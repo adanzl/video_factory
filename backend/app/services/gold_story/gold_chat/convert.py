@@ -3608,6 +3608,7 @@ def _refine_after_normalize(
         beat=beat,
         closing_intent=closing,
         story_raw=story_raw,
+        closing_mode=str(payload.get("closing_mode") or ""),
     )
     banned_list = [str(x) for x in banned]
 
@@ -4954,6 +4955,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         beat=beat,
         closing_intent=closing,
         story_raw=story_raw_full[:800],
+        closing_mode=str(payload.get("closing_mode") or ""),
     )
     m5_h_beat_block = ""
     if mechanism.upper() == "M5" and structure_type == "H":

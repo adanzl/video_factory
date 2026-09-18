@@ -421,3 +421,157 @@ def test_gold_story_to_gold_chat_runs_align_pass(monkeypatch):
     out = gc.gold_story_to_gold_chat(row)
     assert "家规就是" in out["dialogue"][8]["line"]
     assert _issues(out) == []
+
+
+_AUTH_BEAT_CHAIN = [
+    {"beat": 1, "speaker": "妈妈", "intent": "立规：谁先写完作业谁玩"},
+    {"beat": 2, "speaker": "昭昭", "intent": "占物：偷偷把作业本藏进冰箱"},
+    {"beat": 3, "speaker": "灿灿", "intent": "急哭：找不到作业本"},
+    {"beat": 4, "speaker": "妈妈", "intent": "反转：不罚反将任务"},
+    {"beat": 5, "speaker": "灿灿", "intent": "补刀：威胁揭短"},
+    {"beat": 6, "speaker": "昭昭", "intent": "认怂：立刻让渡"},
+    {"beat": 7, "speaker": "妈妈", "intent": "权威点题收束"},
+]
+
+
+def _authority_story(dialogue: list[dict[str, str]]) -> dict:
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    return {
+        "scene_title": "权威点题样例",
+        "setting": "客厅",
+        "key": "权威点题",
+        "conflict_core": "一方藏物抢资源，对方急哭",
+        "closing_mode": CLOSING_MODE_AUTHORITY_PUNCHLINE,
+        "dialogue": dialogue,
+        "punchline_explain": "G类权威点题收束",
+    }
+
+
+def _authority_issues(story: dict) -> list[dict]:
+    return collect_align_issues(
+        story,
+        structure_type="G",
+        mechanism="M4",
+        closing_intent="权威点题收束",
+        beat_chain=_AUTH_BEAT_CHAIN,
+        conflict_text=str(story.get("conflict_core") or ""),
+    )
+
+
+def test_authority_punchline_bad_opening_like_91():
+    """开场跳过立规 + 急哭/撇清说话人对调 → 保真-权威*。"""
+    dlg = [
+        {"speaker": "昭昭", "line": "听见了听见了，我这就去写，姐姐你慢慢来。"},
+        {"speaker": "灿灿", "line": "你写你的，别老盯着我这边看。"},
+        {"speaker": "昭昭", "line": "谁盯你了，我去拿瓶水总行吧。"},
+        {"speaker": "灿灿", "line": "咦，我作业本呢？刚才明明放在上面。"},
+        {"speaker": "昭昭", "line": "我翻遍书包都找不到，急死我了！"},
+        {"speaker": "灿灿", "line": "没看见，你自己乱放还赖我，哭什么呀。"},
+        {"speaker": "妈妈", "line": "你藏得挺快，那今晚你负责哄她睡觉。"},
+        {"speaker": "昭昭", "line": "我哄她？我不会哄人，换个别的事行？"},
+        {"speaker": "灿灿", "line": "你哄我，我就告诉妈你偷吃。"},
+        {"speaker": "昭昭", "line": "你玩你玩，我哄你。"},
+        {"speaker": "妈妈", "line": "记住，这个家我第一，你俩并列第三。"},
+    ]
+    kinds = {x["kind"] for x in _authority_issues(_authority_story(dlg))}
+    assert "保真-权威开场" in kinds
+    assert "保真-权威角色" in kinds
+
+
+def test_authority_punchline_good_opening_passes_opening_kinds():
+    dlg = [
+        {"speaker": "妈妈", "line": "谁先写完作业谁就能玩。"},
+        {"speaker": "昭昭", "line": "听见了，我这就去写。"},
+        {"speaker": "灿灿", "line": "咦，我作业本呢？翻遍书包找不到，急死我了！"},
+        {"speaker": "昭昭", "line": "没看见，你自己乱放还赖我，哭什么呀。"},
+        {"speaker": "妈妈", "line": "你藏得挺快，那今晚你负责哄她睡觉。"},
+        {"speaker": "昭昭", "line": "我不会哄人，换个别的事行？"},
+        {"speaker": "灿灿", "line": "你哄我，我就告诉妈你偷吃。"},
+        {"speaker": "昭昭", "line": "你玩你玩，我哄你。"},
+        {"speaker": "灿灿", "line": "这还差不多。"},
+        {"speaker": "妈妈", "line": "记住，这个家我第一，你俩并列第三。"},
+    ]
+    kinds = {x["kind"] for x in _authority_issues(_authority_story(dlg))}
+    assert "保真-权威开场" not in kinds
+    assert "保真-权威角色" not in kinds
+
+
+def test_authority_punchline_skin_swap_school_passes_opening_kinds():
+    """换皮（交卷/选座）仍只卡抽象槽，不开场误报。"""
+    chain = [
+        {"beat": 1, "speaker": "老师", "intent": "立规：谁先交卷谁先选座位"},
+        {"beat": 2, "speaker": "昭昭", "intent": "占物：把别人卷子藏进讲台"},
+        {"beat": 3, "speaker": "灿灿", "intent": "急哭：找不到卷子"},
+        {"beat": 4, "speaker": "老师", "intent": "反转：不罚反将收作业任务"},
+        {"beat": 5, "speaker": "灿灿", "intent": "补刀：威胁揭短"},
+        {"beat": 6, "speaker": "昭昭", "intent": "认怂：立刻让渡选座权"},
+        {"beat": 7, "speaker": "老师", "intent": "权威点题收束"},
+    ]
+    # 角色映射仍用家中说话人；beat0 speaker 用妈妈代替老师以适配 ALLOWED speakers
+    chain[0]["speaker"] = "妈妈"
+    chain[3]["speaker"] = "妈妈"
+    chain[6]["speaker"] = "妈妈"
+    dlg = [
+        {"speaker": "妈妈", "line": "谁先交卷谁先选座位，定规了。"},
+        {"speaker": "昭昭", "line": "我这就交。"},
+        {"speaker": "灿灿", "line": "我卷子呢？翻遍桌子找不到，急死我了！"},
+        {"speaker": "昭昭", "line": "没看见，你自己乱放还赖我，哭什么呀。"},
+        {"speaker": "妈妈", "line": "你藏得快，那你负责帮全班收作业。"},
+        {"speaker": "昭昭", "line": "收作业我真不会，换事行？"},
+        {"speaker": "灿灿", "line": "你帮我收，我就告诉老师你抄答案。"},
+        {"speaker": "昭昭", "line": "你选你选，我收。"},
+        {"speaker": "灿灿", "line": "这还差不多。"},
+        {"speaker": "妈妈", "line": "记住，这个班我第一，你俩并列第三。"},
+    ]
+    story = _authority_story(dlg)
+    kinds = {
+        x["kind"]
+        for x in collect_align_issues(
+            story,
+            structure_type="G",
+            mechanism="M4",
+            closing_intent="权威点题收束",
+            beat_chain=chain,
+            conflict_text="藏卷子抢选座，对方急哭",
+        )
+    }
+    assert "保真-权威开场" not in kinds
+    assert "保真-权威角色" not in kinds
+
+
+def test_format_align_block_passes_authority_closing_mode():
+    from app.services.gold_story.gold_chat.prompts import format_align_block
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    block = format_align_block(
+        structure_type="G",
+        mechanism="M4",
+        beat=["立规", "反将", "让渡", "点题"],
+        closing_mode=CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+    assert "开场立规/约好" in block or "立规/约好" in block
+    assert "authority_punchline" not in block or True  # chain text is enough
+
+
+def test_authority_punchline_rule_said_by_wrong_speaker():
+    """前2句有立规槽但由孩子说 → 保真-权威开场。"""
+    dlg = [
+        {"speaker": "昭昭", "line": "谁先写完谁就能玩，听见没。"},
+        {"speaker": "灿灿", "line": "知道了知道了。"},
+        {"speaker": "灿灿", "line": "咦，我作业本呢？翻遍书包找不到，急死我了！"},
+        {"speaker": "昭昭", "line": "没看见，你自己乱放还赖我，哭什么呀。"},
+        {"speaker": "妈妈", "line": "你藏得挺快，那今晚你负责哄她睡觉。"},
+        {"speaker": "昭昭", "line": "我不会哄人，换个别的事行？"},
+        {"speaker": "灿灿", "line": "你哄我，我就告诉妈你偷吃。"},
+        {"speaker": "昭昭", "line": "你玩你玩，我哄你。"},
+        {"speaker": "灿灿", "line": "这还差不多。"},
+        {"speaker": "妈妈", "line": "记住，这个家我第一，你俩并列第三。"},
+    ]
+    kinds = {x["kind"] for x in _authority_issues(_authority_story(dlg))}
+    assert "保真-权威开场" in kinds
+

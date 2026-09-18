@@ -10,12 +10,17 @@ def align_chain(
     *,
     structure_type: str,
     mechanism: str,
+    closing_mode: str = "",
 ) -> tuple[str, ...]:
     from app.services.gold_story.gold_chat.type_bridge import (
         type_align_chain,
     )
 
-    return type_align_chain(structure_type=structure_type, mechanism=mechanism)
+    return type_align_chain(
+        structure_type=structure_type,
+        mechanism=mechanism,
+        closing_mode=closing_mode,
+    )
 
 
 _BANNED_INVENTED_CLOSES: tuple[str, ...] = (
@@ -81,6 +86,8 @@ STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
         "保真-发起方倒置",
         "保真-垫字过密",
         "保真-seed角色",
+        "保真-权威开场",
+        "保真-权威角色",
     }
 )
 
@@ -1295,6 +1302,136 @@ def _append_seed_speaker_issues(
             break
 
 
+RE_AUTH_RULE_SLOT = re.compile(r"谁先|先.+谁|立规|约好|规定|规矩|定规|说好|约定")
+RE_AUTH_VICTIM_DISTRESS = re.compile(
+    r"找不到|急死|急哭|翻遍|本子呢|作业呢|咦，.*呢"
+)
+RE_AUTH_HIDER_DENY = re.compile(
+    r"没看见|乱放还赖|哭什么|赖我|你自己乱放"
+)
+
+
+def _beat_chain_first_speaker(beat_chain: list[Any] | None) -> str:
+    for item in beat_chain or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        if sp:
+            return sp
+    return ""
+
+
+def _authority_victim_hider(
+    beat_chain: list[Any] | None,
+) -> tuple[str, str]:
+    victim = ""
+    hider = ""
+    for item in beat_chain or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        intent = str(item.get("intent") or item.get("beat") or "")
+        if not victim and re.search(r"急哭|找不到|急死", intent):
+            victim = sp
+        if not hider and re.search(r"藏|占物|塞", intent):
+            hider = sp
+        if victim and hider:
+            break
+    return victim, hider
+
+
+def _append_authority_punchline_align_issues(
+    story: dict[str, Any],
+    rows: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> None:
+    """authority_punchline：开场立规归属 + 受害/藏物说话人一致性。"""
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    mode = str(story.get("closing_mode") or "").strip()
+    if mode != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        return
+    if not rows:
+        return
+
+    speakers = [str(r.get("speaker") or "").strip() for r in rows]
+    lines = [str(r.get("line") or "").strip() for r in rows]
+    beat0 = _beat_chain_first_speaker(beat_chain)
+    if beat0 and speakers[0] != beat0:
+        issues.append(
+            _issue(
+                lines=[1],
+                kind="保真-权威开场",
+                desc=(
+                    f"第1句 speaker 为{speakers[0]}，"
+                    f"与 beat_chain 首拍立规方({beat0})不一致：{lines[0]}"
+                ),
+                fix=f"开场第1句须由{beat0}说出立规/约好，勿从中段起跳",
+            )
+        )
+
+    head = lines[:2]
+    if head and not any(RE_AUTH_RULE_SLOT.search(x) for x in head):
+        issues.append(
+            _issue(
+                lines=[1] if len(lines) == 1 else [1, 2],
+                kind="保真-权威开场",
+                desc="前2句未出现立规/约好槽（谁先/约好/规定等）",
+                fix="前2句内补抽象立规句，且由 beat0 立规方说出",
+            )
+        )
+    elif beat0 and head:
+        for i, (sp, line) in enumerate(zip(speakers[:2], head), 1):
+            if RE_AUTH_RULE_SLOT.search(line) and sp != beat0:
+                issues.append(
+                    _issue(
+                        lines=[i],
+                        kind="保真-权威开场",
+                        desc=(
+                            f"第{i}句立规槽由{sp}说，"
+                            f"立规发起方应为{beat0}：{line}"
+                        ),
+                        fix=f"立规/约好句须由{beat0}说，勿让孩子代立规",
+                    )
+                )
+
+    victim, hider = _authority_victim_hider(beat_chain)
+    if not victim or not hider or victim == hider:
+        return
+    for i, (sp, line) in enumerate(zip(speakers, lines), 1):
+        if sp not in {"昭昭", "灿灿"}:
+            continue
+        if RE_AUTH_VICTIM_DISTRESS.search(line) and sp != victim:
+            issues.append(
+                _issue(
+                    lines=[i],
+                    kind="保真-权威角色",
+                    desc=(
+                        f"第{i}句急哭/找不到语义由{sp}说，"
+                        f"beat 受害方为{victim}：{line}"
+                    ),
+                    fix=f"急哭/找不到句须由受害方{victim}说",
+                )
+            )
+        if RE_AUTH_HIDER_DENY.search(line) and sp != hider:
+            issues.append(
+                _issue(
+                    lines=[i],
+                    kind="保真-权威角色",
+                    desc=(
+                        f"第{i}句撇清/赖对方语义由{sp}说，"
+                        f"beat 藏物方为{hider}：{line}"
+                    ),
+                    fix=f"撇清/否认句须由藏物方{hider}说",
+                )
+            )
+
+
+
 def collect_align_issues(
     story: dict[str, Any],
     *,
@@ -1357,6 +1494,13 @@ def collect_align_issues(
         _append_pad_filler_issues(rows, issues, max_tail_filler=99)
 
     _append_seed_speaker_issues(rows, issues, dialogue_seed=dialogue_seed)
+
+    _append_authority_punchline_align_issues(
+        story,
+        rows,
+        issues,
+        beat_chain=beat_chain,
+    )
 
     _append_type_contract_align_issues(story, structure_type=st, issues=issues)
 

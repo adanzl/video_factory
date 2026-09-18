@@ -514,7 +514,7 @@ def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any]
 
 # M4+G 权威点题旁路扩写链（closing_mode=authority_punchline）
 _M4_G_AUTHORITY_PUNCHLINE_CHAIN: tuple[str, ...] = (
-    "立规/约好（谁先完成谁得资源）",
+    "开场立规/约好（第1句=beat0立规方；谁先完成谁得资源）",
     "一方耍手段占便宜",
     "权威不罚反将：资源+任务捆给耍手段方",
     "被反将方抗拒/辩解一句（不会/换事等，勿跳过）",
@@ -526,6 +526,9 @@ _M4_G_AUTHORITY_PUNCHLINE_CHAIN: tuple[str, ...] = (
 _M4_G_AUTHORITY_HINT = (
     "\n- **M4+G 权威点题旁路**：本篇 closing_mode=authority_punchline；"
     "须落实立规→反将→认怂让渡→权威点题；"
+    "**开场第1句**须由 beat_chain 首拍立规方说出立规/约好，"
+    "禁止从中段「听见了/我这就去写」起跳过立规；"
+    "急哭/找不到句与藏物撇清句 speaker 不得对调；"
     "**禁止**硬塞护短/擦药/说好了式真情 pivot 暖收（与点题收束抢戏）；"
     "妈妈可多句点题，末句落秩序宣布；对白须可说出口"
 )
