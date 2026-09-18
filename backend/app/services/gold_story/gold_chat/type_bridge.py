@@ -17,7 +17,10 @@ from app.services.gold_story.types import (
     mechanism_label,
     normalize_structure_type,
 )
-from app.services.gold_story.structure_resolve import resolve_structure_row
+from app.services.gold_story.structure_resolve import (
+    CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    resolve_structure_row,
+)
 from app.services.daily_story.story_types import (
     STORY_TYPE_LINES,
     apply_gold_chat_body_pipeline,
@@ -509,14 +512,41 @@ def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any]
     return out, notes
 
 
+# M4+G 权威点题旁路扩写链（closing_mode=authority_punchline）
+_M4_G_AUTHORITY_PUNCHLINE_CHAIN: tuple[str, ...] = (
+    "立规/约好（谁先完成谁得资源）",
+    "一方耍手段占便宜",
+    "权威不罚反将：资源+任务捆给耍手段方",
+    "被反将方抗拒/辩解一句（不会/换事等，勿跳过）",
+    "对方揭短/施压 → 耍手段方认怂让渡",
+    "末句权威点题收束（秩序/排名宣布；勿硬塞护短擦药 pivot）",
+    "对白须可说出口，禁动作神态旁白",
+)
+
+_M4_G_AUTHORITY_HINT = (
+    "\n- **M4+G 权威点题旁路**：本篇 closing_mode=authority_punchline；"
+    "须落实立规→反将→认怂让渡→权威点题；"
+    "**禁止**硬塞护短/擦药/说好了式真情 pivot 暖收（与点题收束抢戏）；"
+    "妈妈可多句点题，末句落秩序宣布；对白须可说出口"
+)
+
+
 def type_align_chain(
     *,
     structure_type: str,
     mechanism: str = "",
+    closing_mode: str = "",
 ) -> tuple[str, ...]:
     """金稿对齐扩写链：mechanism+structure 特化 > 结构类型默认。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
+    mode = str(closing_mode or "").strip()
+    if (
+        mech == "M4"
+        and st == "G"
+        and mode == CLOSING_MODE_AUTHORITY_PUNCHLINE
+    ):
+        return _M4_G_AUTHORITY_PUNCHLINE_CHAIN
     if mech and st:
         chain = _MECH_STRUCTURE_CHAINS.get((mech, st))
         if chain:
@@ -528,10 +558,12 @@ def structure_type_hint(
     *,
     structure_type: str,
     mechanism: str = "",
+    closing_mode: str = "",
 ) -> str:
     """注入 gold_chat LLM prompt：类型公式 + 成熟流水线修订 hint + 扩写链。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
+    mode = str(closing_mode or "").strip()
     if not st:
         return ""
 
@@ -545,19 +577,26 @@ def structure_type_hint(
         parts.append(f"- 公式：{entry['formula']}")
         parts.append(f"- 收束：{entry['closing']}")
 
-    if st in STORY_TYPE_LINES:
+    if mode == CLOSING_MODE_AUTHORITY_PUNCHLINE and mech == "M4" and st == "G":
+        parts.append("- 旁路：closing_mode=authority_punchline（权威点题，非真情暖收）")
+    elif st in STORY_TYPE_LINES:
         type_hint = gold_chat_type_revision_hint(st)
         if type_hint:
             parts.append(type_hint)
 
-    chain = type_align_chain(structure_type=st, mechanism=mech)
+    chain = type_align_chain(
+        structure_type=st, mechanism=mech, closing_mode=mode
+    )
     if chain:
         parts.append("- 扩写链（逐步落实，禁止跳步）：")
         parts.extend(f"  · {step}" for step in chain)
 
-    extra = _MECH_HINT_APPEND.get((mech, st), "")
-    if extra:
-        parts.append(extra.strip())
+    if mode == CLOSING_MODE_AUTHORITY_PUNCHLINE and mech == "M4" and st == "G":
+        parts.append(_M4_G_AUTHORITY_HINT.strip())
+    else:
+        extra = _MECH_HINT_APPEND.get((mech, st), "")
+        if extra:
+            parts.append(extra.strip())
 
     parts.append("- 详拍亦见下方「金稿对齐 checklist」与 beat_chain")
     return "\n".join(parts)

@@ -119,3 +119,57 @@ def test_g_validate_f_stale_softened_by_warm_tail():
     errors: list[str] = []
     append_g_body_errors(story, errors)
     assert not any("威胁僵持" in e for e in errors)
+
+
+def test_g_validate_authority_punchline_mode_skips_pivot_soft():
+    """closing_mode=authority_punchline 走权威点题槽，不卡 pivot/暖收。"""
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    story = {
+        "punchline_explain": "G类嘴硬心软，权威点题",
+        "closing_mode": CLOSING_MODE_AUTHORITY_PUNCHLINE,
+        "dialogue": [
+            {"speaker": "妈妈", "line": "谁先写完作业谁玩。"},
+            {"speaker": "昭昭", "line": "本子呢？我没看见。"},
+            {"speaker": "灿灿", "line": "我本子呢？急死了！"},
+            {"speaker": "妈妈", "line": "你藏得快，那今晚你负责哄她睡。"},
+            {"speaker": "昭昭", "line": "哄人这事我真不会呀。"},
+            {"speaker": "灿灿", "line": "你哄我，我就告你偷吃。"},
+            {"speaker": "昭昭", "line": "你玩你玩，我哄你。"},
+            {"speaker": "灿灿", "line": "真让我玩？"},
+            {"speaker": "昭昭", "line": "真让，我哄你睡。"},
+            {"speaker": "灿灿", "line": "那作业本呢？"},
+            {"speaker": "妈妈", "line": "记住，这个家我第一，你俩并列第三。"},
+        ],
+    }
+    errors: list[str] = []
+    append_g_body_errors(story, errors)
+    assert errors == []
+    assert not any("pivot" in e for e in errors)
+    assert not any("暖收" in e for e in errors)
+
+
+def test_g_validate_without_mode_still_requires_pivot():
+    """无 closing_mode 时仍走标准 G 硬卡。"""
+    story = {
+        "punchline_explain": "G类嘴硬心软",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "谁先写完作业谁玩。"},
+            {"speaker": "昭昭", "line": "本子呢？我没看见。"},
+            {"speaker": "灿灿", "line": "我本子呢？急死了！"},
+            {"speaker": "妈妈", "line": "你藏得快，那今晚你负责哄她睡。"},
+            {"speaker": "昭昭", "line": "这算奖还是罚？"},
+            {"speaker": "灿灿", "line": "你哄我，我就告你偷吃。"},
+            {"speaker": "昭昭", "line": "你玩你玩，我哄你。"},
+            {"speaker": "灿灿", "line": "真让我玩？"},
+            {"speaker": "昭昭", "line": "真让，我哄你睡。"},
+            {"speaker": "妈妈", "line": "早这样不就好了。"},
+            {"speaker": "妈妈", "line": "记住，这个家我第一，你俩并列第三。"},
+        ],
+    }
+    errors: list[str] = []
+    append_g_body_errors(story, errors)
+    assert any("pivot" in e for e in errors)
+    assert any("暖收" in e for e in errors)

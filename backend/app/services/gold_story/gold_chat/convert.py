@@ -262,6 +262,8 @@ def _persist_structure_correction(row: dict[str, Any], notes: list[str]) -> dict
     sc = payload.get("scene_contract")
     if isinstance(sc, dict):
         patch["scene_contract"] = sc
+    if "closing_mode" in payload:
+        patch["closing_mode"] = payload.get("closing_mode")
     if patch:
         repo_gold_story.patch_story_payload(gid, patch)
     # demote 置信写回 payload
@@ -4096,6 +4098,11 @@ def refine_gold_chat_align(
     data = _normalize_chat_speakers(dict(story))
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
+    if row:
+        payload = cast(dict[str, Any], row.get("payload") or {})
+        mode = str(payload.get("closing_mode") or "").strip()
+        if mode:
+            data["closing_mode"] = mode
 
     for _round in range(max(1, int(max_rounds))):
         if mech == "M5" and st == "H":
@@ -4808,12 +4815,20 @@ def _bump_short_regen_or_reject(msg: str, short_regen_count: int) -> int:
     return next_count
 
 
-def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
+def _structure_type_hint(
+    structure_type: str,
+    mechanism: str = "",
+    closing_mode: str = "",
+) -> str:
     from app.services.gold_story.gold_chat.type_bridge import (
         structure_type_hint,
     )
 
-    return structure_type_hint(structure_type=structure_type, mechanism=mechanism)
+    return structure_type_hint(
+        structure_type=structure_type,
+        mechanism=mechanism,
+        closing_mode=closing_mode,
+    )
 
 
 def _gate_forced_m14_p_or_raise(row: dict[str, Any]) -> None:
@@ -4998,7 +5013,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             banned_literals="、".join(str(x) for x in banned) or "（无）",
             funny_why=str(payload.get("funny_why") or "")[:500],
             source_type=source_type,
-            structure_hint=_structure_type_hint(structure_type, mechanism),
+            structure_hint=_structure_type_hint(
+                structure_type,
+                mechanism,
+                str(payload.get("closing_mode") or ""),
+            ),
             align_block=align_block,
             gold_chat_snippet=resolve_gold_chat_snippet(str(row.get("source_id") or "")),
             **_prompt_budget_kwargs(),
@@ -5152,6 +5171,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 "gold_chat pre-align type patch: %s",
                 "；".join(str(n) for n in type_notes[:6]),
             )
+        # 旁路收束模式随稿走入 align/G 硬卡（不改 structure_type）
+        closing_mode = str(payload.get("closing_mode") or "").strip()
+        if closing_mode:
+            data = dict(data)
+            data["closing_mode"] = closing_mode
         chat = data
         try:
             chat = refine_gold_chat_align(

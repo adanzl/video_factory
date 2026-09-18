@@ -478,3 +478,87 @@ def test_sync_h3_from_scene_contract_g_over_d():
     assert fixed["mechanism"] == "M4"
     assert fixed["structure_type"] == "G"
     assert notes
+
+
+def test_stamp_authority_punchline_for_m4_g_like_91():
+    """#91 同类：无真情 pivot，立规→反将→让渡→权威点题 → closing_mode。"""
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+        classification_blob,
+        resolve_structure_row,
+        suggests_authority_punchline_close,
+    )
+
+    raw = (
+        "妈妈和昭昭、灿灿约好：谁先写完作业谁就能玩平板。"
+        "昭昭偷偷把灿灿的作业本藏进冰箱，灿灿找不到急得直哭。"
+        "妈妈发现后没发火，反而把平板递给昭昭说：你藏得挺快，那今晚你负责哄灿灿睡觉。"
+        "昭昭立刻把平板塞给灿灿：你玩你玩，我哄你。"
+        "妈妈说：记住，这个家我第一，平板第二，你俩并列第三。"
+    )
+    closing = "妈妈慢悠悠点破并宣布家庭排名，昭昭认怂让出平板"
+    blob = classification_blob(story_raw=raw, closing_intent=closing)
+    assert suggests_authority_punchline_close(blob)
+
+    row = {
+        "id": 91,
+        "mechanism": "M4",
+        "structure_type": "G",
+        "conflict_core": "藏作业本抢平板",
+        "payload": {
+            "story_raw": raw,
+            "closing_intent": closing,
+            "structure_mapping_note": "反转示好暖收，故 M4+G",
+            "dialogue_seed": [
+                {"speaker": "妈妈", "intent": "谁先写完作业谁玩平板"},
+                {"speaker": "昭昭", "intent": "平板塞给灿灿，你玩你玩我哄你"},
+                {"speaker": "妈妈", "intent": "我第一，平板第二，你俩并列第三"},
+            ],
+        },
+    }
+    fixed, notes = resolve_structure_row(row)
+    assert fixed["mechanism"] == "M4"
+    assert fixed["structure_type"] == "G"
+    assert fixed["payload"].get("closing_mode") == CLOSING_MODE_AUTHORITY_PUNCHLINE
+    assert any("authority_punchline" in n for n in notes)
+
+
+def test_authority_punchline_skin_swap_no_theme_words():
+    """换皮（无平板/巧克力/排名）仍应命中权威点题槽。"""
+    from app.services.gold_story.structure_resolve import (
+        suggests_authority_punchline_close,
+    )
+
+    skin = (
+        "老师定规谁先交卷谁先选座位。同桌把别人卷子藏进讲台。"
+        "老师没发火，把选座权给同桌：你藏得快，那你负责帮全班收作业。"
+        "被藏卷子的人揭短：你帮我收我就告诉老师你上次抄我答案。"
+        "同桌立刻把选座权让出去：你选你选，我收。"
+        "老师慢悠悠：这个班我第一，座位第二，你俩并列第三。"
+    )
+    assert suggests_authority_punchline_close(skin)
+
+
+def test_true_g_relational_not_authority_mode():
+    """真情 pivot+暖收 不得打权威点题旁路。"""
+    from app.services.gold_story.structure_resolve import (
+        resolve_structure_row,
+        suggests_authority_punchline_close,
+        suggests_true_g_relational_close,
+    )
+
+    raw = (
+        "灿灿数落昭昭丢人，昭昭顶嘴。昭昭突然说谁敢动你我跟他拼命。"
+        "灿灿愣住说你说啥。昭昭说认真的。灿灿说行了过来我给你擦擦药。"
+        "两人说好了，以后互相撑腰。"
+    )
+    assert suggests_true_g_relational_close(raw)
+    assert not suggests_authority_punchline_close(raw)
+    row = {
+        "mechanism": "M4",
+        "structure_type": "G",
+        "payload": {"story_raw": raw, "closing_intent": "擦药说好了互相撑腰"},
+    }
+    fixed, notes = resolve_structure_row(row)
+    assert fixed["payload"].get("closing_mode") in (None, "", False)
+    assert not any("authority_punchline" in n for n in notes)
