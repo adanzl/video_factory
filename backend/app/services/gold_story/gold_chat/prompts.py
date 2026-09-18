@@ -344,6 +344,39 @@ def format_m5_h_pass1_beat_block(
     )
 
 
+
+def format_authority_punchline_pass1_block(
+    *,
+    beat_chain: list[Any] | None = None,
+) -> str:
+    """M4+G authority_punchline Pass1 开场硬约束（抽象槽，禁绑单篇词）。"""
+    beat0_sp = ""
+    beat0_intent = ""
+    for item in beat_chain or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        intent = str(item.get("intent") or "").strip()
+        if sp:
+            beat0_sp = sp
+            beat0_intent = intent
+            break
+    who = beat0_sp or "立规方"
+    intent_hint = beat0_intent or "谁先完成谁得资源"
+    return "\n".join(
+        [
+            "【M4+G 权威点题 · Pass1 开场硬约束 · 不可协商】",
+            f"- 第1句必须由 {who} 说，且必须是立规/约定句（要点：{intent_hint}）。",
+            "- 不得从执行、回应、急哭、藏物、撇清起稿。",
+            "- 立规句须含抽象规则：「谁先…谁…」或「先…先…」或约好/规定/说好；"
+            "禁止旁白、心理、追问、后置立规。",
+            "- 开场2句内必须完成立规；第3句后才允许反将/抗拒/受害者反应。",
+            "- 立规未出现前，不得出现资源归属宣称、藏物、急哭、撇清、让渡、点题。",
+            "- 急哭/找不到句须受害方说；藏物撇清句须藏物方说，不得对调。",
+        ]
+    )
+
+
 def format_beat_sequence_block(
     *,
     conflict_text: str,

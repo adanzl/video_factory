@@ -44,6 +44,7 @@ from app.services.gold_story.gold_chat.prompts import (
     format_align_block,
     format_align_issues_block,
     format_m5_h_pass1_beat_block,
+    format_authority_punchline_pass1_block,
     format_pass1_regen_feedback,
     format_role_binding_block,
     format_seed_span_block,
@@ -4112,6 +4113,18 @@ def refine_gold_chat_align(
                 closing_intent=closing,
                 conflict_text=conflict_text,
             )
+        if str(data.get("closing_mode") or "").strip() == "authority_punchline":
+            from app.services.gold_story.gold_chat.patch import (
+                apply_authority_punchline_local_patches,
+            )
+
+            data, patched = apply_authority_punchline_local_patches(
+                data,
+                beat_chain=beat_chain,
+                dialogue_seed=dialogue_seed,
+            )
+            if patched:
+                logger.info("gold_chat authority opening local patch applied")
         if st == "I":
             data = _apply_i_close_local_patches(
                 data,
@@ -4141,6 +4154,37 @@ def refine_gold_chat_align(
             mechanism_text=mechanism_text,
         )
         blocking, warn = split_align_issues(issues)
+        # authority 开场：再兜底一次（不占 Pass1 重生名额）
+        if any(
+            str(x.get("kind") or "") in {"保真-权威开场", "保真-权威角色"}
+            for x in blocking
+        ):
+            from app.services.gold_story.gold_chat.patch import (
+                apply_authority_punchline_local_patches,
+            )
+
+            data, auth2 = apply_authority_punchline_local_patches(
+                data,
+                beat_chain=beat_chain,
+                dialogue_seed=dialogue_seed,
+            )
+            if auth2:
+                logger.info(
+                    "gold_chat authority_retry_after_collect patch"
+                )
+                issues = collect_align_issues(
+                    data,
+                    structure_type=st,
+                    mechanism=mech,
+                    closing_intent=closing,
+                    beat_chain=beat_chain,
+                    conflict_text=conflict_text,
+                    dialogue_seed=dialogue_seed,
+                    beat=beat,
+                    object_text=object_text,
+                    mechanism_text=mechanism_text,
+                )
+                blocking, warn = split_align_issues(issues)
         if not blocking and not warn:
             return _prepare_chat_for_validate(
                 data,
@@ -4267,6 +4311,41 @@ def refine_gold_chat_align(
             conflict_text=conflict_text,
         )
     blocking_remain, warn_remain = split_align_issues(remain)
+    if any(
+        str(x.get("kind") or "") in {"保真-权威开场", "保真-权威角色"}
+        for x in blocking_remain
+    ):
+        from app.services.gold_story.gold_chat.patch import (
+            apply_authority_punchline_local_patches,
+        )
+
+        data["closing_mode"] = str(
+            data.get("closing_mode") or "authority_punchline"
+        ).strip()
+        if not isinstance(data.get("gold_beat_chain"), list) and beat_chain:
+            data["gold_beat_chain"] = beat_chain
+        data, auth_end = apply_authority_punchline_local_patches(
+            data,
+            beat_chain=beat_chain,
+            dialogue_seed=data.get("dialogue_seed"),
+        )
+        logger.info(
+            "gold_chat authority patch before refine_failed changed=%s",
+            auth_end,
+        )
+        remain = collect_align_issues(
+            data,
+            structure_type=st,
+            mechanism=mech,
+            closing_intent=closing,
+            beat_chain=beat_chain,
+            conflict_text=conflict_text,
+            dialogue_seed=dialogue_seed,
+            beat=beat,
+            object_text=object_text,
+            mechanism_text=mechanism_text,
+        )
+        blocking_remain, warn_remain = split_align_issues(remain)
     if blocking_remain:
         parts: list[str] = []
         for x in blocking_remain[:3]:
@@ -4963,6 +5042,24 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             conflict_text=conflict_text,
             closing_intent=closing,
         )
+    closing_mode_pass1 = str(payload.get("closing_mode") or "").strip()
+    if (
+        mechanism.upper() == "M4"
+        and structure_type == "G"
+        and closing_mode_pass1 == "authority_punchline"
+    ):
+        from app.services.gold_story.gold_chat.prompts import (
+            format_authority_punchline_pass1_block,
+        )
+
+        auth_block = format_authority_punchline_pass1_block(
+            beat_chain=beat_chain,
+        )
+        m5_h_beat_block = (
+            f"{m5_h_beat_block}\n\n{auth_block}".strip()
+            if m5_h_beat_block
+            else auth_block
+        )
 
     banned_list = [str(x) for x in banned]
     mom_int = int(mom_max)
@@ -5178,6 +5275,19 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         if closing_mode:
             data = dict(data)
             data["closing_mode"] = closing_mode
+        if closing_mode == "authority_punchline":
+            from app.services.gold_story.gold_chat.patch import (
+                apply_authority_punchline_local_patches,
+            )
+
+            data, auth_patched = apply_authority_punchline_local_patches(
+                data,
+                beat_chain=beat_chain,
+                dialogue_seed=seed,
+            )
+            if auth_patched:
+                type_notes = list(type_notes) + ["权威开场兜底"]
+                logger.info("gold_chat pre-align authority opening patch")
         chat = data
         try:
             chat = refine_gold_chat_align(
@@ -5997,6 +6107,50 @@ def convert_gold_chat(
         )
         if blocking:
             kinds = "、".join(str(x.get("kind") or "") for x in blocking[:3])
+            raise ValueError(f"align_export:{kinds}")
+    # authority_punchline：导出前再兜底开场，防后处理冲掉立规
+    payload_ex = cast(dict[str, Any], row.get("payload") or {})
+    scene_ex = payload_ex.get("scene_contract") or {}
+    closing_mode_ex = str(
+        chat.get("closing_mode") or payload_ex.get("closing_mode") or ""
+    ).strip()
+    if closing_mode_ex == "authority_punchline":
+        from app.services.gold_story.gold_chat.patch import (
+            apply_authority_punchline_local_patches,
+        )
+
+        beat_ex = scene_ex.get("beat_chain") or chat.get("gold_beat_chain")
+        chat = dict(chat)
+        chat["closing_mode"] = closing_mode_ex
+        chat, auth_ex = apply_authority_punchline_local_patches(
+            chat,
+            beat_chain=beat_ex if isinstance(beat_ex, list) else None,
+            dialogue_seed=payload_ex.get("dialogue_seed"),
+        )
+        if auth_ex:
+            logger.info("gold_chat export-time authority opening patch")
+        blocking_ex, _warn_ex = split_align_issues(
+            collect_align_issues(
+                chat,
+                structure_type=str(row.get("structure_type") or "G"),
+                mechanism=str(row.get("mechanism") or "M4"),
+                closing_intent=str(
+                    payload_ex.get("closing_intent")
+                    or scene_ex.get("closing_intent")
+                    or ""
+                ),
+                conflict_text=str(
+                    scene_ex.get("conflict") or row.get("conflict_core") or ""
+                ),
+                beat_chain=beat_ex if isinstance(beat_ex, list) else None,
+                dialogue_seed=payload_ex.get("dialogue_seed"),
+                beat=payload_ex.get("beat"),
+                object_text=str(scene_ex.get("object") or ""),
+                mechanism_text=str(scene_ex.get("mechanism") or ""),
+            )
+        )
+        if blocking_ex:
+            kinds = "、".join(str(x.get("kind") or "") for x in blocking_ex[:3])
             raise ValueError(f"align_export:{kinds}")
     # 终检前再清一次姐弟连说（垫字/精修可能重新制造）
     from app.services.daily_story.prompts import _patch_consecutive_speakers

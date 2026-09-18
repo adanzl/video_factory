@@ -575,3 +575,124 @@ def test_authority_punchline_rule_said_by_wrong_speaker():
     kinds = {x["kind"] for x in _authority_issues(_authority_story(dlg))}
     assert "保真-权威开场" in kinds
 
+
+def test_authority_opening_local_patch_inserts_rule():
+    """缺立规开场：窄 patch 插入 beat0 立规句后机审过开场。"""
+    from app.services.gold_story.gold_chat.patch import (
+        apply_authority_punchline_local_patches,
+    )
+
+    dlg = [
+        {"speaker": "昭昭", "line": "听见了听见了，我这就去写。"},
+        {"speaker": "灿灿", "line": "你写你的。"},
+        {"speaker": "灿灿", "line": "咦，我作业本呢？翻遍书包找不到，急死我了！"},
+        {"speaker": "昭昭", "line": "没看见，你自己乱放还赖我，哭什么呀。"},
+        {"speaker": "妈妈", "line": "你藏得挺快，那今晚你负责哄她睡觉。"},
+        {"speaker": "昭昭", "line": "我不会哄人，换个别的事行？"},
+        {"speaker": "灿灿", "line": "你哄我，我就告诉妈你偷吃。"},
+        {"speaker": "昭昭", "line": "你玩你玩，我哄你。"},
+        {"speaker": "灿灿", "line": "这还差不多。"},
+        {"speaker": "妈妈", "line": "记住，这个家我第一，你俩并列第三。"},
+    ]
+    story = _authority_story(dlg)
+    fixed, changed = apply_authority_punchline_local_patches(
+        story, beat_chain=_AUTH_BEAT_CHAIN
+    )
+    assert changed
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    kinds = {x["kind"] for x in _authority_issues(fixed)}
+    assert "保真-权威开场" not in kinds
+
+
+def test_authority_opening_local_patch_moves_rule_forward():
+    from app.services.gold_story.gold_chat.patch import (
+        apply_authority_punchline_local_patches,
+    )
+
+    dlg = [
+        {"speaker": "昭昭", "line": "姐姐你慢慢写。"},
+        {"speaker": "妈妈", "line": "谁先写完谁就能玩，说好了。"},
+        {"speaker": "灿灿", "line": "咦，我作业本呢？翻遍书包找不到，急死我了！"},
+        {"speaker": "昭昭", "line": "没看见，你自己乱放还赖我，哭什么呀。"},
+        {"speaker": "妈妈", "line": "你藏得挺快，那今晚你负责哄她睡觉。"},
+        {"speaker": "昭昭", "line": "我不会哄人，换个别的事行？"},
+        {"speaker": "灿灿", "line": "你哄我，我就告诉妈你偷吃。"},
+        {"speaker": "昭昭", "line": "你玩你玩，我哄你。"},
+        {"speaker": "灿灿", "line": "这还差不多。"},
+        {"speaker": "妈妈", "line": "记住，这个家我第一，你俩并列第三。"},
+    ]
+    story = _authority_story(dlg)
+    fixed, changed = apply_authority_punchline_local_patches(
+        story, beat_chain=_AUTH_BEAT_CHAIN
+    )
+    assert changed
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert "谁先" in fixed["dialogue"][0]["line"]
+    kinds = {x["kind"] for x in _authority_issues(fixed)}
+    assert "保真-权威开场" not in kinds
+
+
+
+def test_authority_resist_slot_patch_inserts_after_reverse():
+    from app.services.gold_story.gold_chat.patch import (
+        apply_authority_punchline_local_patches,
+    )
+    from app.services.daily_story.story_types.g.validate import RE_AUTH_RESIST
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：谁先写完谁玩"},
+        {"beat": 2, "speaker": "昭昭", "intent": "占物"},
+        {"beat": 3, "speaker": "灿灿", "intent": "急哭"},
+        {"beat": 4, "speaker": "妈妈", "intent": "反转：今晚你负责哄"},
+        {"beat": 5, "speaker": "昭昭", "intent": "认怂让渡"},
+        {"beat": 6, "speaker": "妈妈", "intent": "权威点题"},
+    ]
+    story = {
+        "closing_mode": "authority_punchline",
+        "gold_beat_chain": beat,
+        "dialogue": [
+            {"speaker": "妈妈", "line": "说好了，谁先写完谁玩。"},
+            {"speaker": "昭昭", "line": "平板给我玩会儿。"},
+            {"speaker": "灿灿", "line": "急得我眼泪都掉下来了。"},
+            {"speaker": "妈妈", "line": "不罚你，今晚你负责哄灿灿睡觉。"},
+            {"speaker": "昭昭", "line": "姐姐你玩你玩，我哄你行了吧。"},
+            {"speaker": "妈妈", "line": "这个家我第一，平板第二，你俩并列第三。"},
+        ],
+    }
+    assert not RE_AUTH_RESIST.search("".join(x["line"] for x in story["dialogue"]))
+    fixed, changed = apply_authority_punchline_local_patches(story, beat_chain=beat)
+    assert changed
+    body = "".join(x["line"] for x in fixed["dialogue"])
+    assert RE_AUTH_RESIST.search(body)
+
+
+def test_authority_end_punch_patch_rewrites_last():
+    from app.services.gold_story.gold_chat.patch import (
+        apply_authority_punchline_local_patches,
+    )
+    from app.services.daily_story.story_types.g.validate import RE_AUTH_PUNCH
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：谁先写完谁玩"},
+        {"beat": 2, "speaker": "昭昭", "intent": "占物"},
+        {"beat": 3, "speaker": "灿灿", "intent": "急哭"},
+        {"beat": 4, "speaker": "妈妈", "intent": "反转：今晚你负责哄"},
+        {"beat": 5, "speaker": "昭昭", "intent": "认怂让渡"},
+        {"beat": 6, "speaker": "妈妈", "intent": "宣布：这个家我第一，平板第二，你俩并列第三"},
+    ]
+    story = {
+        "closing_mode": "authority_punchline",
+        "gold_beat_chain": beat,
+        "dialogue": [
+            {"speaker": "妈妈", "line": "说好了，谁先写完谁玩。"},
+            {"speaker": "昭昭", "line": "平板给我。"},
+            {"speaker": "灿灿", "line": "急得我眼泪都掉下来了。"},
+            {"speaker": "妈妈", "line": "不罚你，今晚你负责哄灿灿睡觉。"},
+            {"speaker": "昭昭", "line": "我不会啊，姐姐你玩你玩。"},
+            {"speaker": "妈妈", "line": "好了好了别闹了。"},
+        ],
+    }
+    assert not RE_AUTH_PUNCH.search(story["dialogue"][-1]["line"])
+    fixed, changed = apply_authority_punchline_local_patches(story, beat_chain=beat)
+    assert changed
+    assert RE_AUTH_PUNCH.search(fixed["dialogue"][-1]["line"])
