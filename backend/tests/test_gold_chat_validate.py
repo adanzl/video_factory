@@ -696,3 +696,45 @@ def test_authority_end_punch_patch_rewrites_last():
     fixed, changed = apply_authority_punchline_local_patches(story, beat_chain=beat)
     assert changed
     assert RE_AUTH_PUNCH.search(fixed["dialogue"][-1]["line"])
+
+
+def test_authority_trim_after_cede_keeps_one_mid():
+    from app.services.gold_story.gold_chat.patch import (
+        apply_authority_punchline_local_patches,
+    )
+    from app.services.daily_story.story_types.g.validate import RE_AUTH_PUNCH, RE_AUTH_CEDE
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：谁先写完谁玩"},
+        {"beat": 2, "speaker": "昭昭", "intent": "占物藏"},
+        {"beat": 3, "speaker": "灿灿", "intent": "急哭找不到"},
+        {"beat": 4, "speaker": "妈妈", "intent": "反转：今晚你负责哄"},
+        {"beat": 5, "speaker": "昭昭", "intent": "认怂让渡"},
+        {"beat": 6, "speaker": "妈妈", "intent": "宣布并列第三"},
+    ]
+    story = {
+        "closing_mode": "authority_punchline",
+        "gold_beat_chain": beat,
+        "dialogue": [
+            {"speaker": "妈妈", "line": "说好了，谁先写完谁玩。"},
+            {"speaker": "昭昭", "line": "本子我塞冰箱了。"},
+            {"speaker": "灿灿", "line": "找不到作业本，急哭了。"},
+            {"speaker": "妈妈", "line": "不罚你，今晚你负责哄她睡觉。"},
+            {"speaker": "昭昭", "line": "我不会啊，姐姐你玩你玩。"},
+            {"speaker": "灿灿", "line": "本子就在冷藏层。"},
+            {"speaker": "昭昭", "line": "不行，我偏就不信！"},
+            {"speaker": "灿灿", "line": "真的，马上给我挪开！"},
+            {"speaker": "昭昭", "line": "我…别再乱动了…"},
+            {"speaker": "灿灿", "line": "我…呢…"},
+            {"speaker": "妈妈", "line": "这个家我第一，平板第二，你俩并列第三。"},
+        ],
+    }
+    fixed, changed = apply_authority_punchline_local_patches(story, beat_chain=beat)
+    assert changed
+    dlg = fixed["dialogue"]
+    assert RE_AUTH_PUNCH.search(dlg[-1]["line"])
+    # find cede then gap to punch <=1
+    lines = [x["line"] for x in dlg]
+    cede_i = max(i for i, ln in enumerate(lines[:-1]) if RE_AUTH_CEDE.search(ln))
+    assert len(lines) - 1 - cede_i - 1 <= 1
+    assert not any("我…呢" in x["line"] for x in dlg)

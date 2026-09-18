@@ -2621,6 +2621,88 @@ def patch_authority_ensure_end_punch(
     return out, True
 
 
+
+def patch_authority_trim_after_cede(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """让渡后砍多余拉扯：至多保留1句推进过渡，点题紧随其后。"""
+    import copy
+    import re as _re
+
+    from app.services.daily_story.story_types.g.validate import (
+        RE_AUTH_CEDE,
+        RE_AUTH_PUNCH,
+    )
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    del beat_chain
+    if str(story.get("closing_mode") or "").strip() != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        return story, False
+    rows = _dialogue_rows(story)
+    if len(rows) < 5:
+        return story, False
+    lines = [str(r.get("line") or "") for r in rows]
+    punch_idxs = [i for i, ln in enumerate(lines) if RE_AUTH_PUNCH.search(ln)]
+    if not punch_idxs:
+        return story, False
+    punch_i = punch_idxs[-1]
+    cede_before = [
+        i for i, ln in enumerate(lines[:punch_i]) if RE_AUTH_CEDE.search(ln)
+    ]
+    if not cede_before:
+        return story, False
+    cede_i = cede_before[-1]
+    mid = list(range(cede_i + 1, punch_i))
+    if len(mid) <= 1:
+        # still drop empty ellipsis mid if any
+        keep_mid = []
+        for i in mid:
+            ln = lines[i].strip()
+            if _re.search(r"[…⋯]", ln) and len(ln) <= 10:
+                continue
+            if _re.fullmatch(r"[我你他她它]?\s*[…⋯。.！!？?\s]*", ln or ""):
+                continue
+            keep_mid.append(i)
+        if keep_mid == mid:
+            return story, False
+        mid = keep_mid
+    else:
+        # keep at most one non-empty advancing mid (prefer last non-empty)
+        candidates = []
+        for i in mid:
+            ln = lines[i].strip()
+            if _re.search(r"[…⋯]", ln) and len(ln) <= 10:
+                continue
+            if _re.fullmatch(r"[我你他她它]?\s*[…⋯。.！!？?\s]*", ln or ""):
+                continue
+            # drop obvious stall phrases
+            if _re.search(r"偏就不信|别再乱动|马上给我挪开|我偏", ln):
+                continue
+            candidates.append(i)
+        mid = candidates[-1:]  # at most one
+
+    keep = set(range(0, cede_i + 1)) | set(mid) | {punch_i}
+    # also drop empty fluff after punch if any (shouldn't)
+    new_rows = [rows[i] for i in range(len(rows)) if i in keep]
+    # ensure punch is last
+    if new_rows and not RE_AUTH_PUNCH.search(str(new_rows[-1].get("line") or "")):
+        punch_row = rows[punch_i]
+        new_rows = [r for r in new_rows if r is not punch_row]
+        new_rows.append(punch_row)
+    if len(new_rows) == len(rows) and all(
+        str(new_rows[j].get("line")) == str(rows[j].get("line"))
+        for j in range(len(rows))
+    ):
+        return story, False
+    out = copy.deepcopy(story)
+    out["dialogue"] = new_rows
+    return out, True
+
+
 def apply_authority_punchline_local_patches(
     story: dict[str, Any],
     *,
@@ -2648,9 +2730,10 @@ def apply_authority_punchline_local_patches(
     data, c4 = patch_authority_role_speakers(data, beat_chain=chain)
     data, c5 = patch_authority_insert_resist_after_reverse(data, beat_chain=chain)
     data, c6 = patch_authority_ensure_end_punch(data, beat_chain=chain)
-    data, c7 = patch_authority_cull_extra_mom_lines(data, beat_chain=chain)
+    data, c7 = patch_authority_trim_after_cede(data, beat_chain=chain)
+    data, c8 = patch_authority_cull_extra_mom_lines(data, beat_chain=chain)
     # 权威改 speaker 后必须再 seed 归位（专家：嵌在本函数末尾，避免调用点漏跑）
-    c8 = False
+    c9 = False
     seed = dialogue_seed
     if seed is None:
         seed = data.get("dialogue_seed")
@@ -2682,9 +2765,9 @@ def apply_authority_punchline_local_patches(
                         if sp == want:
                             break
                         item["speaker"] = want
-                        c8 = True
+                        c9 = True
                         break
-                if c8:
+                if c9:
                     data = out
-    return data, c1 or c2 or c3 or c4 or c5 or c6 or c7 or c8
+    return data, c1 or c2 or c3 or c4 or c5 or c6 or c7 or c8 or c9
 
