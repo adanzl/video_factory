@@ -342,7 +342,7 @@ def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
     payload = cast(dict[str, Any], row.get("payload") or {})
     summary = gold_chat_summary(sid, config=config, row=row)
     bili_title = payload.get("bili_title")
-    return {
+    out: dict[str, Any] = {
         "id": row.get("id"),
         "source_id": sid,
         "url": payload.get("bili_url") or row.get("url"),
@@ -357,6 +357,11 @@ def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
         "updated_at": row.get("updated_at"),
         **summary,
     }
+    # 列表「对话稿」列：失败与未导出需可区分（详情已有 gold_chat_error）
+    gold_chat_error = gold_chat_error_from_payload(payload)
+    if gold_chat_error is not None:
+        out["gold_chat_error"] = gold_chat_error
+    return out
 
 
 def _row_to_dump(row: dict[str, Any]) -> dict[str, Any]:

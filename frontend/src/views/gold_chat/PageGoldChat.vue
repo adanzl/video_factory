@@ -69,6 +69,18 @@
             </span>
           </el-tag>
           <el-tag v-else-if="row.has_gold_chat" type="success" size="small">已导出</el-tag>
+          <el-tooltip
+            v-else-if="row.gold_chat_error?.error"
+            placement="top"
+            :show-after="300"
+          >
+            <template #content>
+              <div class="max-w-md whitespace-pre-wrap wrap-break-word text-xs">
+                {{ row.gold_chat_error.error }}
+              </div>
+            </template>
+            <el-tag type="danger" size="small" class="cursor-default">失败</el-tag>
+          </el-tooltip>
           <el-tag v-else type="info" size="small">未导出</el-tag>
         </template>
       </el-table-column>

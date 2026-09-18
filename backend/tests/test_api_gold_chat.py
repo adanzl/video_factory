@@ -479,6 +479,14 @@ def test_api_convert_failure_records_error(app_ctx, monkeypatch):
     assert "不足" in err.get("error", "")
     assert err.get("failed_at")
 
+    list_resp = client.get("/v_factory/api/gold_chat/list?limit=100")
+    assert list_resp.status_code == 200
+    row = next(x for x in list_resp.get_json()["items"] if x["id"] == gid)
+    assert row.get("has_gold_chat") is False
+    list_err = row.get("gold_chat_error") or {}
+    assert "不足" in list_err.get("error", "")
+    assert list_err.get("failed_at")
+
 
 def test_api_get_includes_audit(app_ctx):
     with app_ctx.app_context():
