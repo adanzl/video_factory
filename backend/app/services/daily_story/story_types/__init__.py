@@ -42,6 +42,25 @@ __all__ = [
     "apply_gold_chat_k_fix_truncations",
     "apply_gold_chat_strip_filler",
     "apply_gold_chat_type_patch",
+    "patch_c_force_sibling_alternate",
+    "patch_c_possession_criterion",
+    "patch_j_cap_trailing_particles",
+    "patch_j_cap_ya_particles",
+    "patch_j_dedupe_cross_line_phrases",
+    "patch_j_dedupe_plea_rounds",
+    "patch_j_drop_post_lose_bridge",
+    "patch_j_drop_post_lose_plea",
+    "patch_j_drop_post_lose_rematch",
+    "patch_j_ensure_post_lose_alternate",
+    "patch_j_ensure_post_lose_can_press",
+    "patch_j_fix_can_closing_after_grumble",
+    "patch_j_fix_lose_speaker",
+    "patch_j_fix_post_lose_consecutive_can",
+    "patch_j_fix_strongest_form_wording",
+    "patch_j_plea_veto_speakers",
+    "patch_j_soften_closing_grumble",
+    "patch_j_strip_post_lose_defiant",
+    "patch_j_strip_role_mismatch_expands",
     "chat_type_info_message",
     "format_block_for_code",
     "format_story_type_brief",
@@ -895,3 +914,45 @@ def validate_type_opening(
             conflict_core=conflict_core,
             setting=setting,
         )
+
+
+_GOLD_CHAT_J_PATCH_EXPORTS = frozenset(
+    {
+        "patch_j_cap_trailing_particles",
+        "patch_j_cap_ya_particles",
+        "patch_j_dedupe_cross_line_phrases",
+        "patch_j_dedupe_plea_rounds",
+        "patch_j_drop_post_lose_bridge",
+        "patch_j_drop_post_lose_plea",
+        "patch_j_drop_post_lose_rematch",
+        "patch_j_ensure_post_lose_alternate",
+        "patch_j_ensure_post_lose_can_press",
+        "patch_j_fix_can_closing_after_grumble",
+        "patch_j_fix_lose_speaker",
+        "patch_j_fix_post_lose_consecutive_can",
+        "patch_j_fix_strongest_form_wording",
+        "patch_j_plea_veto_speakers",
+        "patch_j_soften_closing_grumble",
+        "patch_j_strip_post_lose_defiant",
+        "patch_j_strip_role_mismatch_expands",
+    }
+)
+_GOLD_CHAT_C_PATCH_EXPORTS = frozenset(
+    {
+        "patch_c_force_sibling_alternate",
+        "patch_c_possession_criterion",
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    """金稿类型补丁经公开桥懒加载，避免 ``j.patch`` 顶层环依赖。"""
+    if name in _GOLD_CHAT_J_PATCH_EXPORTS:
+        from app.services.daily_story.story_types.j import patch as j_patch
+
+        return getattr(j_patch, name)
+    if name in _GOLD_CHAT_C_PATCH_EXPORTS:
+        from app.services.daily_story.story_types.c import patch as c_patch
+
+        return getattr(c_patch, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

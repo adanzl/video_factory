@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import copy
 import re
+from typing import Any
 
 from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.c.line import C_WHOLE_ITEM_PATCH_CHAR_DEFICIT
@@ -822,3 +824,83 @@ def patch_c_body(story: dict) -> list[str]:
         notes.append("C末句speaker妈妈→姐弟")
     notes.extend(patch_c_trim_soft_last(story, whole_item=wi))
     return notes
+
+
+# ── gold_chat 扩写后结构补丁（经 story_types 公开桥调用）──
+
+def patch_c_force_sibling_alternate(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """C：全篇姐弟严格交替（含末四拍）。日常 try_local_patch 会保护末 4 句。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "C":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
+        return story, False
+    changed = False
+    for i in range(1, len(dialogue)):
+        a, b = dialogue[i - 1], dialogue[i]
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            continue
+        sa = str(a.get("speaker") or "").strip()
+        sb = str(b.get("speaker") or "").strip()
+        if sa in {"昭昭", "灿灿"} and sa == sb:
+            b["speaker"] = "灿灿" if sa == "昭昭" else "昭昭"
+            changed = True
+    return out, changed
+
+
+_RE_C_WEAK_CRITERION_REWRITE = (
+    (re.compile(r"我先(?:碰|摸|搭|够|伸|探|吃|喝|咬|舔|尝)(?:到|着|了|的|完|光)?"), "我先拿到的"),
+    (re.compile(r"谁先(?:碰|摸|搭|够|伸|探|吃|喝|咬|舔|尝)(?:到|着|了|完|光)?"), "谁先拿到"),
+    (
+        re.compile(
+            r"(?:碰|摸|搭|够)(?:到|着|了|的|一下)?(?=[^。！？]{0,8}(?:该|归|算|赢|谁))"
+        ),
+        "拿到",
+    ),
+    (
+        re.compile(
+            r"(?:吃|喝|咬|舔|吞|尝|擦)(?:到|着|了|一下|完|光)?"
+            r"(?=[^。！？]{0,6}(?:该|归|算|赢|谁))"
+        ),
+        "拿到",
+    ),
+    (
+        re.compile(
+            r"(?:拧|撕|掰|揭)(?:开|掉|下来|完)?(?=[^。！？]{0,8}(?:该|归|算|赢|谁))"
+        ),
+        "拿到",
+    ),
+)
+
+
+def patch_c_possession_criterion(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """C：弱接触/消耗系判据翻成占有系（拿到），避免判据漂移硬卡。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "C":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    changed = False
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        old = str(item.get("line") or "")
+        new = old
+        for pat, repl in _RE_C_WEAK_CRITERION_REWRITE:
+            new2 = pat.sub(repl, new)
+            if new2 != new:
+                new = new2
+                changed = True
+        if new != old:
+            item["line"] = new
+    return out, changed
