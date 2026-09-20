@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from app.exceptions import JobStageFailureError
+from app.services.llm import llm_deepseek
 from app.services.llm.llm_deepseek import (
     DeepSeekClient,
     _assemble_storyboard_narration,
@@ -103,3 +107,47 @@ def test_chat_json_invalid_json_raises_after_retry(monkeypatch):
 
     with pytest.raises(ValueError, match="invalid JSON"):
         client._chat_json("sys", "user")
+
+
+def test_daily_script_rejects_reordered_or_reassigned_dialogue(monkeypatch):
+    client = _bare_client()
+    source = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是第一句。"},
+            {"speaker": "灿灿", "line": "这是第二句。"},
+        ],
+    }
+    response = {
+        "scenes": [
+            {
+                "shot_type": "特写",
+                "dialogue": [
+                    {"speaker": "昭昭", "text": "这是第二句。"},
+                    {"speaker": "灿灿", "text": "这是第一句。"},
+                ],
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        llm_deepseek,
+        "get_settings",
+        lambda: SimpleNamespace(script_qa_max_attempts=1),
+    )
+    monkeypatch.setattr(
+        llm_deepseek,
+        "build_daily_script_prompts",
+        lambda *_args, **_kwargs: ("system", "user"),
+    )
+    monkeypatch.setattr(
+        llm_deepseek,
+        "enforce_daily_script_closeups",
+        lambda _scenes: [],
+    )
+    monkeypatch.setattr(
+        client,
+        "_chat_json",
+        lambda *_args, **_kwargs: (response, "stop"),
+    )
+
+    with pytest.raises(JobStageFailureError, match="分镜对白与原稿不一致"):
+        client.generate_daily_script(source)

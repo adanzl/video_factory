@@ -473,10 +473,14 @@ def test_chat_type_info_message_format() -> None:
     assert chat_type_info_message("Z") is None
 
 
-def test_create_chat_job_writes_type_info(app_ctx) -> None:
+def test_create_chat_job_writes_type_info(app_ctx, monkeypatch) -> None:
     """chat 建任务时信息栏写入矛盾类型。"""
     from app.repositories import repo_daily_story
     from app.services.daily_story.daily_story_mgr import daily_story_mgr
+    monkeypatch.setattr(
+        "app.services.daily_story.prompts.validate_daily_story_json",
+        lambda *_args, **_kwargs: None,
+    )
 
     story_id = repo_daily_story.insert_story(
         theme="抢酸奶",
@@ -491,6 +495,127 @@ def test_create_chat_job_writes_type_info(app_ctx) -> None:
     assert job["pipeline"] == "chat"
     assert job["error_message"] == "[A权威翻车]"
     assert job["status"] == "pending"
+
+
+def test_create_chat_job_rejects_story_pending_review(app_ctx) -> None:
+    from app.repositories import repo_daily_story
+    from app.services.daily_story.daily_story_mgr import daily_story_mgr
+
+    story_id = repo_daily_story.insert_story(
+        theme="待审故事",
+        story={
+            "scene_title": "待审故事",
+            "dialogue": [{"speaker": "昭昭", "line": "这稿还没过硬卡"}],
+        },
+        story_type="A",
+        status="review_pending",
+    )
+    with pytest.raises(ValueError, match="审核通过后"):
+        daily_story_mgr.create_job(story_id)
+
+
+def test_create_gold_chat_job_counts_full_dialogue_chars(
+    app_ctx,
+    monkeypatch,
+) -> None:
+    from app.repositories import repo_daily_story
+    from app.services.daily_story.daily_story_mgr import daily_story_mgr
+
+    dialogue = [
+        {"speaker": "灿灿", "line": "你干嘛弄坏我的画！"},
+        {"speaker": "昭昭", "line": "不给你看！你抢！"},
+        {"speaker": "灿灿", "line": "我偏要看！"},
+        {"speaker": "昭昭", "line": "你推我！我打你了！"},
+        {"speaker": "灿灿", "line": "你敢！哎呀！"},
+        {"speaker": "昭昭", "line": "对不起……"},
+        {"speaker": "灿灿", "line": "哼，不原谅你！"},
+        {"speaker": "妈妈", "line": "别打了！都错了！"},
+        {"speaker": "妈妈", "line": "昭昭道歉了，要互相原谅。"},
+        {"speaker": "灿灿", "line": "好吧……"},
+        {"speaker": "昭昭", "line": "我们和好吧。"},
+        {"speaker": "灿灿", "line": "拉手，以后不打了！"},
+        {"speaker": "昭昭", "line": "嗯，不打了。"},
+    ]
+    deficit = 242 - sum(len(item["line"]) for item in dialogue)
+    for item in dialogue:
+        add = min(deficit, 24 - len(item["line"]))
+        item["line"] += "呀" * add
+        deficit -= add
+    assert deficit == 0
+    story = {
+        "scene_title": "金故事字数口径",
+        "setting": "客厅",
+        "key": "字数口径",
+        "conflict_core": "姐弟打架后由妈妈劝和",
+        "punchline_explain": "H类第三方化解，妈妈定责劝和",
+        "story_type": "H",
+        "discovery_opening": dialogue[:2],
+        "dialogue": dialogue,
+    }
+    story_id = repo_daily_story.insert_story(
+        theme="金故事字数口径",
+        story=story,
+        story_type="H",
+        status="active",
+    )
+    monkeypatch.setattr(
+        "app.services.daily_story.daily_story_mgr._gold_chat_source_row",
+        lambda _story_id: {
+            "payload": {"scene_contract": {"mom_lines_max": 3}},
+        },
+    )
+
+    job = daily_story_mgr.create_job(story_id)
+    assert job["status"] == "pending"
+
+
+def test_daily_story_list_allows_gold_only_type(app_ctx) -> None:
+    client = app_ctx.test_client()
+    response = client.get("/v_factory/api/daily_story/list?story_type=K")
+    assert response.status_code == 200
+
+
+def test_regenerate_keeps_review_pending_old_story(app_ctx, monkeypatch) -> None:
+    from app.repositories import repo_daily_story
+    from app.services.daily_story.daily_story_mgr import daily_story_mgr
+
+    old_story = {
+        "scene_title": "待审旧稿",
+        "dialogue": [{"speaker": "昭昭", "line": "旧稿仍在待审"}],
+        "quality": {"score": 1},
+    }
+    story_id = repo_daily_story.insert_story(
+        theme="待审旧稿",
+        story=old_story,
+        story_type="A",
+        status="review_pending",
+    )
+    failed_new = {
+        "scene_title": "失败新稿",
+        "dialogue": [{"speaker": "昭昭", "line": "新稿硬卡失败"}],
+        "punchline_explain": "A类权威翻车",
+        "quality": {"score": 99},
+        "_review_status": "hard_card_failed",
+    }
+    monkeypatch.setattr(
+        "app.services.daily_story.daily_story_mgr.run_in_background",
+        lambda fn: fn(),
+    )
+    monkeypatch.setattr(
+        "app.services.daily_story.daily_story_mgr.llm_mgr.generate_daily_story",
+        lambda *_args, **_kwargs: dict(failed_new),
+    )
+
+    daily_story_mgr._queue_story_generation(
+        story_id,
+        "待审旧稿",
+        is_regenerate=True,
+        story_type="A",
+        previous_status="review_pending",
+    )
+    saved = repo_daily_story.get_story(story_id)
+    assert saved["status"] == "review_pending"
+    assert saved["story"]["scene_title"] == "待审旧稿"
 
 
 def test_mark_done_chat_writes_success_info(app_ctx) -> None:

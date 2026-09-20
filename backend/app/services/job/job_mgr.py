@@ -564,6 +564,23 @@ class JobMgr:
         finally:
             lock.release()
 
+    def run_if_idle(
+        self,
+        job_id: int,
+        operation: Callable[[dict], dict],
+    ) -> dict:
+        """持有任务锁执行变更；有活跃 worker 或 running 状态时拒绝。"""
+        lock = self._job_lock(job_id)
+        if not lock.acquire(blocking=False):
+            raise JobBusyError(f'job {job_id} is running')
+        try:
+            job = self.get_job(job_id)
+            if job.get('status') == 'running':
+                raise JobBusyError(f'job {job_id} is running')
+            return operation(job)
+        finally:
+            lock.release()
+
     def submit_action(
         self,
         job_id: int,

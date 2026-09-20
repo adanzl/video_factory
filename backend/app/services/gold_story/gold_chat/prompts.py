@@ -115,12 +115,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
   抄进本稿（本稿 beat/object/seed 未出现的梗一律禁用）
 - **禁空转**：禁止无新信息的复读句凑轮次（同义空喊连发）
 - **禁垫字脏尾**：禁复合灌尾（「真的了呢」「不行了吧」叠「真的」一类）
-- **互毁段**：「也/还+撕/弄坏+你的」须由受害方说，且先毁方已实质破坏；speaker 不得调序
-- **M5 妈妈前**：须两拍嘴硬（拒和 + 加码），与是否道歉无关；禁止妈妈一句「都错了」立刻和好
-- **M5 角色绑定**：前文互毁/推搡锁定先动手方与受害方；服软/道歉与拒和/加码**不得同一 speaker**
-- **M5 受害方**：scene conflict 受害方须 establish 持有物；先毁物/撕抢者≠受害方
-- **H 调解**：妈妈须分层（先问谁先动手 → 再定责劝和），勿合并成一句；禁「扯平/都有错」
-- **收束**：严格按 closing_intent 要点；「还打不打架」须由 closing_intent 指定角色问；碘伏/涂药后禁止新剧情（一起画/续写承诺）
+{scenario_rules_block}
 - **句尾语气词**：每句结尾最多一个（呢/嘛/呀/啊/吧）；
   禁「了呢了呀/着呢了呀/呢呀」等叠尾；禁叠「呢呢」
 - 若有上方金稿对白正例：语气/句长可参考；剧情须来自本稿 scene_contract + seed
@@ -129,8 +124,6 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 - **迁龄**：对白中的考试/分数须是小学 7–10 岁可拍量级；禁止中考/高考不可能总分原样入戏
 - **禁止对白出现「哥哥」「弟弟」**；称呼用姐姐/昭昭/灿灿
 - **昭昭口中禁止直呼「灿灿」**，一律称「姐姐」（弟弟直呼姐姐名不礼貌）
-- 互毁须双向：先毁方实质弄坏/撕，受害方须**当场动手**报复（写撕了/撕啦/弄坏了），禁仅「那我也撕你的」口头威胁
-- **齐声「不打了」**=昭昭一句+灿灿一句各应答，勿合并括号舞台说明
 - line 禁止括号舞台说明（如「（从厨房走出来）」「（语塞）」）
 - 源稿是爸爸且妈妈代不了 → speaker 写「爸爸」；可替则优先妈妈
 - 单孩+家长源稿须拆成昭昭+灿灿双孩戏份，家长仍配角；戏核家长勿并进姐弟
@@ -206,9 +199,9 @@ _M8_J_MID_REWRITE_USER = """任务：保留首尾，重写中段以补满篇幅�
 
 要求：
 - 中段须分 3 部分明确展开（禁止灌水）：
-  1. 立规（1 句）：明确谁赢谁说了算（9-12 字）
-  2. 应战（2-3 句）：互顶/挑战对白，每句 14-18 字
-  3. 一锤定音（1-2 句）：简短有力，落定（6-12 字）
+  1. 立规（2 句）：一方明确规则、另一方确认或反顶，每句 12–18 字
+  2. 应战（4–5 句）：每句推进新的挑战、动作或局势，每句 16–22 字
+  3. 一锤定音（2 句）：事实落定后立即判输赢，每句 12–18 字
 - 中段『立规→应战→一锤』共需 120–160 字（占全文 50–67%）；禁止在首尾垫字
 - 全文 dialogue 总字数须 ≥{chars_min}（目标 {chars_soft_lo}–{chars_soft_hi}）
 - 认输段句数不增加；认输后禁止不服/再来/威胁
@@ -272,6 +265,57 @@ _SHORTEN_USER = """以下对白有单句超过 {max_chars} 字，请**只改超�
 
 规则：行数、speaker、字段不变；每句 ≤{max_chars} 字；禁括号说明。
 只输出 JSON。"""
+
+
+def format_scenario_rules_block(
+    *,
+    mechanism: str,
+    structure_type: str,
+    conflict_text: str,
+    closing_intent: str,
+    beat_chain: list[Any] | None = None,
+) -> str:
+    """仅注入本次契约涉及的互毁、调解与上药规则。"""
+    context = " ".join(
+        [
+            str(conflict_text or ""),
+            str(closing_intent or ""),
+            *[
+                str(item.get("intent") or item)
+                if isinstance(item, dict)
+                else str(item)
+                for item in (beat_chain or [])
+            ],
+        ]
+    )
+    rules: list[str] = []
+    mech = str(mechanism or "").upper()
+    st = str(structure_type or "").upper()
+    if mech == "M5" or any(
+        token in context for token in ("互毁", "撕坏", "弄坏", "推搡")
+    ):
+        rules.extend(
+            [
+                "- 【本场互毁】先动手方与受害方按 scene_contract 绑定；"
+                "报复须发生在首次实质破坏之后，speaker 不得调序。",
+                "- 【本场互毁】若 closing 要求家长介入，介入前拒和与加码分开表达；"
+                "服软方不得同时承担拒和。",
+            ]
+        )
+    if st == "H" or any(
+        token in context for token in ("调解", "劝和", "谁先动手", "和好")
+    ):
+        rules.append(
+            "- 【本场调解】按 closing_intent 分层处理责任与和解；"
+            "只有契约要求时才写拉手或双方分别承诺，禁止擅自套用齐声收束。"
+        )
+    if any(token in context for token in ("碘伏", "涂药", "上药", "包扎")):
+        rules.append(
+            "- 【本场上药】上药完成即收束，之后禁止另起一起画、拉钩等新剧情。"
+        )
+    if not rules:
+        return "- 本场只按 scene_contract 与 beat_chain 展开，禁止借用其他金稿事件。"
+    return "\n".join(rules)
 
 
 def format_role_binding_block(conflict_text: str) -> str:

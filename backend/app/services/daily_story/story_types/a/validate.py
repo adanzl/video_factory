@@ -347,9 +347,8 @@ def append_mid_restatement_errors(story: dict, errors: list[str]) -> None:
 def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
     """A 类末四拍结构存在性硬卡。
 
-    末 4 句必须走 昭昭引原话 → 灿灿「那不一样」→ 昭昭「哪里不一样」→ 灿灿软破功。
-    只做槽位存在性，节奏交给质检（避免生成空转）；「引话有出处」交给
-    append_closing_quote_errors 兜底。
+    末 4 句只锁语义槽位：引原话 → 具体例外辩解 → 追问例外 → 软破功。
+    不锁「那不一样/哪里不一样」固定字面。
     """
     punch = str(story.get("punchline_explain") or "")
     code = parse_story_type_code(punchline=punch)
@@ -389,15 +388,17 @@ def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
             f"（如「示范就能算错吗？」，实际：{ln4[:16]}）",
         )
         return
-    if "那不一样" not in ln3:
+    if not re.search(
+        r"不算|只是|这次|刚才|例外|因为|我这是|教你|示范|检查|试试|本来",
+        ln3,
+    ):
         errors.append(
-            "A类末四拍缺失：倒数第3句（灿灿）须含「那不一样」"
-            "（那不一样→哪里不一样→软破功三拍缺一即改）",
+            "A类末四拍缺失：倒数第3句（灿灿）须给出针对当前动作的具体例外借口",
         )
         return
-    if "哪里不一样" not in ln2:
+    if not re.search(r"？|吗|呢|凭什么|怎么|为何|哪", ln2):
         errors.append(
-            "A类末四拍缺失：倒数第2句（昭昭）须含「哪里不一样」（全文仅此一处）",
+            "A类末四拍缺失：倒数第2句（昭昭）须追问该例外为何成立",
         )
         return
 

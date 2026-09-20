@@ -920,6 +920,23 @@ def patch_i_body(story: dict) -> list[str]:
     )
     if code != "I":
         return notes
+    lines = [
+        str(item.get("line") or "")
+        for item in (story.get("dialogue") or [])
+        if isinstance(item, dict)
+    ]
+    closure_complete = any(
+        RE_WIN_STUBBORN.search(lines[i])
+        and RE_SPEECHLESS.search(lines[i + 1])
+        for i in range(len(lines) - 1)
+    )
+    if closure_complete:
+        notes.extend(patch_i_trim_trailing_subplot(story))
+        notes.extend(patch_i_strip_meta_type_labels(story))
+        notes.extend(patch_i_indoor_dialogue(story))
+        notes.extend(patch_i_clean_win_line_suffix(story))
+        notes.extend(patch_i_enforce_line_max(story))
+        return notes
     notes.extend(patch_i_align_soul_speaker(story))
     notes.extend(patch_i_ensure_parent_soul_from_beat(story))
     notes.extend(patch_i_rewrite_ambiguous_fridge_soul(story))

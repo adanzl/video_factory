@@ -45,6 +45,7 @@ from app.services.gold_story.gold_chat.prompts import (
     format_align_issues_block,
     format_m5_h_pass1_beat_block,
     format_authority_punchline_pass1_block,
+    format_scenario_rules_block,
     format_pass1_regen_feedback,
     format_role_binding_block,
     format_seed_span_block,
@@ -1176,33 +1177,31 @@ _M8_J_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
         ("灿灿", "规矩先讲好，输了别赖账！"),
     ),
 )
-# K：互顶升级/僵持向，禁套 J 求否；禁拧耳朵/咬手等注水互打灌句
-# （会冲掉场故事主梗，且与「越劝」须对大人 的约定冲突）
+# K：只补抽象互顶与僵持，不凭空新增道具、追跑或肢体动作。
 _K_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
-    # 点题前可插追抢互顶（补字）；点题后勿再靠此灌空喊
     (
-        ("昭昭", "你追不上我，略略略！"),
-        ("灿灿", "满屋子跑也没用，看我逮你！"),
+        ("昭昭", "你别想让我认输，这事还没完！"),
+        ("灿灿", "没完就没完，我也不会让你！"),
     ),
     (
-        ("昭昭", "这笔就是我的，你拿不回去！"),
-        ("灿灿", "抢我笔还嘴硬？看我不收拾你！"),
+        ("昭昭", "你再说一遍试试，我就是不服！"),
+        ("灿灿", "说就说，谁怕谁啊！"),
     ),
     (
-        ("昭昭", "呜，你松手啊，我不服！"),
-        ("灿灿", "不服也白搭，谁怕谁啊！"),
+        ("昭昭", "我偏不让步，你能怎么样！"),
+        ("灿灿", "我也不让，咱们就这么僵着！"),
     ),
     (
         ("昭昭", "我瞪你！下次记着！"),
         ("灿灿", "瞪吧，谁怕谁啊！"),
     ),
     (
-        ("昭昭", "哭也没用，我才不怕！"),
-        ("灿灿", "哼，再闹我也不怕！"),
+        ("昭昭", "你别得意，我可没认输！"),
+        ("灿灿", "不认就不认，我也不理你！"),
     ),
     (
         ("昭昭", "你等着，我记仇！"),
-        ("灿灿", "记吧，下次再抢我还挠！"),
+        ("灿灿", "记就记，这事谁也别想糊弄过去！"),
     ),
 )
 # K near-miss 可读扩写：按说话人分流，禁串角/禁粘护手句
@@ -5095,6 +5094,13 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             role_binding_block=role_binding_block,
             beat_sequence_block=beat_sequence_block,
             m5_h_beat_block=m5_h_beat_block,
+            scenario_rules_block=format_scenario_rules_block(
+                mechanism=mechanism,
+                structure_type=structure_type,
+                conflict_text=conflict_text,
+                closing_intent=closing,
+                beat_chain=beat_chain,
+            ),
             pass1_feedback_block=pass1_feedback_block,
             dialogue_seed=_format_dialogue_seed(prompt_seed)[:4000],
             seed_span_block=format_seed_span_block(
@@ -6009,7 +6015,7 @@ def convert_gold_chat(
                     fillers = [
                         {
                             "speaker": "昭昭",
-                            "line": "你松手啊，我笔还没玩够呢！",
+                            "line": "你别得意，这事还没完呢！",
                         },
                         {
                             "speaker": "灿灿",
@@ -6464,18 +6470,18 @@ def convert_gold_chat(
                 )
                 tmp, _ = _pad_gold_chat_to_min_chars(tmp, max_rounds=24)
                 if dialogue_total_chars(tmp) <= before:
-                    # 硬插追抢一对
+                    # 停滞时只补抽象互顶，不新增道具或动作。
                     mid = tmp.get("dialogue") or []
                     if isinstance(mid, list):
                         mid.extend(
                             [
                                 {
                                     "speaker": "昭昭",
-                                    "line": "你追不上我，略略略！",
+                                    "line": "你别想让我认输，这事还没完！",
                                 },
                                 {
                                     "speaker": "灿灿",
-                                    "line": "满屋子跑也没用，看我逮你！",
+                                    "line": "没完就没完，我也不会让你！",
                                 },
                             ]
                         )
@@ -6505,14 +6511,14 @@ def convert_gold_chat(
                             -5,
                             {
                                 "speaker": "昭昭",
-                                "line": "哈哈哈你弄得我好痒啊！",
+                                "line": "我就是不服，你别想压住我！",
                             },
                         )
                         d2.insert(
                             -5,
                             {
                                 "speaker": "灿灿",
-                                "line": "痒了就哭啊，看你还闹！",
+                                "line": "不服就继续僵着，谁也别让！",
                             },
                         )
                         chat["dialogue"] = d2
@@ -6526,18 +6532,18 @@ def convert_gold_chat(
 
         _force_end(chat)
         _pin_mid(chat)
-        # 破功钉死后若仍短：只在开场后插追抢，勿插破功后
+        # 若仍短，只补抽象互顶，不凭空新增道具、追跑或肢体动作。
         if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
             chat["story_type"] = "K"
             dialogue = chat.get("dialogue")
             if isinstance(dialogue, list):
                 fillers = [
-                    {"speaker": "昭昭", "line": "略略略，这笔归我啦，来追我！"},
-                    {"speaker": "灿灿", "line": "你给我站住，笔是我的！"},
-                    {"speaker": "昭昭", "line": "追不上就别想要回去！"},
-                    {"speaker": "灿灿", "line": "满屋子跑也没用，看我逮你！"},
-                    {"speaker": "昭昭", "line": "你抓不到我，我跑得可快！"},
-                    {"speaker": "灿灿", "line": "逮住你了，看你还跑不跑！"},
+                    {"speaker": "昭昭", "line": "你别想让我认输，这事还没完！"},
+                    {"speaker": "灿灿", "line": "没完就没完，我也不会让你！"},
+                    {"speaker": "昭昭", "line": "你再说一遍试试，我就是不服！"},
+                    {"speaker": "灿灿", "line": "说就说，谁怕谁啊！"},
+                    {"speaker": "昭昭", "line": "我偏不让步，你能怎么样！"},
+                    {"speaker": "灿灿", "line": "我也不让，咱们就这么僵着！"},
                 ]
                 insert_at = 1
                 while (
@@ -6549,7 +6555,7 @@ def convert_gold_chat(
                     chat["dialogue"] = dialogue
             _force_end(chat)
             _pin_mid(chat)
-            # force 可能又砍掉追抢回潮：句内扩写补足
+            # force 可能缩短正文：只做无道具、无动作的句内扩写。
             guard = 0
             while (
                 dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN
@@ -6560,7 +6566,7 @@ def convert_gold_chat(
                 d2 = chat.get("dialogue")
                 if not isinstance(d2, list):
                     break
-                # 只加长开场/追抢段（末段六拍不动）
+                # 只加长前段（末段六拍不动）
                 end = max(1, len(d2) - 6)
                 grew = False
                 for item in d2[:end]:
@@ -6577,9 +6583,9 @@ def convert_gold_chat(
                     sp = str(item.get("speaker") or "")
                     core = line.rstrip("！？!?")
                     if sp == "昭昭":
-                        item["line"] = f"{core}，我就不还你！"
+                        item["line"] = f"{core}，我偏不让步！"
                     else:
-                        item["line"] = f"{core}，快把笔还我！"
+                        item["line"] = f"{core}，这事还没完！"
                     grew = True
                     break
                 chat["dialogue"] = d2
@@ -6592,16 +6598,16 @@ def convert_gold_chat(
                         chat
                     )
                     core = str(d2[0].get("line") or "").rstrip("！？!?")
-                    if "这笔我拿定了" not in core:
-                        d2[0]["line"] = f"{core}，这笔我拿定了！"
+                    if "今天我绝不让" not in core:
+                        d2[0]["line"] = f"{core}，今天我绝不让！"
                     elif need > 0:
-                        d2[0]["line"] = f"{core}，今天说什么也不还！"
+                        d2[0]["line"] = f"{core}，今天说什么也不认输！"
                     chat["dialogue"] = d2
             # 标题被点题句污染时收回
             title = str(chat.get("scene_title") or "").strip()
             if title in {"还不哭？", "还不哭", "哭了还嘴硬？"} or len(title) < 4:
                 chat["scene_title"] = str(
-                    row.get("title") or "挠痒痒逼哭战"
+                    row.get("title") or "姐弟吵翻天"
                 )
         # 无论是否进过补字分支，终检前硬保 ≥min
         guard = 0
@@ -6630,9 +6636,9 @@ def convert_gold_chat(
                 {
                     "speaker": "昭昭" if guard % 2 else "灿灿",
                     "line": (
-                        "你追不上我啦！"
+                        "我就是不认输！"
                         if guard % 2
-                        else "看我这回逮不逮得住你！"
+                        else "不认就继续僵着！"
                     ),
                 },
             )
@@ -6643,10 +6649,10 @@ def convert_gold_chat(
             d2 = chat.get("dialogue")
             if isinstance(d2, list) and d2 and isinstance(d2[0], dict):
                 core = str(d2[0].get("line") or "").rstrip("！？!?")
-                if "这笔我拿定了" not in core:
-                    d2[0]["line"] = f"{core}，这笔我拿定了！"
+                if "今天我绝不让" not in core:
+                    d2[0]["line"] = f"{core}，今天我绝不让！"
                 else:
-                    d2[0]["line"] = f"{core}，今天说什么也不还！"
+                    d2[0]["line"] = f"{core}，今天说什么也不认输！"
                 chat["dialogue"] = d2
         _pin_mid(chat)
     chat = _attach_gold_chat_structure_score(chat, row)
@@ -6812,20 +6818,20 @@ def convert_gold_chat(
                     continue
                 core = line.rstrip("！？!?")
                 if sp == "昭昭":
-                    if "偏不还" in core or "就不还" in core or len(core) >= 18:
+                    if "偏不让步" in core or len(core) >= 18:
                         continue
-                    item["line"] = f"{core}，偏不还！"
+                    item["line"] = f"{core}，偏不让步！"
                 else:
-                    if "站住" in core or "还我" in core or len(core) >= 18:
+                    if "没完" in core or len(core) >= 18:
                         continue
-                    item["line"] = f"{core}，把笔还我！"
+                    item["line"] = f"{core}，这事还没完！"
                 grew = True
                 break
             chat["dialogue"] = d2
             if dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN:
                 break
             if not grew or dialogue_total_chars(chat) <= before:
-                # 专家：差字加有效冲突拍（再挠一轮），禁粒子叠字
+                # 差字时补抽象互顶，禁凭空新增道具或动作。
                 need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(chat)
                 if need > 0 and isinstance(d2, list):
                     parent_i = next(
@@ -6842,11 +6848,11 @@ def convert_gold_chat(
                     beat = [
                         {
                             "speaker": "灿灿",
-                            "line": "抢笔就该被挠！看你还敢不敢！",
+                            "line": "还敢跟我顶？看你服不服！",
                         },
                         {
                             "speaker": "昭昭",
-                            "line": "放开我！别挠了！",
+                            "line": "我才不认输，谁怕谁啊！",
                         },
                     ]
                     # 避免同人连说
@@ -6893,10 +6899,10 @@ def convert_gold_chat(
                     c = str(item.get("line") or "").rstrip("！？!?")
                     if len(c) >= 26:
                         continue
-                    if sp == "昭昭" and "这笔我拿定了" not in c:
-                        item["line"] = f"{c}，这笔我拿定了！"
-                    elif sp == "灿灿" and "今天必须要回来" not in c:
-                        item["line"] = f"{c}，今天必须要回来！"
+                    if sp == "昭昭" and "今天我绝不让" not in c:
+                        item["line"] = f"{c}，今天我绝不让！"
+                    elif sp == "灿灿" and "今天也不认输" not in c:
+                        item["line"] = f"{c}，今天也不认输！"
                     chat["dialogue"] = d2
         _mono_export(chat)
         title = str(chat.get("scene_title") or "").strip()
@@ -6905,7 +6911,7 @@ def convert_gold_chat(
             or title.startswith("哭了还")
             or len(title) < 4
         ):
-            chat["scene_title"] = str(row.get("title") or "挠痒痒逼哭战")
+            chat["scene_title"] = str(row.get("title") or "姐弟吵翻天")
         chat = _attach_gold_chat_structure_score(chat, row)
         try:
             struct = _gate_gold_chat_structure_score(chat)
@@ -6918,6 +6924,13 @@ def convert_gold_chat(
             patch_k_break_same_speaker_run(chat)
             chat = _attach_gold_chat_structure_score(chat, row)
             struct = _gate_gold_chat_structure_score(chat)
+    # 任何归一化、补字、类型修稿和 LLM 修订之后，最终稿必须重新过完整硬卡。
+    validate_gold_chat(
+        chat,
+        banned_literals=[str(x) for x in banned],
+        source_type=source_type,
+        mom_lines_max=int(mom_max),
+    )
     logger.info(
         "[GOLD_CHAT] convert %s structure_score=%s lines=%s chars=%s",
         sid,
@@ -6926,23 +6939,19 @@ def convert_gold_chat(
         dialogue_total_chars(chat),
     )
     cfg = config or Config()
-    try:
-        paths = export_gold_chat_files(
-            source_id=sid,
-            row=row,
-            chat=chat,
-            config=cfg,
-        )
-        _backfill_gold_story_after_export(row, chat=chat, paths=paths, config=cfg)
-        logger.info("[GOLD_CHAT] convert %s exported paths=%s", sid, list(paths.keys()))
-    except Exception as exc:
-        # 机审已过：导出/回写失败不丢稿，便于本地审读与重试落盘
-        logger.exception(
-            "[GOLD_CHAT] convert %s export/backfill failed: %s", sid, exc
-        )
-        paths = {}
+    paths = export_gold_chat_files(
+        source_id=sid,
+        row=row,
+        chat=chat,
+        config=cfg,
+    )
+    _backfill_gold_story_after_export(row, chat=chat, paths=paths, config=cfg)
+    logger.info("[GOLD_CHAT] convert %s exported paths=%s", sid, list(paths.keys()))
     return {
         "ok": True,
+        "generated": True,
+        "exported": True,
+        "backfilled": True,
         "source_id": sid,
         "gold_story_id": row.get("id"),
         "chat_chars": dialogue_total_chars(chat),

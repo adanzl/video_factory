@@ -657,15 +657,28 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
         )
         assert inserted.get("action") == "insert"
         row = repo_gold_story.get_story(int(inserted["id"]))
+        row["payload"]["scene_contract"] = {"mom_lines_max": 0}
 
     chat = _sample_chat()
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     gc.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat)
+    captured_mom_max: list[int | None] = []
+    original_validate = gc.validate_gold_chat
+
+    def capture_validate(story, **kwargs):
+        captured_mom_max.append(kwargs.get("mom_lines_max"))
+        return original_validate(
+            story,
+            **{**kwargs, "mom_lines_max": 1},
+        )
+
+    monkeypatch.setattr(gc, "validate_gold_chat", capture_validate)
 
     with app_ctx.app_context():
         out = gc.import_gold_chat_daily_story(row, review=False)
         assert out["action"] == "insert"
+        assert captured_mom_max[0] == 0
         ds_id = int(out["daily_story_id"])
         saved = repo_daily_story.get_story(ds_id)
         assert saved["story"]["scene_title"] == "关门练功"
@@ -732,6 +745,31 @@ def test_pass1_regen_feedback_includes_short_error():
     )
     assert "未满" in fb or "≥240" in fb
     assert "214" in fb or "错误" in fb
+
+
+def test_gold_chat_scenario_rules_are_contract_scoped():
+    from app.services.gold_story.gold_chat.prompts import (
+        format_scenario_rules_block,
+    )
+
+    unrelated = format_scenario_rules_block(
+        mechanism="M9",
+        structure_type="N",
+        conflict_text="昭昭提出荒诞问题，灿灿认真回答",
+        closing_intent="昭昭被答案噎住",
+    )
+    assert "互毁" not in unrelated
+    assert "上药" not in unrelated
+
+    mediation = format_scenario_rules_block(
+        mechanism="M5",
+        structure_type="H",
+        conflict_text="灿灿先弄坏昭昭的画，双方互毁后妈妈调解",
+        closing_intent="妈妈涂药后收束",
+    )
+    assert "本场互毁" in mediation
+    assert "本场调解" in mediation
+    assert "本场上药" in mediation
 
 
 def test_is_truncation_error():

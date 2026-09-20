@@ -806,6 +806,8 @@ class LLMMgr:
                     "[DAILY_STORY] review skipped (hard card failed)",
                 )
             if isinstance(story, dict):
+                if hard_fail:
+                    story["_review_status"] = "hard_card_failed"
                 story.pop("_beats_theme_object", None)
             return story
         result = run_daily_story_review(self._get_client(), theme, story)

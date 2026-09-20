@@ -847,14 +847,50 @@ possession_stage 约定（生成须内化，validate 按阶段判 contact）：
 _YOGURT_DEMO_MARK = "【消耗品合规示范"
 _DIALOGUE_BITE_MARK = "【对话咬合"
 
+_C_GENERAL_FAIRNESS_PROMPT_BLOCK = """\
+【本次类型：C 公平执念 — 通用公平分支】
+- 核心：双方对同一件事提出各自有利、彼此冲突的公平标准；笑点来自标准被对方
+  按字面执行或用原话反噬，不限定为争夺物品占有。
+- 本分支可写轮流、贡献、承诺、补偿、分工、次数、时间或机会公平。
+- 先明确争点，再让双方各自说明判据及其理由；判据必须可核对、前后一致，
+  不能临时换规则，也不能凭空改变物品状态或既成事实。
+- 中段只围绕一条主规则推进：提出 → 应用 → 暴露偏向或缺口 → 原话回旋镖。
+  每轮增加新事实，禁止同义复读或不断发明新判据。
+- 本分支禁止强行改写成占有争夺；动作与判据只从本次 theme / setting 提取。
+- 结尾由规则的提出者承担反噬并嘴硬收束；禁止妈妈和稀泥，禁止另起新冲突。
+"""
+
+_C_GENERAL_FAIRNESS_USER_CLOSING = """\
+9. 【C类通用公平】先写清争点与双方各自的公平标准；标准可基于轮流、贡献、
+   承诺、补偿、分工、次数、时间或机会，但须由本次 theme / setting 决定。
+10. 【规则主轴】中段只推进一条规则：提出→应用→暴露偏向或缺口→原话反噬；
+    禁止换赛规、重复定义或改写成占有争夺。
+11. 【事实连续】判据须可核对；人物承诺、已做贡献、次数和时间前后一致，
+    禁止凭空补历史事实。
+12. 【收束】规则提出者承担反噬并嘴硬收场；禁止妈妈判平，禁止另起冲突。
+13. punchline_explain 以「C类公平执念」开头，写明两套公平标准和反噬点。
+"""
+
 
 def c_prompt_block_for_theme(theme: str | None = None) -> str:
-    """整件物题走精简专属线路（~150 行）；其它题仍用完整 LINE_C。"""
+    """按公平争点选择通用、整件物或占有争夺线路。"""
     from app.services.daily_story.story_types.c.validate import c_criterion_theme_profile
 
-    if theme and c_criterion_theme_profile(theme) == "whole_item":
+    profile = c_criterion_theme_profile(theme or "")
+    if profile == "general":
+        return _C_GENERAL_FAIRNESS_PROMPT_BLOCK
+    if profile == "whole_item":
         return _C_WHOLE_ITEM_PROMPT_BLOCK
     return LINE_C.prompt_block
+
+
+def c_user_closing_for_theme(theme: str | None = None) -> str:
+    """通用公平分支不携带占有判据和酸奶题 user 规则。"""
+    from app.services.daily_story.story_types.c.validate import c_criterion_theme_profile
+
+    if c_criterion_theme_profile(theme or "") == "general":
+        return _C_GENERAL_FAIRNESS_USER_CLOSING
+    return LINE_C.user_closing
 
 
 def c_whole_item_beats_hint() -> str:
