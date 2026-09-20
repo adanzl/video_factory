@@ -14,12 +14,15 @@ from app.services.daily_story.story_types.quality import (
     TypeQualityProfile,
 )
 
-RE_LOOP_CLOSE = re.compile(r"哪里不一样|都是听|到底哪|凭什么听")
+RE_LOOP_CLOSE = re.compile(r"哪里不一样|都是听|到底哪|凭什么|怎么就|为什么|为何")
 RE_PRECEDENT = re.compile(r"上次|之前|你也|明明说|妈妈说过|你不是说|你自己也")
 RE_ADMIT = re.compile(
-    r"那不一样|你刚才说|你自己说|你也这样|我是教你|不是那个意思",
+    r"那不一样|不算|只是|这次|例外|因为|我这是|"
+    r"你刚才说|你自己说|你也这样|我是教你|不是那个意思",
 )
-RE_RULE_PUSH = re.compile(r"你刚才说|你自己说|你也这样|那不一样")
+RE_RULE_PUSH = re.compile(
+    r"你刚才说|你自己说|你也这样|那不一样|凭什么|怎么|为什么|为何",
+)
 
 
 def score_punchline(

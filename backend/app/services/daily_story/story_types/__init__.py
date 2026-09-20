@@ -520,11 +520,24 @@ def format_block_for_code(code: str) -> str:
         vals = list(range(line.body_lines_min, line.body_lines_max + 1))
         num_text = "、".join(str(v) for v in vals[:-1]) + " 或 " + str(vals[-1])
         lines_hard = f'    // 数组长度必须等于 {num_text}，不得少，不得多。\n'
-    alternation_hard = (
-        '    // 【硬约束】speaker 必须与上一句严格交替'
-        '（昭昭→灿灿→昭昭→…），连续相同则整组作废\n'
-    )
     code_u = (code or "").upper()
+    if code_u in {"C", "D"}:
+        alternation_hard = (
+            '    // 本类型依靠接招节奏，speaker 须逐句交替；'
+            '不得连续同一人\n'
+        )
+        rhythm_rule = (
+            "每句由上一句的对立方接招，昭昭/灿灿严格交替。"
+        )
+    else:
+        alternation_hard = (
+            '    // 同一 speaker 最多连续2句；连续第2句须补完同一动作或信息，'
+            '不得拆句凑轮换\n'
+        )
+        rhythm_rule = (
+            "姐弟以轮换为主；同一人最多连续2句，且第2句必须补完同一动作或因果。"
+            "妈妈/爸爸按类型职责插入，不强行拆成姐弟交替。"
+        )
     if code_u == "D":
         rows = (
             f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'
@@ -564,11 +577,9 @@ def format_block_for_code(code: str) -> str:
   "punchline_explain": "{line.punchline_example}"
 }}
 
-【轮换硬锁·全域最高优先级】
-每一句的 speaker 必须与上一句严格交替（昭昭→灿灿→昭昭→…）。
-生成任何一句前，先检查上句 speaker；若相同，禁止输出，重写本句。
-无论语义衔接多顺、无论当前说话人是否「还没说完」，禁止连说。
-宁可把同一人的完整内容拆成两轮说（中间隔一句），也绝不允许连说 2 句。
+【对话节奏】
+{rhythm_rule}
+禁止为了轮换插入没有新信息的回应，也禁止把一个人的完整意思交给另一个角色。
 {footer}
 """
 

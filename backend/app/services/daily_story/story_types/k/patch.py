@@ -16,7 +16,8 @@ _PARENT_ADVISE_LINE = "别闹了！快分开！再闹我可要生气了！"
 _KID_TOP_LINE = "妈妈你别管！"
 # 劝止与劝失败之间：原冲突续行（求饶/继续压），非纯顶妈妈
 _RE_CONFLICT_RESUME = re.compile(
-    r"松手|别挠|还敢|再挠|哭不哭|疼|痒|还嘴硬|不服|撑多久"
+    r"松手|别挠|还敢|再挠|哭不哭|疼|痒|还嘴硬|不服|撑多久|"
+    r"没完|不让|认输|谁怕谁"
 )
 _RE_PURE_MOM_TOP = re.compile(r"妈妈你别管|你管不着|别管我们|别管我")
 _KID_STALEMATE_AFTER = (
@@ -449,7 +450,7 @@ def patch_k_ensure_press_climax(story: dict) -> list[str]:
                     cry_i + 1,
                     {
                         "speaker": winner,
-                        "line": "哭了还嘴硬？笔在我这儿！",
+                        "line": "哭了还嘴硬？这回你服不服！",
                     },
                 )
                 story["dialogue"] = dialogue
@@ -484,7 +485,7 @@ def patch_k_ensure_press_climax(story: dict) -> list[str]:
         block.append(
             {
                 "speaker": winner,
-                "line": "哭了还嘴硬？笔在我这儿！",
+                "line": "哭了还嘴硬？这回你服不服！",
             }
         )
     if not block:
@@ -1076,7 +1077,11 @@ def patch_k_strip_meta_and_action_narr(story: dict) -> list[str]:
                 if kept:
                     new_line = "！".join(kept) + "！"
                 else:
-                    new_line = "你别过来！" if sp == "昭昭" else "还不哭？你服不服！"
+                    new_line = (
+                        "你别得意，这事没完！"
+                        if sp == "昭昭"
+                        else "没完就没完，谁怕谁！"
+                    )
         # 「继续挠」偏指令：有还不哭时改成可说压迫
         if "还不哭" in new_line and re.search(r"继续挠|我挠你", new_line):
             new_line = "还不哭？看你能撑多久！"
@@ -1097,18 +1102,18 @@ def patch_k_strip_meta_and_action_narr(story: dict) -> list[str]:
         new_line = re.sub(r"[！?]{2,}", "！", new_line)
         new_line = re.sub(r"了{2,}", "了", new_line)
         if re.search(r"我把你|还跑啊了", new_line):
-            new_line = "逮住你了！看你还跑不跑！"
+            new_line = "这事还没完！看你服不服！"
         if new_line.startswith("呀！") or new_line.startswith("啊！"):
             new_line = new_line[2:].strip() or (
                 "你再闹试试！" if sp == "灿灿" else "我才不怕你！"
             )
         # 追捕方说「别过来」属角色方向幻觉
         if sp == "灿灿" and re.search(r"你别过来|别过来", new_line):
-            new_line = "你站住！把笔还我！"
+            new_line = "你站住！这事还没完！"
         # 拽胳膊/别按我等姿态旁白
         if re.search(r"拽我胳膊|别按我|按着我肩膀|按着我干", new_line):
             new_line = (
-                "放开我！别挠了！" if sp == "昭昭" else "逮住你了！看你还跑！"
+                "我才不认输！" if sp == "昭昭" else "不服就继续僵着！"
             )
         if re.match(r"^[吧呀啊呢嘛，,\s]+", new_line) or new_line in {
             "啊！",
@@ -1532,9 +1537,9 @@ def patch_k_fix_consecutive_keep_press(story: dict) -> list[str]:
         ):
             other = loser if sp == winner else winner
             bridge = (
-                "放开我！别挠了！"
+                "你别得意，我还没认输！"
                 if other == loser
-                else "还不哭？你服不服！"
+                else "我也不让，你服不服！"
             )
             out.append({"speaker": other, "line": bridge})
             inserted += 1
@@ -1552,7 +1557,7 @@ def _k_advise_fail_mid_block(story: dict) -> list[dict]:
     )
     return [
         {"speaker": "妈妈", "line": _PARENT_ADVISE_LINE},
-        {"speaker": loser, "line": "疼！快松手啊！"},
+        {"speaker": loser, "line": "你别得意，我还没认输！"},
         {"speaker": winner, "line": _KID_TOP_LINE},
         {"speaker": "妈妈", "line": _PARENT_FAIL_LINE},
         {"speaker": loser, "line": "哼，我就不理你了！"},
@@ -1630,7 +1635,7 @@ def patch_k_seal_after_parent_fail(story: dict) -> list[str]:
                 resume = dict(x)
                 break
         if resume is None:
-            resume = {"speaker": loser, "line": "疼！快松手啊！"}
+            resume = {"speaker": loser, "line": "你别得意，我还没认输！"}
         kid_top = {"speaker": winner, "line": _KID_TOP_LINE}
         # 劝失败后只留冷战僵持，勿再叫阵
         after = [dict(x) for x in _KID_STALEMATE_AFTER]
@@ -1694,7 +1699,7 @@ def patch_k_seal_after_parent_fail(story: dict) -> list[str]:
             kept_head.append(
                 {
                     "speaker": winner,
-                    "line": "哭了还嘴硬？笔在我这儿！",
+                    "line": "哭了还嘴硬？这回你服不服！",
                 }
             )
             kept_head.append({"speaker": loser, "line": "呜，你欺负人！"})
@@ -1812,7 +1817,7 @@ def patch_k_ensure_advise_two_slots(story: dict) -> list[str]:
 
 
 def patch_k_force_climax_before_parent(story: dict) -> list[str]:
-    """劝止前钉死：还不哭→哭→嘴硬→呜；并剥逮住后的追抢回潮。"""
+    """劝止前保证冲突仍在升级，不注入特定道具或动作。"""
     notes: list[str] = []
     if not _is_k(story):
         return notes
@@ -1832,59 +1837,19 @@ def patch_k_force_climax_before_parent(story: dict) -> list[str]:
         return notes
     head = [dict(x) for x in dialogue[:parent_i] if isinstance(x, dict)]
     tail = [dict(x) for x in dialogue[parent_i:] if isinstance(x, dict)]
-    cleaned: list[dict] = []
-    seen_catch = False
-    seen_tickle = False
-    for x in head:
-        sp = str(x.get("speaker") or "").strip()
-        line = str(x.get("line") or "")
-        if re.search(r"逮住|逮着|按住你|按着你|追到你了|抓到你", line):
-            seen_catch = True
-        if re.search(r"别挠|挠了|痒", line):
-            seen_tickle = True
-        if re.search(r"换个理由|再顶你|不收拾你|服软", line):
-            continue
-        if (seen_catch or seen_tickle) and re.search(
-            r"追不上|略略略|满屋子跑|这笔就是我的|拿不回去|"
-            r"抢我笔还嘴硬",
-            line,
-        ):
-            continue
-        # 挠后败方回勇挑衅：丢掉（单向）
-        if seen_tickle and sp in _KID_SPEAKERS and _RE_LOSER_POST_CRY_DEFIANCE.search(
-            line
-        ):
-            # 保留求饶类
-            if not re.search(r"放开|别挠|松手|疼|痒", line):
-                continue
-        # 旧压迫/破功先剥，后面统一钉
-        if re.search(
-            r"还不哭|我哭了|嘴硬|哭了还|笔在我这儿|呜，你欺负人|"
-            r"轮不到你",
-            line,
-        ):
-            continue
-        cleaned.append(x)
-    # 挠拍不足时补一轮可说互顶（专家：差字加有效冲突拍）
-    has_tickle = any(
-        re.search(r"别挠|挠了|痒", str(x.get("line") or ""))
-        for x in cleaned
-    )
-    if not has_tickle:
-        cleaned.extend(
+    recent = "".join(str(x.get("line") or "") for x in head[-4:])
+    if not re.search(r"打|骂|推|吵|抢|按|揪|抓|挠|踢|咬|掐|没完|谁怕谁", recent):
+        last_speaker = str(head[-1].get("speaker") or "") if head else ""
+        first = "灿灿" if last_speaker != "灿灿" else "昭昭"
+        second = "昭昭" if first == "灿灿" else "灿灿"
+        head.extend(
             [
-                {"speaker": "灿灿", "line": "抢笔就该被挠！看你还跑不跑！"},
-                {"speaker": "昭昭", "line": "放开我！别挠了！"},
+                {"speaker": first, "line": "你还敢跟我吵？我跟你没完！"},
+                {"speaker": second, "line": "谁怕谁，我偏不让你！"},
             ]
         )
-    triad = [
-        {"speaker": "灿灿", "line": "还不哭？看你能撑多久！"},
-        {"speaker": "昭昭", "line": "哇，我哭了，你快松手啊！"},
-        {"speaker": "灿灿", "line": "哭了还嘴硬？笔在我这儿！"},
-        {"speaker": "昭昭", "line": "呜，你欺负人！"},
-    ]
-    story["dialogue"] = cleaned + triad + tail
-    notes.append("K劝止前钉破功四拍")
+        notes.append("K劝止前补抽象升级两拍")
+    story["dialogue"] = head + tail
     return notes
 
 

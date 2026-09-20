@@ -144,6 +144,8 @@ def example_copy_error(
 
 
 def c_example_phrases_for_profile(profile: str) -> frozenset[str]:
+    if profile == "general":
+        return frozenset()
     phrases = set(c_yogurt_example_phrases_norm())
     if profile == "whole_item":
         phrases |= c_whole_item_example_phrases_norm()

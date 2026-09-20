@@ -12,6 +12,7 @@ from app.services.daily_story.prompts import (
     DAILY_STORY_LINE_CHARS_MAX,
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
+    validate_daily_story_body_part_chars,
     validate_daily_story_json,
 )
 from app.services.script.optimize_title import parse_title_optimize_payload
@@ -544,6 +545,41 @@ def test_daily_story_prompts_share_contract():
     # 说谎题从 E 正例拿掉，改列为禁止
     assert "不许说谎" in user_e
 
+
+def test_story_type_prompts_only_inject_matching_scene_rules():
+    a_brush_system, a_brush_user = build_daily_story_prompts(
+        "姐姐嫌弟弟刷牙太快",
+        story_type="A",
+    )
+    a_brush = a_brush_system + a_brush_user
+    assert "这刀还没剪直" not in a_brush
+    assert "不强制使用「那不一样」「哪里不一样」" in a_brush
+
+    a_cut_system, a_cut_user = build_daily_story_prompts(
+        "姐姐教弟弟剪纸却自己剪歪",
+        story_type="A",
+    )
+    assert "剪纸场景补充" in a_cut_system
+    assert "下剪、压线、翻面、对折" in a_cut_system
+    assert "倒数第3 句必须含「那不一样」" not in a_cut_user
+
+    c_turns_system, c_turns_user = build_daily_story_prompts(
+        "姐弟争论家务应该轮流还是按贡献分配",
+        story_type="C",
+    )
+    c_turns = c_turns_system + c_turns_user
+    assert "通用公平分支" in c_turns
+    assert "瓶身/吸管" not in c_turns
+    assert "轮流、贡献、承诺、补偿" in c_turns
+
+    d_system, d_user = build_daily_story_prompts(
+        "姐姐让弟弟把鞋带系紧",
+        story_type="D",
+    )
+    assert "模板之外的字一个不改" not in d_system + d_user
+    assert "锁语义，不锁固定台词" in d_system
+
+
 def _pad_line(text: str) -> str:
     pad = max(0, DAILY_STORY_LINE_CHARS_MAX - len(text))
     return text + ("呀" * pad)
@@ -601,6 +637,20 @@ def test_validate_daily_story_json_ok():
     validate_daily_story_json(story, phase="body")
     validate_daily_story_json(story, phase="full")
 
+
+def test_validate_stitched_story_counts_body_without_opening():
+    story = _valid_story(n=18)
+    opening = [
+        {"speaker": "昭昭", "line": "开场第一句呀呀呀呀呀呀呀呀呀呀呀呀"},
+        {"speaker": "灿灿", "line": "开场第二句呀呀呀呀呀呀呀呀呀呀呀呀"},
+    ]
+    story["discovery_opening"] = opening
+    story["dialogue"] = opening + story["dialogue"]
+    with pytest.raises(ValueError, match="总字数须≤"):
+        validate_daily_story_json(story, phase="body")
+    validate_daily_story_body_part_chars(story)
+
+
 def test_validate_daily_story_json_rejects_long_body_chars():
     with pytest.raises(ValueError, match="总字数须≤"):
         validate_daily_story_json(_valid_story(n=34), phase="body")
@@ -618,8 +668,8 @@ def test_validate_daily_story_json_rejects_long_line():
 
 def test_validate_daily_story_json_rejects_bad_speaker():
     story = _valid_story()
-    story["dialogue"][0]["speaker"] = "爸爸"
-    with pytest.raises(ValueError, match="爸爸"):
+    story["dialogue"][0]["speaker"] = "爷爷"
+    with pytest.raises(ValueError, match="爷爷"):
         validate_daily_story_json(story)
 
 def test_validate_daily_story_json_rejects_consecutive_same_speaker():

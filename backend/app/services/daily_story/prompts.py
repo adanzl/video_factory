@@ -1113,7 +1113,14 @@ def _daily_story_system_body(
         return f"{_DAILY_STORY_SYSTEM_SHARED}\n{catalog}\n"
     humor = f"\n{line.humor_pack}\n" if (line.humor_pack or "").strip() else ""
     prompt_block = line.prompt_block
-    if type_code.upper() == "C" and theme:
+    if type_code.upper() == "A":
+        from app.services.daily_story.story_types.a.line import a_prompt_block_for_theme
+
+        prompt_block = a_prompt_block_for_theme(theme)
+        if prompt_block != line.prompt_block:
+            # 旧 humor_pack 含剪纸动作链和固定收束，仅适用于剪纸校准分支。
+            humor = ""
+    elif type_code.upper() == "C" and theme:
         from app.services.daily_story.story_types.c.line import c_prompt_block_for_theme
 
         prompt_block = c_prompt_block_for_theme(theme)
@@ -1155,6 +1162,18 @@ def _daily_story_user_template(
     if type_code and type_code.upper() in STORY_TYPE_LINES:
         line = STORY_TYPE_LINES[type_code.upper()]
         closing = line.user_closing
+        if type_code.upper() == "A":
+            from app.services.daily_story.story_types.a.line import (
+                a_user_closing_for_theme,
+            )
+
+            closing = a_user_closing_for_theme(theme)
+        elif type_code.upper() == "C":
+            from app.services.daily_story.story_types.c.line import (
+                c_user_closing_for_theme,
+            )
+
+            closing = c_user_closing_for_theme(theme)
         anchor = line.body_user_anchor or (
             "1. 主题即冲突实物：setting、conflict_core、正文首句须锚定主题中的实物/动作。"
         )
@@ -2666,7 +2685,7 @@ def _append_single_conflict_errors(story: dict, errors: list[str]) -> None:
 
 
 def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
-    """节奏硬卡：姐弟禁同人连说；弱收束/无破功软收则拦。"""
+    """节奏硬卡：姐弟同人最多连说两句；弱收束则拦。"""
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or not dialogue:
         return
@@ -2683,9 +2702,10 @@ def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
             continue
         if speaker == prev_speaker:
             run += 1
-            if run >= 2:
+            if run >= 3:
                 errors.append(
-                    f"dialogue[{i - 1}:{i}] {speaker} 连说≥2句，须轮流说话"
+                    f"dialogue[{i - 2}:{i}] {speaker} 连说≥3句；"
+                    "同一人最多连续2句，随后须由对方或家长接话"
                 )
                 break
         else:
@@ -4085,6 +4105,35 @@ def _body_part_chars(story: dict) -> int:
         for d in body
         if isinstance(d, dict)
     )
+
+
+def validate_daily_story_body_part_chars(story: dict) -> None:
+    """复验已拼开场成品的正文部分字数，不把 discovery_opening 重复计入。"""
+    opening = story.get("discovery_opening")
+    if not isinstance(opening, list) or not opening:
+        validate_daily_story_json(story, phase="body")
+        return
+    total = _body_part_chars(story)
+    chars_min = DAILY_STORY_BODY_CHARS_MIN
+    type_code = resolve_story_type_code(story)
+    theme_ctx = (
+        str(story.get("conflict_core") or "")
+        + str(story.get("_theme") or "")
+        + str(story.get("theme") or "")
+        + str(story.get("scene_title") or "")
+    )
+    if type_code == "E" and re.search(r"挑食|青菜|拨到碗边", theme_ctx):
+        chars_min = 265
+    if total < chars_min:
+        raise ValueError(
+            f"正文总字数须≥{chars_min}，当前{total}"
+            f"（还差{chars_min - total}字）"
+        )
+    if total > DAILY_STORY_BODY_CHARS_MAX:
+        raise ValueError(
+            f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total}"
+            f"（超出{total - DAILY_STORY_BODY_CHARS_MAX}字）"
+        )
 
 
 def _patch_body_part_char_budget(story: dict) -> list[str]:

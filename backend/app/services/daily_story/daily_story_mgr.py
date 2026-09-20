@@ -1,26 +1,121 @@
 """日常故事业务管理。"""
 from __future__ import annotations
+from difflib import SequenceMatcher
 import logging
+import re
 from typing import Any
 
-from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
+from app.repositories import repo_daily_story, repo_job, repo_job_log
 from app.repositories.sql_exec import atomic
+from app.services.daily_story.story_types import quality_ready_codes
 from app.services.daily_story.story_types.model import STORY_TYPE_LABELS
 from app.services.llm.llm_mgr import llm_mgr
 from app.utils.async_util import run_in_background
 from app.utils.job_info import merge_job_info, merge_job_script_params
 
 _VALID_STORY_TYPES = frozenset(STORY_TYPE_LABELS.keys())
+_GENERATABLE_STORY_TYPES = frozenset(quality_ready_codes())
 
 logger = logging.getLogger(__name__)
 _STATUS_PROCESSING = 'processing'
 _STATUS_ACTIVE = 'active'
+_STATUS_REVIEW_PENDING = 'review_pending'
 _STATUS_FAILED = 'failed'
 
 def _story_has_content(story: dict[str, Any] | None) -> bool:
     if not isinstance(story, dict):
         return False
     return bool(story.get('dialogue') or [])
+
+
+def _story_dialogue_text(story: dict[str, Any] | None) -> str:
+    if not isinstance(story, dict):
+        return ""
+    return "".join(
+        re.sub(r"\s+", "", str(item.get("line") or ""))
+        for item in (story.get("dialogue") or [])
+        if isinstance(item, dict)
+    )
+
+
+def _recent_story_avoids(rows: list[dict], *, limit: int = 20) -> list[str]:
+    avoids: list[str] = []
+    for row in rows[:limit]:
+        story = row.get("story")
+        if not isinstance(story, dict):
+            continue
+        parts = [
+            str(story.get("key") or row.get("key") or "").strip(),
+            str(story.get("conflict_core") or "").strip(),
+        ]
+        dialogue = story.get("dialogue") or []
+        if isinstance(dialogue, list):
+            ending = " / ".join(
+                str(item.get("line") or "").strip()
+                for item in dialogue[-3:]
+                if isinstance(item, dict)
+            )
+            parts.append(ending)
+        avoid = "；".join(part for part in parts if part)
+        if avoid:
+            avoids.append(avoid)
+    return avoids
+
+
+def _find_similar_story(
+    story: dict[str, Any],
+    rows: list[dict],
+    *,
+    threshold: float = 0.82,
+) -> tuple[int, float] | None:
+    text = _story_dialogue_text(story)
+    if not text:
+        return None
+    story_type = str(story.get("story_type") or "").strip().upper()[:1]
+    for row in rows:
+        old = row.get("story")
+        if not isinstance(old, dict):
+            continue
+        old_type = str(
+            old.get("story_type") or row.get("story_type") or ""
+        ).strip().upper()[:1]
+        if story_type and old_type and story_type != old_type:
+            continue
+        old_text = _story_dialogue_text(old)
+        if not old_text:
+            continue
+        ratio = SequenceMatcher(None, text, old_text).ratio()
+        if ratio >= threshold:
+            return int(row.get("id") or 0), ratio
+    return None
+
+
+def _validate_story_hard(
+    story: dict[str, Any],
+    *,
+    gold_chat_row: dict[str, Any] | None = None,
+) -> None:
+    if gold_chat_row is not None:
+        from app.services.gold_story.gold_chat.import_story import (
+            validate_gold_chat_story_for_row,
+        )
+
+        validate_gold_chat_story_for_row(story, gold_chat_row)
+        return
+    from app.services.daily_story.prompts import (
+        validate_daily_story_body_part_chars,
+        validate_daily_story_json,
+    )
+
+    validate_daily_story_body_part_chars(story)
+    validate_daily_story_json(story, phase='full')
+
+
+def _gold_chat_source_row(story_id: int) -> dict[str, Any] | None:
+    from app.repositories import repo_gold_story
+
+    return repo_gold_story.get_by_gold_chat_daily_story_id(story_id)
+
 
 def _ensure_story_quality(row: dict, *, persist: bool=False) -> dict:
     """旧稿无 quality 时补打分；persist=True 时写回 DB。"""
@@ -48,11 +143,22 @@ class DailyStoryMgr:
         *,
         is_regenerate: bool,
         story_type: str | None = None,
+        previous_status: str | None = None,
     ) -> None:
         action = 'regenerate' if is_regenerate else 'generate'
         locked_type = (story_type or '').strip().upper()[:1] or None
         if locked_type and locked_type not in _VALID_STORY_TYPES:
             locked_type = None
+        if locked_type and locked_type not in _GENERATABLE_STORY_TYPES:
+            with atomic():
+                repo_daily_story.update_story(story_id, status=_STATUS_FAILED)
+            logger.error(
+                '[DAILY_STORY] %s rejected unsupported direct type=%s story_id=%d',
+                action,
+                locked_type,
+                story_id,
+            )
+            return
 
         def _worker() -> None:
             from app.repositories.database import get_app
@@ -63,16 +169,33 @@ class DailyStoryMgr:
 
             with get_app().app_context():
                 try:
+                    recent_rows = [
+                        row
+                        for row in repo_daily_story.list_stories(limit=40)
+                        if int(row.get("id") or 0) != story_id
+                    ]
                     gen_type = (
                         story_type_tag(locked_type) if locked_type else None
                     )
                     story = llm_mgr.generate_daily_story(
                         theme,
                         story_type=gen_type,
+                        avoid=_recent_story_avoids(recent_rows),
                     )
                     type_code = locked_type or parse_story_type_code(
                         punchline=str(story.get("punchline_explain") or ""),
                     )
+                    story["story_type"] = type_code
+                    review_pending = (
+                        story.get("_review_status") == "hard_card_failed"
+                    )
+                    similar = _find_similar_story(story, recent_rows)
+                    if similar:
+                        matched_id, ratio = similar
+                        raise ValueError(
+                            "故事正文与库内故事过于相似："
+                            f"story_id={matched_id}, similarity={ratio:.3f}"
+                        )
                     new_score = story.get('quality', {}).get('score', 0)
                     with atomic():
                         old_row = repo_daily_story.get_story(story_id)
@@ -82,7 +205,10 @@ class DailyStoryMgr:
                             if isinstance(old_story, dict)
                             else 0
                         )
-                        if old_score > new_score:
+                        if (
+                            (review_pending and _story_has_content(old_story))
+                            or (old_score > new_score and not review_pending)
+                        ):
                             logger.info(
                                 '[DAILY_STORY] async %s keeping old (score %d > new %d) story_id=%d theme=%r',
                                 action,
@@ -91,12 +217,30 @@ class DailyStoryMgr:
                                 story_id,
                                 theme,
                             )
-                            repo_daily_story.update_story(story_id, status=_STATUS_ACTIVE)
+                            retained_status = str(previous_status or '').strip()
+                            if retained_status not in {
+                                _STATUS_ACTIVE,
+                                _STATUS_REVIEW_PENDING,
+                                _STATUS_FAILED,
+                            }:
+                                retained_status = (
+                                    _STATUS_REVIEW_PENDING
+                                    if _story_has_content(old_story)
+                                    else _STATUS_FAILED
+                                )
+                            repo_daily_story.update_story(
+                                story_id,
+                                status=retained_status,
+                            )
                         else:
                             repo_daily_story.update_story(
                                 story_id,
                                 story=story,
-                                status=_STATUS_ACTIVE,
+                                status=(
+                                    _STATUS_REVIEW_PENDING
+                                    if review_pending
+                                    else _STATUS_ACTIVE
+                                ),
                                 story_type=type_code,
                             )
                     logger.info(
@@ -142,6 +286,9 @@ class DailyStoryMgr:
                 theme,
                 is_regenerate=is_regenerate,
                 story_type=locked,
+                previous_status=(
+                    _STATUS_REVIEW_PENDING if is_regenerate else None
+                ),
             )
         logger.warning('recovered %d stuck daily story/stories', len(rows))
         return len(rows)
@@ -192,6 +339,8 @@ class DailyStoryMgr:
         locked = (story_type or '').strip().upper()[:1] or None
         if locked and locked not in _VALID_STORY_TYPES:
             raise ValueError(f'story_type 无效: {locked}')
+        if locked and locked not in _GENERATABLE_STORY_TYPES:
+            raise ValueError(f'{locked} 类尚未开放直接生成，仅支持金故事改编')
         with atomic():
             story_id = repo_daily_story.insert_story(
                 theme=theme,
@@ -237,9 +386,15 @@ class DailyStoryMgr:
             status = str(story.get('status') or '')
             if status == _STATUS_PROCESSING:
                 raise ValueError('故事正在生成中，请稍后再创建任务')
+            if status != _STATUS_ACTIVE:
+                raise ValueError(f'故事状态为 {status or "unknown"}，审核通过后才能创建任务')
             story_content = story.get('story') or {}
             if not (story_content.get('dialogue') or []):
                 raise ValueError('故事内容为空，无法创建任务')
+            _validate_story_hard(
+                story_content,
+                gold_chat_row=_gold_chat_source_row(story_id),
+            )
             title = (story_content.get('scene_title') or '').strip()
             if not title:
                 title = story.get('theme', f'日常故事-{story_id}')
@@ -285,56 +440,95 @@ class DailyStoryMgr:
         if isinstance(story, dict):
             sync_discovery_opening_from_dialogue(story)
             story, _ = try_local_patch_daily_story_body(story)
+            story.pop('_review_status', None)
+            _validate_story_hard(
+                story,
+                gold_chat_row=_gold_chat_source_row(story_id),
+            )
             attach_daily_story_quality(story)
-        return repo_daily_story.update_story(story_id, story=story)
+        return repo_daily_story.update_story(
+            story_id,
+            story=story,
+            status=_STATUS_ACTIVE,
+        )
 
     def regenerate_story(self, story_id: int) -> dict:
         """异步重新生成：立刻标 processing 返回，后台替换内容。"""
         with atomic():
             old = repo_daily_story.get_story(story_id)
-            if str(old.get('status') or '') == _STATUS_PROCESSING:
+            old_status = str(old.get('status') or '')
+            if old_status == _STATUS_PROCESSING:
                 return old
             theme = str(old.get('theme') or '').strip()
             if not theme:
                 raise ValueError('theme is empty')
             locked = str(old.get('story_type') or '').strip().upper()[:1] or None
+            if locked and locked not in _GENERATABLE_STORY_TYPES:
+                raise ValueError(f'{locked} 类尚未开放直接生成，仅支持金故事改编')
             row = repo_daily_story.update_story(story_id, status=_STATUS_PROCESSING)
         self._queue_story_generation(
             story_id,
             theme,
             is_regenerate=True,
             story_type=locked,
+            previous_status=old_status,
         )
         return row
 
     def sync_to_job(self, story_id: int, *, story: dict[str, Any] | None=None) -> dict:
         """更新故事内容并同步到已有任务，重置脚本阶段使其重新生成。"""
-        with atomic():
-            old = repo_daily_story.get_story(story_id)
-            job_id = old.get('job_id')
-            if not job_id:
-                raise ValueError('该故事尚未创建任务，无法同步')
-            if story:
-                from app.services.daily_story.prompts import (
-                    sync_discovery_opening_from_dialogue,
-                )
-                from app.services.daily_story.quality import attach_daily_story_quality
-                sync_discovery_opening_from_dialogue(story)
-                attach_daily_story_quality(story)
-                repo_daily_story.update_story(story_id, story=story)
-            job = repo_job.get_job(job_id)
-            title = (story or {}).get('scene_title', '') or old.get('story', {}).get('scene_title', '') or job['title']
-            from app.services.daily_story.story_types import chat_type_info_message
-            type_info = chat_type_info_message(old.get('story_type'))
-            repo_job.update_job(
-                job_id,
-                title=title.strip(),
-                stage='script',
-                status='pending',
-                script_json=None,
-                error_message=type_info,
+        old = repo_daily_story.get_story(story_id)
+        job_id = old.get('job_id')
+        if not job_id:
+            raise ValueError('该故事尚未创建任务，无法同步')
+
+        from app.services.job.job_mgr import job_mgr
+
+        def _sync(job: dict) -> dict:
+            current = repo_daily_story.get_story(story_id)
+            if story is None and current.get('status') != _STATUS_ACTIVE:
+                raise ValueError('故事尚未审核通过，无法同步到任务')
+            target_story = story or current.get('story') or {}
+            if not isinstance(target_story, dict):
+                raise ValueError('故事内容无效，无法同步')
+            from app.services.daily_story.prompts import (
+                sync_discovery_opening_from_dialogue,
             )
-            repo_segment.delete_segments(job_id)
-            repo_job_log.append_log(job_id, 'api', f'synced daily story #{story_id} to job #{job_id}, stage reset to script')
-            return repo_job.get_job(job_id)
+            from app.services.daily_story.quality import attach_daily_story_quality
+            sync_discovery_opening_from_dialogue(target_story)
+            target_story.pop('_review_status', None)
+            _validate_story_hard(
+                target_story,
+                gold_chat_row=_gold_chat_source_row(story_id),
+            )
+            attach_daily_story_quality(target_story)
+            with atomic():
+                if story is not None:
+                    repo_daily_story.update_story(
+                        story_id,
+                        story=target_story,
+                        status=_STATUS_ACTIVE,
+                    )
+            job_mgr.prepare_rerun(int(job_id), 'script')
+            title = (
+                str(target_story.get('scene_title') or '').strip()
+                or str(job.get('title') or '')
+            )
+            from app.services.daily_story.story_types import chat_type_info_message
+            type_info = chat_type_info_message(current.get('story_type'))
+            with atomic():
+                repo_job.update_job(
+                    job_id,
+                    title=title,
+                    error_message=type_info,
+                )
+                repo_job_log.append_log(
+                    job_id,
+                    'api',
+                    f'synced daily story #{story_id} to job #{job_id}, '
+                    'stage reset to script',
+                )
+                return repo_job.get_job(job_id)
+
+        return job_mgr.run_if_idle(int(job_id), _sync)
 daily_story_mgr = DailyStoryMgr()

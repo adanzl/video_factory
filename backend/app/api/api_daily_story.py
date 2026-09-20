@@ -17,9 +17,12 @@ from app.api.utils import (
     parse_str,
 )
 from app.services.daily_story.daily_story_mgr import daily_story_mgr
+from app.services.daily_story.story_types import quality_ready_codes
 from app.services.daily_story.story_types.model import STORY_TYPE_LABELS
+from app.services.job.job_mgr import JobBusyError
 
 _VALID_STORY_TYPES = frozenset(STORY_TYPE_LABELS.keys())
+_GENERATABLE_STORY_TYPES = frozenset(quality_ready_codes())
 
 bp = Blueprint("api_daily_story", __name__, url_prefix="/v_factory/api/daily_story")
 
@@ -79,6 +82,11 @@ def generate_story_route():
         code = story_type_raw.strip().upper()[:1]
         if code not in _VALID_STORY_TYPES:
             raise APIError(f"story_type 无效: {code}", status_code=400)
+        if code not in _GENERATABLE_STORY_TYPES:
+            raise APIError(
+                f"{code} 类尚未开放直接生成，仅支持金故事改编",
+                status_code=400,
+            )
         story_type = code
     logger.info(
         "[DAILY_STORY] api /generate theme=%r story_type=%r",
@@ -166,6 +174,12 @@ def sync_to_job_route():
     logger.info("[DAILY_STORY] api /sync_to_job story_id=%d", story_id)
     try:
         return json_ok(daily_story_mgr.sync_to_job(story_id, story=story))
+    except JobBusyError as exc:
+        raise APIError(
+            "任务正在运行，请停止后再同步",
+            status_code=409,
+            code="job_busy",
+        ) from exc
     except ValueError as e:
         raise APIError(str(e))
     except KeyError:

@@ -1900,11 +1900,11 @@ class DeepSeekClient(LLMClient):
         # 提取原始台词列表（跳过纯标点行，与下游过滤逻辑一致）
         original_dialogue = dialogue_script.get("dialogue") or []
         _correct_dialogue_speaker(original_dialogue)
-        original_lines: list[str] = []
+        original_pairs: list[tuple[str, str]] = []
         for d in original_dialogue:
             line = (d.get("line") or "").strip()
             if line and re.search(r"[\u4e00-\u9fff\w]", line):
-                original_lines.append(line)
+                original_pairs.append((str(d.get("speaker") or "").strip(), line))
 
         for attempt in range(max_attempts):
             started = time.perf_counter()
@@ -1959,32 +1959,42 @@ class DeepSeekClient(LLMClient):
                         max_attempts,
                         promoted,
                     )
-                # 验证所有原始台词是否都被 LLM 分配到各镜头中
-                generated_text = "".join(
-                    str(d.get("text") or d.get("line") or "")
+                # 分镜只能分配原对白，禁止换序、换说话人、重复、删改或加句。
+                generated_pairs = [
+                    (
+                        str(d.get("speaker") or "").strip(),
+                        str(d.get("text") or d.get("line") or "").strip(),
+                    )
                     for scene in scenes
                     for d in (scene.get("dialogue") or [])
                     if isinstance(d, dict)
-                )
-                missing = [line for line in original_lines if line not in generated_text]
-                if missing:
+                    and str(d.get("text") or d.get("line") or "").strip()
+                ]
+                if generated_pairs != original_pairs:
                     last_exc = JobStageFailureError(
-                        f"LLM 遗漏 {len(missing)} 句台词: {missing}"
+                        "LLM 分镜对白与原稿不一致（顺序、说话人、次数或文本被修改）"
                     )
                     if attempt + 1 >= max_attempts:
                         break
                     logger.warning(
-                        "[DAILY_STORY] generate script missing %d lines attempt=%d/%d: %s",
-                        len(missing),
+                        "[DAILY_STORY] generate script dialogue mismatch "
+                        "attempt=%d/%d expected=%s actual=%s",
                         attempt + 1,
                         max_attempts,
-                        missing,
+                        original_pairs,
+                        generated_pairs,
                     )
                     user = (
                         f"{user_base}\n\n"
-                        "【重试】上一轮输出的 scenes 遗漏了以下台词，"
-                        "请重新将所有原台词完整分配到各镜头的 dialogue 数组中，不要修改措辞：\n"
-                        + "\n".join(f"- {m}" for m in missing)
+                        "【重试】上一轮分镜改动了对白。请按下列顺序逐句分配，"
+                        "speaker 与文本必须逐字一致；禁止交换、重复、遗漏或新增台词：\n"
+                        + "\n".join(
+                            f"{i}. {speaker}：{line}"
+                            for i, (speaker, line) in enumerate(
+                                original_pairs,
+                                start=1,
+                            )
+                        )
                     )
                     continue
 

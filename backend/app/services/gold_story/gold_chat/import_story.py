@@ -40,6 +40,42 @@ def _review_gold_chat_import_story(story: dict[str, Any], theme: str) -> dict[st
         return story
 
 
+def validate_gold_chat_story_for_row(
+    story: dict[str, Any],
+    row: dict[str, Any],
+) -> None:
+    """按来源金故事契约复验，供导入、编辑、建任务统一复用。"""
+    from app.services.gold_story.gold_chat.convert import (
+        sanitize_banned_literals,
+        validate_gold_chat,
+    )
+
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    scene_contract = (
+        payload.get("scene_contract")
+        if isinstance(payload.get("scene_contract"), dict)
+        else {}
+    )
+    banned = sanitize_banned_literals(
+        payload.get("banned_literals") or scene_contract.get("banned_literals"),
+        scene_contract=scene_contract,
+        beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
+    )
+    mom_lines_max = scene_contract.get("mom_lines_max")
+    if mom_lines_max is None:
+        mom_lines_max = 1
+    validate_gold_chat(
+        story,
+        banned_literals=banned,
+        source_type=str(
+            payload.get("source_type")
+            or scene_contract.get("source_type")
+            or "field"
+        ),
+        mom_lines_max=int(mom_lines_max),
+    )
+
+
 def import_gold_chat_daily_story(
     row: dict[str, Any],
     *,
@@ -89,6 +125,7 @@ def import_gold_chat_daily_story(
     attach_daily_story_quality(story, theme=theme)
     if review:
         story = _review_gold_chat_import_story(story, theme)
+    validate_gold_chat_story_for_row(story, row)
     story_key = str(story.get("key") or "").strip() or None
 
     existing_raw = row.get("gold_chat_daily_story_id")

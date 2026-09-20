@@ -239,8 +239,14 @@ def _story_criterion_anchor(story: dict) -> str:
 
 
 def c_criterion_theme_profile(anchor: str) -> str:
-    """C 判据链选题：cut_food | whole_item | default。"""
+    """C 判据链选题：general | cut_food | whole_item | default。"""
     text = anchor or ""
+    if re.search(
+        r"轮流|轮班|排队|贡献|谁做得多|谁帮得多|承诺|答应|补偿|"
+        r"分工|值日|次数公平|时间公平|机会公平",
+        text,
+    ):
+        return "general"
     if _RE_CUT_FOOD_THEME.search(text):
         return "cut_food"
     if _RE_WHOLE_ITEM_ANCHOR.search(text):
@@ -585,6 +591,7 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
     if n < 8:
         errors.append("C类正文过短，不足以完成公平执念收束（至少约 8 句对白）")
         return
+    profile = c_criterion_theme_profile(_story_criterion_anchor(story))
 
     # 整篇交替发言（用户定 2026-08-08）：开场+正文合并后任意相邻两句须换人。
     # 常见漏网：body 承接开场续写时，第 1 句与开场末句（第 2 句）同人连说——
@@ -603,7 +610,7 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
     # 以接招句式回应一个比赛，但开场两句从没提议过「举」这个比赛（开场末句只做了占有
     # 宣告/理由反对）——正文首句合法形式只有两法（顶回开场末句理由+抛占有判据 /
     # 已拿到者宣示占有），接招不在其列；接招只许回应开场第 2 句真提议过的动作。
-    if n >= 3:
+    if profile != "general" and n >= 3:
         m = _RE_C_AGREE_CONTEST.search(lines[2])
         if m and m.group(1) not in (lines[0] + lines[1]):
             errors.append(
@@ -683,10 +690,11 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
         errors.append(tail_speaker)
         return
 
-    criterion_drift = _criterion_drift_error(lines)
-    if criterion_drift:
-        errors.append(criterion_drift)
-        return
+    if profile != "general":
+        criterion_drift = _criterion_drift_error(lines)
+        if criterion_drift:
+            errors.append(criterion_drift)
+            return
 
     recut_hits = [
         i + 1 for i, ln in enumerate(lines) if _RE_C_RECUT.search(ln)
@@ -707,7 +715,6 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
         example_copy_error,
     )
 
-    profile = c_criterion_theme_profile(_story_criterion_anchor(story))
     if profile == "whole_item":
         prov_err = c_whole_item_rule_upgrade_provenance_error(lines)
         if prov_err:

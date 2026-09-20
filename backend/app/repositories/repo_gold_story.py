@@ -244,6 +244,36 @@ def set_gold_chat_daily_story_id(
     patch_story_payload(int(gold_story_id), patch)
 
 
+def is_gold_chat_daily_story(daily_story_id: int) -> bool:
+    """该 daily_story 是否由 gold_chat 导入。"""
+    row = sql.fetchone(
+        """
+        SELECT 1 AS found
+        FROM gold_story
+        WHERE gold_chat_daily_story_id = ?
+        LIMIT 1
+        """,
+        (int(daily_story_id),),
+    )
+    sql.commit()
+    return row is not None
+
+
+def get_by_gold_chat_daily_story_id(daily_story_id: int) -> dict | None:
+    """按已导入的 daily_story id 取来源金故事及其校验契约。"""
+    row = sql.fetchone(
+        f"""
+        SELECT {_GOLD_STORY_COLUMNS}
+        FROM gold_story
+        WHERE gold_chat_daily_story_id = ?
+        LIMIT 1
+        """,
+        (int(daily_story_id),),
+    )
+    sql.commit()
+    return _row_to_dict(row) if row is not None else None
+
+
 def _list_where(
     *,
     status: str | None = None,

@@ -109,6 +109,18 @@ def test_parse_k_from_story_type():
     assert parse_story_type_code(story_type="K", punchline="H类：旧稿") == "K"
 
 
+def test_k_padding_pairs_do_not_invent_props_or_actions():
+    from app.services.gold_story.gold_chat.convert import _K_NATURAL_MID_PAIRS
+
+    text = "".join(
+        line
+        for pair in _K_NATURAL_MID_PAIRS
+        for _speaker, line in pair
+    )
+    for forbidden in ("笔", "挠", "追", "跑", "逮", "抓", "松手"):
+        assert forbidden not in text
+
+
 def test_k_quality_scores_stalemate_story():
     from app.services.daily_story.quality import score_daily_story
 

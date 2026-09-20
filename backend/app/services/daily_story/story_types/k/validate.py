@@ -90,7 +90,8 @@ def append_k_body_errors(story: dict, errors: list[str]) -> None:
             mid = lines[a_i + 1 : f_i]
             has_resume = any(
                 re.search(
-                    r"松手|别挠|还敢|再挠|哭不哭|疼|痒|还嘴硬|不服|撑多久",
+                    r"松手|别挠|还敢|再挠|哭不哭|疼|痒|还嘴硬|不服|撑多久|"
+                    r"没完|不让|认输|谁怕谁",
                     ln,
                 )
                 and not re.search(r"妈妈你别管|你管不着|别管我们", ln)
