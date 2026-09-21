@@ -31,7 +31,8 @@ from app.utils.async_util import run_subprocess_cmd, wait_futures_hub
 logger = logging.getLogger(__name__)
 
 _OCR_CONFIG_NAME = "rapidocr_gold_story.yaml"
-_BACKEND_DIR = Path(__file__).resolve().parents[5]
+# ocr.py → transcript → gold_story → services → app → backend
+_BACKEND_DIR = Path(__file__).resolve().parents[4]
 _OCR_SUBPROCESS_TIMEOUT_SEC = 600.0
 
 _worker_engine = None
