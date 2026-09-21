@@ -190,7 +190,6 @@ def test_patch_m2_c_structure_layers():
     from app.services.gold_story.gold_chat.patch import (
         patch_m2_c_structure,
     )
-    from app.services.daily_story.quality import attach_daily_story_quality
 
     chat = {
         "scene_title": "八百个心眼子",
@@ -215,19 +214,206 @@ def test_patch_m2_c_structure_layers():
             {"speaker": "昭昭", "line": "这妹妹，八百个心眼子呢！"},
         ],
     }
+    before = [str(r["line"]) for r in chat["dialogue"]]
     patched, notes = patch_m2_c_structure(
         chat,
         structure_type="C",
         mechanism="M2",
         theme="八百个心眼子",
     )
-    assert any("C类" in n or "回旋镖" in n or "C1" in n for n in notes)
     assert patched["punchline_explain"].startswith("C类")
     assert "你刚说" in patched["dialogue"][1]["line"]
     assert "之前说过" in patched["dialogue"][3]["line"]
-    attach_daily_story_quality(patched, theme="八百个心眼子")
-    struct = patched["quality"]["structure_score"]
-    assert struct is not None and struct >= 50
+    # 不本地编 C1 / 回旋镖句；缺则只记 note
+    assert "M2+C补C1争归属" not in notes
+    assert "M2+C末段回旋镖" not in notes
+    assert any("缺末段回旋镖" in n or "缺C1" in n for n in notes)
+    # 原稿末句点题不被模板覆盖
+    assert patched["dialogue"][-1]["line"] == before[-1]
+
+
+def test_patch_m5_retaliation_does_not_inject_plot():
+    from app.services.gold_story.gold_chat.patch import (
+        patch_ensure_chorus_bukeda,
+        patch_ensure_injury_after_push,
+        patch_fix_mom_ask_admission,
+        patch_m5_insert_authority_before_mom,
+        patch_m5_pre_mom_escalation,
+        patch_m5_retaliation_action,
+        patch_m2_c_ensure_seed_close,
+        patch_m2_c_fix_opening,
+        patch_gold_chat_c_seed_bridge,
+    )
+
+    story = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我也要撕你的！"},
+            {"speaker": "昭昭", "line": "你敢！"},
+        ]
+    }
+    patched, changed = patch_m5_retaliation_action(
+        story,
+        conflict_text="灿灿受害，昭昭弄坏画画",
+    )
+    assert changed is False
+    assert patched["dialogue"] == story["dialogue"]
+    for fn in (
+        patch_ensure_injury_after_push,
+        patch_m5_pre_mom_escalation,
+        patch_fix_mom_ask_admission,
+    ):
+        out, ch = fn(story)
+        assert ch is False
+        assert out is story or out["dialogue"] == story["dialogue"]
+    out, ch = patch_ensure_chorus_bukeda(story, closing_intent="齐声不打了")
+    assert ch is False
+    out, ch = patch_m5_insert_authority_before_mom(story)
+    assert ch is False
+    out, notes = patch_m2_c_fix_opening(story)
+    assert notes == []
+    out, notes = patch_m2_c_ensure_seed_close(story)
+    assert notes == []
+    out, notes = patch_gold_chat_c_seed_bridge(
+        story, structure_type="C", mechanism="M2"
+    )
+    assert notes == []
+
+
+def test_m2_c_snack_rebuild_fallback_eligible():
+    from app.services.gold_story.gold_chat.patch import (
+        m2_c_snack_rebuild_fallback_eligible,
+    )
+
+    short = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "零食归我。"},
+            {"speaker": "昭昭", "line": "本子归我。"},
+        ]
+    }
+    assert m2_c_snack_rebuild_fallback_eligible(
+        short, last_err="structure_score:40"
+    )
+    assert not m2_c_snack_rebuild_fallback_eligible(
+        short, last_err="random_fail"
+    )
+    meat = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "给我夹一块肉。"},
+            {"speaker": "灿灿", "line": "你刚才说不爱吃。"},
+            {"speaker": "昭昭", "line": "我明天不吃零食了，换一口肉。"},
+            {"speaker": "灿灿", "line": "今天的肉我说了算。"},
+            {"speaker": "妈妈", "line": "吃商谁能比得过我。"},
+            {"speaker": "昭昭", "line": "八百个心眼子。"},
+            {"speaker": "灿灿", "line": "真香。"},
+            {"speaker": "昭昭", "line": "你刚说不爱吃，说不通！"},
+            {"speaker": "灿灿", "line": "下次还这样。"},
+            {"speaker": "昭昭", "line": "哼。"},
+            {"speaker": "灿灿", "line": "嘿嘿。"},
+            {"speaker": "昭昭", "line": "行吧。"},
+        ]
+    }
+    assert not m2_c_snack_rebuild_fallback_eligible(
+        meat, last_err="structure_score:40"
+    )
+    full_lines = [
+        "沙发上这包零食归我，作业本归你，公平吧？",
+        "凭什么你偷吃我的零食还定规矩？",
+        "谁拿到算谁的才算数，你抢不到。",
+        "那我拿到作业本，本子归我才算？",
+        "本子不算！还得我攥手里才算真正归我。",
+        "你一条接一条说，哪条作数啊？",
+        "你敢撕本子，我就把零食全吃光！",
+        "之前说过的，规矩是你自己定的。",
+        "你撕了我也交不了差，零食你也保不住！",
+        "那我先不撕，你还认不认这规矩？",
+        "认什么呀，零食本来就是我的。",
+        "本子我放下了，你说话算不算数？",
+        "别撕啦，零食给你还不行吗。",
+        "你刚说「零食归我，作业本归你」，说不通！",
+        "下次我还这样，你管不着！",
+    ]
+    full = {
+        "dialogue": [
+            {
+                "speaker": "灿灿" if i % 2 == 0 else "昭昭",
+                "line": ln,
+            }
+            for i, ln in enumerate(full_lines)
+        ]
+    }
+    assert not m2_c_snack_rebuild_fallback_eligible(
+        full, last_err="structure_score:40"
+    )
+
+
+def test_patch_m2_c_structure_does_not_rebuild_snack_draft():
+    """零食+作业语境：structure normalize 不得整篇替换成 15 句模板。"""
+    from app.services.gold_story.gold_chat.patch import (
+        patch_m2_c_snack_beat_rebuild,
+        patch_m2_c_structure,
+    )
+
+    original_lines = [
+        "沙发上这包零食归我，作业本归你，公平吧？",
+        "凭什么你偷吃我的零食还定规矩？",
+        "谁拿到算谁的才算数，你抢不到。",
+        "那我拿到作业本，本子归我才算？",
+        "本子不算！还得我攥手里才算真正归我。",
+        "你一条接一条说，哪条作数啊？",
+        "你敢撕本子，我就把零食全吃光！",
+        "之前说过的，规矩是你自己定的。",
+        "你撕了我也交不了差，零食你也保不住！",
+        "那我先不撕，你还认不认这规矩？",
+        "认什么呀，零食本来就是我的。",
+        "本子我放下了，你说话算不算数？",
+        "别撕啦，零食给你还不行吗。",
+        "你刚说「零食归我，作业本归你」，说不通！",
+        "下次我还这样，你管不着！",
+    ]
+    speakers = [
+        "灿灿",
+        "昭昭",
+        "灿灿",
+        "昭昭",
+        "灿灿",
+        "昭昭",
+        "灿灿",
+        "昭昭",
+        "灿灿",
+        "昭昭",
+        "灿灿",
+        "昭昭",
+        "灿灿",
+        "昭昭",
+        "灿灿",
+    ]
+    chat = {
+        "scene_title": "零食作业战",
+        "setting": "家中客厅，灿灿端着零食盒，昭昭攥着作业本",
+        "conflict_core": "灿灿拿零食定规矩，昭昭用作业本回旋镖",
+        "punchline_explain": "C类：昭昭用灿灿刚立的规矩回旋镖堵住。",
+        "story_type": "C",
+        "dialogue": [
+            {"speaker": sp, "line": ln}
+            for sp, ln in zip(speakers, original_lines)
+        ],
+    }
+    before = list(original_lines)
+    patched, notes = patch_m2_c_structure(
+        chat,
+        structure_type="C",
+        mechanism="M2",
+        theme="零食作业战",
+    )
+    after = [str(r.get("line") or "") for r in patched["dialogue"]]
+    assert "M2+C零食战beat重建" not in notes
+    assert all("beat重建" not in n for n in notes)
+    assert len(after) == len(before)
+    # 末句不得被模板默认句覆盖（normalize 可改嘴硬，但不应整篇 rebuild）
+    assert after[-1] != "下次我先写在纸上，看你怎么钻空子啊。"
+    rebuilt, rebuild_notes = patch_m2_c_snack_beat_rebuild(chat)
+    assert "M2+C零食战beat重建" in rebuild_notes
+    assert after != [str(r.get("line") or "") for r in rebuilt["dialogue"]]
 
 
 def test_apply_gold_chat_body_pipeline_via_story_types():

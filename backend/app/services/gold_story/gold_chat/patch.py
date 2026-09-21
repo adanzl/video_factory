@@ -23,14 +23,11 @@ from app.services.gold_story.gold_chat.validate import (
     RE_MOM_BALANCE,
     RE_MOM_SOFT,
     RE_ONE_SIDED,
-    RE_PRIOR_DAMAGE,
-    RE_RETALIATION_DONE,
     _dialogue_rows,
     _iodine_close_line_index,
     _m5_phrase_hits,
     _parse_conflict_victim,
     _parse_fight_question_asker,
-    _retaliation_missing_action,
     _sibling_partner,
 )
 
@@ -45,34 +42,18 @@ def _last_kid_idx_before_mom(
     return -1
 
 
-def _escalate_line_for_context(pre_mom_lines: list[str]) -> str:
-    blob = "".join(pre_mom_lines)
-    if "画" in blob:
-        return "这画我弄了好久呢！"
-    if RE_PRIOR_DAMAGE.search(blob):
-        return "哼，变不回来了！"
-    return "哼，没那么容易算！"
-
-
-_MAX_M5_CONSECUTIVE_FIXES = 8
-
-
 def _pick_m5_bridge_line(
     speaker: str,
     prev_line: str,
     next_line: str,
 ) -> tuple[str, str]:
+    """连说打断只插中性短接话，不按「画/撕」编剧情。"""
+    del prev_line, next_line
     alt = "昭昭" if speaker == "灿灿" else "灿灿"
-    blob = prev_line + next_line
-    if "拉手" in prev_line or "还打不" in next_line:
-        return alt, "嗯……好吧。"
-    if "不原谅" in next_line or "道歉也没用" in next_line:
-        return alt, "哼！别说了！"
-    if "赔" in blob or "撕" in blob or "弄花" in blob:
-        return alt, "呜……别闹了！"
-    if "画" in blob:
-        return alt, "你住手！"
-    return alt, "别说了！"
+    return alt, "嗯。"
+
+
+_MAX_M5_CONSECUTIVE_FIXES = 8
 
 
 def patch_m5_break_sibling_consecutive(
@@ -120,7 +101,6 @@ def patch_m5_break_sibling_consecutive(
 
 
 _M5_RULE_AUTHORITY_PREFIX = "家规就是"
-_M5_RULE_CANONICAL = "家规就是谁先动手谁道歉！"
 _RE_MOM_RULE_REF = re.compile(r"妈妈(?:说过|说|讲|告诉)")
 
 
@@ -129,37 +109,9 @@ def patch_m5_retaliation_action(
     *,
     conflict_text: str = "",
 ) -> tuple[dict[str, Any], bool]:
-    """受害方互毁句缺当场动作时，改为「抢你画撕啦」类已完成破坏。"""
-    import copy
-
-    victim = _parse_conflict_victim(conflict_text)
-    if not victim:
-        return story, False
-    rows = _dialogue_rows(story)
-    if len(rows) < 6:
-        return story, False
-    lines = [str(r.get("line") or "").strip() for r in rows]
-    speakers = [str(r.get("speaker") or "").strip() for r in rows]
-    out = copy.deepcopy(story)
-    changed = False
-    for idx, (sp, line) in enumerate(zip(speakers, lines)):
-        if sp != victim:
-            continue
-        following = lines[idx + 1 : idx + 3]
-        if RE_RETALIATION_DONE.search(line) and not re.search(
-            r"也抢|那我也|我也", line
-        ):
-            out["dialogue"][idx]["line"] = "我也抢你画撕啦！你赔！"
-            changed = True
-            continue
-        if not _retaliation_missing_action(line, following):
-            continue
-        new_line = "我也抢你画撕啦！你赔！"
-        if len(new_line) > 30:
-            new_line = "我也抢你画撕啦！"
-        out["dialogue"][idx]["line"] = new_line
-        changed = True
-    return out, changed
+    """互毁缺当场动作：不在本地写死道具/台词，交精修或扩写反馈闭环。"""
+    del conflict_text
+    return story, False
 
 
 def patch_m5_soften_premature_push_blame(
@@ -256,7 +208,7 @@ def patch_m5_rule_authority(
     *,
     max_line_chars: int = 30,
 ) -> tuple[dict[str, Any], bool]:
-    """M5 立规缺 authority 词时句首补「家规就是」（精修本地修，不打回扩写）。"""
+    """M5 立规句：仅把「妈妈说过」换成「家规就是」前缀；不整句换成 canonical。"""
     import copy
 
     rows = _dialogue_rows(story)
@@ -277,11 +229,8 @@ def patch_m5_rule_authority(
             continue
         if _RE_MOM_RULE_REF.search(line) and RE_M5_RULE.search(line):
             new_line = _RE_MOM_RULE_REF.sub(_M5_RULE_AUTHORITY_PREFIX, line)
-            if len(new_line) <= max_line_chars:
+            if new_line != line and len(new_line) <= max_line_chars:
                 item["line"] = new_line
-                changed = True
-            elif len(_M5_RULE_CANONICAL) <= max_line_chars:
-                item["line"] = _M5_RULE_CANONICAL
                 changed = True
             continue
         if not RE_M5_RULE.search(line):
@@ -294,9 +243,6 @@ def patch_m5_rule_authority(
         if len(candidate) <= max_line_chars:
             item["line"] = candidate
             changed = True
-        elif len(_M5_RULE_CANONICAL) <= max_line_chars:
-            item["line"] = _M5_RULE_CANONICAL
-            changed = True
     return out, changed
 
 
@@ -305,78 +251,14 @@ def patch_m5_insert_authority_before_mom(
     *,
     max_line_chars: int = 30,
 ) -> tuple[dict[str, Any], bool]:
-    """妈妈介入前全无家规/规矩时，补一句 canonical 立规（句数满则替换嘴硬句）。"""
-    import copy
-
-    from app.services.gold_story.scene import (
-        CHAT_LINE_COUNT_MAX,
-    )
-
-    rows = _dialogue_rows(story)
-    if len(rows) < 8:
-        return story, False
-    lines = [str(r.get("line") or "").strip() for r in rows]
-    speakers = [str(r.get("speaker") or "").strip() for r in rows]
-    mom_indices = [i for i, sp in enumerate(speakers, 1) if sp == "妈妈"]
-    if not mom_indices:
-        return story, False
-    first_mom = mom_indices[0]
-    pre_mom = lines[: first_mom - 1]
-    if any(RE_M5_AUTHORITY.search(x) for x in pre_mom):
-        return story, False
-    if len(_M5_RULE_CANONICAL) > max_line_chars:
-        return story, False
-
-    out = copy.deepcopy(story)
-    dlg = out["dialogue"]
-    rule = {"speaker": "灿灿", "line": _M5_RULE_CANONICAL}
-    insert_at = first_mom - 1
-    if len(dlg) < CHAT_LINE_COUNT_MAX:
-        dlg.insert(insert_at, rule)
-        return out, True
-
-    for j in range(first_mom - 2, -1, -1):
-        if speakers[j] not in {"昭昭", "灿灿"}:
-            continue
-        cur = lines[j]
-        if RE_M5_STUBBORN.search(cur) or RE_M5_ESCALATE.search(cur):
-            dlg[j]["line"] = _M5_RULE_CANONICAL
-            return out, True
-    if insert_at >= 0 and speakers[insert_at - 1] in {"昭昭", "灿灿"}:
-        dlg[insert_at - 1]["line"] = _M5_RULE_CANONICAL
-        return out, True
+    """缺家规不本地补 canonical 台词，交精修/扩写反馈。"""
+    del max_line_chars
     return story, False
 
 
-_INJURY_LINE = "啊！额头磕到了，好疼！"
-
-
 def patch_ensure_injury_after_push(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """碘伏收场稿：推搡后缺伤情时补一句受害方喊疼。"""
-    import copy
-
-    rows = _dialogue_rows(story)
-    if len(rows) < 8:
-        return story, False
-    lines = [str(r.get("line") or "").strip() for r in rows]
-    if not any(RE_IODINE_CLOSE.search(x) for x in lines):
-        return story, False
-    speakers = [str(r.get("speaker") or "").strip() for r in rows]
-    mom_i = next((i for i, sp in enumerate(speakers) if sp == "妈妈"), len(rows))
-    pre_mom = lines[:mom_i]
-    if any(RE_INJURY.search(x) for x in pre_mom):
-        return story, False
-    push_i = next((i for i, x in enumerate(pre_mom) if "推" in x), -1)
-    if push_i < 0:
-        return story, False
-    out = copy.deepcopy(story)
-    dlg = out["dialogue"]
-    target = push_i + 1
-    if target >= len(dlg):
-        return story, False
-    dlg[target]["speaker"] = "灿灿"
-    dlg[target]["line"] = _INJURY_LINE
-    return out, True
+    """缺伤情不本地补固定喊疼句，交精修/扩写反馈。"""
+    return story, False
 
 
 def patch_m5_fix_pre_mom_sequence(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -443,8 +325,7 @@ def patch_m5_fix_pre_mom_sequence(story: dict[str, Any]) -> tuple[dict[str, Any]
 
     last_i = after_mom[-1]
     mom_row = dlg.pop(mom_ask_i)
-    insert_at = last_i if last_i < mom_ask_i else last_i
-    dlg.insert(insert_at + 1, mom_row)
+    dlg.insert(last_i + 1, mom_row)
     return out, True
 
 
@@ -480,8 +361,6 @@ def patch_trim_post_iodine_tail(story: dict[str, Any]) -> tuple[dict[str, Any], 
     lines = [str(r.get("line") or "").strip() for r in rows]
     iodine_idx = _iodine_close_line_index(lines)
     if iodine_idx <= 0 or iodine_idx >= len(rows):
-        return story, False
-    if iodine_idx == len(rows):
         return story, False
     out = copy.deepcopy(story)
     out["dialogue"] = list(rows[:iodine_idx])
@@ -597,106 +476,16 @@ def patch_ensure_chorus_bukeda(
     *,
     closing_intent: str = "",
 ) -> tuple[dict[str, Any], bool]:
-    """closing 齐声：缺问句则整段插入；有问句则补第二句「不打了」。"""
-    import copy
-
-    rows = _dialogue_rows(story)
-    if len(rows) < 8:
-        return story, False
-    lines = [str(r.get("line") or "").strip() for r in rows]
-    speakers = [str(r.get("speaker") or "").strip() for r in rows]
-    fight_idx = next(
-        (i for i, line in enumerate(lines, 1) if RE_FIGHT_QUESTION.search(line)),
-        0,
-    )
-    asker = _parse_fight_question_asker(closing_intent) or "灿灿"
-    closing_needed = bool(RE_FIGHT_QUESTION.search(closing_intent or ""))
-
-    if fight_idx <= 0:
-        if not closing_needed:
-            return story, False
-        iodine_idx = _iodine_close_line_index(lines)
-        hand_i = next(
-            (i for i, line in enumerate(lines) if "拉手" in line),
-            -1,
-        )
-        if hand_i >= 0:
-            insert_at = hand_i + 1
-        elif iodine_idx > 0:
-            insert_at = iodine_idx - 1
-        else:
-            insert_at = len(rows)
-        out = copy.deepcopy(story)
-        dlg = out["dialogue"]
-        block = [
-            {"speaker": asker, "line": "以后还打不打架？"},
-            {"speaker": "昭昭", "line": "不打了！"},
-            {"speaker": "灿灿", "line": "不打了！这还差不多。"},
-        ]
-        for j, item in enumerate(block):
-            dlg.insert(insert_at + j, item)
-        return out, True
-
-    kid_bukeda = [
-        i
-        for i in range(fight_idx + 1, len(lines) + 1)
-        if speakers[i - 1] in {"昭昭", "灿灿"} and "不打了" in lines[i - 1]
-    ]
-    if len(kid_bukeda) >= 2:
-        return story, False
-    out = copy.deepcopy(story)
-    dlg = out["dialogue"]
-    if len(kid_bukeda) == 1:
-        only_i = kid_bukeda[0]
-        only_sp = speakers[only_i - 1]
-        other = _sibling_partner(only_sp)
-        insert_at = only_i
-        insert_line = "不打了！这还差不多。" if other == "灿灿" else "不打了！"
-        dlg.insert(insert_at, {"speaker": other, "line": insert_line})
-        return out, True
-    if closing_needed:
-        insert_at = fight_idx
-        dlg.insert(insert_at, {"speaker": "昭昭", "line": "不打了！"})
-        dlg.insert(insert_at + 1, {"speaker": "灿灿", "line": "不打了！这还差不多。"})
-        return out, True
+    """缺齐声「不打了」不本地插入固定句，交精修/扩写反馈。"""
+    del closing_intent
     return story, False
 
 
 def patch_fix_mom_ask_admission(
     story: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
-    """妈妈问谁先动手后，昭昭须承认推/动手/先弄画。"""
-    import copy
-
-    rows = _dialogue_rows(story)
-    if len(rows) < 12:
-        return story, False
-    lines = [str(r.get("line") or "").strip() for r in rows]
-    speakers = [str(r.get("speaker") or "").strip() for r in rows]
-    mom_ask_i = next(
-        (
-            i
-            for i, (sp, line) in enumerate(zip(speakers, lines))
-            if sp == "妈妈" and RE_MOM_ASK.search(line)
-        ),
-        -1,
-    )
-    if mom_ask_i < 0 or mom_ask_i >= len(rows) - 1:
-        return story, False
-    next_i = mom_ask_i + 1
-    if speakers[next_i] != "昭昭":
-        return story, False
-    line = lines[next_i]
-    blames_sister = bool(
-        re.search(r"姐姐先|是姐姐|都怪姐姐", line)
-        and not re.search(r"我.{0,6}先", line)
-    )
-    admits = bool(re.search(r"推|动手|弄花|弄坏|我先|我……先", line))
-    if admits and not blames_sister:
-        return story, False
-    out = copy.deepcopy(story)
-    out["dialogue"][next_i]["line"] = "我……我先弄花的，姐姐对不起！"
-    return out, True
+    """缺承认句不本地写「弄花」固定台词，交精修/扩写反馈。"""
+    return story, False
 
 
 _KEEP_NE_CLOSE_MARKERS = ("八百个心眼子", "一招制敌", "灵魂拷问")
@@ -830,11 +619,8 @@ def patch_strip_mom_fight_question(
         line = str(item.get("line") or "").strip()
         if not RE_FIGHT_QUESTION.search(line):
             continue
-        if "拉手" in line:
-            item["line"] = "来，拉手。"
-        else:
-            trimmed = RE_FIGHT_QUESTION.sub("", line).strip("，, ")
-            item["line"] = trimmed or "好了。"
+        trimmed = RE_FIGHT_QUESTION.sub("", line).strip("，, ")
+        item["line"] = trimmed or "好了。"
         changed = True
     return out, changed
 
@@ -1087,93 +873,7 @@ def apply_m5_h_local_patches(
 
 
 def patch_m5_pre_mom_escalation(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """妈妈介入前缺 M5 拒和/加码时本地补拍（与是否道歉无关）。"""
-    import copy
-
-    rows = _dialogue_rows(story)
-    if len(rows) < 10:
-        return story, False
-
-    lines = [str(r.get("line") or "").strip() for r in rows]
-    speakers = [str(r.get("speaker") or "").strip() for r in rows]
-    mom_indices = [i for i, sp in enumerate(speakers, 1) if sp == "妈妈"]
-    if not mom_indices:
-        return story, False
-
-    first_mom = mom_indices[0]
-    pre_mom = lines[: first_mom - 1]
-    stubborn_idx = next(
-        (i for i, x in enumerate(pre_mom) if RE_M5_STUBBORN.search(x)),
-        -1,
-    )
-    has_hard = stubborn_idx >= 0 or any(RE_M5_STUBBORN.search(x) for x in pre_mom)
-    if stubborn_idx >= 0:
-        has_escalate = any(
-            RE_M5_ESCALATE.search(x) for x in pre_mom[stubborn_idx + 1 :]
-        )
-    else:
-        has_escalate = any(RE_M5_ESCALATE.search(x) for x in pre_mom)
-    if has_hard and has_escalate:
-        return story, False
-
-    out = copy.deepcopy(story)
-    dlg = out["dialogue"]
-    candidate = _escalate_line_for_context(pre_mom)
-
-    if stubborn_idx >= 0 and not has_escalate:
-        insert_at = stubborn_idx + 1
-        sp = str(dlg[insert_at].get("speaker") or "").strip()
-        if sp not in {"昭昭", "灿灿"}:
-            sp = str(dlg[stubborn_idx].get("speaker") or "灿灿").strip()
-        if len(candidate) <= 30:
-            from app.services.gold_story.scene import (
-                CHAT_LINE_COUNT_MAX,
-            )
-
-            if len(dlg) >= CHAT_LINE_COUNT_MAX:
-                dlg[stubborn_idx]["line"] = candidate
-            else:
-                dlg.insert(insert_at, {"speaker": sp, "line": candidate})
-            return out, True
-
-    kid_idx = _last_kid_idx_before_mom(dlg, first_mom)
-    if kid_idx < 0:
-        return story, False
-
-    if not has_escalate:
-        candidate = _escalate_line_for_context(pre_mom)
-        cur = str(dlg[kid_idx].get("line") or "").strip()
-        if RE_M5_STUBBORN.search(cur):
-            for j in range(kid_idx - 1, -1, -1):
-                if str(dlg[j].get("speaker") or "") not in {"昭昭", "灿灿"}:
-                    continue
-                prev = str(dlg[j].get("line") or "").strip()
-                if not RE_M5_ESCALATE.search(prev) and len(candidate) <= 30:
-                    dlg[j]["line"] = candidate
-                    return out, True
-                break
-        elif len(candidate) <= 30 and not RE_M5_ESCALATE.search(cur):
-            dlg[kid_idx]["line"] = candidate
-            return out, True
-
-    if not has_hard:
-        stub = "哼，不原谅！"
-        cur = str(dlg[kid_idx].get("line") or "").strip()
-        if RE_M5_AUTHORITY.search(cur):
-            return story, False
-        if RE_M5_ESCALATE.search(cur):
-            for j in range(kid_idx - 1, -1, -1):
-                if str(dlg[j].get("speaker") or "") not in {"昭昭", "灿灿"}:
-                    continue
-                prev = str(dlg[j].get("line") or "").strip()
-                if not RE_M5_STUBBORN.search(prev) and len(stub) <= 30:
-                    dlg[j]["line"] = stub
-                    return out, True
-                break
-        elif len(stub) <= 30 and not RE_M5_STUBBORN.search(cur):
-            dlg[kid_idx]["line"] = stub
-            return out, True
-
+    """缺拒和/加码不本地补拍固定台词，交精修/扩写反馈。"""
     return story, False
 
 
@@ -1395,9 +1095,6 @@ def m2_c_meat_whole_item_context(
 
 
 _RE_M2_C1 = re.compile(r"凭什么|归谁|谁先|应该给我|你抢")
-_RE_M2_C2 = re.compile(r"你刚说|你定的|规矩|你不是说")
-_RE_M2_C3 = re.compile(r"凭什么你|你说了算|你又不是")
-_RE_M2_C4 = re.compile(r"妈妈说过|上次|之前说过")
 
 
 def _m2_c_layer_blob(rows: list[dict[str, Any]]) -> str:
@@ -1496,8 +1193,6 @@ def patch_m2_c_snack_beat_rebuild(
     title = str(out.get("scene_title") or story.get("scene_title") or "").strip()
     if title and not str(out.get("key") or "").strip():
         out["key"] = title[:12]
-    if title and not str(out.get("scene_title") or "").strip():
-        out["scene_title"] = title
     if not str(out.get("key") or "").strip():
         out["key"] = "零食作业战"
     if not str(out.get("scene_title") or "").strip():
@@ -1512,6 +1207,38 @@ def patch_m2_c_snack_beat_rebuild(
     return out, ["M2+C零食战beat重建"]
 
 
+def m2_c_snack_rebuild_fallback_eligible(
+    story: dict[str, Any],
+    *,
+    last_err: str = "",
+    payload: dict[str, Any] | None = None,
+) -> bool:
+    """扩写耗尽后是否允许零食模板重建：仅结构分/截断类失败，且原稿未呈完整零食战形态。"""
+    from app.services.daily_story.story_types.quality import RE_BOOMERANG_RULE
+
+    err = str(last_err or "")
+    if not (
+        err.startswith("structure_score:")
+        or "截断" in err
+        or "truncat" in err.lower()
+        or err.startswith("align_refine_failed:")
+        or err.startswith("align_structural:")
+    ):
+        return False
+    meat_ctx = m2_c_meat_whole_item_context(story, payload=payload)
+    if not _m2_c_is_snack_homework_ctx(
+        story, meat_ctx=meat_ctx, payload=payload
+    ):
+        return False
+    rows = _dialogue_rows(story)
+    blob = _m2_c_layer_blob(rows)
+    has_boom = bool(RE_BOOMERANG_RULE.search(blob)) or "说不通" in blob
+    # 已较长且含回旋镖形态：勿整篇覆盖
+    if len(rows) >= 12 and has_boom:
+        return False
+    return True
+
+
 def patch_m2_c_structure(
     story: dict[str, Any],
     *,
@@ -1520,10 +1247,15 @@ def patch_m2_c_structure(
     theme: str = "",
     payload: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """M2+C 金稿：补 C1–C4 层触发词 + 末段回旋镖 + C类 punchline（仅 normalize）。"""
+    """M2+C 机械 normalize：称谓/你刚才→你刚说、setting、剥垫词、清杂引。
+
+    缺 C1 / 末段回旋镖只记 notes，不本地编句；交扩写/精修反馈闭环。
+    不写开场「沙发上」、不 prepend C4、不本地扩句/补赛规。
+    整篇零食 beat 重建仅 expand 耗尽兜底见 ``patch_m2_c_snack_beat_rebuild``。
+    """
     import copy
 
-    from app.services.daily_story.story_types.quality import RE_BOOMERANG_RULE
+    del theme  # 调用方兼容；主题锚不再本地改写 conflict_core
 
     st = str(structure_type or story.get("story_type") or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
@@ -1551,18 +1283,6 @@ def patch_m2_c_structure(
         boom_sp = "灿灿"
     last_sp = "灿灿" if "灿灿嘴硬" in closing else ("昭昭" if "昭昭嘴硬" in closing else "")
 
-    snack_ctx = _m2_c_is_snack_homework_ctx(
-        out, meat_ctx=meat_ctx, payload=payload
-    )
-    if snack_ctx:
-        rebuilt, rebuild_notes = patch_m2_c_snack_beat_rebuild(
-            out,
-            payload=payload,
-            boom_sp=boom_sp,
-            last_sp=last_sp or "灿灿",
-        )
-        return rebuilt, rebuild_notes
-
     # setting 缺地点会扣开场分
     setting = str(out.get("setting") or "").strip()
     if setting and not re.search(r"厅|房|桌|沙发|厨房|门口|床", setting):
@@ -1570,37 +1290,16 @@ def patch_m2_c_structure(
         notes.append("M2+C补setting地点")
         changed = True
     elif not setting:
-        out["setting"] = "客厅沙发前，零食在灿灿手里"
+        out["setting"] = "客厅"
         notes.append("M2+C补setting")
         changed = True
 
-    # punchline_explain → C类前缀
+    # punchline_explain → C类前缀（不写死单篇解释）
     explain = str(out.get("punchline_explain") or "").strip()
     if explain and not explain.startswith("C类"):
-        if meat_ctx and ("八百" in explain or "堵" in explain):
-            out["punchline_explain"] = (
-                "C类：灿灿用昭昭原话与妈妈规矩双重堵截，昭昭无奈嘀咕八百个心眼子。"
-            )
-        else:
-            out["punchline_explain"] = f"C类：{explain}"
+        out["punchline_explain"] = f"C类：{explain}"
         notes.append("M2+C punchline→C类")
         changed = True
-
-    # 主题锚定（relevancy 查 conflict_core+setting+前4句）
-    theme_anchor = str(theme or out.get("scene_title") or "").strip()
-    core = str(out.get("conflict_core") or "")
-    setting = str(out.get("setting") or "")
-    first4 = _m2_c_layer_blob(rows[:4])
-    if (
-        meat_ctx
-        and theme_anchor
-        and theme_anchor[:2] not in core + setting + first4
-    ):
-        suffix = "，昭昭无奈称妹妹八百个心眼子"
-        if suffix not in core:
-            out["conflict_core"] = (core.rstrip("。") + suffix + "。").replace("。。", "。")
-            notes.append("M2+C conflict_core主题锚")
-            changed = True
 
     for item in rows:
         if not isinstance(item, dict):
@@ -1625,30 +1324,20 @@ def patch_m2_c_structure(
             changed = True
 
     rows = _dialogue_rows(out)
-    blob = _m2_c_layer_blob(rows)
 
-    # C1：首句求物须带争归属
+    # C1：缺争归属只记 note，不改写对白
+    c1_ok = False
     for item in rows[:3]:
         if str(item.get("speaker") or "") != "昭昭":
             continue
         ln = str(item.get("line") or "")
         if _RE_M2_C1.search(ln):
+            c1_ok = True
             break
-        if "夹" in ln or "肉" in ln:
-            item["line"] = ln.replace(
-                "给我夹", "凭什么不能给我夹", 1,
-            ).replace(
-                "分我", "凭什么不能分我", 1,
-            )
-            if item["line"] == ln:
-                item["line"] = f"凭什么不能{ln.lstrip('，,')}"
-            notes.append("M2+C补C1争归属")
-            changed = True
-            break
+    if not c1_ok:
+        notes.append("M2+C缺C1争归属")
 
-    rows = _dialogue_rows(out)
-
-    # 开场对白缺地点词：嵌进口语（禁「沙发前，」旁白定格起句）
+    # 开场对白禁旁白定格起句
     for item in rows[:2]:
         ln = str(item.get("line") or "").strip()
         stripped = re.sub(
@@ -1660,221 +1349,83 @@ def patch_m2_c_structure(
             item["line"] = stripped
             notes.append("M2+C剥开场旁白定格")
             changed = True
-    rows = _dialogue_rows(out)
-    open_blob = _m2_c_layer_blob(rows[:3])
-    if not re.search(r"客厅|沙发|餐桌|厨房|门口|床", open_blob):
-        for item in rows[:2]:
-            if str(item.get("speaker") or "") not in {"昭昭", "灿灿"}:
-                continue
-            ln = str(item.get("line") or "").strip()
-            if re.search(r"零食|薯片|肉", ln):
-                new_ln = re.sub(
-                    r"(这包|那包)?(零食|薯片|肉)",
-                    r"沙发上那包\2",
-                    ln,
-                    count=1,
-                )
-            else:
-                m = re.match(r"^((?:昭昭|灿灿)[，,])?(.*)$", ln)
-                prefix = (m.group(1) if m else "") or ""
-                rest = (m.group(2) if m else ln) or ""
-                new_ln = f"{prefix}沙发上{rest}".replace("沙发上沙发上", "沙发上")
-            item["line"] = new_ln[:24]
-            notes.append("M2+C开场嵌地点")
-            changed = True
-            break
 
-    # 规则轮次：仅整件物/吃肉语境才补「才算」模板；零食作业本战禁注入举过头顶
+    # 清误注入的整件物赛规；不在本地补新赛规台词
     rows = _dialogue_rows(out)
-    mid = rows[2:-4] if len(rows) >= 10 else rows[2:-2]
-    mid_blob = _m2_c_layer_blob(mid)
-    append_n = len(re.findall(r"才算|不算|追加一条", mid_blob))
-    snack_ctx = (not meat_ctx) and bool(
-        re.search(r"薯片|作业本|(?:零食.{0,8}作业)|(?:作业.{0,8}零食)", _m2_c_layer_blob(rows))
-        or re.search(r"零食", _m2_c_layer_blob(rows[:4]))
-        and re.search(r"作业|本子", _m2_c_layer_blob(rows))
+    snack_ctx = _m2_c_is_snack_homework_ctx(
+        out, meat_ctx=meat_ctx, payload=payload
     )
-    if meat_ctx and append_n < 2 and mid:
-        targets = [
-            it
-            for it in mid
-            if str(it.get("speaker") or "") == "灿灿"
-            and not re.search(
-                r"之前|你刚说|凭什么|才算",
-                str(it.get("line") or ""),
-            )
-        ]
-        if len(targets) < 2:
-            more = [
-                it
-                for it in mid
-                if it not in targets
-                and not re.search(r"之前|你刚说", str(it.get("line") or ""))
-            ]
-            targets = targets + more
-        if targets:
-            targets[0]["line"] = "光抱着不行，得举过头顶才算！"
-            notes.append("M2+C补规则定义轮")
-            changed = True
-        if len(targets) >= 2:
-            targets[1]["line"] = "还得证明三次才算真正拿到！"
-            notes.append("M2+C补荒谬规则轮")
-            changed = True
-        elif len(mid) >= 2 and targets:
-            other = next(
-                (
-                    it
-                    for it in mid
-                    if str(it.get("speaker") or "")
-                    != str(targets[0].get("speaker") or "")
-                ),
-                None,
-            )
-            if other is not None:
-                other["line"] = "那按哪条才算？你一条接一条！"
-                notes.append("M2+C补规则追问")
-                changed = True
-    elif snack_ctx and mid:
-        # 清掉误注入的整件物赛规
+    if snack_ctx:
         for item in rows:
             ln = str(item.get("line") or "")
-            if re.search(r"举过头顶|证明三次|光抱着不行", ln):
-                sp = str(item.get("speaker") or "")
-                if sp == "灿灿":
-                    item["line"] = "零食归我，作业本归你，这才公平！"
-                else:
-                    item["line"] = "你偷吃还讲公平？"
+            if not re.search(r"举过头顶|证明三次|光抱着不行", ln):
+                continue
+            new_ln = re.sub(r"光抱着不行，得举过头顶才算！?", "", ln)
+            new_ln = re.sub(
+                r"还得证明三次才算真正拿到！?",
+                "",
+                new_ln,
+            ).strip("，, ")
+            if new_ln and new_ln != ln:
+                item["line"] = new_ln[:24]
                 notes.append("M2+C清无关才算模板")
                 changed = True
-        # 零食战递进：威胁本子 / 吃光加码（贴 beat，不发明新赛规维度）
-        rows = _dialogue_rows(out)
-        blob = _m2_c_layer_blob(rows)
-        if "撕" not in blob and len(rows) >= 8:
-            for item in rows[3:8]:
-                if str(item.get("speaker") or "") == "昭昭":
-                    item["line"] = "你不还，我就撕你作业本！"
-                    notes.append("M2+C补撕本威胁")
-                    changed = True
-                    break
-        rows = _dialogue_rows(out)
-        blob = _m2_c_layer_blob(rows)
-        if "吃光" not in blob and "全吃" not in blob and len(rows) >= 8:
-            for item in rows[4:9]:
-                if str(item.get("speaker") or "") == "灿灿":
-                    item["line"] = "你敢撕，我就把零食全吃光！"
-                    notes.append("M2+C补吃光加码")
-                    changed = True
-                    break
+
+    from app.services.daily_story.story_types.quality import RE_BOOMERANG_RULE
 
     rows = _dialogue_rows(out)
-    blob = _m2_c_layer_blob(rows)
+    tail_rows = rows[-4:] if len(rows) >= 4 else rows
+    tail_blob = _m2_c_layer_blob(tail_rows)
 
-    # C3：昭昭反驳须挑战权威
-    if not _RE_M2_C3.search(blob):
-        for item in rows[4:10]:
-            if str(item.get("speaker") or "") != "昭昭":
-                continue
-            ln = str(item.get("line") or "")
-            if "胖" in ln or "哼" in ln:
-                item["line"] = f"凭什么你说了算，{ln.lstrip('，,')}"
-                notes.append("M2+C补C3挑战权威")
-                changed = True
-                break
+    def _tail_has_boomerang() -> bool:
+        return bool(RE_BOOMERANG_RULE.search(tail_blob)) or "说不通" in tail_blob
 
-    rows = _dialogue_rows(out)
-    blob = _m2_c_layer_blob(rows)
-
-    # 从正文抽出可核对的规矩短句（供回旋镖引语有前文）
-    rule_frag = ""
-    for item in rows[:-4]:
-        ln = str(item.get("line") or "")
-        # 优先完整双归句，避免截成「作业本归你，公平」
-        m = re.search(
-            r"((?:零食|薯片).{0,4}归我.{0,2}(?:作业本|本子).{0,2}归你)",
-            ln,
-        )
-        if m:
-            rule_frag = re.sub(r"[呢呀嘛吧啊「」]", "", m.group(1))[:14]
-            break
-        m = re.search(r"((?:零食|作业|肉|牛奶).{0,6}归.{0,4})", ln)
-        if m:
-            rule_frag = m.group(1)[:10]
-            break
-        if "不吃就不吃" in ln or "不爱吃" in ln:
-            rule_frag = "不吃就不吃"
-            break
-    if meat_ctx or rule_frag == "不吃就不吃":
-        boom_line = "你刚说「不吃就不吃」，说不通！"
-    elif rule_frag:
-        boom_line = f"你刚说「{rule_frag}」，说不通！"
-    elif snack_ctx or "零食" in blob or "作业" in blob:
-        # 确保前文有出处后再引
-        has_src = any(
-            re.search(r"零食.{0,4}归我", str(it.get("line") or ""))
-            for it in rows[:-4]
-        )
-        if not has_src:
-            for item in rows[0:4]:
-                if str(item.get("speaker") or "") == "灿灿":
-                    item["line"] = "零食归我，作业本归你，公平吧？"
-                    notes.append("M2+C补规矩出处")
-                    changed = True
-                    break
-        boom_line = "你刚说「零食归我，作业本归你」，说不通！"
-    else:
-        boom_line = "你刚说的规矩，现在说不通了！"
-    boom_line = boom_line[:24]
-
-    # 末句嘴硬：禁「哼」（会触发无破功软收 -20）
+    # 末句：只纠 speaker / 去「哼」
     if last_sp and rows:
         last = rows[-1]
-        want_last = "下次我还这样！"
-        if str(last.get("speaker") or "") != last_sp or "哼" in str(
-            last.get("line") or ""
-        ):
+        if str(last.get("speaker") or "") != last_sp:
             last["speaker"] = last_sp
-            last["line"] = want_last
             notes.append("M2+C末句嘴硬speaker")
             changed = True
-        elif not re.search(r"下次|还这样|嘴硬|算你|藏", str(last.get("line") or "")):
-            last["line"] = want_last
-            notes.append("M2+C末句嘴硬话")
+        last_ln = str(last.get("line") or "")
+        if "哼" in last_ln:
+            trimmed = re.sub(r"哼[，,]?", "", last_ln).strip("，, ")
+            if trimmed and trimmed != last_ln:
+                last["line"] = trimmed[:24]
+                notes.append("M2+C末句去哼")
+                changed = True
+
+    rows = _dialogue_rows(out)
+    if not _tail_has_boomerang():
+        notes.append("M2+C缺末段回旋镖")
+    elif len(rows) >= 2:
+        prev = rows[-2]
+        prev_ln = str(prev.get("line") or "")
+        if (
+            RE_BOOMERANG_RULE.search(prev_ln) or "说不通" in prev_ln
+        ) and str(prev.get("speaker") or "") != boom_sp:
+            prev["speaker"] = boom_sp
+            notes.append("M2+C回旋镖speaker")
             changed = True
 
     rows = _dialogue_rows(out)
-    # 倒数第二句固定为 boom_sp 回旋镖（须落在 validate 的 tail4）
     if len(rows) >= 2:
         prev = rows[-2]
-        prev["speaker"] = boom_sp
-        prev["line"] = boom_line
-        notes.append("M2+C末段回旋镖")
-        changed = True
         for item in rows[-4:-2] + rows[-1:]:
             ln = str(item.get("line") or "")
             if not re.search(r"你刚说|你说的|你不是说", ln):
                 continue
             if item is prev:
                 continue
-            item["line"] = re.sub(
+            trimmed = re.sub(
                 r"(不行[！!])?(?:你刚说|你说的|你不是说)[^，。！?]{0,16}",
                 "",
                 ln,
-            ).strip("，, ") or "真的不行！"
-            notes.append("M2+C清尾段杂引")
-            changed = True
-
-    # C4：新证据（之前/妈妈）
-    rows = _dialogue_rows(out)
-    blob = _m2_c_layer_blob(rows)
-    if not re.search(r"之前|妈妈说过|上次|柜子里", blob):
-        for item in rows[4:10]:
-            if str(item.get("speaker") or "") not in {"昭昭", "灿灿"}:
-                continue
-            ln = str(item.get("line") or "").strip()
-            item["line"] = f"之前说过的，{ln}".replace("，，", "，")[:24]
-            notes.append("M2+C补C4新证据")
-            changed = True
-            break
+            ).strip("，, ")
+            if trimmed and trimmed != ln:
+                item["line"] = trimmed[:24]
+                notes.append("M2+C清尾段杂引")
+                changed = True
 
     # 剥垫字叠词：只清「现在/立刻/马上/快点」连拍，保留单次「真的/不行/啊/吧」
     rows = _dialogue_rows(out)
@@ -1894,85 +1445,21 @@ def patch_m2_c_structure(
             notes.append("M2+C剥叠垫词")
             changed = True
 
-    # 零食战：清掉中段误引的残缺回旋镖（只保留末二句那条）
     if snack_ctx:
         rows = _dialogue_rows(out)
         for item in rows[:-2]:
             ln = str(item.get("line") or "")
             if not re.search(r"你刚说|你说的|你不是说", ln):
                 continue
-            item["line"] = re.sub(
+            trimmed = re.sub(
                 r"(不行[！!])?(?:你刚说|你说的|你不是说)[^，。！?]{0,18}",
                 "",
                 ln,
-            ).strip("，,！!。？ ") or "你休想！"
-            notes.append("M2+C清中段杂引")
-            changed = True
-
-        # 字数不够时用本场语义扩句，禁止靠「现在立刻」凑字
-        rows = _dialogue_rows(out)
-        from app.services.daily_story.prompts import (
-            DAILY_STORY_BODY_CHARS_MIN,
-            dialogue_total_chars,
-        )
-
-        expands = (
-            (r"^你等着", "你等着，薯片不还我就撕本子！"),
-            (r"^你敢撕", "你敢撕，我就把零食全吃光！"),
-            (r"^你休想", "你休想，规矩是你自己定的！"),
-            (r"^放下", "放下我的作业本，那是明天要交的！"),
-            (r"^你偷吃", "你偷吃我的零食，还敢讲公平？"),
-            (r"^好好好", "好好好，薯片给你，别撕我本子！"),
-            (r"^下次", "下次我先把规矩写清楚！"),
-        )
-        guard = 0
-        while dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN and guard < 10:
-            guard += 1
-            grew = False
-            for item in rows:
-                ln = str(item.get("line") or "").strip()
-                if len(ln) >= 22:
-                    continue
-                for pat, repl in expands:
-                    if re.search(pat, ln) and ln != repl[:24]:
-                        item["line"] = repl[:24]
-                        notes.append("M2+C零食扩句")
-                        changed = True
-                        grew = True
-                        break
-                if grew:
-                    break
-            if not grew:
-                # 给偏短中段句加本场细节（不增句）
-                for item in rows[2:-2]:
-                    ln = str(item.get("line") or "").strip()
-                    if len(ln) >= 20:
-                        continue
-                    sp = str(item.get("speaker") or "")
-                    if sp == "昭昭" and "本子" not in ln and "撕" not in ln:
-                        item["line"] = (ln.rstrip("！。") + "，不还就撕本子！")[:24]
-                    elif sp == "灿灿" and "吃" not in ln:
-                        item["line"] = (ln.rstrip("！。") + "，敢撕我全吃光！")[:24]
-                    else:
-                        continue
-                    notes.append("M2+C零食扩句")
-                    changed = True
-                    grew = True
-                    break
-            if not grew:
-                break
-            rows = _dialogue_rows(out)
-
-        # 扩句后可能冲掉末二拍，再钉一次
-        rows = _dialogue_rows(out)
-        if len(rows) >= 2 and last_sp:
-            rows[-1]["speaker"] = last_sp
-            if "下次" not in str(rows[-1].get("line") or ""):
-                rows[-1]["line"] = "下次我先把规矩写清楚！"
-            rows[-2]["speaker"] = boom_sp
-            rows[-2]["line"] = boom_line
-            notes.append("M2+C零食末拍重钉")
-            changed = True
+            ).strip("，,！!。？ ")
+            if trimmed and trimmed != ln:
+                item["line"] = trimmed[:24]
+                notes.append("M2+C清中段杂引")
+                changed = True
 
     if changed:
         from app.services.daily_story.prompts import sync_discovery_opening_from_dialogue
@@ -2053,8 +1540,7 @@ def patch_m2_c_break_eating_consecutive(
         ln_b = str(b.get("line") or "")
         if ("吃给你看" in ln_a or "真香" in ln_b) and re.search(r"真香|啊呜", ln_b):
             a["speaker"] = "昭昭"
-            if "吃给你看" in ln_a:
-                a["line"] = "哼，那你吃吧，我看着你吃呢。"
+            # 只纠 speaker，不改写台词
             return out, ["M2+C拆连说吃肉"]
     return story, []
 
@@ -2114,40 +1600,9 @@ def patch_m2_c_fix_opening(
     *,
     payload: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """M2+C：首句须昭昭求肉，灿灿不能无前置引话堵截。"""
-    import copy
-
-    payload = payload if isinstance(payload, dict) else {}
-    rows = _dialogue_rows(story)
-    if not rows:
-        return story, []
-
-    first = rows[0]
-    sp0 = str(first.get("speaker") or "").strip()
-    ln0 = str(first.get("line") or "")
-    if sp0 != "灿灿" or not re.search(r"不爱吃|你刚说", ln0):
-        return story, []
-
-    sc = payload.get("scene_contract")
-    if isinstance(sc, dict):
-        chain = sc.get("beat_chain") or []
-        if chain and isinstance(chain[0], dict):
-            b0_sp = str(chain[0].get("speaker") or "")
-            if b0_sp == "昭昭":
-                return story, []
-
-    out = copy.deepcopy(story)
-    dlg = out["dialogue"]
-    if not isinstance(dlg, list):
-        return story, []
-    dlg.insert(
-        0,
-        {
-            "speaker": "昭昭",
-            "line": "餐桌旁，灿灿，你盘里肉好香，凭什么不能给我夹一块？",
-        },
-    )
-    return out, ["M2+C补开场求肉"]
+    """缺开场求物不本地插入固定求肉句，交扩写/精修反馈。"""
+    del payload
+    return story, []
 
 
 def patch_m2_c_ensure_seed_close(
@@ -2155,51 +1610,9 @@ def patch_m2_c_ensure_seed_close(
     *,
     payload: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """M2+C 整件肉：缺 seed 收束则补妈妈+八百个心眼子；牛奶/公平类不注入。"""
-    import copy
-
-    payload = payload if isinstance(payload, dict) else {}
-    if not m2_c_meat_whole_item_context(story, payload=payload):
-        return story, []
-
-    rows = _dialogue_rows(story)
-    if not rows:
-        return story, []
-
-    blob = _m2_c_layer_blob(rows)
-    notes: list[str] = []
-    out = copy.deepcopy(story)
-    dlg = out["dialogue"]
-    if not isinstance(dlg, list):
-        return story, []
-
-    seed = payload.get("dialogue_seed")
-    mom_line = "吃商这方面谁能比得过我。"
-    close_line = "这妹妹，八百个心眼子呢。"
-    if isinstance(seed, list):
-        for item in seed:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("speaker") or "") == "妈妈":
-                intent = str(item.get("intent") or "")
-                m = re.search(r"[「\"]([^」\"]+)[」\"]", intent)
-                if m:
-                    mom_line = m.group(1)
-                elif "吃商" in intent:
-                    mom_line = "吃商这方面谁能比得过我。"
-            if str(item.get("speaker") or "") == "昭昭" and "八百" in str(
-                item.get("intent") or ""
-            ):
-                close_line = "这妹妹，八百个心眼子呢！"
-
-    if "八百个心眼" not in blob:
-        if not any(str(r.get("speaker") or "") == "妈妈" for r in rows):
-            dlg.append({"speaker": "妈妈", "line": mom_line})
-            notes.append("M2+C补妈妈收束")
-        dlg.append({"speaker": "昭昭", "line": close_line})
-        notes.append("M2+C补点题收束")
-
-    return out, notes
+    """缺 seed 收束不本地补妈妈/点题固定句，交扩写/精修反馈。"""
+    del payload
+    return story, []
 
 
 def patch_gold_chat_c_seed_bridge(
@@ -2209,48 +1622,9 @@ def patch_gold_chat_c_seed_bridge(
     mechanism: str = "",
     payload: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """M2+C 整件肉：妈妈出场前补「再要/再堵」短来回；非肉战跳过。"""
-    import copy
-
-    st = str(structure_type or story.get("story_type") or "").strip().upper()
-    mech = str(mechanism or "").strip().upper()
-    if st != "C" or mech != "M2":
-        return story, []
-    if not m2_c_meat_whole_item_context(story, payload=payload):
-        return story, []
-
-    rows = _dialogue_rows(story)
-    if len(rows) < 6:
-        return story, []
-
-    blob = "".join(str(r.get("line") or "") for r in rows)
-    if (
-        "故意馋" in blob
-        or "谁让你先说不爱吃" in blob
-        or "明天的是明天的" in blob
-    ):
-        return story, []
-
-    mom_i = next(
-        (i for i, r in enumerate(rows) if str(r.get("speaker") or "") == "妈妈"),
-        -1,
-    )
-    if mom_i < 2:
-        return story, []
-
-    out = copy.deepcopy(story)
-    dlg = out["dialogue"]
-    if not isinstance(dlg, list):
-        return story, []
-    insert = [
-        {"speaker": "昭昭", "line": "你……你就故意馋我！"},
-        {"speaker": "灿灿", "line": "馋的就是你，谁让你先说不爱吃。"},
-        {"speaker": "昭昭", "line": "我明天不吃零食了，换一口肉行不行？"},
-        {"speaker": "灿灿", "line": "明天的是明天的，今天的肉我说了算，不分！"},
-        {"speaker": "昭昭", "line": "哼，你就仗着自己盘里有肉！"},
-    ]
-    dlg[mom_i:mom_i] = insert
-    return out, ["gold_chat补seed再堵来回"]
+    """缺再堵来回不本地插入固定肉战台词，交扩写/精修反馈。"""
+    del structure_type, mechanism, payload
+    return story, []
 
 
 def _authority_beat0(
@@ -2692,11 +2066,7 @@ def patch_authority_trim_after_cede(
     keep = set(range(0, cede_i + 1)) | set(mid) | {punch_i}
     # also drop empty fluff after punch if any (shouldn't)
     new_rows = [rows[i] for i in range(len(rows)) if i in keep]
-    # ensure punch is last
-    if new_rows and not RE_AUTH_PUNCH.search(str(new_rows[-1].get("line") or "")):
-        punch_row = rows[punch_i]
-        new_rows = [r for r in new_rows if r is not punch_row]
-        new_rows.append(punch_row)
+    # keep 含 punch_i 且 mid ⊂ (cede, punch)，末行必然是点题句
     if len(new_rows) == len(rows) and all(
         str(new_rows[j].get("line")) == str(rows[j].get("line"))
         for j in range(len(rows))
@@ -2742,36 +2112,12 @@ def apply_authority_punchline_local_patches(
     if seed is None:
         seed = data.get("dialogue_seed")
     if isinstance(seed, list) and seed:
-        # 不经 convert 以免循环 import；逻辑与 patch_seed_speaker_align 同构
         from app.services.gold_story.gold_chat.validate import (
-            _seed_unique_phrase_owners,
+            apply_seed_phrase_speaker_align,
         )
 
-        owners = _seed_unique_phrase_owners(seed)
-        if owners:
-            import copy as _copy
-            import re as _re2
-
-            out = _copy.deepcopy(data)
-            dlg = out.get("dialogue")
-            if isinstance(dlg, list):
-                for item in dlg:
-                    if not isinstance(item, dict):
-                        continue
-                    sp = str(item.get("speaker") or "").strip()
-                    line = str(item.get("line") or "").strip()
-                    if not line or sp not in {"昭昭", "灿灿", "妈妈", "爸爸"}:
-                        continue
-                    line_han = "".join(_re2.findall(r"[\u4e00-\u9fff]", line))
-                    for phr, want in owners.items():
-                        if phr not in line and phr not in line_han:
-                            continue
-                        if sp == want:
-                            break
-                        item["speaker"] = want
-                        c9 = True
-                        break
-                if c9:
-                    data = out
+        data, c9 = apply_seed_phrase_speaker_align(
+            data, dialogue_seed=seed
+        )
     return data, c1 or c2 or c3 or c4 or c5 or c6 or c7 or c8 or c9
 

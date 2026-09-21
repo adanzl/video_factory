@@ -1268,6 +1268,42 @@ def _seed_unique_phrase_owners(
     return kept
 
 
+def apply_seed_phrase_speaker_align(
+    story: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """seed 专属短语出现在错 speaker 时，改回 seed 标注角色（机械对齐）。"""
+    import copy
+
+    owners = _seed_unique_phrase_owners(dialogue_seed)
+    if not owners:
+        return story, False
+
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    changed = False
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if not line or sp not in {"昭昭", "灿灿", "妈妈", "爸爸"}:
+            continue
+        line_han = "".join(re.findall(r"[\u4e00-\u9fff]", line))
+        for phr, want in owners.items():
+            if phr not in line and phr not in line_han:
+                continue
+            if sp == want:
+                break
+            item["speaker"] = want
+            changed = True
+            break
+    return out, changed
+
+
 def _append_seed_speaker_issues(
     rows: list[dict[str, Any]],
     issues: list[dict[str, Any]],
