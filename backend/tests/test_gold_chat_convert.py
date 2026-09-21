@@ -771,6 +771,124 @@ def test_gold_chat_scenario_rules_are_contract_scoped():
     assert "本场调解" in mediation
     assert "本场上药" in mediation
 
+    # 「不和好」不得因含子串「和好」而注入调解
+    denied = format_scenario_rules_block(
+        mechanism="M8",
+        structure_type="J",
+        conflict_text="昭昭先动手抢垫子",
+        closing_intent="灿灿压住，昭昭怂退，不和好，妈妈不出场",
+    )
+    assert "本场调解" not in denied
+    assert "定责" not in denied
+
+    # 中段拒和 + 结尾要求和好 → 仍注入和好/调解
+    mid_refuse = format_scenario_rules_block(
+        mechanism="M5",
+        structure_type="H",
+        conflict_text="灿灿拒绝和好，说不和好，冲突升级",
+        closing_intent="妈妈调解后姐弟拉手和好",
+    )
+    assert "本场调解" in mid_refuse or "本场和好" in mid_refuse
+
+
+def test_gold_chat_align_refine_prompts_are_type_scoped():
+    from app.services.gold_story.gold_chat.prompts import (
+        format_align_refine_system,
+        format_align_refine_user,
+    )
+
+    sys_j = format_align_refine_system(mechanism="M8", structure_type="J")
+    user_j = format_align_refine_user(
+        issues_block="（无）",
+        align_block="checklist",
+        story_json="{}",
+        chars_min=240,
+        chars_max=370,
+        banned_literals="（无）",
+        mom_lines_max=1,
+        max_line=24,
+        mechanism="M8",
+        structure_type="J",
+        closing_intent="灿灿压住，昭昭怂退",
+    )
+    j_all = sys_j + user_j
+    assert "保真-互毁" not in j_all
+    assert "保真-和好" not in j_all
+    assert "保真-M5" not in j_all
+    assert "不打了" not in j_all
+    assert "拉手" not in j_all
+
+    # 否定契约：不和好 + 妈妈不出场 → 禁止和好/定责
+    deny_closing = "灿灿压住，昭昭怂退，不和好，妈妈不出场"
+    sys_deny = format_align_refine_system(
+        mechanism="M8",
+        structure_type="J",
+        closing_intent=deny_closing,
+    )
+    user_deny = format_align_refine_user(
+        issues_block="（无）",
+        align_block="checklist",
+        story_json="{}",
+        chars_min=240,
+        chars_max=370,
+        banned_literals="（无）",
+        mom_lines_max=1,
+        max_line=24,
+        mechanism="M8",
+        structure_type="J",
+        closing_intent=deny_closing,
+    )
+    deny_all = sys_deny + user_deny
+    assert "保真-和好" not in deny_all
+    assert "保真-H定责" not in deny_all
+    assert "妈妈分层定责" not in deny_all
+
+    # 中段「不和好」不得覆盖结尾和好要求
+    mid_refuse_closing = "妈妈调解后姐弟拉手和好"
+    mid_refuse_conflict = "灿灿拒绝和好，说不和好，冲突升级"
+    user_mid = format_align_refine_user(
+        issues_block="（无）",
+        align_block="checklist",
+        story_json="{}",
+        chars_min=240,
+        chars_max=370,
+        banned_literals="（无）",
+        mom_lines_max=1,
+        max_line=24,
+        mechanism="M5",
+        structure_type="H",
+        closing_intent=mid_refuse_closing,
+        conflict_text=mid_refuse_conflict,
+    )
+    assert "保真-和好" in user_mid
+    assert "保真-H定责" in user_mid
+
+    sys_h = format_align_refine_system(
+        mechanism="M5",
+        structure_type="H",
+        closing_intent="灿灿问还打不打架，拉手和好",
+        conflict_text="互毁后妈妈调解",
+    )
+    user_h = format_align_refine_user(
+        issues_block="（无）",
+        align_block="checklist",
+        story_json="{}",
+        chars_min=240,
+        chars_max=370,
+        banned_literals="（无）",
+        mom_lines_max=1,
+        max_line=24,
+        mechanism="M5",
+        structure_type="H",
+        closing_intent="灿灿问还打不打架，拉手和好",
+        conflict_text="互毁后妈妈调解",
+    )
+    h_all = sys_h + user_h
+    assert "M5 立规" in sys_h
+    assert "保真-互毁" in user_h
+    assert "保真-和好" in user_h
+    assert "拉手" in h_all
+
 
 def test_is_truncation_error():
     assert gc._is_truncation_error(

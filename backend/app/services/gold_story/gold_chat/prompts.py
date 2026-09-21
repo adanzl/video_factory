@@ -1,5 +1,6 @@
 """gold_chat 扩写 / 精修提示词模板。"""
 
+import re
 from typing import Any
 
 from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
@@ -27,6 +28,102 @@ CHARS_SOFT_HI = DAILY_STORY_BODY_CHARS_MAX - 30  # 340
 DIALOGUE_ROUNDS_SOFT_LO = 12
 DIALOGUE_ROUNDS_SOFT_HI = 16
 DIALOGUE_ROUNDS_HARD_MAX = 18
+
+# 否定前缀：避免「不和好」误触发「和好」规则
+_RE_NEG_BEFORE = re.compile(r"(?:不|勿|别|没|无|非|禁|莫)[\u4e00-\u9fff]{0,2}$")
+_MOM_ABSENT_MARKERS = (
+    "妈妈不出场",
+    "妈妈不介入",
+    "家长不出场",
+    "大人不出场",
+    "妈妈不在场",
+)
+_RECONCILE_DENY_MARKERS = (
+    "不和好",
+    "勿和好",
+    "别和好",
+    "禁止和好",
+    "无需和好",
+    "不要和好",
+)
+
+
+def _token_affirmed(text: str, token: str) -> bool:
+    """token 出现且局部无否定前缀；「不打了」整词视为肯定收束。"""
+    raw = str(text or "")
+    if not token or not raw:
+        return False
+    if token == "不打了":
+        return "不打了" in raw
+    start = 0
+    while True:
+        i = raw.find(token, start)
+        if i < 0:
+            return False
+        prefix = raw[max(0, i - 4) : i]
+        if _RE_NEG_BEFORE.search(prefix):
+            start = i + len(token)
+            continue
+        return True
+
+
+def _any_token_affirmed(text: str, tokens: tuple[str, ...]) -> bool:
+    return any(_token_affirmed(text, t) for t in tokens)
+
+
+def _reconcile_wanted(
+    *,
+    structure_type: str,
+    closing_intent: str = "",
+    conflict_text: str = "",
+) -> bool:
+    """是否需要仪式性和好；以 closing_intent 为准，中段拒和不当全篇禁止。"""
+    st = str(structure_type or "").strip().upper()
+    closing = str(closing_intent or "").strip()
+    conflict = str(conflict_text or "").strip()
+    if closing:
+        # 结尾明确禁止 → 关；结尾明确和好/拉手 → 开
+        if any(m in closing for m in _RECONCILE_DENY_MARKERS):
+            return False
+        if _any_token_affirmed(
+            closing, ("和好", "拉手", "不打了", "劝和", "调解")
+        ):
+            return True
+        # 收束未谈和好：H 默认真好；其余不因 conflict 中段「不和好」关掉
+        return st == "H"
+    # 无收束文案时：H 默认开；否则只认 conflict 的肯定表述（不认中段否定）
+    if st == "H":
+        return True
+    return _any_token_affirmed(
+        conflict, ("和好", "拉手", "不打了", "劝和", "调解")
+    )
+
+
+def _mom_adjudicate_wanted(
+    *,
+    structure_type: str,
+    closing_intent: str = "",
+    conflict_text: str = "",
+) -> bool:
+    """是否需要妈妈定责；缺席声明与肯定要求均优先看 closing_intent。"""
+    st = str(structure_type or "").strip().upper()
+    closing = str(closing_intent or "").strip()
+    conflict = str(conflict_text or "").strip()
+    if closing:
+        if any(m in closing for m in _MOM_ABSENT_MARKERS):
+            return False
+        if _any_token_affirmed(
+            closing, ("调解", "劝和", "定责", "妈妈介入", "妈妈定责")
+        ):
+            return True
+        return st == "H"
+    if any(m in conflict for m in _MOM_ABSENT_MARKERS):
+        return False
+    if st == "H":
+        return True
+    return _any_token_affirmed(
+        conflict, ("调解", "劝和", "定责", "妈妈介入", "妈妈定责")
+    )
 
 _SYSTEM = (
     "你是日常故事编剧。输入为金故事 scene_contract（可拍场景契约）"
@@ -212,21 +309,16 @@ _M8_J_MID_REWRITE_USER = """任务：保留首尾，重写中段以补满篇幅�
 
 只输出 JSON。"""
 
-_ALIGN_REFINE_SYSTEM = (
+_ALIGN_REFINE_SYSTEM_BASE = (
     "你是 gold_chat 类型对齐精修编辑。只改被点到的对白行，其余字段与行数不动。\n"
-    "须落实金稿对齐 checklist；M5 立规用「家规/规矩/规定」，勿写「妈妈说过」类转述。\n"
-    "互毁：报复句之前须 establish 双方物/作品；改机审标定行，"
-    "禁止把前文合并进「也/还弄坏」同一句。\n"
-    "M5 立规/拒和/加码各占一句，禁止一句三连；"
-    "拆句时须保留拒和与加码各一句且在妈妈前（与是否道歉无关）。\n"
+    "须落实金稿对齐 checklist。\n"
     "修复不得减少正文总字数、不得删句；不足则在句内扩写。\n"
     "收场严格按 closing_intent，不发明帮拿/搀扶等新动作；"
     "碘伏/涂药后禁止续写新剧情；「还打不打架」speaker 须与 closing_intent 一致。\n"
-    "末 4 句须有拉手或齐声「不打了」。\n"
     "只输出 JSON：{\"fixes\":[{\"no\":行号,\"line\":\"改好后的一句\"}]}"
 )
 
-_ALIGN_REFINE_USER = """对齐机审问题（只改标定行）：
+_ALIGN_REFINE_USER_BASE = """对齐机审问题（只改标定行）：
 {issues_block}
 
 {align_block}
@@ -237,20 +329,175 @@ _ALIGN_REFINE_USER = """对齐机审问题（只改标定行）：
 硬约束：
 - 只改上方标定行号；行数、speaker 不变；每句 ≤{max_line} 字
 - **不得减少正文总字数、不得删句**；改句后总字数仍须 ≥{chars_min}
-- **保真-互毁**：在报复句**之前**的句 establish 破坏依据（抢坏/弄坏）与对方也有该物
-  （如「我画…你的画呢」）；报复句可保留，勿合并成一句
-- **保真-M5合并/保真-M5加码**：立规、拒和、加码须分句且在妈妈介入前各至少一句
-- **保真-和好**：末 4 句补「拉手」或姐弟齐声「不打了」
-- **保真-M5拒和speaker**：若已有服软/道歉，拒和/加码须另一方说
-- **保真-对象持有补丁**：勿用「我也有你的X」单独补丁互毁对象
 - **保真-收场Invent**：删 closing_intent 外的帮忙/搀扶/回来/不疼了等，收成短应答
 - **保真-收场拖句**：碘伏/涂药后多余句**可删**；删后总字数仍须 ≥{chars_min}；残句改完整或删
-- **保真-齐声问句**：「还打不打架」改 closing_intent 指定角色问；删重复问句
-- **保真-H定责**：妈妈分层定责，禁「扯平/都有错」；先点先动手方再劝和
 - 正文总字数 {chars_min}–{chars_max}；妈妈台词 ≤{mom_lines_max} 句；末句宜姐弟对白
 - 禁词须同义改写：{banned_literals}
 - line 只写台词，不带说话人前缀；禁括号说明
+{type_constraints}
 只输出 fixes JSON。"""
+
+
+def format_align_refine_type_constraints(
+    *,
+    mechanism: str = "",
+    structure_type: str = "",
+    closing_intent: str = "",
+    conflict_text: str = "",
+) -> str:
+    """精修阶段按机制/结构裁剪；与 format_scenario_rules_block 同口径。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    context = " ".join(
+        [
+            str(conflict_text or ""),
+            str(closing_intent or ""),
+        ]
+    )
+    lines: list[str] = []
+    need_mutual = mech == "M5" or _any_token_affirmed(
+        context, ("互毁", "撕坏", "弄坏", "推搡")
+    )
+    need_m5 = mech == "M5"
+    need_reconcile = _reconcile_wanted(
+        structure_type=st,
+        closing_intent=closing_intent,
+        conflict_text=conflict_text,
+    )
+    need_mom = _mom_adjudicate_wanted(
+        structure_type=st,
+        closing_intent=closing_intent,
+        conflict_text=conflict_text,
+    )
+    need_fight_q = "还打不打架" in context or bool(
+        _parse_fight_question_asker(closing_intent)
+    )
+    need_iodine = _any_token_affirmed(
+        context, ("碘伏", "涂药", "上药", "包扎")
+    )
+
+    if need_mutual:
+        lines.extend(
+            [
+                "- **保真-互毁**：在报复句**之前**的句 establish 破坏依据（抢坏/弄坏）"
+                "与对方也有该物（如「我画…你的画呢」）；报复句可保留，勿合并成一句",
+                "- **保真-对象持有补丁**：勿用「我也有你的X」单独补丁互毁对象",
+            ]
+        )
+    if need_m5:
+        lines.extend(
+            [
+                "- **保真-M5合并/保真-M5加码**：立规、拒和、加码须分句且在妈妈介入前"
+                "各至少一句",
+                "- **保真-M5拒和speaker**：若已有服软/道歉，拒和/加码须另一方说",
+            ]
+        )
+    if need_reconcile:
+        lines.append(
+            "- **保真-和好**：仅当 closing_intent 要求时，末 4 句补「拉手」"
+            "或姐弟齐声「不打了」；勿擅自套到无和好契约的类型"
+        )
+    if need_fight_q:
+        lines.append(
+            "- **保真-齐声问句**：「还打不打架」改 closing_intent 指定角色问；"
+            "删重复问句"
+        )
+    if need_mom:
+        lines.append(
+            "- **保真-H定责**：妈妈分层定责，禁「扯平/都有错」；先点先动手方再劝和"
+        )
+    if need_iodine:
+        lines.append(
+            "- **保真-上药**：上药完成即收束，之后禁止另起一起画、拉钩等新剧情"
+        )
+    if not lines:
+        return (
+            "- 本场只按 align checklist 与 closing_intent 定点修；"
+            "禁止借用 M5/H 互毁和好模板"
+        )
+    return "\n".join(lines)
+
+
+def format_align_refine_system(
+    *,
+    mechanism: str = "",
+    structure_type: str = "",
+    closing_intent: str = "",
+    conflict_text: str = "",
+) -> str:
+    """精修 system：通用底稿 + 仅本场契约相关的 M5/H 条款。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    context = f"{conflict_text or ''} {closing_intent or ''}"
+    extras: list[str] = []
+    if mech == "M5":
+        extras.append(
+            "M5 立规用「家规/规矩/规定」，勿写「妈妈说过」类转述。"
+            "M5 立规/拒和/加码各占一句，禁止一句三连；"
+            "拆句时须保留拒和与加码各一句且在妈妈前（与是否道歉无关）。"
+        )
+    if mech == "M5" or _any_token_affirmed(
+        context, ("互毁", "撕坏", "弄坏", "推搡")
+    ):
+        extras.append(
+            "互毁：报复句之前须 establish 双方物/作品；改机审标定行，"
+            "禁止把前文合并进「也/还弄坏」同一句。"
+        )
+    if _reconcile_wanted(
+        structure_type=st,
+        closing_intent=closing_intent,
+        conflict_text=conflict_text,
+    ):
+        extras.append(
+            "收场和好仅在 closing_intent 要求时写拉手或齐声「不打了」；"
+            "禁止给无和好契约的类型硬套末四句和好。"
+        )
+    if extras:
+        return _ALIGN_REFINE_SYSTEM_BASE + "\n" + "\n".join(extras)
+    return _ALIGN_REFINE_SYSTEM_BASE
+
+
+def format_align_refine_user(
+    *,
+    issues_block: str,
+    align_block: str,
+    story_json: str,
+    chars_min: int,
+    chars_max: int,
+    banned_literals: str,
+    mom_lines_max: int,
+    max_line: int,
+    mechanism: str = "",
+    structure_type: str = "",
+    closing_intent: str = "",
+    conflict_text: str = "",
+) -> str:
+    """精修 user：通用硬约束 + 按类型裁剪的保真条款。"""
+    type_constraints = format_align_refine_type_constraints(
+        mechanism=mechanism,
+        structure_type=structure_type,
+        closing_intent=closing_intent,
+        conflict_text=conflict_text,
+    )
+    return _ALIGN_REFINE_USER_BASE.format(
+        issues_block=issues_block,
+        align_block=align_block,
+        story_json=story_json,
+        chars_min=chars_min,
+        chars_max=chars_max,
+        banned_literals=banned_literals,
+        mom_lines_max=mom_lines_max,
+        max_line=max_line,
+        type_constraints=type_constraints,
+    )
+
+
+# 兼容旧名：默认无类型条款（仅通用底稿）；新调用请走 format_align_refine_*。
+_ALIGN_REFINE_SYSTEM = _ALIGN_REFINE_SYSTEM_BASE
+_ALIGN_REFINE_USER = _ALIGN_REFINE_USER_BASE.replace(
+    "{type_constraints}",
+    "- 本场只按 align checklist 与 closing_intent 定点修",
+)
 
 _SHORTEN_SYSTEM = (
     "你是 gold_chat 缩句编辑。只缩短超长对白行，语义与 speaker 不变。\n"
@@ -291,8 +538,8 @@ def format_scenario_rules_block(
     rules: list[str] = []
     mech = str(mechanism or "").upper()
     st = str(structure_type or "").upper()
-    if mech == "M5" or any(
-        token in context for token in ("互毁", "撕坏", "弄坏", "推搡")
+    if mech == "M5" or _any_token_affirmed(
+        context, ("互毁", "撕坏", "弄坏", "推搡")
     ):
         rules.extend(
             [
@@ -302,14 +549,25 @@ def format_scenario_rules_block(
                 "服软方不得同时承担拒和。",
             ]
         )
-    if st == "H" or any(
-        token in context for token in ("调解", "劝和", "谁先动手", "和好")
+    if _mom_adjudicate_wanted(
+        structure_type=st,
+        closing_intent=closing_intent,
+        conflict_text=conflict_text,
     ):
         rules.append(
             "- 【本场调解】按 closing_intent 分层处理责任与和解；"
             "只有契约要求时才写拉手或双方分别承诺，禁止擅自套用齐声收束。"
         )
-    if any(token in context for token in ("碘伏", "涂药", "上药", "包扎")):
+    elif _reconcile_wanted(
+        structure_type=st,
+        closing_intent=closing_intent,
+        conflict_text=conflict_text,
+    ):
+        rules.append(
+            "- 【本场和好】仅按 closing_intent 写拉手或分别承诺；"
+            "禁止擅自引入妈妈定责或齐声收束。"
+        )
+    if _any_token_affirmed(context, ("碘伏", "涂药", "上药", "包扎")):
         rules.append(
             "- 【本场上药】上药完成即收束，之后禁止另起一起画、拉钩等新剧情。"
         )

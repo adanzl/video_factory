@@ -410,24 +410,54 @@ def layer_patterns_for_story(story: dict | None) -> tuple[tuple[str, re.Pattern[
     return story_line_for_code(code).layer_patterns
 
 
-def revision_hints_for_type(code: str) -> tuple[str, str]:
+def revision_hints_for_type(
+    code: str,
+    *,
+    theme: str | None = None,
+) -> tuple[str, str]:
     line = story_line_for_code(code)
-    return line.escalation_revision_hint, line.closing_revision_hint
+    esc = line.escalation_revision_hint
+    close = line.closing_revision_hint
+    st = str(code or "").strip().upper()
+    if st == "A":
+        from app.services.daily_story.story_types.a.line import (
+            a_escalation_revision_hint_for_theme,
+        )
+
+        esc = a_escalation_revision_hint_for_theme(theme)
+    elif st == "D":
+        from app.services.daily_story.story_types.d.line import (
+            d_closing_revision_hint_for_theme,
+        )
+
+        close = d_closing_revision_hint_for_theme(theme)
+    return esc, close
 
 
-def gold_chat_type_revision_hint(structure_type: str) -> str:
+def gold_chat_type_revision_hint(
+    structure_type: str,
+    *,
+    theme: str | None = None,
+) -> str:
     """金稿 prompt 用：类型修订 hint + 正文锚（不含机制附录）。"""
     st = str(structure_type or "").strip().upper()
     if not st or st not in STORY_TYPE_LINES:
         return ""
     parts: list[str] = []
-    esc, close = revision_hints_for_type(st)
+    esc, close = revision_hints_for_type(st, theme=theme)
     line = story_line_for_code(st)
     if esc:
         parts.append(f"- 冲突升级：{esc}")
     if close:
         parts.append(f"- 收束修订：{close}")
-    anchor = str(line.body_user_anchor or "").strip()
+    if st == "A":
+        from app.services.daily_story.story_types.a.line import (
+            a_body_user_anchor_for_theme,
+        )
+
+        anchor = a_body_user_anchor_for_theme(theme).strip()
+    else:
+        anchor = str(line.body_user_anchor or "").strip()
     if anchor:
         parts.append(f"- 正文锚：{anchor}")
     return "\n".join(parts)

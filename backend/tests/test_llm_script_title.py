@@ -553,6 +553,10 @@ def test_story_type_prompts_only_inject_matching_scene_rules():
     )
     a_brush = a_brush_system + a_brush_user
     assert "这刀还没剪直" not in a_brush
+    assert "下剪" not in a_brush_user
+    assert "顺着推" not in a_brush_user
+    assert "压着剪" not in a_brush_user
+    assert "你刚剪的这一刀" not in a_brush_user
     assert "不强制使用「那不一样」「哪里不一样」" in a_brush
 
     a_cut_system, a_cut_user = build_daily_story_prompts(
@@ -561,6 +565,7 @@ def test_story_type_prompts_only_inject_matching_scene_rules():
     )
     assert "剪纸场景补充" in a_cut_system
     assert "下剪、压线、翻面、对折" in a_cut_system
+    assert "你刚剪的这一刀" in a_cut_user
     assert "倒数第3 句必须含「那不一样」" not in a_cut_user
 
     c_turns_system, c_turns_user = build_daily_story_prompts(
@@ -577,6 +582,14 @@ def test_story_type_prompts_only_inject_matching_scene_rules():
         story_type="D",
     )
     assert "模板之外的字一个不改" not in d_system + d_user
+
+    d_water_system, _d_water_user = build_daily_story_prompts(
+        "浇花别浇太多水",
+        story_type="D",
+    )
+    assert "整座端进箱子" not in d_water_system
+    assert "离手即塌" not in d_water_system
+    assert "字面执行推到极限" in d_water_system
     assert "锁语义，不锁固定台词" in d_system
 
 

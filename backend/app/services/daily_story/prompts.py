@@ -1164,19 +1164,25 @@ def _daily_story_user_template(
         closing = line.user_closing
         if type_code.upper() == "A":
             from app.services.daily_story.story_types.a.line import (
+                a_body_user_anchor_for_theme,
                 a_user_closing_for_theme,
             )
 
             closing = a_user_closing_for_theme(theme)
+            anchor = a_body_user_anchor_for_theme(theme)
         elif type_code.upper() == "C":
             from app.services.daily_story.story_types.c.line import (
                 c_user_closing_for_theme,
             )
 
             closing = c_user_closing_for_theme(theme)
-        anchor = line.body_user_anchor or (
-            "1. 主题即冲突实物：setting、conflict_core、正文首句须锚定主题中的实物/动作。"
-        )
+            anchor = line.body_user_anchor or (
+                "1. 主题即冲突实物：setting、conflict_core、正文首句须锚定主题中的实物/动作。"
+            )
+        else:
+            anchor = line.body_user_anchor or (
+                "1. 主题即冲突实物：setting、conflict_core、正文首句须锚定主题中的实物/动作。"
+            )
     else:
         closing = (
             "9. 收束须遵守本次锁定类型的专属线路（见 system）；"
