@@ -261,12 +261,14 @@ def update_story(
     status: str | None = None,
     story_type: str | None | object = _MISSING,
     key: str | None | object = _MISSING,
+    theme: str | None | object = _MISSING,
 ) -> dict:
     if (
         story is None
         and status is None
         and story_type is _MISSING
         and key is _MISSING
+        and theme is _MISSING
     ):
         return get_story(story_id)
     sets: list[str] = ["updated_at = datetime('now')"]
@@ -279,6 +281,14 @@ def update_story(
             nested = _normalize_key(story.get("key"))
             sets.append("key = ?")
             params.append(nested)
+        # 默认同步 theme（scene_title），避免 force 重导入后列残留旧主题
+        if theme is _MISSING:
+            nested_theme = str(
+                story.get("scene_title") or story.get("key") or ""
+            ).strip()
+            if nested_theme:
+                sets.append("theme = ?")
+                params.append(nested_theme)
     if status is not None:
         sets.append("status = ?")
         params.append(status)
@@ -288,6 +298,9 @@ def update_story(
     if key is not _MISSING:
         sets.append("key = ?")
         params.append(_normalize_key(key))
+    if theme is not _MISSING:
+        sets.append("theme = ?")
+        params.append(str(theme or "").strip() or None)
     params.append(story_id)
     sql.execute(
         f"UPDATE daily_story SET {', '.join(sets)} WHERE id = ?",

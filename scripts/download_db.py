@@ -18,10 +18,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REMOTE_BASE = "/mnt/data/project/video_factory"
-# (host, port, connect_timeout_sec)
+# (host, port, connect_timeout_sec) — 与 Agents.md SSH 优先级一致
 REMOTE_HOSTS = [
     ("mini", 22, 2),
-    ("vip.sy.frp.one", 57904, 10),
+    ("leo-mini.fucku.top", 57904, 10),
     ("cn-hk-bgp-4.ofalias.net", 27358, 10),
 ]
 SSH_USER = "leo"

@@ -212,38 +212,13 @@ def patch_seed_speaker_align(
     dialogue_seed: list[Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """seed 专属短语出现在错 speaker 时，改回 seed 标注角色（抽象，不写死单篇）。"""
-    import copy
-
     from app.services.gold_story.gold_chat.validate import (
-        _seed_unique_phrase_owners,
+        apply_seed_phrase_speaker_align,
     )
 
-    owners = _seed_unique_phrase_owners(dialogue_seed)
-    if not owners:
-        return story, False
-
-    out = copy.deepcopy(story)
-    dialogue = out.get("dialogue")
-    if not isinstance(dialogue, list):
-        return story, False
-    changed = False
-    for item in dialogue:
-        if not isinstance(item, dict):
-            continue
-        sp = str(item.get("speaker") or "").strip()
-        line = str(item.get("line") or "").strip()
-        if not line or sp not in {"昭昭", "灿灿", "妈妈", "爸爸"}:
-            continue
-        line_han = "".join(re.findall(r"[\u4e00-\u9fff]", line))
-        for phr, want in owners.items():
-            if phr not in line and phr not in line_han:
-                continue
-            if sp == want:
-                break
-            item["speaker"] = want
-            changed = True
-            break
-    return out, changed
+    return apply_seed_phrase_speaker_align(
+        story, dialogue_seed=dialogue_seed
+    )
 
 
 _RE_PROPAGANDA_CLAIM = re.compile(

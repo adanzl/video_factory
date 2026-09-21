@@ -1659,7 +1659,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             )
             if conflict_core:
                 chat["conflict_core"] = conflict_core
-            # 结构分门控前先跑 M2+C 回旋镖/触发词补丁（否则 40 分空转）
+            # 结构分门控前先跑 M2+C 机械 normalize（缺层只记 note，不编句）
             from app.services.gold_story.gold_chat.patch import (
                 patch_m2_c_structure,
             )
@@ -1676,6 +1676,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                     "gold_chat pre-score M2+C: %s",
                     "；".join(str(n) for n in m2_notes[:4]),
                 )
+            gaps = [str(n) for n in m2_notes if "缺" in str(n)]
             if str(structure_type or "").upper() == "J":
                 chat = _gold_chat_j_pre_score_polish(
                     chat,
@@ -1690,6 +1691,10 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 # 已过 align 的稿：先定点抬结构，避免整开扩写空转
                 try:
                     fb = format_structure_score_feedback(last_err, chat)
+                    if gaps:
+                        fb = fb + "\n" + "\n".join(
+                            f"- {g}：请在对白中补全，勿另起无关剧情" for g in gaps[:3]
+                        )
                     lifted = _fix_chat_with_llm(
                         chat,
                         fb or last_err,
@@ -1788,11 +1793,13 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 conflict_text=conflict_text,
                 short_regen_count=short_regen_count,
             )
-    # 零食+作业本战：LLM 截断/结构分翻车时用 beat 重建兜底（禁再烧 flash）
+    # 零食+作业本战：仅扩写耗尽后的兜底；
+    # patch_m2_c_structure 不再无条件整篇覆盖
     if str(structure_type or "").upper() == "C" and str(mechanism or "").upper() == "M2":
         from app.services.gold_story.gold_chat.patch import (
             _m2_c_is_snack_homework_ctx,
             m2_c_meat_whole_item_context,
+            m2_c_snack_rebuild_fallback_eligible,
             patch_m2_c_snack_beat_rebuild,
         )
 
@@ -1812,25 +1819,36 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         ):
             seed_story = dict(ctx_story)
             seed_story["dialogue"] = list(chat.get("dialogue") or [])
-            rebuilt, notes = patch_m2_c_snack_beat_rebuild(
+            if not m2_c_snack_rebuild_fallback_eligible(
                 seed_story,
-                payload=payload,
-                boom_sp="昭昭",
-                last_sp="灿灿",
-            )
-            if conflict_core:
-                rebuilt["conflict_core"] = conflict_core
-            rebuilt["story_type"] = "C"
-            rebuilt = _attach_gold_chat_structure_score(rebuilt, row)
-            try:
-                _gate_gold_chat_structure_score(rebuilt)
+                last_err=str(last_err or ""),
+                payload=payload if isinstance(payload, dict) else None,
+            ):
                 logger.info(
-                    "gold_chat snack beat rebuild fallback: %s",
-                    "；".join(notes),
+                    "gold_chat snack rebuild skipped: draft already structured "
+                    "or err=%s",
+                    (last_err or "")[:80],
                 )
-                return rebuilt
-            except ValueError:
-                pass
+            else:
+                rebuilt, notes = patch_m2_c_snack_beat_rebuild(
+                    seed_story,
+                    payload=payload,
+                    boom_sp="昭昭",
+                    last_sp="灿灿",
+                )
+                if conflict_core:
+                    rebuilt["conflict_core"] = conflict_core
+                rebuilt["story_type"] = "C"
+                rebuilt = _attach_gold_chat_structure_score(rebuilt, row)
+                try:
+                    _gate_gold_chat_structure_score(rebuilt)
+                    logger.info(
+                        "gold_chat snack beat rebuild fallback: %s",
+                        "；".join(notes),
+                    )
+                    return rebuilt
+                except ValueError:
+                    pass
     raise ValueError(
         _short_content_reject_message(last_err)
         if last_err and _is_short_content_error(last_err)
