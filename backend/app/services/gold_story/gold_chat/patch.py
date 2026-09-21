@@ -217,7 +217,7 @@ def patch_m5_soften_premature_push_blame(
 
 
 def patch_m5_denial_speaker_swap(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """服软方说了拒和/加码时，改由另一方 speaker（Pass2 本地）。"""
+    """服软方说了拒和/加码时，改由另一方 speaker（精修本地）。"""
     import copy
 
     rows = _dialogue_rows(story)
@@ -256,7 +256,7 @@ def patch_m5_rule_authority(
     *,
     max_line_chars: int = 30,
 ) -> tuple[dict[str, Any], bool]:
-    """M5 立规缺 authority 词时句首补「家规就是」（Pass2 本地修，不打回 Pass1）。"""
+    """M5 立规缺 authority 词时句首补「家规就是」（精修本地修，不打回扩写）。"""
     import copy
 
     rows = _dialogue_rows(story)
@@ -380,7 +380,7 @@ def patch_ensure_injury_after_push(story: dict[str, Any]) -> tuple[dict[str, Any
 
 
 def patch_m5_fix_pre_mom_sequence(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """妈妈问谁先动手须晚于服软+立规+拒和+加码（Pass2 本地重排）。"""
+    """妈妈问谁先动手须晚于服软+立规+拒和+加码（精修本地重排）。"""
     import copy
 
     rows = _dialogue_rows(story)
@@ -471,7 +471,7 @@ def patch_sanitize_iodine_line(story: dict[str, Any]) -> tuple[dict[str, Any], b
 
 
 def patch_trim_post_iodine_tail(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """碘伏/涂药妈妈句后删拖句 invent（Pass2 本地，不手改 export）。"""
+    """碘伏/涂药妈妈句后删拖句 invent（精修本地，不手改 export）。"""
     import copy
 
     rows = _dialogue_rows(story)
@@ -515,7 +515,7 @@ def patch_split_m5_merged_line(
     *,
     max_line_chars: int = 30,
 ) -> tuple[dict[str, Any], bool]:
-    """Pass2：M5 立规/拒和/加码同句合并时只保留立规（其余靠邻句/本地补拍）。"""
+    """精修：M5 立规/拒和/加码同句合并时只保留立规（其余靠邻句/本地补拍）。"""
     import copy
 
     rows = _dialogue_rows(story)
@@ -543,7 +543,7 @@ def patch_fight_question_speaker(
     *,
     closing_intent: str = "",
 ) -> tuple[dict[str, Any], bool]:
-    """Pass2：「还打不打架」speaker 对齐 closing_intent（允许改 speaker）。"""
+    """精修：「还打不打架」speaker 对齐 closing_intent（允许改 speaker）。"""
     import copy
 
     asker = _parse_fight_question_asker(closing_intent)
@@ -568,7 +568,7 @@ def patch_fight_question_speaker(
 
 
 def patch_remap_sibling_terms(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """Pass2：站外兄弟称谓 → 姐弟映射（哥哥→姐姐，弟弟→昭昭）。"""
+    """精修：站外兄弟称谓 → 姐弟映射（哥哥→姐姐，弟弟→昭昭）。"""
     import copy
 
     rows = _dialogue_rows(story)
@@ -988,7 +988,7 @@ def patch_remove_mom_forced_forgive(
 def patch_m5_remove_premature_mom_blame(
     story: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
-    """删妈妈问谁先动手之前的定责/扯平句（Pass2 本地）。"""
+    """删妈妈问谁先动手之前的定责/扯平句（精修本地）。"""
     import copy
 
     rows = _dialogue_rows(story)
@@ -1034,7 +1034,7 @@ def apply_m5_h_local_patches(
     closing_intent: str = "",
     conflict_text: str = "",
 ) -> tuple[dict[str, Any], bool]:
-    """M5+H Pass2 本地补丁：称谓 → 定责 → 立规 → 拆合并 → 问句 speaker → 齐声 → 加码 → 碘伏后删尾。"""
+    """M5+H 精修本地补丁：称谓 → 定责 → 立规 → 拆合并 → 问句 speaker → 齐声 → 加码 → 碘伏后删尾。"""
     data, c0 = patch_remap_sibling_terms(story)
     data, c0b = patch_fix_role_pronouns(data)
     data, c0c = patch_fix_mom_balance_line(data, conflict_text=conflict_text)

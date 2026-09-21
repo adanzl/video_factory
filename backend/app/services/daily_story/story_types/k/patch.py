@@ -246,7 +246,7 @@ def _rewrite_h_line(speaker: str, line: str) -> str:
 
 
 def sanitize_k_dialogue_seed(seed: list | None) -> list:
-    """K：seed 里带 H 式和好的 intent 改成劝失败/僵持，避免 Pass1 被带偏。"""
+    """K：seed 里带 H 式和好的 intent 改成劝失败/僵持，避免扩写被带偏。"""
     if not isinstance(seed, list):
         return []
     out: list = []

@@ -917,7 +917,7 @@ def _pad_gold_chat_to_min_chars(
     particle_only: bool = False,
     max_rounds: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Pass2 改短/删尾后垫字至 hard min（不限 near_miss 3 字）。"""
+    """精修改短/删尾后垫字至 hard min（不限 near_miss 3 字）。"""
     import copy
 
     floor = int(min_chars or DAILY_STORY_BODY_CHARS_MIN)
@@ -1011,7 +1011,7 @@ def _boost_short_with_mid_lines(
     mechanism: str = "",
     structure_type: str = "",
 ) -> tuple[dict[str, Any], bool]:
-    """FIX/Pass1 写不满时：收束前插入成对句，保 J 权威方向。
+    """FIX/扩写 写不满时：收束前插入成对句，保 J 权威方向。
 
     M8+J 插互顶/立规对；M5+J 等插昭求/灿否对。
     O 只插死磕/资源溜走实义对，且必须在点题句之前。
@@ -1221,7 +1221,7 @@ def _expand_short_gold_chat_lines(
 ) -> tuple[dict[str, Any], bool]:
     """句数已满、字数 near-miss 时，句内加可读实词尾巴（禁旧灌尾）。
 
-    每句最多一条、优先不重复；大缺口仍交 Pass1/FIX，勿靠本地硬灌过关。
+    每句最多一条、优先不重复；大缺口仍交 扩写/FIX，勿靠本地硬灌过关。
     """
     import copy
 
@@ -1408,7 +1408,7 @@ def _ensure_gold_chat_min_chars(
     mechanism: str = "",
     structure_type: str = "",
 ) -> tuple[dict[str, Any], bool]:
-    """near-miss 垫到 hard min；大缺口先可读中段加句，再交 Pass1/FIX。
+    """near-miss 垫到 hard min；大缺口先可读中段加句，再交 扩写/FIX。
 
     剥旧灌尾 → 可读句内扩写 → 中段加句 → 粒子 near-miss（差 ≤60）。
     """

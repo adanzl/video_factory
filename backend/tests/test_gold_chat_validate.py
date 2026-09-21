@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 
 from app.services.gold_story.gold_chat import convert as gc
+from app.services.gold_story.gold_chat import expand as gex
+from app.services.gold_story.gold_chat import refine as grf
 from app.services.gold_story.gold_chat.validate import (
     collect_align_issues,
-    should_regenerate_pass1,
+    should_reexpand,
 )
 
 _CLOSING = "灿灿问以后还打不打架，昭昭齐声不打了，妈妈拿碘伏"
@@ -65,8 +67,8 @@ def _m5h_dialogue_v2() -> list[dict[str, str]]:
     ]
 
 
-def _m5h_dialogue_bad_pass2() -> list[dict[str, str]]:
-    """#5 Pass2 成稿：机审应拦 speaker 倒置 + 收场 invent。"""
+def _m5h_dialogue_bad_refine() -> list[dict[str, str]]:
+    """#5 精修成稿：机审应拦 speaker 倒置 + 收场 invent。"""
     return [
         {"speaker": "灿灿", "line": "昭昭，你趴那儿弄啥呢？让我瞅瞅。"},
         {"speaker": "昭昭", "line": "不行！这是我的秘密，你不能看！"},
@@ -93,7 +95,7 @@ def _m5h_dialogue_bad_pass2() -> list[dict[str, str]]:
 
 
 def _m5h_dialogue_pipeline() -> list[dict[str, str]]:
-    """Pass2 流水线产出稿（含 M5 合并 + 收场 invent）。"""
+    """精修流水线产出稿（含 M5 合并 + 收场 invent）。"""
     return [
         {"speaker": "灿灿", "line": "昭昭，你趴那儿画啥呢？让我瞅瞅！"},
         {"speaker": "昭昭", "line": "不行！这是我的秘密，你不能看！"},
@@ -198,7 +200,7 @@ def test_collect_align_issues_type_contract_covers_a_to_l_registry():
 
 
 def test_collect_align_issues_tear_not_only_si_huai():
-    """「撕破/撕了」须算互毁前文依据，勿误拦 Pass1 合理稿。"""
+    """「撕破/撕了」须算互毁前文依据，勿误拦扩写合理稿。"""
     dlg = [
         {"speaker": "灿灿", "line": "我的画马上就好，太阳要涂成金色。"},
         {"speaker": "昭昭", "line": "我看看你画的什么嘛！"},
@@ -269,6 +271,7 @@ def test_refine_passes_with_only_align_warn(monkeypatch):
         raise AssertionError("should not call LLM when only warn")
 
     monkeypatch.setattr(gc, "_align_refine_with_llm", fail_llm)
+    monkeypatch.setattr(grf, "_align_refine_with_llm", fail_llm)
     out = gc.refine_gold_chat_align(
         story,
         structure_type="H",
@@ -281,26 +284,26 @@ def test_refine_passes_with_only_align_warn(monkeypatch):
     assert out["dialogue"][8]["line"].startswith("家规就是")
 
 
-def test_collect_align_issues_bad_pass2_flags_speaker_and_invent():
-    kinds = {x["kind"] for x in _issues(_m5h_story(_m5h_dialogue_bad_pass2()))}
+def test_collect_align_issues_bad_refine_flags_speaker_and_invent():
+    kinds = {x["kind"] for x in _issues(_m5h_story(_m5h_dialogue_bad_refine()))}
     assert "保真-M5拒和speaker" in kinds
     assert "保真-对象持有补丁" in kinds or "保真-互毁前文" in kinds
     assert "保真-收场Invent" in kinds
 
 
-def test_should_regenerate_pass1_structural():
-    issues = _issues(_m5h_story(_m5h_dialogue_bad_pass2()))
-    assert should_regenerate_pass1(issues)
+def test_should_reexpand_structural():
+    issues = _issues(_m5h_story(_m5h_dialogue_bad_refine()))
+    assert should_reexpand(issues)
 
 
-def test_should_regenerate_pass1_single_local_issue():
+def test_should_reexpand_single_local_issue():
     dlg = _m5h_dialogue_v2()
     dlg[8] = {"speaker": "灿灿", "line": "谁先动手谁道歉！你推我，你先道歉！"}
     dlg[10] = {"speaker": "灿灿", "line": "哼，我不原谅！"}
     dlg[11] = {"speaker": "灿灿", "line": "道歉也没用！我画了好久呢！"}
     issues = _issues(_m5h_story(dlg))
     assert issues
-    assert not should_regenerate_pass1(issues)
+    assert not should_reexpand(issues)
 
 
 def test_collect_align_issues_pipeline_draft_flags_merge_and_invent():
@@ -317,6 +320,7 @@ def test_refine_gold_chat_align_applies_spot_fixes(monkeypatch):
         return {"fixes": _m5h_refine_fixes()}
 
     monkeypatch.setattr(gc, "_align_refine_with_llm", fake_refine)
+    monkeypatch.setattr(grf, "_align_refine_with_llm", fake_refine)
     out = gc.refine_gold_chat_align(
         story,
         structure_type="H",
@@ -337,6 +341,7 @@ def test_refine_gold_chat_align_fails_when_llm_noop(monkeypatch):
         return {"fixes": []}
 
     monkeypatch.setattr(gc, "_align_refine_with_llm", fake_refine)
+    monkeypatch.setattr(grf, "_align_refine_with_llm", fake_refine)
     with pytest.raises(ValueError, match="align_refine_failed"):
         gc.refine_gold_chat_align(
             story,
@@ -351,7 +356,7 @@ def test_refine_gold_chat_align_fails_when_llm_noop(monkeypatch):
 
 
 def test_refine_bails_on_structural_by_default():
-    story = _m5h_story(_m5h_dialogue_bad_pass2())
+    story = _m5h_story(_m5h_dialogue_bad_refine())
     with pytest.raises(ValueError, match="align_structural"):
         gc.refine_gold_chat_align(
             story,
@@ -400,8 +405,11 @@ def test_gold_story_to_gold_chat_runs_align_pass(monkeypatch):
         },
     }
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
-    monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
-    monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 1)
+    monkeypatch.setattr(gex, "_chat_json", fake_chat)
+    monkeypatch.setattr(gc, "EXPAND_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gex, "EXPAND_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gc, "EXPAND_REGENERATE_MAX", 1)
+    monkeypatch.setattr(gex, "EXPAND_REGENERATE_MAX", 1)
     _real_refine = gc.refine_gold_chat_align
 
     def refine_test(*args, **kwargs):
@@ -409,6 +417,7 @@ def test_gold_story_to_gold_chat_runs_align_pass(monkeypatch):
         return _real_refine(*args, **kwargs)
 
     monkeypatch.setattr(gc, "refine_gold_chat_align", refine_test)
+    monkeypatch.setattr(grf, "refine_gold_chat_align", refine_test)
     monkeypatch.setattr(
         gc,
         "_attach_gold_chat_structure_score",

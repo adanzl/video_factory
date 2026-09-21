@@ -1,6 +1,7 @@
 """gold_chat 终稿：类型垫字 / 钉收束 / 结构分门控。
 
-从 ``convert.convert_gold_chat`` 抽出；convert 只负责编排到此步再导出。
+三阶段末环（扩写 → 精修 → **终稿**）。从 ``convert.convert_gold_chat``
+抽出；convert 只负责编排到此步再导出。
 
 K 收口原则：走 ``story_types.k.patch`` 的 seal/pin，中段通用补字；
 不在本文件手写收束五句或固定 filler 插句。
