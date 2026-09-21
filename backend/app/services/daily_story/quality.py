@@ -1165,7 +1165,15 @@ def build_quality_revision_hints(
     cons = [r for r in reasons if r not in pros]
 
     profile = resolve_quality_profile(story)
-    esc_type_hint, close_type_hint = profile.revision_hints()
+    theme = None
+    if isinstance(story, dict):
+        theme = str(
+            story.get("theme")
+            or story.get("scene_title")
+            or story.get("setting")
+            or ""
+        ).strip() or None
+    esc_type_hint, close_type_hint = profile.revision_hints(theme=theme)
     has_punch_ending = closing_satisfied(pros, profile)
     score = structure_score_of(quality)
 

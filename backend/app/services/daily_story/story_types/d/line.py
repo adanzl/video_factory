@@ -1,5 +1,7 @@
 """日常故事 D 类线路（提示词片段）。"""
 
+import re
+
 from app.services.daily_story.story_types.model import (
     STORY_TYPE_KEYWORDS,
     StoryTypeLine,
@@ -353,8 +355,8 @@ LINE_D = StoryTypeLine(
     ),
     closing_revision_hint=(
         "【D·收束】末三拍固定："
-        "①灿灿收场须具体（指甲抠/赶紧解开），"
-        "②昭昭回旋镖=引原话+点破「怎么现在又上手来解了」，"
+        "①灿灿收场须具体（对本场搞砸结果上手补救），"
+        "②昭昭回旋镖=引原话+点破灿灿刚做的破规补救动作，"
         "③灿灿嘴硬收束（短词+可选情绪半句），禁止发新指令；"
         "禁止只引原话不点破、禁止未收场就回旋镖、禁止A式末四拍。"
     ),
@@ -375,9 +377,28 @@ LINE_D = StoryTypeLine(
 5. 昭昭每轮歪读**换一个新「讲究」**（垫平底座／吹灰再码／数到十才放），
    每次用**一个新的认真法**把歪读演下去，不是把上一招再做一遍；
    越讲究越离谱。严禁「再轻一点／更轻／又放一块」换词复读。
-6. **把字面执行推到极限收尾**：最后一轮不是「又码高一层」，而是把歪读产物
-   **当整体端/抬/搬**——「齐了，我两手托住底座，整座端进箱子」，
-   为照做「放进去」而把整个造物当一件东西搬，离手即塌。
-   这一拍既是整段字面执行的极端收束，也是「整座端」荒诞高潮的入口。
+6. **把字面执行推到极限收尾**：最后一轮不是「同招再做一遍」，而是把歪读
+   **推到本场主题能承受的最荒诞一步**——照着叮嘱字面做到极致，使结果当场
+   不可收拾。具体动作必须来自本次 theme / setting，禁止套用无关主题的固定收尾。
+   这一拍既是整段字面执行的极端收束，也是本场荒诞高潮的入口。
 """,
 )
+
+_D_KNOT_THEME_RE = re.compile(r"鞋带|系紧|系鞋|死结|解开|打结|系牢")
+
+_D_KNOT_CLOSING_APPEND = (
+    "【D·系结收束补充】灿灿收场可用指甲抠/赶紧解开；"
+    "昭昭回旋镖可点破「怎么现在又上手来解了」——仅系结/鞋带主题适用。"
+)
+
+
+def _d_is_knot_theme(theme: str | None) -> bool:
+    return bool(_D_KNOT_THEME_RE.search(str(theme or "")))
+
+
+def d_closing_revision_hint_for_theme(theme: str | None = None) -> str:
+    """D 类收束修订：通用破规点破；仅系结主题追加解开口感。"""
+    base = str(LINE_D.closing_revision_hint or "")
+    if _d_is_knot_theme(theme):
+        return f"{base}{_D_KNOT_CLOSING_APPEND}"
+    return base

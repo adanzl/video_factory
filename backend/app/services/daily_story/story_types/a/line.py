@@ -1,5 +1,7 @@
 """日常故事 A 类线路（提示词片段）。"""
 
+import re
+
 from app.services.daily_story.story_types.model import (
     STORY_TYPE_KEYWORDS,
     StoryTypeLine,
@@ -269,19 +271,8 @@ LINE_A = StoryTypeLine(
     ③ 末四拍引语是否与灿灿前文 3–10 字连续原文片段逐字一致？
     ④ 24 句是否按节拍表推进，篇幅靠动作链撑起来？
 """,
-    body_user_anchor="""\
-1. 【A类·主题锚定】管教/指正/立规矩（教作业、练琴、手机、收拾房间）。
-   开场两句已经立过规矩；正文第 1 句（全场第 3 句）只写手上第一下
-   （下剪/顺着推/压着剪），话跟着手走。
-   并规划「本场一锤」（如自己算错题、自己弹错音）。
-   例：「姐姐教弟弟写作业自己写错」→ 开场已挑题，正文首句灿灿开始算；
-   一锤=灿灿把 36+57 说成 94（正确 93）。
-2. 【A类·操作题动作链】若主题是剪、折、系、弹等现场操作，开场已立可核对标准；
-   正文前两句固定为：第 3 句手上第一下 → 第 4 句指「你刚剪的这一刀」已经歪。
-   同一次动作只认这一个结果。接着「这次不算，我重来」→
-   第二下偏得更远 → 昭昭拿原线/原物对照 → 末四拍逐字引开场那句标准 → 软破功。
-   中段每一拍都往前推一个新动作，台词跟着动作走。
-""",
+    body_user_anchor="",  # 由 a_body_user_anchor_for_theme 按主题注入
+
     opening_system_append="""\
 
 【A 类开场补充】
@@ -378,8 +369,8 @@ LINE_A = StoryTypeLine(
         "【A·埋句】灿灿先说可引用原话；写末四拍前从中复制3–10字连续断言作"
         " quote_anchor，只换人称，禁否定/逆否/同义改写；"
         "收束勿复读该借口、勿只甩我是姐姐。"
-        "【A·偷吃口感】先溅脸/手脏再丢检查不算吃；勿只回「那是果汁」就进检查；"
-        "勿催「你倒是说」；勿复读检查样品。"
+        "【A·证据】中段依据本场留下的可见证据推进；借口必须对应实际行为与道具，"
+        "禁止借用别题动作链。"
     ),
     layer_patterns=compile_layers(
         [
@@ -452,6 +443,26 @@ _A_GENERIC_USER_CLOSING = """\
 13. punchline_explain 以「A类权威翻车」开头，说明标准、当场翻车与原话反噬。
 """
 
+_A_GENERIC_BODY_USER_ANCHOR = """\
+1. 【A类·主题锚定】管教/指正/立规矩（教作业、练琴、手机、收拾房间）。
+   开场两句已经立过规矩；正文第 1 句（全场第 3 句）只写本场第一下动作，
+   动作词必须来自本次 theme / setting，话跟着手走。
+   并规划「本场一锤」（如自己算错题、自己弹错音、刷太快）。
+   例：「姐姐教弟弟写作业自己写错」→ 开场已挑题，正文首句灿灿开始算；
+   一锤=灿灿把 36+57 说成 94（正确 93）。
+2. 【A类·动作链】开场已立可核对标准；正文前两句固定为：
+   第 3 句本场第一下动作 → 第 4 句指「你刚这一下」已偏离该标准。
+   同一次动作只认这一个结果。接着「这次不算，我重来」→
+   第二下偏得更远 → 昭昭拿原标准/原物对照 → 末四拍逐字引开场那句标准 → 软破功。
+   中段每一拍都往前推一个新动作，台词跟着动作走；禁止串入别题道具动作链。
+"""
+
+_A_SCISSOR_BODY_USER_ANCHOR_APPEND = """\
+3. 【剪纸场景补充·user】本次道具确为纸和剪刀：
+   正文第 3 句可用下剪/顺着推/压着剪；第 4 句可指「你刚剪的这一刀」已歪。
+   勿把剪纸动作链套到非剪纸主题。
+"""
+
 _A_SCISSOR_PROMPT_APPEND = """\
 【剪纸场景补充】
 - 本次道具确为纸和剪刀，可用下剪、压线、翻面、对折等动作推进；
@@ -461,14 +472,34 @@ _A_SCISSOR_PROMPT_APPEND = """\
 - 收束仍按通用 A 类语义槽位自然表达，不使用固定问答模板。
 """
 
+_A_SCISSOR_THEME_RE = re.compile(r"剪纸|剪刀|裁纸|剪直|纸边|剪坏")
+
+
+def _a_is_scissor_theme(theme: str | None) -> bool:
+    return bool(_A_SCISSOR_THEME_RE.search(str(theme or "")))
+
 
 def a_prompt_block_for_theme(theme: str | None = None) -> str:
     """通用 A 结构上仅按需追加剪纸动作，不发送旧整篇模板。"""
-    import re
-
-    if re.search(r"剪纸|剪刀|裁纸|剪直|纸边|剪坏", str(theme or "")):
+    if _a_is_scissor_theme(theme):
         return f"{_A_GENERIC_PROMPT_BLOCK}\n{_A_SCISSOR_PROMPT_APPEND}"
     return _A_GENERIC_PROMPT_BLOCK
+
+
+def a_body_user_anchor_for_theme(theme: str | None = None) -> str:
+    """A 类 user 锚定：默认通用动作链，仅剪纸主题追加剪刀动作词。"""
+    if _a_is_scissor_theme(theme):
+        return (
+            f"{_A_GENERIC_BODY_USER_ANCHOR}"
+            f"{_A_SCISSOR_BODY_USER_ANCHOR_APPEND}"
+        )
+    return _A_GENERIC_BODY_USER_ANCHOR
+
+
+def a_escalation_revision_hint_for_theme(theme: str | None = None) -> str:
+    """A 类升级修订：统一通用证据推进，不再按偷吃关键词追加口感。"""
+    _ = theme
+    return str(LINE_A.escalation_revision_hint or "")
 
 
 def a_user_closing_for_theme(theme: str | None = None) -> str:

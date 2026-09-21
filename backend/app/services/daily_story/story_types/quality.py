@@ -228,9 +228,10 @@ class TypeQualityProfile:
     def layer_patterns(self):
         return story_line_for_code(self.code).layer_patterns
 
-    def revision_hints(self) -> tuple[str, str]:
-        line = story_line_for_code(self.code)
-        return line.escalation_revision_hint, line.closing_revision_hint
+    def revision_hints(self, theme: str | None = None) -> tuple[str, str]:
+        from app.services.daily_story.story_types import revision_hints_for_type
+
+        return revision_hints_for_type(self.code, theme=theme)
 
 
 def quality_profile_for_code(type_code: str) -> TypeQualityProfile:

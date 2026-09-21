@@ -254,6 +254,32 @@ def test_apply_gold_chat_body_pipeline_via_story_types():
     hint = gold_chat_type_revision_hint("J")
     assert "冲突升级" in hint or "收束修订" in hint or hint == ""
 
+    a_brush = gold_chat_type_revision_hint("A", theme="姐姐嫌弟弟刷牙太快")
+    assert "先溅脸" not in a_brush
+    assert "再丢检查不算吃" not in a_brush
+    assert "依据本场留下的可见证据" in a_brush
+    a_fruit = gold_chat_type_revision_hint(
+        "A", theme="姐姐教弟弟洗水果，自己却没洗干净"
+    )
+    assert "先溅脸" not in a_fruit
+    assert "再丢检查不算吃" not in a_fruit
+    a_phone = gold_chat_type_revision_hint(
+        "A", theme="姐姐不许弟弟偷拿手机，自己却偷偷拿来玩"
+    )
+    assert "先溅脸" not in a_phone
+    assert "再丢检查不算吃" not in a_phone
+    assert "依据本场留下的可见证据" in a_phone
+    a_steal = gold_chat_type_revision_hint("A", theme="不许饭前偷吃自己却先捏")
+    assert "先溅脸" not in a_steal
+    assert "再丢检查不算吃" not in a_steal
+    assert "依据本场留下的可见证据" in a_steal
+
+    d_water = gold_chat_type_revision_hint("D", theme="浇花别浇太多水")
+    assert "上手来解了" not in d_water
+    assert "赶紧解开" not in d_water
+    d_knot = gold_chat_type_revision_hint("D", theme="姐姐让弟弟把鞋带系紧")
+    assert "上手来解了" in d_knot
+
 
 def test_apply_type_body_pipeline_sets_story_type():
     chat = {
