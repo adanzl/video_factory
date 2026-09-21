@@ -75,8 +75,8 @@ RE_EXPAND_CLUTTER = re.compile(
 # closing_intent 常见收场词；未出现则末段禁对应 invent 动作
 _CLOSING_INVENT_ALLOW = re.compile(r"帮|扶|递|棉签|送去|一起|回来|不疼了|快点|等你")
 
-# 结构性问题：Pass2 定点修易打补丁，应打回 Pass1 重生
-# 「对齐-类型契约」留给 Pass2 定点补槽，不进此集合
+# 结构性问题：精修 定点修易打补丁，应打回扩写重生
+# 「对齐-类型契约」留给精修 定点补槽，不进此集合
 STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
     {
         "保真-互毁前文",
@@ -122,8 +122,8 @@ def split_align_issues(
     return blocking, warn
 
 
-def should_regenerate_pass1(issues: list[dict[str, Any]]) -> bool:
-    """仅结构性 issue → 打回 Pass1；M5 立规/合并等局部问题留给 Pass2。"""
+def should_reexpand(issues: list[dict[str, Any]]) -> bool:
+    """仅结构性 issue → 打回扩写；M5 立规/合并等局部问题留给精修。"""
     if not issues:
         return False
     kinds = {str(x.get("kind") or "") for x in issues}
@@ -396,7 +396,7 @@ def _append_closing_tail_issues(
             )
 
 
-def pass1_align_score(
+def expand_align_score(
     story: dict[str, Any],
     *,
     structure_type: str,
@@ -409,7 +409,7 @@ def pass1_align_score(
     object_text: str = "",
     mechanism_text: str = "",
 ) -> tuple[int, int]:
-    """预选 Pass1 候选：(结构性 issue 数, 总 issue 数)，越小越好。"""
+    """预选扩写候选：(结构性 issue 数, 总 issue 数)，越小越好。"""
     issues = collect_align_issues(
         story,
         structure_type=structure_type,

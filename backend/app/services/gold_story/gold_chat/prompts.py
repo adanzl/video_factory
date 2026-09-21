@@ -1,4 +1,4 @@
-"""gold_chat 扩写 / 精修提示词模板。"""
+"""gold_chat 扩写/ 精修提示词模板。"""
 
 import re
 from typing import Any
@@ -153,7 +153,7 @@ _USER = """金故事标题：{title}
 
 {m5_h_beat_block}
 
-{pass1_feedback_block}
+{expand_feedback_block}
 
 dialogue_seed（剧情要点，不是最终台词）：
 {dialogue_seed}
@@ -577,7 +577,7 @@ def format_scenario_rules_block(
 
 
 def format_role_binding_block(conflict_text: str) -> str:
-    """Pass1 注入：从 scene conflict 解析受害方/先动手方/宣传方分工。"""
+    """扩写注入：从 scene conflict 解析受害方/先动手方/宣传方分工。"""
     prop_roles = _parse_conflict_propaganda_roles(conflict_text)
     if prop_roles:
         propagandist, victim = prop_roles
@@ -611,12 +611,12 @@ def format_role_binding_block(conflict_text: str) -> str:
     )
 
 
-def format_m5_h_pass1_beat_block(
+def format_m5_h_expand_beat_block(
     *,
     conflict_text: str,
     closing_intent: str = "",
 ) -> str:
-    """M5+H Pass1 固定节拍表（对齐金稿 #5 正例结构）。"""
+    """M5+H 扩写固定节拍表（对齐金稿 #5 正例结构）。"""
     victim = _parse_conflict_victim(conflict_text)
     if not victim:
         return ""
@@ -647,11 +647,11 @@ def format_m5_h_pass1_beat_block(
 
 
 
-def format_authority_punchline_pass1_block(
+def format_authority_punchline_expand_block(
     *,
     beat_chain: list[Any] | None = None,
 ) -> str:
-    """M4+G authority_punchline Pass1 开场硬约束（抽象槽，禁绑单篇词）。"""
+    """M4+G authority_punchline 扩写开场硬约束（抽象槽，禁绑单篇词）。"""
     beat0_sp = ""
     beat0_intent = ""
     for item in beat_chain or []:
@@ -667,7 +667,7 @@ def format_authority_punchline_pass1_block(
     intent_hint = beat0_intent or "谁先完成谁得资源"
     return "\n".join(
         [
-            "【M4+G 权威点题 · Pass1 开场硬约束 · 不可协商】",
+            "【M4+G 权威点题 · 扩写开场硬约束 · 不可协商】",
             f"- 第1句必须由 {who} 说，且必须是立规/约定句（要点：{intent_hint}）。",
             "- 不得从执行、回应、急哭、藏物、撇清起稿。",
             "- 立规句须含抽象规则：「谁先…谁…」或「先…先…」或约好/规定/说好；"
@@ -688,7 +688,7 @@ def format_beat_sequence_block(
     mechanism: str = "",
     structure_type: str = "",
 ) -> str:
-    """Pass1 注入：beat 事件顺序硬约束 + 互毁正/反例。"""
+    """扩写注入：beat 事件顺序硬约束 + 互毁正/反例。"""
     from app.services.gold_story.scene import format_beat_chain
 
     mech = str(mechanism or "").strip().upper()
@@ -751,7 +751,7 @@ def format_m8_j_beat_budget_block(
     return M8_J_BEAT_BUDGET_BLOCK
 
 
-def format_pass1_regen_feedback(
+def format_expand_regen_feedback(
     error: str,
     story: dict[str, Any] | None,
     *,
@@ -762,7 +762,7 @@ def format_pass1_regen_feedback(
     conflict_text: str = "",
     short_regen_count: int = 0,
 ) -> str:
-    """Pass1 重试：把上一轮失败原因注入 prompt。"""
+    """扩写重试：把上一轮失败原因注入 prompt。"""
     err = str(error or "").strip()
     if not err:
         return ""
@@ -786,7 +786,7 @@ def format_pass1_regen_feedback(
                 if is_structural_align_kind(str(x.get("kind") or ""))
             ]
 
-        parts = ["【上一轮 Pass1 失败 · 本轮须修正】"]
+        parts = ["【上一轮扩写失败 · 本轮须修正】"]
         parts.append(f"机审：{err.split(':', 1)[-1]}")
         if issues:
             for item in issues[:4]:
@@ -807,7 +807,7 @@ def format_pass1_regen_feedback(
         is_m8_j_domination,
     )
 
-    parts = ["【上一轮 Pass1 硬校验失败 · 本轮须一次写对】", f"错误：{err[:400]}"]
+    parts = ["【上一轮扩写硬校验失败 · 本轮须一次写对】", f"错误：{err[:400]}"]
     if "正文总字数须≥" in err:
         parts.append(
             f"- 正文必须先写满 ≥{DAILY_STORY_BODY_CHARS_MIN} 字，"
@@ -892,7 +892,7 @@ def format_structure_score_feedback(
     error: str,
     story: dict[str, Any] | None,
 ) -> str:
-    """Pass1 重试：上一轮结构分未过线时的修订指令。"""
+    """扩写重试：上一轮结构分未过线时的修订指令。"""
     from app.services.daily_story.quality import (
         STRUCTURE_PUBLISH_MIN,
         build_quality_revision_hints,

@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from app.services.gold_story.gold_chat import convert as gc
+from app.services.gold_story.gold_chat import expand as gex
+from app.services.gold_story.gold_chat import refine as grf
 from app.services.gold_story.gold_chat import export as gce
 
 
@@ -176,12 +178,13 @@ def _bypass_structure_gate(monkeypatch):
         },
     )
     monkeypatch.setattr(gc, "_gate_gold_chat_structure_score", lambda _chat: 80)
-    # 测试夹具对白过不了 A–L 契约机审；跳过 Pass2 对齐精修
+    # 测试夹具对白过不了 A–L 契约机审；跳过精修对齐
     monkeypatch.setattr(gc, "refine_gold_chat_align", lambda story, **_kw: story)
+    monkeypatch.setattr(grf, "refine_gold_chat_align", lambda story, **_kw: story)
 
 
 def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
-    """差 1 句：不本地硬插注水句；须 FIX 扩写或 Pass1 重生成。"""
+    """差 1 句：不本地硬插注水句；须 FIX 扩写或扩写重抽。"""
     calls: dict[str, int | bool] = {"n": 0}
     _bypass_structure_gate(monkeypatch)
 
@@ -196,8 +199,11 @@ def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
         return chat
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
-    monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
-    monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 5)
+    monkeypatch.setattr(gex, "_chat_json", fake_chat)
+    monkeypatch.setattr(gc, "EXPAND_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gex, "EXPAND_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gc, "EXPAND_REGENERATE_MAX", 5)
+    monkeypatch.setattr(gex, "EXPAND_REGENERATE_MAX", 5)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 12
     blob = "".join(str(d.get("line") or "") for d in out["dialogue"])
@@ -213,7 +219,9 @@ def test_gold_story_to_gold_chat_rejects_when_far_too_short(monkeypatch):
         return bad
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
-    monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gex, "_chat_json", fake_chat)
+    monkeypatch.setattr(gc, "EXPAND_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gex, "EXPAND_CANDIDATE_COUNT", 1)
     with pytest.raises(ValueError, match="篇幅驳回"):
         gc.gold_story_to_gold_chat(_sample_row())
 
@@ -297,7 +305,7 @@ def test_gold_chat_structure_score_skips_bili_title_relevancy():
     assert "跑题" not in reasons
 
 
-def test_validate_pass1_expands_short_with_fix_before_regen(monkeypatch):
+def test_validate_expand_expands_short_with_fix_before_regen(monkeypatch):
     """偏短时先 FIX 句内扩写，勿立刻整稿重生成。"""
     calls = {"fix": 0}
 
@@ -315,8 +323,12 @@ def test_validate_pass1_expands_short_with_fix_before_regen(monkeypatch):
         return _sample_chat()
 
     monkeypatch.setattr(gc, "_fix_chat_with_llm", fake_fix)
+    monkeypatch.setattr(gex, "_fix_chat_with_llm", fake_fix)
     monkeypatch.setattr(gc, "_ensure_gold_chat_min_chars", lambda s, **kw: (s, False))
-    out = gc._validate_pass1_chat(
+    import app.services.gold_story.gold_chat.length as glength
+    monkeypatch.setattr(glength, "_ensure_gold_chat_min_chars", lambda s, **kw: (s, False))
+    monkeypatch.setattr(gex, "_ensure_gold_chat_min_chars", lambda s, **kw: (s, False))
+    out = gc._validate_expand_chat(
         short,
         banned_literals=[],
         source_type="field",
@@ -339,7 +351,7 @@ def test_apply_deterministic_shorten_trims_one_char():
     assert len(out["dialogue"][0]["line"]) <= gc.CHAT_MAX_LINE_CHARS
 
 
-def test_validate_pass1_shortens_before_full_fix(monkeypatch):
+def test_validate_expand_shortens_before_full_fix(monkeypatch):
     calls: list[str] = []
 
     def fake_validate(story, **kwargs):
@@ -360,12 +372,16 @@ def test_validate_pass1_shortens_before_full_fix(monkeypatch):
 
     monkeypatch.setattr(gc, "validate_gold_chat", fake_validate)
     monkeypatch.setattr(gc, "_shorten_overlong_lines_with_llm", fake_shorten)
-    monkeypatch.setattr(gc, "_fix_chat_with_llm", lambda *_a, **_k: (_ for _ in ()).throw(
-        AssertionError("should not full fix")
-    ))
+    monkeypatch.setattr(gex, "_shorten_overlong_lines_with_llm", fake_shorten)
+
+    def _boom(*_a, **_k):
+        raise AssertionError("should not full fix")
+
+    monkeypatch.setattr(gc, "_fix_chat_with_llm", _boom)
+    monkeypatch.setattr(gex, "_fix_chat_with_llm", _boom)
     story = _sample_chat()
     story["dialogue"][0]["line"] = "你" * 31
-    out = gc._validate_pass1_chat(
+    out = gc._validate_expand_chat(
         story,
         banned_literals=[],
         source_type="field",
@@ -382,6 +398,7 @@ def test_gold_story_to_gold_chat(monkeypatch):
         return _sample_chat()
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
+    monkeypatch.setattr(gex, "_chat_json", fake_chat)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert out["scene_title"] == "关门练功"
     assert len(out["dialogue"]) >= 4
@@ -732,12 +749,12 @@ def test_closing_for_prompt_shortens_long():
     assert "灿灿求饶但嘴硬收场" in out
 
 
-def test_pass1_regen_feedback_includes_short_error():
+def test_expand_regen_feedback_includes_short_error():
     from app.services.gold_story.gold_chat.prompts import (
-        format_pass1_regen_feedback,
+        format_expand_regen_feedback,
     )
 
-    fb = format_pass1_regen_feedback(
+    fb = format_expand_regen_feedback(
         "正文总字数须≥240，当前214",
         None,
         structure_type="C",
