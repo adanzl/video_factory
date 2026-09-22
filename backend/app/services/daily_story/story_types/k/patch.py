@@ -245,8 +245,19 @@ def _rewrite_h_line(speaker: str, line: str) -> str:
     return _KID_STALEMATE_MID
 
 
-def sanitize_k_dialogue_seed(seed: list | None) -> list:
-    """K：seed 里带 H 式和好的 intent 改成劝失败/僵持，避免扩写被带偏。"""
+def sanitize_k_dialogue_seed(
+    seed: list | None,
+    *,
+    k_close_mode: str = "",
+) -> list:
+    """K-A：seed 里 H 式和好→劝失败/僵持；K-B/K_UNKNOWN 不洗成僵持。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_A_PARENT_FAIL_STALEMATE,
+        normalize_k_close_mode,
+    )
+
+    if normalize_k_close_mode(k_close_mode) != K_A_PARENT_FAIL_STALEMATE:
+        return list(seed) if isinstance(seed, list) else []
     if not isinstance(seed, list):
         return []
     out: list = []
@@ -269,8 +280,15 @@ def sanitize_k_dialogue_seed(seed: list | None) -> list:
 
 def patch_k_parent_advise_fail(story: dict) -> list[str]:
     """大人劝失败须有「劝→失败」两拍：仅一句管不了太薄。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_A_PARENT_FAIL_STALEMATE,
+        k_close_mode_from_story,
+    )
+
     notes: list[str] = []
     if not _is_k(story):
+        return notes
+    if k_close_mode_from_story(story) != K_A_PARENT_FAIL_STALEMATE:
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 10:
@@ -506,10 +524,44 @@ def patch_k_punchline_prefix(story: dict) -> list[str]:
     return ["K punchline→K类"]
 
 
-def patch_k_close_stalemate(story: dict) -> list[str]:
-    """末 4 句：剥 H 式和好；缺僵持则补；家长无劝失败则改一句。"""
+def patch_k_strip_h_reconcile_tail(story: dict) -> list[str]:
+    """K-B/K_UNKNOWN：仅剥家长末段 H 定责仪式；孩子轻量和好/一起走保留。"""
+    from app.services.daily_story.story_types.k.close_mode import RE_H_RITUAL
+
     notes: list[str] = []
     if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    idxs = _dialogue_idxs(dialogue)
+    if len(idxs) < 4:
+        return notes
+    for i in idxs[-4:]:
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if sp not in _PARENT_SPEAKERS or not RE_H_RITUAL.search(line):
+            continue
+        if re.search(r"定责|都错|道歉|拉手|抱抱|齐声", line):
+            item["line"] = "不评理，你们自己解决。"
+            notes.append(f"K末段剥家长H仪式[{i + 1}]")
+    return notes
+
+
+def patch_k_close_stalemate(story: dict) -> list[str]:
+    """末 4 句：剥 H 式和好；缺僵持则补；家长无劝失败则改一句。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_A_PARENT_FAIL_STALEMATE,
+        k_close_mode_from_story,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    if k_close_mode_from_story(story) != K_A_PARENT_FAIL_STALEMATE:
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
@@ -1853,7 +1905,17 @@ def patch_k_force_climax_before_parent(story: dict) -> list[str]:
     return notes
 
 
+def _k_stalemate_seal_enabled(story: dict) -> bool:
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_A_PARENT_FAIL_STALEMATE,
+        k_close_mode_from_story,
+    )
+
+    return k_close_mode_from_story(story) == K_A_PARENT_FAIL_STALEMATE
+
+
 def patch_k_body(story: dict) -> list[str]:
+    stalemate = _k_stalemate_seal_enabled(story)
     notes = patch_k_punchline_prefix(story)
     notes.extend(patch_k_strip_cross_type_plea(story))
     notes.extend(patch_k_strip_pad_junk(story))
@@ -1875,19 +1937,24 @@ def patch_k_body(story: dict) -> list[str]:
     notes.extend(patch_k_ensure_press_climax(story))
     notes.extend(patch_k_dedupe_cry_and_defiance(story))
     notes.extend(patch_k_strip_hard_win_close(story))
-    notes.extend(patch_k_parent_advise_fail(story))
-    notes.extend(patch_k_ensure_advise_two_slots(story))
-    notes.extend(patch_k_close_stalemate(story))
-    notes.extend(patch_k_fix_limp_soft_close(story))
-    notes.extend(patch_k_tail_anchor(story))
-    notes.extend(patch_k_trim_empty_tail(story))
-    # 回扣锚点后再剥一次垫字头，避免「这我才我才」
-    notes.extend(patch_k_strip_pad_junk(story))
-    notes.extend(patch_k_bind_press_roles(story))
-    notes.extend(patch_k_fix_consecutive_keep_press(story))
-    notes.extend(patch_k_seal_after_parent_fail(story))
-    notes.extend(patch_k_force_climax_before_parent(story))
-    notes.extend(patch_k_loser_monotonic(story))
-    notes.extend(patch_k_ensure_advise_two_slots(story))
-    notes.extend(patch_k_pin_advise_fail_close(story))
+    if stalemate:
+        notes.extend(patch_k_parent_advise_fail(story))
+        notes.extend(patch_k_ensure_advise_two_slots(story))
+        notes.extend(patch_k_close_stalemate(story))
+        notes.extend(patch_k_fix_limp_soft_close(story))
+        notes.extend(patch_k_tail_anchor(story))
+        notes.extend(patch_k_trim_empty_tail(story))
+        notes.extend(patch_k_strip_pad_junk(story))
+        notes.extend(patch_k_bind_press_roles(story))
+        notes.extend(patch_k_fix_consecutive_keep_press(story))
+        notes.extend(patch_k_seal_after_parent_fail(story))
+        notes.extend(patch_k_force_climax_before_parent(story))
+        notes.extend(patch_k_loser_monotonic(story))
+        notes.extend(patch_k_ensure_advise_two_slots(story))
+        notes.extend(patch_k_pin_advise_fail_close(story))
+    else:
+        notes.extend(patch_k_strip_h_reconcile_tail(story))
+        notes.extend(patch_k_strip_pad_junk(story))
+        notes.extend(patch_k_bind_press_roles(story))
+        notes.extend(patch_k_fix_consecutive_keep_press(story))
     return notes

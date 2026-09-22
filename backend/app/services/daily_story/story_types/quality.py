@@ -8,24 +8,15 @@ from dataclasses import dataclass, field
 
 from app.services.daily_story.story_types import parse_story_type_code, story_line_for_code
 
-PunchlineScorer = Callable[
-    [list[str], list[str], str, str],
-    tuple[int, list[str]],
-]
-HumorIssueCollector = Callable[
-    [list[str], list[str] | None],
-    list[str],
-]
+PunchlineScorer = Callable[..., tuple[int, list[str]]]
+HumorIssueCollector = Callable[..., list[str]]
 GroundQuoteFn = Callable[[str, str], bool]
 QuoteHaystackFn = Callable[[list[str], list[str] | None, str], str]
 SceneBeatScorer = Callable[
     [list[str], Callable[[str], bool]],
     tuple[int, list[str]],
 ]
-FunninessTailScorer = Callable[
-    [list[str], list[str] | None],
-    tuple[int, list[str]],
-]
+FunninessTailScorer = Callable[..., tuple[int, list[str]]]
 SpecificityBonusScorer = Callable[[list[str], list[str] | None], int]
 HumorRevisionHintFn = Callable[[str], str | None]
 FactIssueCollector = Callable[[dict], list[str]]
@@ -259,8 +250,15 @@ def score_punchline_for_profile(
     speakers: list[str],
     prev2: str,
     last: str,
+    *,
+    story: dict | None = None,
 ) -> tuple[int, list[str]]:
-    return profile.score_punchline(lines, speakers, prev2, last)
+    try:
+        return profile.score_punchline(
+            lines, speakers, prev2, last, story=story,
+        )
+    except TypeError:
+        return profile.score_punchline(lines, speakers, prev2, last)
 
 
 def closing_satisfied(pros: list[str], profile: TypeQualityProfile) -> bool:

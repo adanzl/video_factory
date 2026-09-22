@@ -109,6 +109,10 @@ def export_gold_chat_files(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     payload = cast(dict[str, Any], row.get("payload") or {})
+    sc_export = payload.get("scene_contract")
+    k_mode_export = chat.get("k_close_mode")
+    if not k_mode_export and isinstance(sc_export, dict):
+        k_mode_export = sc_export.get("k_close_mode")
     export = {
         "gold_story_id": row.get("id"),
         "source_id": sid,
@@ -121,6 +125,7 @@ def export_gold_chat_files(
         "chat_chars": dialogue_total_chars(chat),
         "chat_lines": len(chat.get("dialogue") or []),
         "exported_at": datetime.now(timezone.utc).isoformat(),
+        "k_close_mode": k_mode_export,
         "daily_story": chat,
         "gold_meta": {
             "source_type": payload.get("source_type"),

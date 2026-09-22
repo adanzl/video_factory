@@ -722,7 +722,14 @@ def _refine_after_normalize(
     structure_type = structure_type.strip().upper()
     mechanism = str(row.get("mechanism") or "").strip().upper()
     closing = _resolve_closing_intent(
-        payload, scene_contract, structure_type=structure_type
+        payload,
+        scene_contract,
+        structure_type=structure_type,
+        k_close_mode=str(
+            payload.get("k_close_mode")
+            or scene_contract.get("k_close_mode")
+            or ""
+        ),
     )
     beat_chain = scene_contract.get("beat_chain") or []
     if not isinstance(beat_chain, list):
@@ -748,6 +755,9 @@ def _refine_after_normalize(
         payload.get("source_type") or scene_contract.get("source_type") or "field"
     )
     story_raw = str(row.get("story_raw") or payload.get("story_raw") or "")[:800]
+    k_close_mode = str(
+        payload.get("k_close_mode") or scene_contract.get("k_close_mode") or ""
+    ).strip()
     align_block = format_align_block(
         structure_type=structure_type,
         mechanism=mechanism,
@@ -755,6 +765,7 @@ def _refine_after_normalize(
         closing_intent=closing,
         story_raw=story_raw,
         closing_mode=str(payload.get("closing_mode") or ""),
+        k_close_mode=k_close_mode,
     )
     banned_list = [str(x) for x in banned]
 

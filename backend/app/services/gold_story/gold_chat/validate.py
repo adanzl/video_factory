@@ -11,6 +11,7 @@ def align_chain(
     structure_type: str,
     mechanism: str,
     closing_mode: str = "",
+    k_close_mode: str = "",
 ) -> tuple[str, ...]:
     from app.services.gold_story.gold_chat.type_bridge import (
         type_align_chain,
@@ -20,6 +21,7 @@ def align_chain(
         structure_type=structure_type,
         mechanism=mechanism,
         closing_mode=closing_mode,
+        k_close_mode=k_close_mode,
     )
 
 

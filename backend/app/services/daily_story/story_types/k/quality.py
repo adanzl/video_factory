@@ -1,9 +1,22 @@
-"""K 类观感 profile（家长看戏）。"""
+"""K 类观感 profile（家长看戏，k_close_mode 分支）。"""
 
 from __future__ import annotations
 
 from app.services.daily_story.story_types.k import humor as k_humor
 from app.services.daily_story.story_types.k import opening as k_opening
+from app.services.daily_story.story_types.k.close_mode import (
+    K_A_PARENT_FAIL_STALEMATE,
+    K_B_CHILD_SELF_RESOLVE,
+    K_UNKNOWN,
+    k_close_mode_from_story,
+)
+from app.services.daily_story.story_types.k.close_mode import (
+    RE_H_RITUAL,
+    RE_KB_PARENT_PASSIVE,
+)
+from app.services.daily_story.story_types.k.resolve_check import (
+    kid_self_resolve_in_tail,
+)
 from app.services.daily_story.story_types.k.validate import (
     RE_A_BACKFIRE,
     RE_FIGHT,
@@ -22,40 +35,81 @@ def score_punchline(
     speakers: list[str],
     prev2: str,
     last: str,
+    *,
+    story: dict | None = None,
 ) -> tuple[int, list[str]]:
-    del speakers, prev2, last
+    del prev2, last
     n = len(lines)
     if n < 4:
         return 0, []
 
+    mode = (
+        k_close_mode_from_story(story)
+        if isinstance(story, dict)
+        else K_UNKNOWN
+    )
     body = "".join(lines)
     tail6 = "".join(lines[-6:])
+    tail6_speakers = speakers[-6:] if len(speakers) >= 6 else speakers
+    tail6_lines = lines[-6:]
+    parent_tail6 = "".join(
+        ln
+        for sp, ln in zip(tail6_speakers, tail6_lines, strict=False)
+        if sp in ("妈妈", "爸爸")
+    )
     if RE_A_BACKFIRE.search(tail6):
         return 0, ["K收束含A式反噬标记"]
-    if RE_H_RECONCILE.search(tail6):
+    if RE_H_RECONCILE.search(tail6) and mode == K_A_PARENT_FAIL_STALEMATE:
         return 0, ["K收束含H式和好"]
+    if mode == K_B_CHILD_SELF_RESOLVE and RE_H_RITUAL.search(parent_tail6):
+        return 0, ["K_B收束含H式定责仪式"]
 
     has_fight = bool(RE_FIGHT.search(body))
-    has_fail = bool(RE_PARENT_FAIL.search(body))
-    has_stale = bool(RE_STALEMATE.search(tail6))
     if not has_fight:
         return 0, []
 
     bonus = 0
     details: list[str] = ["互骂升级落位"]
-    if has_fail:
-        details.append("大人劝失败")
-    if has_stale:
-        bonus = 8
-        details.append("僵持不和好")
+    if mode == K_A_PARENT_FAIL_STALEMATE:
+        has_fail = bool(RE_PARENT_FAIL.search(body))
+        has_stale = bool(RE_STALEMATE.search(tail6))
+        if has_fail:
+            details.append("大人劝失败")
+        if has_stale:
+            bonus = 8
+            details.append("僵持不和好")
+        else:
+            bonus = 5
+            details.append("缺僵持收场")
+    elif mode == K_B_CHILD_SELF_RESOLVE:
+        parent_blob = "".join(
+            ln
+            for sp, ln in zip(speakers, lines, strict=False)
+            if sp in ("妈妈", "爸爸")
+        )
+        if parent_blob and RE_KB_PARENT_PASSIVE.search(parent_blob):
+            bonus += 4
+            details.append("家长挡回旁观")
+        tail6_sp = speakers[-6:] if len(speakers) >= 6 else speakers
+        if kid_self_resolve_in_tail(tail6_sp, tail6_lines):
+            bonus += 8
+            details.append("孩子自行恢复互动")
+        else:
+            bonus = max(0, bonus - 6)
+            details.append("缺自行恢复互动")
+        if RE_H_RITUAL.search(parent_tail6):
+            bonus = 0
+            details.append("K_B含H仪式污染")
     else:
-        bonus = 5
-        details.append("缺僵持收场")
+        bonus = 3
+        details.append("K收场模式未定")
 
     return bonus, details
 
 
 def humor_revision_hint(issue_text: str) -> str | None:
+    if "K_B" in issue_text or "自行恢复" in issue_text:
+        return "【K_B收束】家长挡回不评理；末段孩子自行恢复互动；勿妈妈劝架/H仪式。"
     if "和好" in issue_text or "收束" in issue_text:
         return "【K收束】末段僵持不和好；勿拉手/不打了/和好。"
     if "劝" in issue_text or "推进" in issue_text:
@@ -74,6 +128,8 @@ QUALITY_PROFILE = TypeQualityProfile(
         "僵持",
         "看戏",
         "不和好",
+        "自行恢复",
+        "挡回",
     ),
     punch_before_soft_markers=SHARED_PUNCH_SOFT
     + (

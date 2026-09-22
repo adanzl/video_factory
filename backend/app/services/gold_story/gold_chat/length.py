@@ -1060,16 +1060,24 @@ def _boost_short_with_mid_lines(
     # K：僵持词已在不挡大缺口补句；小缺口且已有僵持点则不再插
     insert_at = max(2, len(dialogue) - 2)
     if st == "K":
-        # 插在劝失败/劝止前，避免封口后再灌尾
-        for i, item in enumerate(dialogue):
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("speaker") or "").strip() not in ("妈妈", "爸爸"):
-                continue
-            line = str(item.get("line") or "")
-            if re.search(r"管不了|劝不了|别闹|别打|别吵|看着", line):
-                insert_at = max(2, i)
-                break
+        from app.services.daily_story.story_types.k.close_mode import (
+            K_A_PARENT_FAIL_STALEMATE,
+            k_close_mode_from_story,
+        )
+
+        if k_close_mode_from_story(out) == K_A_PARENT_FAIL_STALEMATE:
+            # 插在劝失败/劝止前，避免封口后再灌尾
+            for i, item in enumerate(dialogue):
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("speaker") or "").strip() not in ("妈妈", "爸爸"):
+                    continue
+                line = str(item.get("line") or "")
+                if re.search(r"管不了|劝不了|别闹|别打|别吵|看着", line):
+                    insert_at = max(2, i)
+                    break
+        else:
+            insert_at = max(2, len(dialogue) // 2)
     if st == "O":
         punch = _o_goal_punch_index(dialogue)
         if punch >= 0:

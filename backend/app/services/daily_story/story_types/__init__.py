@@ -534,6 +534,7 @@ def sanitize_gold_chat_dialogue_seed(
     seed: list[Any],
     *,
     structure_type: str,
+    k_close_mode: str = "",
 ) -> list[Any]:
     """金稿 dialogue_seed 类型向清洗（现仅 K）。"""
     st = str(structure_type or "").strip().upper()
@@ -542,7 +543,7 @@ def sanitize_gold_chat_dialogue_seed(
             sanitize_k_dialogue_seed,
         )
 
-        return sanitize_k_dialogue_seed(seed)
+        return sanitize_k_dialogue_seed(seed, k_close_mode=k_close_mode)
     return seed
 
 
