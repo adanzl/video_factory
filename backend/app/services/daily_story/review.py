@@ -1260,12 +1260,16 @@ def apply_review_to_quality(
     story: dict,
     issues: list[dict[str, Any]],
     humor: dict[str, Any] | None = None,
+    *,
+    apply_penalty: bool = True,
 ) -> dict:
     """把审读结果落到 quality：扣硬伤分、写入 LLM 好笑分、判定发布线。
 
     humor 为审读同批输出的好笑评估 {funny_score, best_moment, humor_type}。
     有 humor：总分 = 结构分（正则，≤80）+ LLM 好笑（0-20）− 审读硬伤；
     发布线 = 结构≥75 且 好笑≥HUMOR_PUBLISH_MIN。无 humor：保持旧扣分逻辑（兼容 mock）。
+    ``apply_penalty=False``：仅注入好笑与 ``review_issues``（如 gold_chat 导入），
+    硬伤待润色后再扣；正式 ``run_daily_story_review`` 仍为 True。
     """
     from app.services.daily_story.quality import HUMOR_PUBLISH_MIN, _grade_from_score
 
@@ -1289,11 +1293,19 @@ def apply_review_to_quality(
     ]
     quality["review_issues"] = issues
     points, reasons = review_penalty(penalized)
+    if not apply_penalty:
+        if points and reasons:
+            quality["reasons"] = [
+                *(quality.get("reasons") or []),
+                *reasons,
+                f"审读硬伤待润色后扣分（约{points}分）",
+            ]
+        points = 0
 
     if humor and isinstance(humor, dict):
         from app.services.daily_story.quality import finalize_daily_story_total
 
-        if reasons:
+        if apply_penalty and reasons:
             quality["reasons"] = [
                 *(quality.get("reasons") or []),
                 *reasons,
