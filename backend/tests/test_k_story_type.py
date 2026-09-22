@@ -647,6 +647,21 @@ def test_k_b_patch_rewrites_narrator_close_to_mutter():
     assert not any("自言自语" in e for e in errors)
 
 
+def test_k_b_patch_inserts_self_resolve_when_missing():
+    from app.services.daily_story.story_types.k.patch import patch_k_body
+
+    story = _k_stalemate_story()
+    story["k_close_mode"] = "K_B_CHILD_SELF_RESOLVE"
+    story["dialogue"] = story["dialogue"][:12]
+    story["dialogue"][-1] = {"speaker": "妈妈", "line": "不掺和就对了。"}
+    patch_k_body(story)
+    blob = "".join(d["line"] for d in story["dialogue"])
+    assert "还玩不玩" in blob or "吃不吃" in blob
+    errors: list[str] = []
+    append_k_body_errors(story, errors)
+    assert not any("K_B_MISSING" in e for e in errors)
+
+
 def test_k_b_patch_grounds_ungrounded_punchline():
     from app.services.daily_story.story_types.k.patch import patch_k_body
 

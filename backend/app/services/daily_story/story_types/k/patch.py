@@ -526,6 +526,67 @@ def patch_k_punchline_prefix(story: dict) -> list[str]:
     return ["K punchline→K类"]
 
 
+def patch_k_b_ensure_self_resolve_tail(story: dict) -> list[str]:
+    """K-B：末段缺孩子自行恢复时，在孩子与家长末句之间补两拍邀约-接住。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        RE_BEAT_CHILD_SELF,
+        k_close_mode_from_story,
+    )
+    from app.services.daily_story.story_types.k.resolve_check import (
+        kid_self_resolve_in_tail,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story) or k_close_mode_from_story(story) != K_B_CHILD_SELF_RESOLVE:
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    idxs = _dialogue_idxs(dialogue)
+    if len(idxs) < 8:
+        return notes
+    lines, speakers = _lines_and_speakers_from_dialogue(dialogue)
+    if kid_self_resolve_in_tail(speakers, lines):
+        return notes
+
+    last_kid = ""
+    for i in reversed(idxs):
+        sp = str(dialogue[i].get("speaker") or "").strip()
+        if sp in _KID_SPEAKERS:
+            last_kid = sp
+            break
+    inviter = last_kid or "昭昭"
+    acceptor = "灿灿" if inviter == "昭昭" else "昭昭"
+
+    beat_blob = ""
+    sc = story.get("scene_contract")
+    if isinstance(sc, dict):
+        for item in sc.get("beat_chain") or []:
+            if isinstance(item, dict):
+                beat_blob += str(item.get("intent") or "")
+    if RE_BEAT_CHILD_SELF.search(beat_blob) and re.search(
+        r"吃|冰棍|零食", beat_blob
+    ):
+        invite = "吃不吃？一起吧。"
+    else:
+        invite = "还玩不玩？一起吧。"
+    block = [
+        {"speaker": inviter, "line": invite},
+        {"speaker": acceptor, "line": "行啊！一起玩！"},
+    ]
+
+    insert_at = len(dialogue)
+    for i in reversed(idxs):
+        sp = str(dialogue[i].get("speaker") or "").strip()
+        if sp in _PARENT_SPEAKERS:
+            insert_at = i
+            break
+    story["dialogue"] = dialogue[:insert_at] + block + dialogue[insert_at:]
+    notes.append("K_B补自行恢复两拍")
+    return notes
+
+
 def patch_k_b_parent_closing_voice(story: dict) -> list[str]:
     """K-B：家长末句改自言自语点题，剥观众解说/显式喊爸爸。"""
     from app.services.daily_story.story_types.k.close_mode import (
@@ -2039,6 +2100,7 @@ def patch_k_body(story: dict) -> list[str]:
         notes.extend(patch_k_pin_advise_fail_close(story))
     else:
         notes.extend(patch_k_b_ground_punchline_explain(story))
+        notes.extend(patch_k_b_ensure_self_resolve_tail(story))
         notes.extend(patch_k_b_parent_closing_voice(story))
         notes.extend(patch_k_strip_h_reconcile_tail(story))
         notes.extend(patch_k_strip_pad_junk(story))
