@@ -562,15 +562,43 @@ def type_catalog_system_block() -> str:
     return TYPE_CATALOG_LINE
 
 
-def format_block_for_code(code: str) -> str:
+def format_block_for_code(
+    code: str,
+    *,
+    theme: str | None = None,
+    framework: dict | None = None,
+) -> str:
     line = story_line_for_code(code)
+    body_lines_min = line.body_lines_min
+    body_lines_max = line.body_lines_max
+    line_format_hint = line.line_format_hint
+    code_u = (code or "").upper()
+    if code_u == "C":
+        anchor = str(theme or "")
+        if isinstance(framework, dict):
+            anchor += str(framework.get("conflict_core") or "")
+            anchor += str(framework.get("setting") or "")
+        from app.services.daily_story.story_types.c.line import (
+            C_WHOLE_ITEM_LINE_FORMAT,
+            c_whole_item_line_budget,
+        )
+        from app.services.daily_story.story_types.c.validate import (
+            c_criterion_theme_profile,
+        )
+
+        if c_criterion_theme_profile(anchor) == "whole_item":
+            body_lines_min, body_lines_max, _avg = c_whole_item_line_budget()
+            line_format_hint = C_WHOLE_ITEM_LINE_FORMAT
     lines_hard = ""
-    if line.body_lines_min and line.body_lines_max and line.body_lines_max > line.body_lines_min:
+    if (
+        body_lines_min
+        and body_lines_max
+        and body_lines_max > body_lines_min
+    ):
         # D 等硬句数类型：把数组长度写进 JSON 模板（Flash 对可校验格式更听话）
-        vals = list(range(line.body_lines_min, line.body_lines_max + 1))
+        vals = list(range(body_lines_min, body_lines_max + 1))
         num_text = "、".join(str(v) for v in vals[:-1]) + " 或 " + str(vals[-1])
         lines_hard = f'    // 数组长度必须等于 {num_text}，不得少，不得多。\n'
-    code_u = (code or "").upper()
     if code_u in {"C", "D"}:
         alternation_hard = (
             '    // 本类型依靠接招节奏，speaker 须逐句交替；'
@@ -590,15 +618,15 @@ def format_block_for_code(code: str) -> str:
         )
     if code_u == "D":
         rows = (
-            f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'
+            f'    {{"speaker": "昭昭", "line": "台词（{line_format_hint}）"}},\n'
             '    {"speaker": "灿灿", "line": "台词"}  // 本场仅昭昭/灿灿，禁止妈妈/爸爸\n'
         )
         footer = "本场仅昭昭/灿灿出场；禁止妈妈/爸爸发言。"
     elif code_u == "E":
         rows = (
-            f'    {{"speaker": "妈妈", "line": "台词（{line.line_format_hint}）"}},\n'
-            f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'
-            f'    {{"speaker": "灿灿", "line": "台词（{line.line_format_hint}）"}}\n'
+            f'    {{"speaker": "妈妈", "line": "台词（{line_format_hint}）"}},\n'
+            f'    {{"speaker": "昭昭", "line": "台词（{line_format_hint}）"}},\n'
+            f'    {{"speaker": "灿灿", "line": "台词（{line_format_hint}）"}}\n'
         )
         footer = (
             "妈妈三拍：开场立规+中段恰好1句短反应+末句破功并当场做回去；"
@@ -606,7 +634,7 @@ def format_block_for_code(code: str) -> str:
         )
     else:
         rows = (
-            f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'
+            f'    {{"speaker": "昭昭", "line": "台词（{line_format_hint}）"}},\n'
             '    {"speaker": "灿灿", "line": "台词"},\n'
             '    {"speaker": "妈妈", "line": "台词（宜少）"}\n'
         )

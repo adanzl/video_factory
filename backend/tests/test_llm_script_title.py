@@ -851,3 +851,140 @@ def test_c_whole_item_body_too_short():
     assert "总字数须≥" in err
     assert "C整件物句数须≥" in err
 
+
+def test_c_whole_item_format_block_matches_line_budget():
+    from app.services.daily_story.prompts import build_daily_story_prompts
+
+    theme = "沙发上的抱枕大战"
+    system, _user = build_daily_story_prompts(theme, story_type="C")
+    assert "数组长度必须等于 19、20、21 或 22" in system
+    assert "数组长度必须等于 14、15 或 16" not in system
+
+
+def test_e_core_word_substituted_in_user_prompt():
+    from app.services.daily_story.prompts import (
+        build_daily_story_prompts,
+        extract_e_core_word,
+    )
+
+    theme = "九点了必须睡觉妈妈还在刷手机"
+    assert extract_e_core_word(theme) == "睡觉"
+    _sys, user = build_daily_story_prompts(theme, story_type="E")
+    assert "核心词「睡觉」" in user
+    assert "{core_word}" not in user
+
+
+def test_revise_patch_direction_c_short_vs_e_long():
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MAX,
+        build_daily_story_prompts,
+    )
+
+    c_sys, c_user = build_daily_story_prompts(
+        "沙发上的抱枕大战",
+        story_type="C",
+        length_mode="revise_patch",
+        body_chars=230,
+    )
+    assert "偏短" in c_sys or "句内微调·偏短" in c_sys
+    assert "偏长压缩" not in c_sys
+    assert "偏短" in c_user
+
+    e_sys, e_user = build_daily_story_prompts(
+        "九点了必须睡觉妈妈还在刷手机",
+        story_type="E",
+        length_mode="revise_patch",
+        body_chars=DAILY_STORY_BODY_CHARS_MAX + 10,
+    )
+    assert "偏长" in e_sys
+    assert "各加 2–8 字" not in e_sys
+    assert "偏长" in e_user
+
+
+def test_e_user_allows_two_consecutive_lines_not_ban_lianshuo():
+    from app.services.daily_story.prompts import build_daily_story_prompts
+
+    _sys, user = build_daily_story_prompts(
+        "九点了必须睡觉妈妈还在刷手机",
+        story_type="E",
+    )
+    assert "禁同人连说" not in user
+    assert "最多连续2句" in user
+
+
+def test_e_patch_keeps_two_consecutive_sibling_lines():
+    from app.services.daily_story.prompts import (
+        _patch_consecutive_speakers,
+        try_local_patch_daily_story_body,
+    )
+
+    story = {
+        "punchline_explain": "E类妈妈破功，睡觉规矩被戳穿",
+        "conflict_core": "姐弟抓妈妈九点后刷手机",
+        "setting": "客厅沙发",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "九点了必须睡觉别磨蹭"},
+            {"speaker": "灿灿", "line": "你刚才还说大人要早睡呢"},
+            {"speaker": "灿灿", "line": "手机屏还亮着我都看见了"},
+            {"speaker": "昭昭", "line": "就是说啊你自己先破规矩"},
+            {"speaker": "妈妈", "line": "好好好我这就放下手机"},
+        ],
+    }
+    notes = _patch_consecutive_speakers(story)
+    assert story["dialogue"][1]["speaker"] == "灿灿"
+    assert story["dialogue"][2]["speaker"] == "灿灿"
+    assert not any(n.startswith("连说改speaker[2]") for n in notes)
+    _out, notes2 = try_local_patch_daily_story_body(story)
+    assert _out["dialogue"][1]["speaker"] == "灿灿"
+    assert _out["dialogue"][2]["speaker"] == "灿灿"
+
+
+def test_e_patch_still_breaks_three_consecutive_sibling_lines():
+    from app.services.daily_story.prompts import _patch_consecutive_speakers
+
+    story = {
+        "punchline_explain": "E类妈妈破功",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "第一句帮腔"},
+            {"speaker": "灿灿", "line": "第二句帮腔"},
+            {"speaker": "灿灿", "line": "第三句不该连说"},
+            {"speaker": "妈妈", "line": "好了别吵"},
+        ],
+    }
+    _patch_consecutive_speakers(story)
+    run = sum(
+        1
+        for d in story["dialogue"][:3]
+        if d.get("speaker") == "灿灿"
+    )
+    assert run <= 2
+
+
+def test_revise_patch_in_band_for_yinhua_and_g_long():
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MAX,
+        DAILY_STORY_BODY_CHARS_MIN,
+        build_daily_story_prompts,
+    )
+
+    mid = (DAILY_STORY_BODY_CHARS_MIN + DAILY_STORY_BODY_CHARS_MAX) // 2
+    e_sys, e_user = build_daily_story_prompts(
+        "九点了必须睡觉妈妈还在刷手机",
+        story_type="E",
+        length_mode="revise_patch",
+        body_chars=mid,
+    )
+    assert "达标" in e_sys
+    assert "各加 2–8 字" not in e_sys
+    assert "达标只修局部" in e_user
+
+    g_sys, g_user = build_daily_story_prompts(
+        "谁先写完作业",
+        story_type="G",
+        length_mode="revise_patch",
+        body_chars=DAILY_STORY_BODY_CHARS_MAX + 10,
+    )
+    assert "偏长" in g_sys
+    assert "压到" in g_sys or "删冗余" in g_sys
+    assert "偏长句内删" in g_user or "压到" in g_user
+

@@ -211,13 +211,30 @@ _DAILY_STORY_LENGTH_REVISE_TRIM = f"""\
   发现开场系统另写另验，不计入正文硬卡。
 """
 
-_DAILY_STORY_LENGTH_REVISE_PATCH = f"""\
-- 片长（正文微调重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+_DAILY_STORY_LENGTH_REVISE_PATCH_SHORT = f"""\
+- 片长（正文微调·偏短）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  只差几个字或局部硬卡：禁止整稿重写、禁止大段增删句。
-  优先在现有中段 2–3 句内各加几个字；末四拍尽量原样保留。
+  **禁止增删句**；在现有句内补可拍细节，写到 ≥{DAILY_STORY_BODY_CHARS_MIN}；
+  禁止整稿重写。发现开场系统另写另验，不计入正文硬卡。
+"""
+
+_DAILY_STORY_LENGTH_REVISE_PATCH_LONG = f"""\
+- 片长（正文微调·偏长）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **禁止增删句**；从中段 1–3 句删冗余措辞/重复，压到 ≤{DAILY_STORY_BODY_CHARS_MAX}；
+  禁止整稿重写。发现开场系统另写另验，不计入正文硬卡。
+"""
+
+_DAILY_STORY_LENGTH_REVISE_PATCH_IN_BAND = f"""\
+- 片长（正文·达标微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  字数已在区间内：**勿故意加长或缩短**；只修本轮机审指出的局部硬卡
+  （引话/连说/结构槽位等）；禁止整稿重写、禁止大段增删句。
   发现开场系统另写另验，不计入正文硬卡。
 """
+
+# 兼容旧引用
+_DAILY_STORY_LENGTH_REVISE_PATCH = _DAILY_STORY_LENGTH_REVISE_PATCH_IN_BAND
 
 # 非字数问题重试：篇幅别乱动
 _DAILY_STORY_LENGTH_REVISE = f"""\
@@ -250,11 +267,27 @@ _DAILY_STORY_LENGTH_USER_REVISE_TRIM = f"""\
    speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
 
-_DAILY_STORY_LENGTH_USER_REVISE_PATCH = f"""\
-3. 【字数：微调补齐】正文须落在 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-   只改现有句子（句内加字或改 1–2 句措辞），禁止插入大段新回合、禁止整稿重写。
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
+_DAILY_STORY_LENGTH_USER_REVISE_PATCH_SHORT = f"""\
+3. 【字数：偏短句内补】写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
+   只改现有句子（句内加字），禁止增删句、禁止整稿重写。发现开场另计另验。
+   speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
+
+_DAILY_STORY_LENGTH_USER_REVISE_PATCH_LONG = f"""\
+3. 【字数：偏长句内删】压到 ≤{DAILY_STORY_BODY_CHARS_MAX} 字（仍须 ≥{DAILY_STORY_BODY_CHARS_MIN}）；
+   只删句内冗余，禁止增删句、禁止整稿重写。发现开场另计另验。
+   speaker 仅昭昭/灿灿/妈妈/爸爸。
+"""
+
+_DAILY_STORY_LENGTH_USER_REVISE_PATCH_IN_BAND = f"""\
+3. 【字数：达标只修局部】正文已在 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字：
+   **勿为凑字或压字改篇幅**；只改机审点名的 1–2 句。发现开场另计另验。
+   speaker 仅昭昭/灿灿/妈妈/爸爸。
+"""
+
+_DAILY_STORY_LENGTH_USER_REVISE_PATCH = (
+    _DAILY_STORY_LENGTH_USER_REVISE_PATCH_IN_BAND
+)
 
 _DAILY_STORY_LENGTH_USER_REVISE = f"""\
 3. 【字数硬卡优先】正文只遵守 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
@@ -268,7 +301,7 @@ _LENGTH_MODE_SYSTEM = {
     "revise": _DAILY_STORY_LENGTH_REVISE,
     "revise_expand": _DAILY_STORY_LENGTH_REVISE_EXPAND,
     "revise_trim": _DAILY_STORY_LENGTH_REVISE_TRIM,
-    "revise_patch": _DAILY_STORY_LENGTH_REVISE_PATCH,
+    "revise_patch": _DAILY_STORY_LENGTH_REVISE_PATCH_IN_BAND,
 }
 
 _LENGTH_MODE_USER = {
@@ -276,7 +309,7 @@ _LENGTH_MODE_USER = {
     "revise": _DAILY_STORY_LENGTH_USER_REVISE,
     "revise_expand": _DAILY_STORY_LENGTH_USER_REVISE_EXPAND,
     "revise_trim": _DAILY_STORY_LENGTH_USER_REVISE_TRIM,
-    "revise_patch": _DAILY_STORY_LENGTH_USER_REVISE_PATCH,
+    "revise_patch": _DAILY_STORY_LENGTH_USER_REVISE_PATCH_IN_BAND,
 }
 
 
@@ -492,6 +525,17 @@ def _build_c_whole_item_near_miss_expand_user(
         "punchline_explain/dialogue）。\n"
         "禁止附带上一稿 JSON。"
     )
+
+
+def _revise_patch_direction(body_chars: int | None) -> str:
+    """revise_patch 时按上一稿字数区分偏短 / 偏长 / 达标（含 unknown）。"""
+    if body_chars is None:
+        return "in_band"
+    if body_chars < DAILY_STORY_BODY_CHARS_MIN:
+        return "short"
+    if body_chars > DAILY_STORY_BODY_CHARS_MAX:
+        return "long"
+    return "in_band"
 
 
 def _body_line_budget(
@@ -738,22 +782,16 @@ def _daily_story_length_rewrite_from_scratch_for_type(
     )
 
 
-def _daily_story_length_revise_patch_for_type(type_code: str | None) -> str:
-    if type_code and type_code.upper() == "E":
-        return f"""\
-- 片长（E类句内微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  **禁止增删句**；把偏短句各加 2–8 字（可拍细节/追问语气），写到 ≥{DAILY_STORY_BODY_CHARS_MIN}；
-  末段闭环+妈妈破功原样保留。发现开场另写另验。
-"""
-    if type_code and type_code.upper() == "D":
-        return f"""\
-- 片长（D类句内微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  **禁止增删句**；偏短句各加 2–8 字，写到 ≥{DAILY_STORY_BODY_CHARS_MIN}；
-  末段回旋镖+嘴硬收束原样保留。发现开场另写另验。
-"""
-    if type_code and type_code.upper() == "A":
+def _daily_story_length_revise_patch_for_type(
+    type_code: str | None,
+    *,
+    theme: str | None = None,
+    framework: dict | None = None,
+    body_chars: int | None = None,
+) -> str:
+    direction = _revise_patch_direction(body_chars)
+    tc = (type_code or "").upper()
+    if tc == "A":
         return f"""\
 - 片长（A类句内微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
@@ -763,15 +801,77 @@ def _daily_story_length_revise_patch_for_type(type_code: str | None) -> str:
   其余三句（那不一样/哪里不一样/软破功）原样保留。
   发现开场系统另写另验，不计入正文硬卡。
 """
-    if type_code and type_code.upper() == "C":
-        lo, hi, _avg = _body_line_budget(type_code)
+    if tc == "E":
+        if direction == "long":
+            return f"""\
+- 片长（E类句内微调·偏长）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **禁止增删句**；删冗余语气词/叠词、合并同义追问，压到 ≤{DAILY_STORY_BODY_CHARS_MAX}；
+  末段闭环+妈妈破功原样保留。发现开场另写另验。
+"""
+        if direction == "short":
+            return f"""\
+- 片长（E类句内微调·偏短）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **禁止增删句**；把偏短句各加 2–8 字（可拍细节/追问语气），写到 ≥{DAILY_STORY_BODY_CHARS_MIN}；
+  末段闭环+妈妈破功原样保留。发现开场另写另验。
+"""
         return f"""\
+- 片长（E类·达标微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  字数已在区间内：勿故意改篇幅；只修本轮机审点（引话/闭环/连说等）。
+  末段闭环+妈妈破功原样保留。发现开场另写另验。
+"""
+    if tc == "D":
+        if direction == "long":
+            return f"""\
+- 片长（D类句内微调·偏长）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **禁止增删句**；删空辩论/重复字面复读，压到 ≤{DAILY_STORY_BODY_CHARS_MAX}；
+  末段回旋镖+嘴硬收束原样保留。发现开场另写另验。
+"""
+        if direction == "short":
+            return f"""\
+- 片长（D类句内微调·偏短）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **禁止增删句**；偏短句各加 2–8 字，写到 ≥{DAILY_STORY_BODY_CHARS_MIN}；
+  末段回旋镖+嘴硬收束原样保留。发现开场另写另验。
+"""
+        return f"""\
+- 片长（D类·达标微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  字数已在区间内：勿故意改篇幅；只修本轮机审点；昭昭/灿灿须逐句交替。
+  末段回旋镖+嘴硬收束原样保留。发现开场另写另验。
+"""
+    if tc == "C":
+        lo, hi, _avg = _body_line_budget(
+            type_code, theme=theme, framework=framework,
+        )
+        if direction == "long":
+            return f"""\
 - 片长（C类偏长压缩）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
   压缩到 {lo}–{hi} 句；删赛规绕圈复读、删先后争读叠句；
   压缩后仍须满足回旋镖收束 + 被戳穿方末句嘴硬结构。发现开场另写另验。
 """
-    return _DAILY_STORY_LENGTH_REVISE_PATCH
+        if direction == "short":
+            return f"""\
+- 片长（C类句内微调·偏短）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **禁止删句**；在现有句内加可拍细节/互怼分句，写到 ≥{DAILY_STORY_BODY_CHARS_MIN}；
+  保留回旋镖收束 + 被戳穿方末句嘴硬结构。发现开场另写另验。
+"""
+        return f"""\
+- 片长（C类·达标微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  字数已在区间内：勿故意改篇幅；只修本轮机审点；昭昭/灿灿须逐句交替。
+  保留回旋镖收束 + 被戳穿方末句嘴硬结构。发现开场另写另验。
+"""
+    if direction == "long":
+        return _DAILY_STORY_LENGTH_REVISE_PATCH_LONG
+    if direction == "short":
+        return _DAILY_STORY_LENGTH_REVISE_PATCH_SHORT
+    return _DAILY_STORY_LENGTH_REVISE_PATCH_IN_BAND
 
 
 def _daily_story_length_revise_trim_for_type(type_code: str | None) -> str:
@@ -825,18 +925,63 @@ def _daily_story_length_user_revise_expand_for_type(
     return _DAILY_STORY_LENGTH_USER_REVISE_EXPAND
 
 
-def _daily_story_length_user_revise_patch_for_type(type_code: str | None) -> str:
-    if type_code and type_code.upper() == "E":
-        return f"""\
-3. 【E类·句内微调】禁止增删句；偏短句各加几个字（可拍细节），写到≥{DAILY_STORY_BODY_CHARS_MIN}；
+def _daily_story_length_user_revise_patch_for_type(
+    type_code: str | None,
+    *,
+    body_chars: int | None = None,
+) -> str:
+    direction = _revise_patch_direction(body_chars)
+    tc = (type_code or "").upper()
+    if tc == "E":
+        if direction == "long":
+            return f"""\
+3. 【E类·句内微调·偏长】禁止增删句；删冗余措辞压到 ≤{DAILY_STORY_BODY_CHARS_MAX}；
    闭环与妈妈末句破功勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
-    if type_code and type_code.upper() == "D":
+        if direction == "short":
+            return f"""\
+3. 【E类·句内微调·偏短】禁止增删句；偏短句各加几个字（可拍细节），写到≥{DAILY_STORY_BODY_CHARS_MIN}；
+   闭环与妈妈末句破功勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
+"""
         return f"""\
-3. 【D类·句内微调】禁止增删句；偏短句各加 2–8 字，写到≥{DAILY_STORY_BODY_CHARS_MIN}；
+3. 【E类·达标只修局部】字数已在区间内：勿改篇幅；只修机审点名句。
+   闭环与妈妈末句破功勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
+"""
+    if tc == "D":
+        if direction == "long":
+            return f"""\
+3. 【D类·句内微调·偏长】禁止增删句；删重复回合压到 ≤{DAILY_STORY_BODY_CHARS_MAX}；
+   回旋镖收束勿动；发现开场另计另验。speaker 仅昭昭/灿灿。
+"""
+        if direction == "short":
+            return f"""\
+3. 【D类·句内微调·偏短】禁止增删句；偏短句各加 2–8 字，写到≥{DAILY_STORY_BODY_CHARS_MIN}；
+   回旋镖收束勿动；发现开场另计另验。speaker 仅昭昭/灿灿。
+"""
+        return f"""\
+3. 【D类·达标只修局部】字数已在区间内：勿改篇幅；只修机审点名句；须逐句交替。
+   回旋镖收束勿动；发现开场另计另验。speaker 仅昭昭/灿灿。
+"""
+    if tc == "C":
+        if direction == "short":
+            return f"""\
+3. 【C类·句内微调·偏短】禁止删句；句内补可拍细节，写到≥{DAILY_STORY_BODY_CHARS_MIN}；
    回旋镖收束勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
-    return _DAILY_STORY_LENGTH_USER_REVISE_PATCH
+        if direction == "long":
+            return f"""\
+3. 【C类·句内微调·偏长】删复读/叠句压到 ≤{DAILY_STORY_BODY_CHARS_MAX}；
+   回旋镖收束勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
+"""
+        return f"""\
+3. 【C类·达标只修局部】字数已在区间内：勿改篇幅；只修机审点名句；须逐句交替。
+   回旋镖收束勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
+"""
+    if direction == "long":
+        return _DAILY_STORY_LENGTH_USER_REVISE_PATCH_LONG
+    if direction == "short":
+        return _DAILY_STORY_LENGTH_USER_REVISE_PATCH_SHORT
+    return _DAILY_STORY_LENGTH_USER_REVISE_PATCH_IN_BAND
 
 
 _SPEAKER_BY_TYPE = {
@@ -851,6 +996,7 @@ def _daily_story_contract(
     type_code: str | None = None,
     theme: str | None = None,
     framework: dict | None = None,
+    body_chars: int | None = None,
 ) -> str:
     if length_mode == "draft":
         length = _daily_story_length_draft_for_type(
@@ -865,7 +1011,12 @@ def _daily_story_contract(
             type_code, theme=theme, framework=framework,
         )
     elif length_mode == "revise_patch":
-        length = _daily_story_length_revise_patch_for_type(type_code)
+        length = _daily_story_length_revise_patch_for_type(
+            type_code,
+            theme=theme,
+            framework=framework,
+            body_chars=body_chars,
+        )
     elif length_mode == "revise_trim":
         length = _daily_story_length_revise_trim_for_type(type_code)
     else:
@@ -1086,6 +1237,16 @@ _MOM_BLOCK_E = """\
 """
 
 
+_RE_SHARED_STRICT_ALTERNATION = (
+    "- **【最高优先级】昭昭/灿灿严格交替：每一句 speaker 与上句必须不同。"
+    "禁止连说，连一句也不行。**"
+)
+_SHARED_ALTERNATION_E = (
+    "- **【E类节奏】姐弟以轮换为主；同一人最多连续2句且须补完同一动作/因果。"
+    "妈妈按三拍出场（立规→中段1句短反应→末破功），不强行拆成姐弟逐句交替。**"
+)
+
+
 def _shared_block_for_type(*, type_code: str | None = None) -> str:
     """按类型裁剪共享段：锁定类型时只含该类型的通用规则 + 对应妈妈戏份。
 
@@ -1097,13 +1258,20 @@ def _shared_block_for_type(*, type_code: str | None = None) -> str:
         "D": _MOM_BLOCK_D,
         "E": _MOM_BLOCK_E,
     }.get(type_code.upper(), _MOM_BLOCK_DEFAULT)
-    return f"{_SHARED_GENERIC}\n{mom}"
+    shared = _SHARED_GENERIC
+    if type_code.upper() == "E":
+        shared = shared.replace(
+            _RE_SHARED_STRICT_ALTERNATION,
+            _SHARED_ALTERNATION_E,
+        )
+    return f"{shared}\n{mom}"
 
 
 def _daily_story_system_body(
     *,
     type_code: str | None = None,
     theme: str | None = None,
+    framework: dict | None = None,
 ) -> str:
     catalog = type_catalog_system_block()
     if not type_code:
@@ -1127,7 +1295,7 @@ def _daily_story_system_body(
     return (
         f"{_shared_block_for_type(type_code=type_code)}\n"
         f"{prompt_block}\n"
-        f"{format_block_for_code(line.code)}\n"
+        f"{format_block_for_code(line.code, theme=theme, framework=framework)}\n"
         f"{humor}"
     )
 
@@ -1138,6 +1306,7 @@ def _daily_story_user_template(
     type_code: str | None = None,
     theme: str | None = None,
     framework: dict | None = None,
+    body_chars: int | None = None,
 ) -> str:
     length_req = (
         _daily_story_length_user_draft_for_type(
@@ -1148,7 +1317,9 @@ def _daily_story_user_template(
             type_code, theme=theme, framework=framework,
         )
         if length_mode == "revise_expand" and type_code
-        else _daily_story_length_user_revise_patch_for_type(type_code)
+        else _daily_story_length_user_revise_patch_for_type(
+            type_code, body_chars=body_chars,
+        )
         if length_mode == "revise_patch" and type_code
         else _LENGTH_MODE_USER.get(length_mode, _DAILY_STORY_LENGTH_USER_DRAFT)
     )
@@ -1194,10 +1365,16 @@ def _daily_story_user_template(
     core_hint = ""
     if type_code and type_code.upper() == "E":
         core_hint = (
-            "0. 【E类·核心词贯穿】本文核心词「{{core_word}}」——"
+            "0. 【E类·核心词贯穿】本文核心词「{core_word}」——"
             "妈妈规矩、孩子追问戳穿、闭环反问全部围绕核心词；"
             "规矩句必须含核心词或其同义表述，禁偏离核心词另聊别事。\n"
         )
+    rhythm_note = (
+        "姐弟最多连续2句且须补完同一动作/因果；禁为凑轮换拆句；"
+        "禁对称复读注水；末句勿只甩「明天再战」。"
+        if type_code and type_code.upper() == "E"
+        else "禁同人连说、禁对称复读注水；末句勿只甩「明天再战」。"
+    )
     return f"""\
 请根据上述规则，生成一个昭昭和灿灿的日常对话场景。
 
@@ -1213,7 +1390,7 @@ def _daily_story_user_template(
    punchline_explain 须含类型标签并说明如何收该冲突。
 7. 禁止中途换分法（剪刀石头布、轮流、另算谁先碰到等）或扯无关旧账。
 8. 立场须连贯：可软收，但须先破功再软收；禁无铺垫「给你/算了」；
-   禁同人连说、禁对称复读注水；末句勿只甩「明天再战」。
+   {rhythm_note}
 {closing}
 
 请直接输出JSON。
@@ -1226,12 +1403,13 @@ def _daily_story_system_prompt(
     type_code: str | None = None,
     theme: str | None = None,
     framework: dict | None = None,
+    body_chars: int | None = None,
 ) -> str:
     return (
         "你是一位家庭情景喜剧编剧，写昭昭&灿灿的日常对话短剧。\n"
         "面向孩子和有娃的大人：笑点要孩子听得懂，家长看得出自家日常。\n\n"
-        f"{_daily_story_contract(length_mode=length_mode, type_code=type_code, theme=theme, framework=framework)}"
-        f"{_daily_story_system_body(type_code=type_code, theme=theme)}"
+        f"{_daily_story_contract(length_mode=length_mode, type_code=type_code, theme=theme, framework=framework, body_chars=body_chars)}"
+        f"{_daily_story_system_body(type_code=type_code, theme=theme, framework=framework)}"
     )
 
 
@@ -1821,6 +1999,7 @@ def build_daily_story_prompts(
     framework: dict | None = None,
     opening: list[dict] | None = None,
     beats: dict | None = None,
+    body_chars: int | None = None,
 ) -> tuple[str, str]:
     """构造日常故事正文生成的 system + user 提示词。
 
@@ -1849,6 +2028,7 @@ def build_daily_story_prompts(
         type_code=type_code,
         theme=theme,
         framework=framework,
+        body_chars=body_chars,
     )
     core_word = extract_e_core_word(theme) if type_code and type_code.upper() == "E" else ""
     user = user_tpl.format(theme=theme, type_instruction=type_instruction, core_word=core_word)
@@ -1899,6 +2079,7 @@ def build_daily_story_prompts(
             type_code=type_code,
             theme=theme,
             framework=framework,
+            body_chars=body_chars,
         ),
         user,
     )
@@ -4235,6 +4416,30 @@ def _patch_body_part_char_budget(story: dict) -> list[str]:
     return notes
 
 
+def _sibling_speaker_run_len(dialogue: list, index: int) -> int:
+    """昭昭/灿灿 连续句数（含 index）。"""
+    if index < 0 or index >= len(dialogue):
+        return 0
+    item = dialogue[index]
+    if not isinstance(item, dict):
+        return 0
+    sp = str(item.get("speaker") or "").strip()
+    if sp not in {"昭昭", "灿灿"}:
+        return 0
+    run = 1
+    j = index - 1
+    while j >= 0:
+        prev = dialogue[j]
+        if not isinstance(prev, dict):
+            break
+        ps = str(prev.get("speaker") or "").strip()
+        if ps != sp:
+            break
+        run += 1
+        j -= 1
+    return run
+
+
 def _patch_consecutive_speakers(story: dict) -> list[str]:
     """同人连说：把后一句 speaker 改成另一方（仅修硬卡，少动文案）。"""
     from app.services.daily_story.story_types import resolve_story_type_code
@@ -4245,6 +4450,8 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
     # Q：只插接话、不改 speaker，避免把耍赖句翻给姐弟后再与 seed 归位拉锯
     if code == "Q":
         return _patch_q_break_consecutive_insert(story)
+    # E：提示词/节奏允许姐弟最多连说 2 句，勿把帮腔+戳穿分工翻 speaker
+    max_sibling_run = 2 if code == "E" else 1
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 2:
@@ -4262,6 +4469,8 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
             sa = str(a.get("speaker") or "").strip()
             sb = str(b.get("speaker") or "").strip()
             if sa in {"昭昭", "灿灿"} and sa == sb:
+                if _sibling_speaker_run_len(dialogue, i) <= max_sibling_run:
+                    continue
                 new_sp = "灿灿" if sa == "昭昭" else "昭昭"
                 b["speaker"] = new_sp
                 notes.append(f"连说改speaker[{i}]")

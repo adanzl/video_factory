@@ -3136,6 +3136,14 @@ class DeepSeekClient(LLMClient):
                         errors=errors,
                         story_type=story_type,
                     )
+                _retry_prev = (
+                    prev_story if isinstance(prev_story, dict) else None
+                )
+                _patch_chars = (
+                    dialogue_total_chars(_retry_prev)
+                    if length_mode == "revise_patch" and _retry_prev
+                    else None
+                )
                 system, _ = build_daily_story_prompts(
                     theme,
                     story_type=story_type,
@@ -3144,6 +3152,7 @@ class DeepSeekClient(LLMClient):
                     framework=framework,
                     opening=opening,
                     beats=beats,
+                    body_chars=_patch_chars,
                 )
                 if isinstance(prev_story, dict):
                     user = build_daily_story_retry_user(
@@ -3518,6 +3527,7 @@ class DeepSeekClient(LLMClient):
             DAILY_STORY_LINE_CHARS_MAX,
             build_daily_story_prompts,
             build_daily_story_retry_user,
+            dialogue_total_chars,
             resolve_daily_story_retry_length_mode,
             try_local_patch_daily_story_body,
             validate_daily_story_json,
@@ -3614,12 +3624,22 @@ class DeepSeekClient(LLMClient):
                     errors=errors,
                     story_type=rev_type,
                 )
+                _rev_prev = raw if isinstance(raw, dict) else prev_story
+                _patch_chars = (
+                    dialogue_total_chars(_rev_prev)
+                    if length_mode == "revise_patch"
+                    and isinstance(_rev_prev, dict)
+                    else None
+                )
                 system, _ = build_daily_story_prompts(
-                    theme, story_type=rev_type, length_mode=length_mode,
+                    theme,
+                    story_type=rev_type,
+                    length_mode=length_mode,
+                    body_chars=_patch_chars,
                 )
                 user = build_daily_story_retry_user(
                     theme,
-                    prev_story=raw if isinstance(raw, dict) else prev_story,
+                    prev_story=_rev_prev if isinstance(_rev_prev, dict) else prev_story,
                     errors=errors,
                     story_type=rev_type,
                 )
