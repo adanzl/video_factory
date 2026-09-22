@@ -609,6 +609,58 @@ def test_k_b_validate_rejects_parent_invite_kid_reject():
     assert any("K_B" in e for e in errors)
 
 
+def test_k_b_validate_rejects_parent_narrator_close():
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "dialogue": _k_b_dialogue_ok(),
+    }
+    story["dialogue"][-1] = {
+        "speaker": "妈妈",
+        "line": "不掺和就对了，你看他俩自己就好了。",
+    }
+    errors: list[str] = []
+    append_k_body_errors(story, errors)
+    assert any("自言自语" in e or "解说" in e for e in errors)
+
+
+def test_k_b_patch_rewrites_narrator_close_to_mutter():
+    from app.services.daily_story.story_types.k.patch import patch_k_body
+
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "closing_intent": "妈妈放下碗对爸爸说：不掺和就对了。",
+        "dialogue": _k_b_dialogue_ok(),
+    }
+    story["dialogue"][-1] = {
+        "speaker": "妈妈",
+        "line": "跟孩他爸说，不掺和就对了，咱俩别插手。",
+    }
+    patch_k_body(story)
+    last = story["dialogue"][-1]["line"]
+    assert "爸" not in last
+    assert "你看" not in last
+    assert "不掺和" in last
+    errors: list[str] = []
+    append_k_body_errors(story, errors)
+    assert not any("自言自语" in e for e in errors)
+
+
+def test_k_b_patch_grounds_ungrounded_punchline():
+    from app.services.daily_story.story_types.k.patch import patch_k_body
+
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "punchline_explain": "K类：扭打后勾肩搭背吃冰棍。",
+        "dialogue": _k_b_dialogue_ok(),
+    }
+    patch_k_body(story)
+    assert "勾肩搭背" not in story["punchline_explain"]
+    assert "自行收场" in story["punchline_explain"]
+
+
 def test_self_name_legal_not_suspicion():
     from app.services.daily_story.story_types.k.dialogue_quality import (
         collect_k_dialogue_suspicions,

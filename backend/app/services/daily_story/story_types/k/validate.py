@@ -117,6 +117,8 @@ def _append_k_b_body_errors(
     from app.services.daily_story.story_types.k.close_mode import (
         RE_H_RITUAL,
         RE_KB_COLD_TAIL,
+        RE_KB_PARENT_AUDIENCE_NARRATION,
+        RE_KB_PARENT_EXPLICIT_ADDRESSEE,
         RE_KB_PARENT_MEDIATE,
         RE_KB_PARENT_PASSIVE,
     )
@@ -151,6 +153,18 @@ def _append_k_b_body_errors(
         tail6_speakers, tail6_lines
     ):
         errors.append("K_B：末段仍冷战，缺孩子自行恢复互动")
+    last_parent = ""
+    for sp, ln in zip(reversed(speakers), reversed(lines), strict=False):
+        if sp in ("妈妈", "爸爸"):
+            last_parent = ln
+            break
+    if last_parent and (
+        RE_KB_PARENT_AUDIENCE_NARRATION.search(last_parent)
+        or RE_KB_PARENT_EXPLICIT_ADDRESSEE.search(last_parent)
+    ):
+        errors.append(
+            "K_B：家长末句勿对观众解说或点名爸爸，宜自言自语点题"
+        )
 
 
 def append_k_body_errors(story: dict, errors: list[str]) -> None:
