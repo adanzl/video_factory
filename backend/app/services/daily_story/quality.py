@@ -883,6 +883,10 @@ def score_daily_story(
         pros.append("末句有破功落点")
 
     layer_patterns = profile.layer_patterns()
+    if profile.code == "K":
+        from app.services.daily_story.story_types.k.layers import k_escalation_layers
+
+        layer_patterns = k_escalation_layers(story)
 
     # ── 推进维度（满分 14）：4 层达标；3层-6 / 2层-12 / ≤1层-14 ──
     esc_bonus, esc_details = _score_escalation(lines, layer_patterns=layer_patterns)

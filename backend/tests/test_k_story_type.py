@@ -698,6 +698,21 @@ def test_k_b_weak_lai_a_counts_as_accept_after_food_invite():
     )
 
 
+def test_k_b_structure_escalation_uses_four_kb_layers_not_advise_fail():
+    from app.services.daily_story.quality import score_daily_story
+
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "conflict_core": "昭昭和灿灿扭打，妈妈旁观。",
+        "punchline_explain": "K类：旁观后自行和好。",
+        "dialogue": _k_b_dialogue_ok(),
+    }
+    q = score_daily_story(story, skip_relevancy=True)
+    assert q["structure_score"] == 80
+    assert not any("冲突推进不足" in r for r in q.get("reasons") or [])
+
+
 def test_k_b_p1_fixes_incite_fragment_and_defiance():
     from app.services.daily_story.story_types.k.patch import patch_k_body
     from app.services.daily_story.story_types.k.validate import append_k_body_errors
