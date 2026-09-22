@@ -538,6 +538,11 @@ def test_narration_line_detects_stage_direction():
     assert looks_like_narration_line("一把揪住昭昭衣领，警告你别逼我呀。")
     assert looks_like_narration_line("挣扎着还手，被灿灿按在地上。")
     assert looks_like_narration_line("叹气，劝不动你们了。")
+    assert looks_like_narration_line("勾肩搭背，咱俩一起去，快点啊！")
+    assert "勾肩" not in rewrite_narration_to_speech(
+        "勾肩搭背，咱俩一起去，快点啊！",
+        speaker="昭昭",
+    )
     assert not looks_like_narration_line("你松手！我喊妈了！")
     assert not looks_like_narration_line("你别戳我腰！疼！")
     assert not looks_like_narration_line(

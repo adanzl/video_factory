@@ -566,7 +566,9 @@ _NARRATION_LINE_RE = re.compile(
     r"沉默几秒|沉默一会儿|"
     r"我俩都愣住|都愣住|"
     r"气全消了|"
-    r"撞见(?:她|他)"
+    r"撞见(?:她|他)|"
+    # 姿态分镜词（宜改口语「一起走/一起吃」，勿当 line 开头旁白）
+    r"勾肩搭背|肩并肩|手挽手|挽着手臂"
 )
 _RE_ACTION_CHUNK = re.compile(
     r"又?补[一二两三四五两1-5]?下|按在地上|"
@@ -616,6 +618,19 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
     # 咀嚼/塞食动作 → 可说的逞强短句（抽象，不绑具体食物）
     if re.search(r"一口(?:吞下|塞进|吞了)|奶油都?(?:挤|溢)", raw):
         return "看我一口吞！"
+    m_pose = re.match(
+        r"^(?:勾肩搭背|肩并肩|手挽手|挽着手臂)[，,]\s*(.+)$",
+        raw,
+    )
+    if m_pose:
+        tail = m_pose.group(1).strip("，。！？ ")
+        if tail and not looks_like_narration_line(tail):
+            if tail[-1] not in "？！。!?":
+                tail = f"{tail}！"
+            return tail
+        return "咱俩一起走！" if sp in {"昭昭", "灿灿"} else "一起走！"
+    if re.search(r"^(?:勾肩搭背|肩并肩|手挽手)", raw):
+        return "咱俩一起走！" if sp in {"昭昭", "灿灿"} else "一起走！"
     # 「…问：台词」/「…开口：台词」只留冒号后口语
     m_ask = re.search(r"(?:问|开口)[:：]\s*(.+)$", raw)
     if m_ask:

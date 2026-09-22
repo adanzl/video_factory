@@ -271,7 +271,7 @@ def _k_b_dialogue_ok() -> list[dict[str, str]]:
         ("昭昭", "……灿灿，还玩不玩？"),
         ("灿灿", "玩！等我换鞋！"),
         ("昭昭", "行，一起走。"),
-        ("妈妈", "你看，不掺和就对了。"),
+        ("妈妈", "不掺和就对了……嗯，让他们自己弄去吧。"),
     ]
     return [{"speaker": sp, "line": ln} for sp, ln in lines]
 
@@ -660,6 +660,24 @@ def test_k_b_patch_inserts_self_resolve_when_missing():
     errors: list[str] = []
     append_k_body_errors(story, errors)
     assert not any("K_B_MISSING" in e for e in errors)
+
+
+def test_k_patch_strips_goujian_narration_in_dialogue():
+    from app.services.daily_story.story_types.k.patch import patch_k_body
+
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "dialogue": _k_b_dialogue_ok(),
+    }
+    story["dialogue"][-3] = {
+        "speaker": "昭昭",
+        "line": "勾肩搭背，咱俩一起去，快点啊！",
+    }
+    patch_k_body(story)
+    line = story["dialogue"][-3]["line"]
+    assert "勾肩" not in line
+    assert "一起" in line
 
 
 def test_k_b_patch_grounds_ungrounded_punchline():
