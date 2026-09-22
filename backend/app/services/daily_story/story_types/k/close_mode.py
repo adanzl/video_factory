@@ -60,12 +60,48 @@ RE_H_RITUAL = re.compile(
     r"拉手|(?<!不)和好|对不起|原谅|说好了|齐声|抱抱|都错"
 )
 
+# K-B：家长对白勿替观众解说；closing_intent 可写「对爸爸说」，成稿宜自言自语
+RE_KB_PARENT_AUDIENCE_NARRATION = re.compile(
+    r"你看(他|她|它|俩|两|他们|孩子|他俩|两个)|"
+    r"自己就好了|自己弄好了"
+)
+RE_KB_PARENT_EXPLICIT_ADDRESSEE = re.compile(
+    r"跟(跟)?(孩|孩子)?(他)?爸(说|讲)|跟你爸|跟孩子爸|咱俩"
+)
+
+# punchline 常见未落正文动作（抽象，非单篇道具）
+RE_KB_PUNCHLINE_UNGROUNDED = re.compile(r"勾肩搭背|拉钩一百年")
+
 
 def normalize_k_close_mode(value: str | None) -> str:
     raw = str(value or "").strip()
     if raw in K_CLOSE_MODES:
         return raw
     return K_UNKNOWN
+
+
+def closing_intent_from_story(story: dict[str, Any]) -> str:
+    if not isinstance(story, dict):
+        return ""
+    direct = str(story.get("closing_intent") or "").strip()
+    if direct:
+        return direct
+    sc = story.get("scene_contract")
+    if isinstance(sc, dict):
+        return str(sc.get("closing_intent") or "").strip()
+    return ""
+
+
+def k_b_passive_mutter_from_closing(closing_intent: str) -> str:
+    """K-B 家长末句：自言自语点题，关键词来自 closing_intent。"""
+    ci = str(closing_intent or "").strip()
+    if re.search(r"不掺和|不介入|不参与", ci):
+        lead = "不掺和就对了"
+    elif re.search(r"不评理|挡回|旁观", ci):
+        lead = "不评理就对了"
+    else:
+        lead = "不掺和就对了"
+    return f"{lead}……嗯，让他们自己弄去吧。"
 
 
 def k_close_mode_from_story(story: dict[str, Any]) -> str:

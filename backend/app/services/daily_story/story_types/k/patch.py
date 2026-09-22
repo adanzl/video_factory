@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.k.validate import (
@@ -118,7 +119,8 @@ _RE_ADULT_THREAT = re.compile(
     r"警告你|今天.{0,8}教训|好好教训|我非要教训|说一不二|"
     r"非治你|非收拾你|今天非.{0,10}|"
     r"不服也得挨着|也得挨着|轮不到你.{0,4}说|"
-    r"这茬我记下|记下了|我数三下|数三下|服软",
+    r"这茬我记下|记下了|我数三下|数三下|服软|"
+    r"再闹.{0,2}我.{0,2}恼",
 )
 # 「越劝」应对劝架大人；对弟妹说「你越劝」属指代事故
 _RE_YUEQUAN_TO_PEER = re.compile(r"你越劝|越劝我越打")
@@ -522,6 +524,89 @@ def patch_k_punchline_prefix(story: dict) -> list[str]:
         return []
     story["punchline_explain"] = f"K类：{explain}"
     return ["K punchline→K类"]
+
+
+def patch_k_b_parent_closing_voice(story: dict) -> list[str]:
+    """K-B：家长末句改自言自语点题，剥观众解说/显式喊爸爸。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        RE_KB_PARENT_AUDIENCE_NARRATION,
+        RE_KB_PARENT_EXPLICIT_ADDRESSEE,
+        closing_intent_from_story,
+        k_b_passive_mutter_from_closing,
+        k_close_mode_from_story,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story) or k_close_mode_from_story(story) != K_B_CHILD_SELF_RESOLVE:
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    idxs = _dialogue_idxs(dialogue)
+    if len(idxs) < 8:
+        return notes
+    mutter = k_b_passive_mutter_from_closing(closing_intent_from_story(story))
+    last_parent_i: int | None = None
+    for i in reversed(idxs):
+        sp = str(dialogue[i].get("speaker") or "").strip()
+        if sp in _PARENT_SPEAKERS:
+            last_parent_i = i
+            break
+    if last_parent_i is None:
+        return notes
+    line = str(dialogue[last_parent_i].get("line") or "").strip()
+    if not line:
+        return notes
+    if RE_KB_PARENT_AUDIENCE_NARRATION.search(
+        line
+    ) or RE_KB_PARENT_EXPLICIT_ADDRESSEE.search(line):
+        dialogue[last_parent_i]["line"] = mutter
+        notes.append(f"K_B家长末句→自言自语[{last_parent_i + 1}]")
+    return notes
+
+
+def patch_k_b_ground_punchline_explain(story: dict) -> list[str]:
+    """K-B：punchline 勿写正文未呈现的动作（如勾肩搭背）。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        RE_KB_PUNCHLINE_UNGROUNDED,
+        k_close_mode_from_story,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story) or k_close_mode_from_story(story) != K_B_CHILD_SELF_RESOLVE:
+        return notes
+    explain = str(story.get("punchline_explain") or "").strip()
+    if not explain or not RE_KB_PUNCHLINE_UNGROUNDED.search(explain):
+        return notes
+    lines, _ = _lines_and_speakers_from_dialogue(story.get("dialogue"))
+    body = "".join(lines)
+    if RE_KB_PUNCHLINE_UNGROUNDED.search(body):
+        return notes
+    fixed = RE_KB_PUNCHLINE_UNGROUNDED.sub("自行收场", explain)
+    if fixed != explain:
+        story["punchline_explain"] = fixed
+        notes.append("K_B punchline→ grounded")
+    return notes
+
+
+def _lines_and_speakers_from_dialogue(
+    dialogue: Any,
+) -> tuple[list[str], list[str]]:
+    if not isinstance(dialogue, list):
+        return [], []
+    lines: list[str] = []
+    speakers: list[str] = []
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line:
+            continue
+        lines.append(line)
+        speakers.append(str(item.get("speaker") or "").strip())
+    return lines, speakers
 
 
 def patch_k_strip_h_reconcile_tail(story: dict) -> list[str]:
@@ -1953,6 +2038,8 @@ def patch_k_body(story: dict) -> list[str]:
         notes.extend(patch_k_ensure_advise_two_slots(story))
         notes.extend(patch_k_pin_advise_fail_close(story))
     else:
+        notes.extend(patch_k_b_ground_punchline_explain(story))
+        notes.extend(patch_k_b_parent_closing_voice(story))
         notes.extend(patch_k_strip_h_reconcile_tail(story))
         notes.extend(patch_k_strip_pad_junk(story))
         notes.extend(patch_k_bind_press_roles(story))

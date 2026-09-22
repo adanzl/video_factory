@@ -109,7 +109,10 @@ def score_punchline(
 
 def humor_revision_hint(issue_text: str) -> str | None:
     if "K_B" in issue_text or "自行恢复" in issue_text:
-        return "【K_B收束】家长挡回不评理；末段孩子自行恢复互动；勿妈妈劝架/H仪式。"
+        return (
+            "【K_B收束】挡回旁观；孩子自行恢复互动；"
+            "家长末句自言自语点题；勿解说/勿喊爸爸；勿 H 仪式。"
+        )
     if "和好" in issue_text or "收束" in issue_text:
         return "【K收束】末段僵持不和好；勿拉手/不打了/和好。"
     if "劝" in issue_text or "推进" in issue_text:
