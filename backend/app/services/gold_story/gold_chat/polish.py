@@ -27,6 +27,37 @@ _VIOLENCE_WORD_HINTS: tuple[tuple[str, str], ...] = (
 )
 
 _ZHAO_WA_PREFIX = re.compile(r"^我……+")
+# 句内同短语重复（口语 fight 常用，抽象非单篇）
+_INTRA_LINE_ORAL_PHRASE = re.compile(
+    r"试试看|来试试|来啊|谁怕谁|还不服|不认输|你等着|别闹"
+)
+
+
+def _collect_intra_line_repeat_issues(
+    line: str,
+    line_no: int,
+) -> list[dict[str, Any]]:
+    """同一句内口头短语重复 ≥2 次 → 润色点（不走类型 patch）。"""
+    text = str(line or "").strip()
+    if not text or len(text) < 8:
+        return []
+    counts: dict[str, int] = {}
+    for m in _INTRA_LINE_ORAL_PHRASE.finditer(text):
+        key = m.group(0)
+        counts[key] = counts.get(key, 0) + 1
+    out: list[dict[str, Any]] = []
+    for phrase, n in counts.items():
+        if n < 2:
+            continue
+        out.append(
+            {
+                "lines": [line_no],
+                "kind": "句内重复",
+                "desc": f"第{line_no}句「{phrase}」在同句出现{n}次：{text}",
+                "fix": f"合并为一次「{phrase}」，删同句内重复，语气保留",
+            }
+        )
+    return out
 
 
 def collect_gold_chat_polish_issues(story: dict[str, Any]) -> list[dict[str, Any]]:
@@ -87,6 +118,7 @@ def collect_gold_chat_polish_issues(story: dict[str, Any]) -> list[dict[str, Any
                     "fix": "改成更贴7岁的短反应，如「哦。」或「那你说话算数。」",
                 }
             )
+        issues.extend(_collect_intra_line_repeat_issues(line, i))
     return issues
 
 
