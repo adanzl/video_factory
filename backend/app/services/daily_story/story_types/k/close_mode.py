@@ -50,10 +50,15 @@ RE_KB_CHILD_RESOLVE = re.compile(
     r"还生气|饿不饿"
 )
 RE_KB_CHILD_ACCEPT = re.compile(
-    r"玩！|玩啊|行啊|好啊|要[！。?]|走起|一起[走去吧]|等我|换鞋|走[。！]"
+    r"玩！|玩啊|行啊|好啊|要[！。?]|走起|一起[走去吧]|等我|换鞋|走[。！]|"
+    r"来啊|来吧"
 )
 RE_KB_CHILD_REJECT = re.compile(r"不要|我拒绝|谁稀罕|不理你|才不")
 RE_KB_COLD_TAIL = re.compile(r"不理|谁稀罕|谁怕谁|不认输|不让你|没完就没完")
+RE_KB_STALE_LOOP = re.compile(
+    r"谁怕谁|不让步|服不服|僵着|僵吧|没完|我也不让|你服不服|偏不让|瞪吧|"
+    r"不服呀|怎么样"
+)
 
 KID_SPEAKERS = frozenset({"昭昭", "灿灿"})
 

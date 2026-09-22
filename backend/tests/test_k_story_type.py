@@ -662,6 +662,56 @@ def test_k_b_patch_inserts_self_resolve_when_missing():
     assert not any("K_B_MISSING" in e for e in errors)
 
 
+def test_k_b_collapse_keeps_last_resolve_invite_only():
+    from app.services.daily_story.story_types.k.patch import patch_k_body
+
+    dlg = _k_b_dialogue_ok()[:-1] + [
+        {"speaker": "昭昭", "line": "姐姐，吃不吃冰棍呀？"},
+        {"speaker": "灿灿", "line": "来啊！谁怕谁吧！"},
+        {"speaker": "昭昭", "line": "咱俩一起走啊！"},
+        {"speaker": "灿灿", "line": "我也不让，你服不服！"},
+        {"speaker": "昭昭", "line": "还玩不玩？一起吧。"},
+        {"speaker": "灿灿", "line": "行啊！一起玩！"},
+        {"speaker": "妈妈", "line": "不掺和就对了。"},
+    ]
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "closing_intent": "不掺和就对了。",
+        "dialogue": dlg,
+    }
+    patch_k_body(story)
+    blob = "".join(d["line"] for d in story["dialogue"])
+    assert "吃不吃冰棍" not in blob
+    assert "还玩不玩" in blob
+    assert blob.count("谁怕谁") <= 2
+
+
+def test_k_b_weak_lai_a_counts_as_accept_after_food_invite():
+    from app.services.daily_story.story_types.k.resolve_check import (
+        kid_self_resolve_in_tail,
+    )
+
+    assert kid_self_resolve_in_tail(
+        ["昭昭", "灿灿"],
+        ["吃不吃冰棍？", "来啊！谁怕谁吧！"],
+    )
+
+
+def test_k_b_parent_short_buchanhe_expanded_to_mutter():
+    from app.services.daily_story.story_types.k.patch import patch_k_body
+
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "closing_intent": "妈妈对爸爸说：不掺和就对了。",
+        "dialogue": _k_b_dialogue_ok(),
+    }
+    story["dialogue"][-1] = {"speaker": "妈妈", "line": "不掺和就对了。"}
+    patch_k_body(story)
+    assert "……" in story["dialogue"][-1]["line"] or "自己弄" in story["dialogue"][-1]["line"]
+
+
 def test_k_patch_strips_goujian_narration_in_dialogue():
     from app.services.daily_story.story_types.k.patch import patch_k_body
 

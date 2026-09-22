@@ -527,6 +527,86 @@ def patch_k_punchline_prefix(story: dict) -> list[str]:
     return ["K punchline→K类"]
 
 
+def patch_k_b_collapse_duplicate_resolve_invites(story: dict) -> list[str]:
+    """K-B：多次邀约收束时只保留最后一轮，删掉中间僵持填充。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        RE_KB_CHILD_RESOLVE,
+        k_close_mode_from_story,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story) or k_close_mode_from_story(story) != K_B_CHILD_SELF_RESOLVE:
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    idxs = _dialogue_idxs(dialogue)
+    parent_i: int | None = None
+    for i in reversed(idxs):
+        if str(dialogue[i].get("speaker") or "").strip() in _PARENT_SPEAKERS:
+            parent_i = i
+            break
+    if parent_i is None:
+        return notes
+    kid_rows: list[tuple[int, str]] = []
+    for i in idxs:
+        if i >= parent_i:
+            continue
+        sp = str(dialogue[i].get("speaker") or "").strip()
+        if sp not in _KID_SPEAKERS:
+            continue
+        kid_rows.append((i, str(dialogue[i].get("line") or "").strip()))
+    invite_js = [
+        j for j, (_idx, ln) in enumerate(kid_rows) if RE_KB_CHILD_RESOLVE.search(ln)
+    ]
+    if len(invite_js) < 2:
+        return notes
+    first_j, last_j = invite_js[0], invite_js[-1]
+    if last_j <= first_j:
+        return notes
+    drop = {kid_rows[j][0] for j in range(first_j, last_j)}
+    if not drop:
+        return notes
+    story["dialogue"] = [
+        item for k, item in enumerate(dialogue) if k not in drop
+    ]
+    notes.append(f"K_B收束去重{len(drop)}句")
+    return notes
+
+
+def patch_k_b_trim_stalemate_loop(story: dict) -> list[str]:
+    """K-B：末段「谁怕谁/不让步」连喊压到最多 2 处。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        RE_KB_STALE_LOOP,
+        k_close_mode_from_story,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story) or k_close_mode_from_story(story) != K_B_CHILD_SELF_RESOLVE:
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    idxs = _dialogue_idxs(dialogue)
+    hits = 0
+    for i in idxs:
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if sp not in _KID_SPEAKERS or not RE_KB_STALE_LOOP.search(line):
+            continue
+        hits += 1
+        if hits <= 2:
+            continue
+        item["line"] = "哼，再来啊！" if sp == "灿灿" else "我才不怕呢！"
+        notes.append(f"K_B压僵持口癖[{i + 1}]")
+    return notes
+
+
 def patch_k_b_ensure_self_resolve_tail(story: dict) -> list[str]:
     """K-B：末段缺孩子自行恢复时，在孩子与家长末句之间补两拍邀约-接住。"""
     from app.services.daily_story.story_types.k.close_mode import (
@@ -620,9 +700,12 @@ def patch_k_b_parent_closing_voice(story: dict) -> list[str]:
     line = str(dialogue[last_parent_i].get("line") or "").strip()
     if not line:
         return notes
-    if RE_KB_PARENT_AUDIENCE_NARRATION.search(
-        line
-    ) or RE_KB_PARENT_EXPLICIT_ADDRESSEE.search(line):
+    if (
+        RE_KB_PARENT_AUDIENCE_NARRATION.search(line)
+        or RE_KB_PARENT_EXPLICIT_ADDRESSEE.search(line)
+        or re.match(r"^不掺和就对了[。！?？]?$", line)
+        or re.match(r"^不评理就对了[。！?？]?$", line)
+    ):
         dialogue[last_parent_i]["line"] = mutter
         notes.append(f"K_B家长末句→自言自语[{last_parent_i + 1}]")
     return notes
@@ -2101,7 +2184,10 @@ def patch_k_body(story: dict) -> list[str]:
         notes.extend(patch_k_pin_advise_fail_close(story))
     else:
         notes.extend(patch_k_b_ground_punchline_explain(story))
+        notes.extend(patch_k_b_trim_stalemate_loop(story))
+        notes.extend(patch_k_b_collapse_duplicate_resolve_invites(story))
         notes.extend(patch_k_b_ensure_self_resolve_tail(story))
+        notes.extend(patch_k_b_collapse_duplicate_resolve_invites(story))
         notes.extend(patch_k_b_parent_closing_voice(story))
         notes.extend(patch_k_strip_h_reconcile_tail(story))
         notes.extend(patch_k_strip_pad_junk(story))
