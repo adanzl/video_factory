@@ -47,6 +47,76 @@ from app.services.gold_story.scene import sanitize_banned_literals
 logger = logging.getLogger(__name__)
 
 
+class GoldChatAcceptanceBlocked(ValueError):
+    """终检高置信度硬伤，禁止导出。"""
+
+
+class GoldChatAcceptanceIncomplete(Exception):
+    """语义审核未完成（超时/解析失败），非稿子过错。"""
+
+
+def run_gold_chat_final_acceptance(
+    chat: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    sid: str,
+) -> dict[str, Any]:
+    """补字/改 speaker 完成后统一终验；未过则抛错，不写导出文件。"""
+    from app.services.daily_story.quality import stamp_gold_chat_acceptance_quality
+    from app.services.daily_story.review import (
+        collect_escalation_chatter_signals,
+        collect_export_blocking_local_issues,
+        filter_llm_export_blocking_issues,
+        run_export_semantic_review,
+    )
+
+    theme = str(
+        row.get("title") or chat.get("scene_title") or chat.get("key") or sid
+    ).strip()
+    local_block = collect_export_blocking_local_issues(chat)
+    if local_block:
+        parts = [
+            f"第{it['lines']}句·{it['kind']}：{it['desc']}"
+            for it in local_block[:5]
+        ]
+        raise GoldChatAcceptanceBlocked(
+            "终检本地硬伤：" + "；".join(parts),
+        )
+
+    review = run_export_semantic_review(theme, chat)
+    if not review.completed:
+        raise GoldChatAcceptanceIncomplete(
+            review.error
+            or "语义审核未完成（LLM 超时或解析失败），已保留上次导出稿",
+        )
+
+    llm_block = filter_llm_export_blocking_issues(review.issues, chat)
+    if llm_block:
+        parts = [
+            f"第{it['lines']}句·{it['kind']}：{it['desc']}"
+            for it in llm_block[:5]
+        ]
+        raise GoldChatAcceptanceBlocked(
+            "终检语义硬伤：" + "；".join(parts),
+        )
+
+    signals = collect_escalation_chatter_signals(chat)
+    stamp_gold_chat_acceptance_quality(
+        chat,
+        review_issues=review.issues,
+        humor=review.humor,
+        chatter_signals=signals,
+        semantic_pass=True,
+    )
+    logger.info(
+        "[GOLD_CHAT] final acceptance ok %s issues=%s humor=%s",
+        sid,
+        len(review.issues),
+        bool(review.humor),
+    )
+    return chat
+
+
 def _k_fix_scene_title(chat: dict[str, Any], row: dict[str, Any]) -> None:
     """点题句污染标题时收回。"""
     title = str(chat.get("scene_title") or "").strip()
@@ -795,6 +865,7 @@ def run_gold_chat_finalize(
         source_type=source_type,
         mom_lines_max=int(mom_max),
     )
+    chat = run_gold_chat_final_acceptance(chat, row, sid=sid)
     logger.info(
         "[GOLD_CHAT] convert %s structure_score=%s lines=%s chars=%s",
         sid,

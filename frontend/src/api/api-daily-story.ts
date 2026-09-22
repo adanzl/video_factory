@@ -9,8 +9,16 @@ export interface DialogueLine {
 export interface StoryQuality {
   grade: "好" | "中" | "偏弱" | string;
   score: number;
+  structure_score?: number;
   summary: string;
   reasons?: string[];
+  humor_pending?: boolean;
+  semantic_pending?: boolean;
+  semantic_pass?: boolean | null;
+  semantic_reviewed_at?: string;
+  acceptance_tags?: string[];
+  humor?: { funny_score: number; best_moment?: string; humor_type?: string };
+  review_issues?: unknown[];
 }
 
 export interface StoryContent {

@@ -216,6 +216,22 @@
             · {{ formatDateTime(detail.gold_chat.exported_at) }}
           </span>
         </div>
+        <div
+          v-if="chatStory.quality?.score != null"
+          class="flex flex-wrap gap-1 border-b border-gray-100 px-4 py-2"
+        >
+          <el-tag
+            v-for="(tag, ti) in chatQualityAcceptanceTags"
+            :key="ti"
+            size="small"
+            :type="chatAcceptanceTagType(tag)"
+          >
+            {{ tag }}
+          </el-tag>
+          <span class="ml-auto text-xs text-gray-500">
+            结构分 {{ chatStory.quality?.structure_score ?? chatStory.quality?.score }}
+          </span>
+        </div>
 
         <el-scrollbar v-if="detail.has_gold_chat && chatStory.dialogue?.length" class="min-h-0 flex-1">
           <div class="space-y-2 p-4">
@@ -329,6 +345,10 @@ import {
 } from "@/api/api-gold-chat";
 import type { StoryContent } from "@/api/api-daily-story";
 import { formatDateTime } from "@/utils/date";
+import {
+  acceptanceTagType as chatAcceptanceTagType,
+  acceptanceTags,
+} from "@/utils/storyQualityAcceptance";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
 const props = defineProps<{
@@ -378,6 +398,10 @@ const dump = computed(() => detail.value?.dump || {});
 
 const chatStory = computed<StoryContent>(
   () => detail.value?.gold_chat?.daily_story || ({} as StoryContent),
+);
+
+const chatQualityAcceptanceTags = computed(() =>
+  acceptanceTags(chatStory.value.quality),
 );
 
 const titleText = computed(() => {

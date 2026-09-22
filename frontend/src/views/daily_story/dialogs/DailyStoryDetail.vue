@@ -46,8 +46,18 @@
         </div>
         <div>
           <div class="mb-1 text-xs text-gray-400">评价</div>
-          <template v-if="editStory.quality?.grade">
+          <template v-if="editStory.quality?.score != null">
             <div class="rounded-lg bg-gray-50 p-3">
+              <div class="mb-2 flex flex-wrap gap-1">
+                <el-tag
+                  v-for="(tag, ti) in qualityAcceptanceTags"
+                  :key="ti"
+                  size="small"
+                  :type="acceptanceTagType(tag)"
+                >
+                  {{ tag }}
+                </el-tag>
+              </div>
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
                   <ul
@@ -65,7 +75,11 @@
                   </p>
                 </div>
                 <div class="flex shrink-0 flex-col items-center gap-1">
-                  <el-tag size="small" :type="qualityTagType(editStory.quality.grade)">
+                  <el-tag
+                    v-if="showQualityCompositeGrade"
+                    size="small"
+                    :type="qualityTagType(editStory.quality.grade)"
+                  >
                     {{ editStory.quality.grade }}
                   </el-tag>
                   <span class="text-lg font-semibold leading-none text-gray-700">
@@ -221,6 +235,11 @@ import {
   syncDailyStoryToJob,
   waitDailyStoryReady,
 } from "@/api/api-daily-story";
+import {
+  acceptanceTagType,
+  acceptanceTags,
+  showCompositeGrade,
+} from "@/utils/storyQualityAcceptance";
 
 function speakerStyle(speaker: string): { bg: string; text: string } {
   if (speaker === '昭昭') return { bg: 'bg-blue-50', text: 'text-blue-600 font-bold' }
@@ -295,6 +314,14 @@ const totalChars = computed(() => {
   if (!dialogue) return 0;
   return dialogue.reduce((sum, line) => sum + (line.line?.length || 0), 0);
 });
+
+const qualityAcceptanceTags = computed(() =>
+  acceptanceTags(editStory.value.quality),
+);
+
+const showQualityCompositeGrade = computed(() =>
+  showCompositeGrade(editStory.value.quality),
+);
 
 const qualityReasonsTitle = computed(() => {
   const reasons = editStory.value.quality?.reasons;

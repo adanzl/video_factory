@@ -16,6 +16,7 @@ from app.api.utils import (
     parse_query_int,
     parse_optional_str,
 )
+from app.services.gold_story.gold_chat.finalize import GoldChatAcceptanceIncomplete
 from app.services.gold_story.gold_story_mgr import gold_story_mgr
 
 bp = Blueprint(
@@ -130,6 +131,12 @@ def convert_route():
         )
     except KeyError:
         raise APIError("金故事不存在", status_code=404)
+    except GoldChatAcceptanceIncomplete as exc:
+        raise APIError(
+            str(exc),
+            status_code=503,
+            code="acceptance_incomplete",
+        ) from exc
     except RuntimeError as exc:
         raise APIError(str(exc), status_code=409, code="convert_busy") from exc
     except ValueError as exc:
