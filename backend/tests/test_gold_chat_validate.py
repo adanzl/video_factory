@@ -761,3 +761,15 @@ def test_authority_trim_after_cede_keeps_one_mid():
     cede_i = max(i for i, ln in enumerate(lines[:-1]) if RE_AUTH_CEDE.search(ln))
     assert len(lines) - 1 - cede_i - 1 <= 1
     assert not any("我…呢" in x["line"] for x in dlg)
+
+
+def test_gold_chat_polish_flags_intra_line_oral_repeat():
+    from app.services.gold_story.gold_chat.polish import collect_gold_chat_polish_issues
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我就过来，你砸一个试试看，你试试看啊！"},
+        ],
+    }
+    kinds = [it["kind"] for it in collect_gold_chat_polish_issues(story)]
+    assert "句内重复" in kinds
