@@ -136,18 +136,28 @@ def _resolve_closing_intent(
     scene_contract: dict[str, Any],
     *,
     structure_type: str = "",
+    k_close_mode: str = "",
 ) -> str:
-    """读取 closing；I 对齐 seed 赢家；K 纠偏 H 式和好/缺僵持。"""
+    """读取 closing；I 对齐 seed 赢家；K-A 才纠偏僵持 closing。"""
     closing = str(
         payload.get("closing_intent") or scene_contract.get("closing_intent") or ""
     )
     st = str(structure_type or "").strip().upper()
     if st == "K":
+        from app.services.daily_story.story_types.k.close_mode import (
+            k_close_mode_from_story,
+        )
         from app.services.daily_story.story_types.k.validate import (
             repair_closing_intent_for_k,
         )
 
-        return repair_closing_intent_for_k(closing)
+        mode = str(k_close_mode or "").strip() or k_close_mode_from_story(
+            {
+                "k_close_mode": payload.get("k_close_mode")
+                or scene_contract.get("k_close_mode"),
+            }
+        )
+        return repair_closing_intent_for_k(closing, k_close_mode=mode)
     if st != "I":
         return closing
     from app.services.daily_story.story_types.i.validate import (
@@ -244,6 +254,50 @@ def _repair_i_row_contract(row: dict[str, Any]) -> dict[str, Any]:
     out["payload"] = new_payload
     return out
 
+
+def _repair_k_row_contract(row: dict[str, Any]) -> dict[str, Any]:
+    """K：生成前解析 k_close_mode 并落盘；不根据正文反改。"""
+    st = str(row.get("structure_type") or "").strip().upper()
+    if st != "K":
+        return row
+    payload = cast(dict[str, Any], row.get("payload") or {})
+    sc = cast(dict[str, Any], payload.get("scene_contract")) if isinstance(
+        payload.get("scene_contract"), dict
+    ) else {}
+    from app.services.daily_story.story_types.k.close_mode import (
+        stamp_k_close_mode_on_payload,
+    )
+
+    new_payload = dict(payload)
+    mode, changed = stamp_k_close_mode_on_payload(
+        new_payload,
+        beat_chain=sc.get("beat_chain") if isinstance(sc.get("beat_chain"), list) else [],
+        closing_intent=str(
+            payload.get("closing_intent") or sc.get("closing_intent") or ""
+        ),
+        mechanism_text=str(
+            sc.get("mechanism") or row.get("mechanism") or ""
+        ),
+    )
+    out = dict(row)
+    out["payload"] = new_payload
+    gid = int(row.get("id") or 0)
+    if changed and gid > 0:
+        from app.repositories import repo_gold_story
+
+        repo_gold_story.patch_story_payload(
+            gid,
+            {
+                "k_close_mode": mode,
+                "scene_contract": new_payload.get("scene_contract"),
+            },
+        )
+        refreshed = repo_gold_story.get_story(gid)
+        if refreshed:
+            out = refreshed
+    return out
+
+
 def _resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     from app.services.gold_story.gold_chat.type_bridge import (
         resolve_gold_chat_structure_row,
@@ -281,6 +335,8 @@ def _persist_structure_correction(row: dict[str, Any], notes: list[str]) -> dict
         patch["scene_contract"] = sc
     if "closing_mode" in payload:
         patch["closing_mode"] = payload.get("closing_mode")
+    if payload.get("k_close_mode"):
+        patch["k_close_mode"] = payload.get("k_close_mode")
     if patch:
         repo_gold_story.patch_story_payload(gid, patch)
     # demote 置信写回 payload
@@ -1201,6 +1257,7 @@ def _structure_type_hint(
     structure_type: str,
     mechanism: str = "",
     closing_mode: str = "",
+    k_close_mode: str = "",
 ) -> str:
     from app.services.gold_story.gold_chat.type_bridge import (
         structure_type_hint,
@@ -1210,6 +1267,7 @@ def _structure_type_hint(
         structure_type=structure_type,
         mechanism=mechanism,
         closing_mode=closing_mode,
+        k_close_mode=k_close_mode,
     )
 
 def _gate_forced_m14_p_or_raise(row: dict[str, Any]) -> None:
@@ -1242,6 +1300,7 @@ def _gate_forced_m14_p_or_raise(row: dict[str, Any]) -> None:
 def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     """单条 gold_story 行 → daily_story 形 JSON。"""
     row = _repair_i_row_contract(row)
+    row = _repair_k_row_contract(row)
     row, _structure_notes = _resolve_structure_row(row)
     _gate_forced_m14_p_or_raise(row)
     payload = cast(dict[str, Any], row.get("payload") or {})
@@ -1279,13 +1338,20 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         )
 
         seed = sanitize_dialogue_seed_speech(seed)
+    k_close_mode = str(
+        payload.get("k_close_mode")
+        or scene_contract.get("k_close_mode")
+        or ""
+    ).strip()
     if structure_type == "K" and isinstance(seed, list):
         from app.services.daily_story.story_types import (
             sanitize_gold_chat_dialogue_seed,
         )
 
         seed = sanitize_gold_chat_dialogue_seed(
-            seed, structure_type="K"
+            seed,
+            structure_type="K",
+            k_close_mode=k_close_mode,
         )
     banned = sanitize_banned_literals(
         payload.get("banned_literals") or scene_contract.get("banned_literals"),
@@ -1305,7 +1371,10 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         mom_max = 1
     beat = payload.get("beat") if isinstance(payload.get("beat"), list) else []
     closing = _resolve_closing_intent(
-        payload, scene_contract, structure_type=structure_type
+        payload,
+        scene_contract,
+        structure_type=structure_type,
+        k_close_mode=k_close_mode,
     )[:500]
     beat_chain = scene_contract.get("beat_chain") or []
     if not isinstance(beat_chain, list):
@@ -1335,6 +1404,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         closing_intent=closing,
         story_raw=story_raw_full[:800],
         closing_mode=str(payload.get("closing_mode") or ""),
+        k_close_mode=k_close_mode,
     )
     m5_h_beat_block = ""
     if mechanism.upper() == "M5" and structure_type == "H":
@@ -1423,6 +1493,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 structure_type,
                 mechanism,
                 str(payload.get("closing_mode") or ""),
+                k_close_mode,
             ),
             align_block=align_block,
             gold_chat_snippet=resolve_gold_chat_snippet(str(row.get("source_id") or "")),
@@ -1594,6 +1665,9 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         if closing_mode:
             data = dict(data)
             data["closing_mode"] = closing_mode
+        if k_close_mode:
+            data = dict(data)
+            data["k_close_mode"] = k_close_mode
         if closing_mode == "authority_punchline":
             from app.services.gold_story.gold_chat.patch import (
                 apply_authority_punchline_local_patches,

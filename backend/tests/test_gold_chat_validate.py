@@ -551,6 +551,20 @@ def test_authority_punchline_skin_swap_school_passes_opening_kinds():
     assert "保真-权威角色" not in kinds
 
 
+def test_format_align_block_kb_chain_not_stalemate():
+    from app.services.gold_story.gold_chat.prompts import format_align_block
+
+    block = format_align_block(
+        structure_type="K",
+        mechanism="M12",
+        beat=["妈妈不评理", "孩子自行恢复互动"],
+        closing_intent="妈妈说不掺和就对了",
+        k_close_mode="K_B_CHILD_SELF_RESOLVE",
+    )
+    assert "孩子自行恢复" in block or "自行恢复" in block
+    assert "僵持（不和好" not in block
+
+
 def test_format_align_block_passes_authority_closing_mode():
     from app.services.gold_story.gold_chat.prompts import format_align_block
     from app.services.gold_story.structure_resolve import (

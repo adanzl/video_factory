@@ -554,6 +554,7 @@ def _collect_humor_issues(
     *,
     type_code: str,
     speakers: list[str] | None = None,
+    story: dict | None = None,
 ) -> list[str]:
     """好笑维度的硬伤（不直接改结构分，用于压低好笑分）。"""
     cons: list[str] = []
@@ -584,7 +585,12 @@ def _collect_humor_issues(
                     return cons
 
     if profile.collect_humor_issues:
-        cons.extend(profile.collect_humor_issues(lines, speakers))
+        try:
+            cons.extend(
+                profile.collect_humor_issues(lines, speakers, story=story)
+            )
+        except TypeError:
+            cons.extend(profile.collect_humor_issues(lines, speakers))
     return cons
 
 
@@ -594,6 +600,7 @@ def _score_funniness(
     type_code: str,
     humor_issues: list[str],
     speakers: list[str] | None = None,
+    story: dict | None = None,
 ) -> tuple[int, list[str], list[str]]:
     """好笑维度 0–20，叠在结构分（≤80）之上。"""
     cons = list(humor_issues)
@@ -673,7 +680,12 @@ def _score_funniness(
             points += 2
 
     if not humor_blocked and profile.score_funniness_tail:
-        tail_pts, tail_pros = profile.score_funniness_tail(lines, speakers)
+        try:
+            tail_pts, tail_pros = profile.score_funniness_tail(
+                lines, speakers, story=story,
+            )
+        except TypeError:
+            tail_pts, tail_pros = profile.score_funniness_tail(lines, speakers)
         points += tail_pts
         pros.extend(tail_pros)
 
@@ -892,10 +904,13 @@ def score_daily_story(
 
     # ── 收束形态（满分 8）：有回旋镖/反转/破功落点 = 达标；无 = 扣满 ──
     punch_bonus, punch_details = score_punchline_for_profile(
-        profile, lines, speakers, prev2, last,
+        profile, lines, speakers, prev2, last, story=story,
     )
     humor_issues = _collect_humor_issues(
-        lines, type_code=profile.code, speakers=speakers,
+        lines,
+        type_code=profile.code,
+        speakers=speakers,
+        story=story,
     )
     if humor_issues:
         grounded = not any("无出处" in c for c in humor_issues)
@@ -929,6 +944,7 @@ def score_daily_story(
         type_code=profile.code,
         humor_issues=humor_issues,
         speakers=speakers,
+        story=story,
     )
     pros.extend(humor_pros)
     cons.extend(humor_cons)

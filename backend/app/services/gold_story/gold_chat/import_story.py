@@ -121,8 +121,13 @@ def import_gold_chat_daily_story(
         story["story_type"] = story_type
     if mech == "M5" and story_type == "H":
         story, _ = patch_m5_break_sibling_consecutive(story)
+    # 与 convert._attach_gold_chat_structure_score 一致：先按正文一体计分，
+    # 再 sync discovery_opening，避免开场双句被二次扣分。
+    story.pop("discovery_opening", None)
+    attach_daily_story_quality(
+        story, theme=theme, finalize=True, skip_relevancy=True
+    )
     sync_discovery_opening_from_dialogue(story)
-    attach_daily_story_quality(story, theme=theme)
     if review:
         story = _review_gold_chat_import_story(story, theme)
     validate_gold_chat_story_for_row(story, row)

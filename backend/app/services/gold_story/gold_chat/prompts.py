@@ -1004,14 +1004,17 @@ def format_align_block(
     closing_intent: str = "",
     story_raw: str = "",
     closing_mode: str = "",
+    k_close_mode: str = "",
 ) -> str:
     """注入 gold_chat prompt：金稿关键拍 checklist。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
+    k_mode = str(k_close_mode or "").strip()
     chain = align_chain(
         structure_type=st,
         mechanism=mech,
         closing_mode=closing_mode,
+        k_close_mode=k_mode,
     )
 
     parts = [

@@ -72,6 +72,10 @@ def _k_bind_press_roles(chat: dict[str, Any]) -> list[str]:
 
 def _k_seal_and_pin(chat: dict[str, Any]) -> list[str]:
     """劝失败封口 + 冲突续行钉死（走 k.patch，不手写五句）。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_A_PARENT_FAIL_STALEMATE,
+        k_close_mode_from_story,
+    )
     from app.services.daily_story.story_types.k.patch import (
         patch_k_ensure_press_climax,
         patch_k_force_climax_before_parent,
@@ -81,6 +85,8 @@ def _k_seal_and_pin(chat: dict[str, Any]) -> list[str]:
         patch_k_strip_meta_and_action_narr,
     )
 
+    if k_close_mode_from_story(chat) != K_A_PARENT_FAIL_STALEMATE:
+        return []
     notes: list[str] = []
     notes.extend(patch_k_ensure_press_climax(chat))
     notes.extend(patch_k_strip_meta_and_action_narr(chat))
@@ -92,12 +98,18 @@ def _k_seal_and_pin(chat: dict[str, Any]) -> list[str]:
 
 
 def _k_pin_close(chat: dict[str, Any]) -> list[str]:
-    """只钉收束，不跑 seal 砍句（垫字后用）。"""
+    """只钉收束，不跑 seal 砍句（垫字后用）；仅 K-A。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_A_PARENT_FAIL_STALEMATE,
+        k_close_mode_from_story,
+    )
     from app.services.daily_story.story_types.k.patch import (
         patch_k_force_climax_before_parent,
         patch_k_pin_advise_fail_close,
     )
 
+    if k_close_mode_from_story(chat) != K_A_PARENT_FAIL_STALEMATE:
+        return []
     notes: list[str] = []
     notes.extend(patch_k_force_climax_before_parent(chat))
     notes.extend(patch_k_pin_advise_fail_close(chat))
@@ -534,6 +546,19 @@ def run_gold_chat_finalize(
     closing_mode_ex = str(
         chat.get("closing_mode") or payload_ex.get("closing_mode") or ""
     ).strip()
+    k_mode_ex = str(
+        chat.get("k_close_mode")
+        or payload_ex.get("k_close_mode")
+        or (
+            scene_ex.get("k_close_mode")
+            if isinstance(scene_ex, dict)
+            else ""
+        )
+        or ""
+    ).strip()
+    if k_mode_ex:
+        chat = dict(chat)
+        chat["k_close_mode"] = k_mode_ex
     if closing_mode_ex == "authority_punchline":
         from app.services.gold_story.gold_chat.patch import (
             apply_authority_punchline_local_patches,

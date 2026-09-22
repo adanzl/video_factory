@@ -267,8 +267,22 @@ _MECH_STRUCTURE_CHAINS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
 }
 
+_M12_K_B_CHAIN: tuple[str, ...] = (
+    "互打互骂升级（篇幅宜压短）",
+    "找家长评理→挡回/不评理/立规旁观",
+    "姐弟仍不服短顶嘴",
+    "隔一会儿孩子自行发起恢复互动（一起走/一起玩/邀约一句）",
+    "家长短句对第三方总结（不掺和/不评理），禁 H 定责仪式",
+)
+
+_M12_K_UNKNOWN_CHAIN: tuple[str, ...] = (
+    "严格按 beat_chain/closing_intent 逐步落实",
+    "禁止擅自补劝失败两拍或僵持尾",
+    "禁止擅自写 H 式定责仪式和好",
+)
+
 # mechanism 特化 prompt 追加（保留原 gold_chat_convert 里 H/I/J/K 细节）
-_MECH_HINT_APPEND: dict[tuple[str, str], str] = {
+_MECH_HINT_APPEND: dict[tuple[str, ...], str] = {
     ("M5", "H"): (
         "\n- **M5+H**：互毁须双向且受害方须**当场动手**撕/弄坏对方画（写撕了/撕啦），"
         "禁仅口头「那我也撕」；推/扭打后**须写伤情一句**（额/头/蹭破/疼），"
@@ -331,8 +345,21 @@ _MECH_HINT_APPEND: dict[tuple[str, str], str] = {
         "对方怂；家长可旁观或感叹；禁止写成调解和好（勿套 H），"
         "禁止 A 末四拍反噬"
     ),
+    ("M12", "K", "K_B_CHILD_SELF_RESOLVE"): (
+        "\n- **M12+K · k_close_mode=K_B_CHILD_SELF_RESOLVE**："
+        "家长**不劝架不定责**，用规矩挡回告状/继续吃饭旁观；"
+        "争吵段宜短；**末段须孩子自行恢复互动**（邀约/一起走/一起玩），"
+        "笑点在打后反差；禁止「别闹快分开」劝架失败收束；"
+        "禁止 H 式定责道歉拉手；妈妈末句可短总结不掺和；"
+        "禁止末段堆「不理你/谁稀罕」冷战当收束"
+    ),
+    ("M12", "K", "K_UNKNOWN"): (
+        "\n- **M12+K · k_close_mode=K_UNKNOWN**：严格按 beat_chain/closing，"
+        "禁止擅自补劝失败或僵持尾；禁止擅自补 H 仪式和好"
+    ),
     ("M12", "K"): (
-        "\n- **M12+K**：主戏是姐弟互打互骂升级；大人须**叹/劝失败**"
+        "\n- **M12+K · k_close_mode=K_A_PARENT_FAIL_STALEMATE**："
+        "主戏是姐弟互打互骂升级；大人须**叹/劝失败**"
         "（管不了/劝不动），禁只写一句「我看着」薄旁观；"
         "收束僵持不和好；禁止套 H 定责劝和+仪式性和好；"
         "禁止套 J 求否（再求你一次/保证也没用）；"
@@ -539,21 +566,31 @@ def type_align_chain(
     structure_type: str,
     mechanism: str = "",
     closing_mode: str = "",
+    k_close_mode: str = "",
 ) -> tuple[str, ...]:
     """金稿对齐扩写链：mechanism+structure 特化 > 结构类型默认。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     mode = str(closing_mode or "").strip()
+    k_mode = str(k_close_mode or "").strip()
     if (
         mech == "M4"
         and st == "G"
         and mode == CLOSING_MODE_AUTHORITY_PUNCHLINE
     ):
         return _M4_G_AUTHORITY_PUNCHLINE_CHAIN
+    if mech == "M12" and st == "K" and k_mode == "K_B_CHILD_SELF_RESOLVE":
+        return _M12_K_B_CHAIN
+    if mech == "M12" and st == "K" and k_mode == "K_UNKNOWN":
+        return _M12_K_UNKNOWN_CHAIN
     if mech and st:
         chain = _MECH_STRUCTURE_CHAINS.get((mech, st))
-        if chain:
+        if chain and not (
+            st == "K" and k_mode in ("K_B_CHILD_SELF_RESOLVE", "K_UNKNOWN")
+        ):
             return chain
+    if st == "K" and k_mode in ("K_B_CHILD_SELF_RESOLVE", "K_UNKNOWN"):
+        return _M12_K_UNKNOWN_CHAIN if k_mode == "K_UNKNOWN" else _M12_K_B_CHAIN
     return _STRUCTURE_TYPE_CHAINS.get(st, ())
 
 
@@ -562,11 +599,13 @@ def structure_type_hint(
     structure_type: str,
     mechanism: str = "",
     closing_mode: str = "",
+    k_close_mode: str = "",
 ) -> str:
     """注入 gold_chat LLM prompt：类型公式 + 成熟流水线修订 hint + 扩写链。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     mode = str(closing_mode or "").strip()
+    k_mode = str(k_close_mode or "").strip()
     if not st:
         return ""
 
@@ -576,19 +615,42 @@ def structure_type_hint(
     header = f"【{st} {name} · 机制 {mech or '?'}（{mech_label}）】"
 
     parts: list[str] = [header]
-    if entry:
+    if st == "K" and k_mode == "K_B_CHILD_SELF_RESOLVE":
+        parts.append(
+            "- 公式：互打宜短→挡回/不评理旁观→孩子自行恢复互动"
+        )
+        parts.append(
+            "- 收束：孩子邀约/一起走；家长短总结不掺和；禁僵持劝失败模板"
+        )
+    elif st == "K" and k_mode == "K_UNKNOWN":
+        parts.append("- 公式：仅跟 beat_chain/closing，勿套 K-A 僵持默认")
+        parts.append("- 收束：由 beat 决定，勿擅自选劝失败或僵持")
+    elif entry:
         parts.append(f"- 公式：{entry['formula']}")
         parts.append(f"- 收束：{entry['closing']}")
 
     if mode == CLOSING_MODE_AUTHORITY_PUNCHLINE and mech == "M4" and st == "G":
         parts.append("- 旁路：closing_mode=authority_punchline（权威点题，非真情暖收）")
     elif st in STORY_TYPE_LINES:
-        type_hint = gold_chat_type_revision_hint(st)
-        if type_hint:
-            parts.append(type_hint)
+        if st == "K" and k_mode == "K_B_CHILD_SELF_RESOLVE":
+            parts.append(
+                "- 收束修订：末段孩子自行恢复互动；勿大人劝架/僵持尾"
+            )
+            parts.append(
+                "- 正文锚：争执压短→挡回→孩子邀约→家长一句不掺和"
+            )
+        elif st == "K" and k_mode == "K_UNKNOWN":
+            parts.append("- 收束修订：勿补劝失败+僵持；严格 beat")
+        else:
+            type_hint = gold_chat_type_revision_hint(st)
+            if type_hint:
+                parts.append(type_hint)
 
     chain = type_align_chain(
-        structure_type=st, mechanism=mech, closing_mode=mode
+        structure_type=st,
+        mechanism=mech,
+        closing_mode=mode,
+        k_close_mode=k_mode,
     )
     if chain:
         parts.append("- 扩写链（逐步落实，禁止跳步）：")
@@ -597,9 +659,17 @@ def structure_type_hint(
     if mode == CLOSING_MODE_AUTHORITY_PUNCHLINE and mech == "M4" and st == "G":
         parts.append(_M4_G_AUTHORITY_HINT.strip())
     else:
-        extra = _MECH_HINT_APPEND.get((mech, st), "")
+        if mech == "M12" and st == "K":
+            if k_mode in ("K_B_CHILD_SELF_RESOLVE", "K_UNKNOWN"):
+                extra = _MECH_HINT_APPEND.get((mech, st, k_mode), "")
+            else:
+                extra = _MECH_HINT_APPEND.get((mech, st), "")
+        else:
+            extra = _MECH_HINT_APPEND.get((mech, st), "")
         if extra:
             parts.append(extra.strip())
+    if k_mode and st == "K":
+        parts.append(f"- k_close_mode={k_mode}（生成前锁定，勿与 beat 相反）")
 
     parts.append("- 详拍亦见下方「金稿对齐 checklist」与 beat_chain")
     return "\n".join(parts)
