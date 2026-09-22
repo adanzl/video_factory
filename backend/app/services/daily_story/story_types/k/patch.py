@@ -364,10 +364,47 @@ def patch_k_strip_hard_win_close(story: dict) -> list[str]:
     return notes
 
 
+def _k_norm_dialogue_line(text: str) -> str:
+    return re.sub(r"[呀啊吧呢嘛了呗！？。!?，,\s]", "", str(text or ""))
+
+
+def _k_patch_can_drop_lines(
+    story: dict,
+    kept: list[Any],
+    *,
+    min_lines: int = 12,
+    char_slack: int = 40,
+) -> bool:
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MIN,
+        dialogue_total_chars,
+    )
+
+    if len(kept) < min_lines:
+        return False
+    probe = dict(story)
+    probe["dialogue"] = kept
+    return dialogue_total_chars(probe) >= DAILY_STORY_BODY_CHARS_MIN - char_slack
+
+
+def _k_patch_can_drop_duplicate_lines(story: dict, kept: list[Any]) -> bool:
+    """删同句复读时略放宽字数（下游 gold_chat 可再扩写）。"""
+    return _k_patch_can_drop_lines(story, kept, min_lines=10, char_slack=100)
+
+
+def _k_close_is_kb(story: dict) -> bool:
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        k_close_mode_from_story,
+    )
+
+    return k_close_mode_from_story(story) == K_B_CHILD_SELF_RESOLVE
+
+
 def patch_k_dedupe_cry_and_defiance(story: dict) -> list[str]:
     """破功哭腔只留一次；哭后勿再堆败方「不怕/偏不让」。"""
     notes: list[str] = []
-    if not _is_k(story):
+    if not _is_k(story) or _k_close_is_kb(story):
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 8:
@@ -576,7 +613,7 @@ def patch_k_b_collapse_duplicate_resolve_invites(story: dict) -> list[str]:
 
 
 def patch_k_b_trim_stalemate_loop(story: dict) -> list[str]:
-    """K-B：末段「谁怕谁/不让步」连喊压到最多 2 处。"""
+    """K-B：僵持口癖句超过 2 处时删句，勿统一改写成同一句。"""
     from app.services.daily_story.story_types.k.close_mode import (
         K_B_CHILD_SELF_RESOLVE,
         RE_KB_STALE_LOOP,
@@ -590,7 +627,7 @@ def patch_k_b_trim_stalemate_loop(story: dict) -> list[str]:
     if not isinstance(dialogue, list):
         return notes
     idxs = _dialogue_idxs(dialogue)
-    hits = 0
+    stale_idxs: list[int] = []
     for i in idxs:
         item = dialogue[i]
         if not isinstance(item, dict):
@@ -599,11 +636,55 @@ def patch_k_b_trim_stalemate_loop(story: dict) -> list[str]:
         line = str(item.get("line") or "").strip()
         if sp not in _KID_SPEAKERS or not RE_KB_STALE_LOOP.search(line):
             continue
-        hits += 1
-        if hits <= 2:
+        stale_idxs.append(i)
+    if len(stale_idxs) <= 2:
+        return notes
+    drop = set(stale_idxs[2:])
+    kept = [x for k, x in enumerate(dialogue) if k not in drop]
+    if not _k_patch_can_drop_duplicate_lines(story, kept):
+        return notes
+    story["dialogue"] = kept
+    notes.append(f"K_B删僵持口癖×{len(drop)}")
+    return notes
+
+
+def patch_k_b_compress_repeat_kid_lines(story: dict) -> list[str]:
+    """K-B：同角色归一化后完全相同的台词只留首次（删句不替换成固定口癖）。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        k_close_mode_from_story,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story) or k_close_mode_from_story(story) != K_B_CHILD_SELF_RESOLVE:
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    seen: set[tuple[str, str]] = set()
+    drop: set[int] = set()
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
             continue
-        item["line"] = "哼，再来啊！" if sp == "灿灿" else "我才不怕呢！"
-        notes.append(f"K_B压僵持口癖[{i + 1}]")
+        sp = str(item.get("speaker") or "").strip()
+        if sp not in _KID_SPEAKERS:
+            continue
+        line = str(item.get("line") or "").strip()
+        norm = _k_norm_dialogue_line(line)
+        if not norm:
+            continue
+        key = (sp, norm)
+        if key in seen:
+            drop.add(i)
+        else:
+            seen.add(key)
+    if not drop:
+        return notes
+    kept = [x for k, x in enumerate(dialogue) if k not in drop]
+    if not _k_patch_can_drop_duplicate_lines(story, kept):
+        return notes
+    story["dialogue"] = kept
+    notes.append(f"K_B删重复童声×{len(drop)}")
     return notes
 
 
@@ -646,15 +727,22 @@ def patch_k_b_ensure_self_resolve_tail(story: dict) -> list[str]:
         for item in sc.get("beat_chain") or []:
             if isinstance(item, dict):
                 beat_blob += str(item.get("intent") or "")
-    if RE_BEAT_CHILD_SELF.search(beat_blob) and re.search(
-        r"吃|冰棍|零食", beat_blob
-    ):
-        invite = "吃不吃？一起吧。"
+    for item in story.get("gold_beat_chain") or []:
+        if isinstance(item, dict):
+            beat_blob += str(item.get("intent") or "")
+    food_resolve = bool(
+        RE_BEAT_CHILD_SELF.search(beat_blob)
+        and re.search(r"吃|冰棍|零食", beat_blob)
+    )
+    if food_resolve:
+        invite = "姐，吃不吃冰棍？"
+        accept_line = "要！给我拿一根！"
     else:
         invite = "还玩不玩？一起吧。"
+        accept_line = "行啊！一起玩！"
     block = [
         {"speaker": inviter, "line": invite},
-        {"speaker": acceptor, "line": "行啊！一起玩！"},
+        {"speaker": acceptor, "line": accept_line},
     ]
 
     insert_at = len(dialogue)
@@ -2030,7 +2118,7 @@ def patch_k_seal_after_parent_fail(story: dict) -> list[str]:
 def patch_k_loser_monotonic(story: dict) -> list[str]:
     """败方状态单向：挠后/哭后不得回勇挑衅（抽象，不绑单篇）。"""
     notes: list[str] = []
-    if not _is_k(story):
+    if not _is_k(story) or _k_close_is_kb(story):
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
@@ -2044,18 +2132,22 @@ def patch_k_loser_monotonic(story: dict) -> list[str]:
             continue
         sp = str(item.get("speaker") or "").strip()
         line = str(item.get("line") or "").strip()
-        if re.search(r"别挠|挠了|痒|还不哭", line):
-            seen_tickle = True
-        if re.search(r"我哭了|哭给你|眼泪", line):
-            seen_cry = True
+        if sp in _KID_SPEAKERS:
+            if re.search(r"别挠|挠了|痒|还不哭", line):
+                seen_tickle = True
+            if re.search(r"我哭了|哭给你|眼泪", line):
+                seen_cry = True
         if sp != loser or not line:
             continue
         if (seen_tickle or seen_cry) and _RE_LOSER_POST_CRY_DEFIANCE.search(line):
-            item["line"] = (
+            new_line = (
                 "呜，你欺负人！"
                 if seen_cry
                 else "放开我！别挠了！"
             )
+            if _k_norm_dialogue_line(line) == _k_norm_dialogue_line(new_line):
+                continue
+            item["line"] = new_line
             changed += 1
     if changed:
         notes.append(f"K败方单向×{changed}")
@@ -2185,11 +2277,14 @@ def patch_k_body(story: dict) -> list[str]:
     else:
         notes.extend(patch_k_b_ground_punchline_explain(story))
         notes.extend(patch_k_b_trim_stalemate_loop(story))
+        notes.extend(patch_k_b_compress_repeat_kid_lines(story))
         notes.extend(patch_k_b_collapse_duplicate_resolve_invites(story))
         notes.extend(patch_k_b_ensure_self_resolve_tail(story))
         notes.extend(patch_k_b_collapse_duplicate_resolve_invites(story))
         notes.extend(patch_k_b_parent_closing_voice(story))
         notes.extend(patch_k_strip_h_reconcile_tail(story))
+        notes.extend(patch_k_b_compress_repeat_kid_lines(story))
+        notes.extend(patch_k_dedupe_near_lines(story))
         notes.extend(patch_k_strip_pad_junk(story))
         notes.extend(patch_k_bind_press_roles(story))
         notes.extend(patch_k_fix_consecutive_keep_press(story))
