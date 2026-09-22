@@ -698,6 +698,55 @@ def test_k_b_weak_lai_a_counts_as_accept_after_food_invite():
     )
 
 
+def test_k_b_skips_loser_monotonic_even_after_mom_tears_line():
+    from app.services.daily_story.story_types.k.patch import patch_k_body
+
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "conflict_core": "昭昭和灿灿扭打，妈妈旁观。",
+        "closing_intent": "不掺和就对了。",
+        "dialogue": _k_b_dialogue_ok(),
+    }
+    story["dialogue"][5] = {"speaker": "妈妈", "line": "不能哭，眼泪收回去。"}
+    story["dialogue"][7] = {"speaker": "昭昭", "line": "你别过来，你试试看啊！"}
+    patch_k_body(story)
+    assert story["dialogue"][7]["line"] != "呜，你欺负人！"
+
+
+def test_k_b_compress_drops_repeated_kid_line_not_fixed_swap():
+    from app.services.daily_story.story_types.k.patch import patch_k_body
+
+    dlg = [
+        {"speaker": "灿灿", "line": "你站住！这事还没完啊！"},
+        {"speaker": "昭昭", "line": "是你先拽我衣服的！枕头还我啊！"},
+        {"speaker": "灿灿", "line": "你再闹试试！"},
+        {"speaker": "昭昭", "line": "妈！姐姐先动手的，你管不管她！"},
+        {"speaker": "灿灿", "line": "妈你看他踢我！呜……我胳膊都红！"},
+        {"speaker": "妈妈", "line": "不能哭。规矩刚说完，眼泪收回去。"},
+        {"speaker": "昭昭", "line": "你别想让我认输，这事还没完！"},
+        {"speaker": "灿灿", "line": "说就说，谁怕谁啊！"},
+        {"speaker": "昭昭", "line": "呜，你欺负人！"},
+        {"speaker": "灿灿", "line": "我也不让，咱们就这么僵着！"},
+        {"speaker": "昭昭", "line": "呜，你欺负人！"},
+        {"speaker": "灿灿", "line": "打累了，我喘口气再跟你算账，别跑啊！"},
+        {"speaker": "昭昭", "line": "呜，你欺负人！"},
+        {"speaker": "灿灿", "line": "还玩不玩？一起吧。"},
+        {"speaker": "昭昭", "line": "行啊！一起玩！"},
+        {"speaker": "妈妈", "line": "不掺和就对了。"},
+    ]
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "closing_intent": "不掺和就对了。",
+        "dialogue": dlg,
+    }
+    patch_k_body(story)
+    blob = "".join(d["line"] for d in story["dialogue"])
+    assert blob.count("呜，你欺负人") <= 1
+    assert "还玩不玩" in blob
+
+
 def test_k_b_parent_short_buchanhe_expanded_to_mutter():
     from app.services.daily_story.story_types.k.patch import patch_k_body
 
