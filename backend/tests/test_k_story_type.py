@@ -698,6 +698,45 @@ def test_k_b_weak_lai_a_counts_as_accept_after_food_invite():
     )
 
 
+def test_k_b_p1_fixes_incite_fragment_and_defiance():
+    from app.services.daily_story.story_types.k.patch import patch_k_body
+    from app.services.daily_story.story_types.k.validate import append_k_body_errors
+
+    dlg = [
+        {"speaker": "昭昭", "line": "妈！姐姐先动手的，她抢我积木还推我！"},
+        {"speaker": "妈妈", "line": "不评理。我吃饭呢，你俩接着打！"},
+        {"speaker": "灿灿", "line": "妈——他踢我！呜，谁怕谁啊…了呢…"},
+        {"speaker": "妈妈", "line": "不能哭。墙上有规矩，自己看。"},
+        {"speaker": "昭昭", "line": "你别想让我认输，这事还没完！"},
+        {"speaker": "灿灿", "line": "没完就没完，我也不会让你！"},
+        {"speaker": "昭昭", "line": "你再说一遍试试，我就是不服！"},
+        {"speaker": "灿灿", "line": "说就说，谁怕谁啊！"},
+        {"speaker": "昭昭", "line": "你胡说，明明是你先拿我蓝的换吧！"},
+        {"speaker": "灿灿", "line": "你得意什么，我也不认输！"},
+        {"speaker": "昭昭", "line": "再来，你试试看啊！"},
+        {"speaker": "灿灿", "line": "你过来试试，看我不挠你啊！"},
+        {"speaker": "昭昭", "line": "姐，吃不吃冰棍呢！"},
+        {"speaker": "灿灿", "line": "要！给我拿一根啊！"},
+        {"speaker": "妈妈", "line": "不掺和就对了。"},
+    ]
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "closing_intent": "不掺和就对了。",
+        "dialogue": dlg,
+    }
+    patch_k_body(story)
+    mom2 = next(d["line"] for d in story["dialogue"] if d["speaker"] == "妈妈")
+    assert "接着打" not in mom2
+    blob = "".join(d["line"] for d in story["dialogue"])
+    assert "…了呢" not in blob
+    assert "换吧" not in blob
+    assert "换的" in blob or "蓝的" in blob
+    errors: list[str] = []
+    append_k_body_errors(story, errors)
+    assert not any("怂恿" in e or "破碎" in e for e in errors)
+
+
 def test_k_b_skips_loser_monotonic_even_after_mom_tears_line():
     from app.services.daily_story.story_types.k.patch import patch_k_body
 

@@ -109,6 +109,18 @@ def score_punchline(
 
 def humor_revision_hint(issue_text: str) -> str | None:
     if "K_B" in issue_text or "自行恢复" in issue_text:
+        if "怂恿" in issue_text or "接着打" in issue_text:
+            return (
+                "【K_B挡回】家长只挡回/吃饭旁观，勿「接着打/你俩打」；"
+                "孩子自行恢复；末句自言自语点题。"
+            )
+        if "破碎" in issue_text or "尾词" in issue_text:
+            return "【K_B口语】删…了呢…碎尾，收成完整可配音短句。"
+        if "争执" in issue_text or "不服" in issue_text:
+            return (
+                "【K_B篇幅】互打宜短；每句须有新信息（道具/动作）；"
+                "勿连喊不服/试试看；保留一轮冰棍/邀约收束。"
+            )
         return (
             "【K_B收束】挡回旁观；孩子自行恢复互动；"
             "家长末句自言自语点题；勿解说/勿喊爸爸；勿 H 仪式。"

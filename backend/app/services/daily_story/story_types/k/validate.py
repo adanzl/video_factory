@@ -117,8 +117,10 @@ def _append_k_b_body_errors(
     from app.services.daily_story.story_types.k.close_mode import (
         RE_H_RITUAL,
         RE_KB_COLD_TAIL,
+        RE_KB_LINE_FRAGMENT,
         RE_KB_PARENT_AUDIENCE_NARRATION,
         RE_KB_PARENT_EXPLICIT_ADDRESSEE,
+        RE_KB_PARENT_INCITE,
         RE_KB_PARENT_MEDIATE,
         RE_KB_PARENT_PASSIVE,
     )
@@ -145,6 +147,10 @@ def _append_k_b_body_errors(
         RE_KB_PARENT_PASSIVE.search(ln) for ln in parent_lines
     ):
         errors.append("K_B：正文须有家长挡回或不评理/旁观线索")
+    if parent_lines and any(RE_KB_PARENT_INCITE.search(ln) for ln in parent_lines):
+        errors.append("K_B：家长勿怂恿继续打斗，须挡回旁观")
+    if any(RE_KB_LINE_FRAGMENT.search(ln) for ln in lines):
+        errors.append("K_B：对白勿留…破碎尾词或未说完整句")
     if RE_H_RITUAL.search(parent_tail6):
         errors.append("K_B：末段勿 H 式定责仪式和好")
     if not kid_self_resolve_in_tail(tail6_speakers, tail6_lines):
