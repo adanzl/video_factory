@@ -31,7 +31,12 @@ def _review_gold_chat_import_story(story: dict[str, Any], theme: str) -> dict[st
             return story
         issues_, humor_ = review(theme, story)  # type: ignore[union-attr]
         issues = merge_issues(collect_local_issues(story), issues_)
-        return apply_review_to_quality(story, issues, humor=humor_)
+        return apply_review_to_quality(
+            story,
+            issues,
+            humor=humor_,
+            apply_penalty=False,
+        )
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "gold_chat import review skipped: %s",
