@@ -1132,6 +1132,78 @@ def finalize_daily_story_total(
     return quality
 
 
+def acceptance_tags_for_quality(quality: dict[str, Any] | None) -> list[str]:
+    """展示用：结构 / 语义 / 好笑审核状态（历史稿无终验字段视为语义待审）。"""
+    if not isinstance(quality, dict):
+        return ["语义待审"]
+    tags: list[str] = []
+    struct = structure_score_of(quality)
+    if struct >= STRUCTURE_PUBLISH_MIN:
+        tags.append("结构合格")
+    else:
+        tags.append("结构不足")
+    if quality.get("semantic_pass") is None:
+        tags.append("语义待审")
+    elif quality.get("semantic_pass") is True:
+        tags.append("语义通过")
+    else:
+        tags.append("语义未过")
+    if quality.get("humor_pending"):
+        tags.append("好笑待审")
+    elif isinstance(quality.get("humor"), dict):
+        tags.append("好笑已评")
+    else:
+        tags.append("好笑待审")
+    return tags
+
+
+def enrich_quality_acceptance_defaults(quality: dict[str, Any]) -> None:
+    """补全终验展示字段；缺 semantic_pass 时不默认通过。"""
+    if quality.get("semantic_pass") is None:
+        quality["semantic_pending"] = True
+    else:
+        quality["semantic_pending"] = False
+    quality["acceptance_tags"] = acceptance_tags_for_quality(quality)
+
+
+def stamp_gold_chat_acceptance_quality(
+    chat: dict[str, Any],
+    *,
+    review_issues: list[dict[str, Any]],
+    humor: dict[str, Any] | None,
+    chatter_signals: list[str],
+    semantic_pass: bool,
+) -> None:
+    """gold_chat 终验通过后写回 quality（含语义/好笑状态）。"""
+    from datetime import datetime, timezone
+
+    quality = chat.get("quality")
+    if not isinstance(quality, dict):
+        return
+    quality["semantic_pass"] = semantic_pass
+    quality["semantic_pending"] = False
+    quality["semantic_reviewed_at"] = datetime.now(timezone.utc).isoformat()
+    quality["review_issues"] = review_issues
+    reasons = [str(r) for r in (quality.get("reasons") or [])]
+    for sig in chatter_signals:
+        if sig not in reasons:
+            reasons.append(sig)
+    if semantic_pass:
+        reasons = [
+            r
+            for r in reasons
+            if not str(r).startswith("语义终检")
+        ]
+        reasons.append("语义终检通过")
+    quality["reasons"] = reasons
+    finalize_daily_story_total(
+        quality,
+        humor=humor if isinstance(humor, dict) else None,
+        review_penalty_points=0,
+    )
+    enrich_quality_acceptance_defaults(quality)
+
+
 def attach_daily_story_quality(
     story: dict[str, Any],
     *,
@@ -1157,6 +1229,7 @@ def attach_daily_story_quality(
             quality,
             humor=prev_humor if isinstance(prev_humor, dict) else None,
         )
+    enrich_quality_acceptance_defaults(quality)
     story["quality"] = quality
     return story
 

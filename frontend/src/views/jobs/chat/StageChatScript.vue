@@ -127,14 +127,29 @@
             <el-descriptions-item label="笑点解析">
               <div class="rounded-lg bg-gray-50 p-2 text-sm text-gray-600">{{ dailyStory.story.punchline_explain }}</div>
             </el-descriptions-item>
-            <el-descriptions-item v-if="dailyStory.story.quality?.grade" label="观感">
+            <el-descriptions-item v-if="dailyStory.story.quality?.score != null" label="观感">
+              <span class="mr-2 inline-flex flex-wrap gap-1">
+                <el-tag
+                  v-for="(tag, ti) in chatQualityAcceptanceTags"
+                  :key="ti"
+                  size="small"
+                  :type="chatAcceptanceTagType(tag)"
+                >
+                  {{ tag }}
+                </el-tag>
+              </span>
               <el-tag
+                v-if="chatShowCompositeGrade"
                 size="small"
+                class="mr-2"
                 :type="dailyStory.story.quality.grade === '好' ? 'success' : dailyStory.story.quality.grade === '中' ? 'warning' : 'danger'"
               >
                 {{ dailyStory.story.quality.grade }} {{ dailyStory.story.quality.score }}
               </el-tag>
-              <span class="ml-2 text-sm text-gray-600">{{ dailyStory.story.quality.summary }}</span>
+              <span v-else class="mr-2 text-sm text-gray-700">
+                分 {{ dailyStory.story.quality.score }}
+              </span>
+              <span class="text-sm text-gray-600">{{ dailyStory.story.quality.summary }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="总字数">{{ totalChars }} 字</el-descriptions-item>
             <el-descriptions-item label="时长估算">{{ estimatedDuration }}</el-descriptions-item>
@@ -364,6 +379,11 @@ import type { UpdateJobInfoParams } from "@/types/jobs/job";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import type { LlmPromptStep } from "@/types/jobs/script";
 import { DEFAULT_CHAT_SPEECH_CHARS_PER_SEC } from "@/utils/media";
+import {
+  acceptanceTagType as chatAcceptanceTagType,
+  acceptanceTags,
+  showCompositeGrade,
+} from "@/utils/storyQualityAcceptance";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "../detail/StageActionBar.vue";
 import StageLogsSection from "../detail/StageLogsSection.vue";
@@ -432,6 +452,14 @@ function formatSegmentDialogueFull(seg: ChatSegment): string {
 
 const submitting = ref(false);
 const dailyStory = ref<DailyStoryRecord | null>(null);
+
+const chatQualityAcceptanceTags = computed(() =>
+  acceptanceTags(dailyStory.value?.story?.quality),
+);
+
+const chatShowCompositeGrade = computed(() =>
+  showCompositeGrade(dailyStory.value?.story?.quality),
+);
 const storyLoading = ref(false);
 
 const estimatedDurationMin = ref(2.0);

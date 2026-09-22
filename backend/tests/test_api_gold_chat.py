@@ -7,6 +7,7 @@ import pytest
 from app.repositories import repo_gold_story
 from app.services.gold_story.gold_chat import convert as gc
 from app.services.gold_story.gold_chat import export as gce
+from app.services.gold_story.gold_chat import finalize as gcf
 
 
 def _insert_sample(app_ctx) -> dict:
@@ -95,6 +96,11 @@ def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr(gc, "_gate_gold_chat_structure_score", lambda _chat: 80)
+    monkeypatch.setattr(
+        gcf,
+        "run_gold_chat_final_acceptance",
+        lambda chat, row, sid: chat,
+    )
 
     client = app_ctx.test_client()
     list_resp = client.get("/v_factory/api/gold_chat/list?limit=10")
@@ -429,6 +435,11 @@ def test_api_batch(app_ctx, monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr(gc, "_gate_gold_chat_structure_score", lambda _chat: 80)
+    monkeypatch.setattr(
+        gcf,
+        "run_gold_chat_final_acceptance",
+        lambda chat, row, sid: chat,
+    )
 
     client = app_ctx.test_client()
     batch_resp = client.post(

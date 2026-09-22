@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 REVIEW_KINDS: tuple[str, ...] = (
     "矛盾",
     "错位",
+    "称谓",
     "示范",
     "重复",
     "塑料",
@@ -39,6 +40,7 @@ REVIEW_KINDS: tuple[str, ...] = (
 _KIND_PENALTY: dict[str, int] = {
     "矛盾": 8,
     "错位": 8,
+    "称谓": 8,
     "示范": 10,
     "重复": 5,
     "塑料": 5,
@@ -376,6 +378,345 @@ def collect_local_issues(story: dict) -> list[dict[str, Any]]:
     return issues
 
 
+_RE_QUOTED_SEGMENT = re.compile(r"[「『]([^」』]*)[」』]")
+_RE_RELAY_AFTER = re.compile(r"(?:说|讲|问|答|念叨|复述)[：:]")
+# 灿灿把昭昭当哥哥叫：仅直接称呼，单字「哥」不泛拦
+_RE_CANCAN_DIRECT_GE = re.compile(
+    r"(?:^|[，。！？…])(?:昭昭[，,])?(?:你)?哥[，,！？吧呢啊]|^哥[，,！？]",
+)
+_RE_TP_SIBLING_PREFIX = re.compile(
+    r"(?:隔壁|同学|别家|邻家|对面|楼上|楼下|人家|别的|其他|小朋友)(?:的)?$",
+)
+_ESCALATION_CHATTER_PHRASES: tuple[str, ...] = (
+    "谁怕谁",
+    "不让步",
+    "没认输",
+    "不认输",
+)
+_LLM_EXPORT_BLOCKING_KINDS: frozenset[str] = frozenset({
+    "矛盾",
+    "称谓",
+    "错位",
+    "接不上",
+})
+
+
+def _relay_or_quote_ranges(line: str) -> list[tuple[int, int]]:
+    """转述/引用片段：其中的哥哥妹妹不当作说话人对姐弟的称呼。"""
+    ranges: list[tuple[int, int]] = [m.span() for m in _RE_QUOTED_SEGMENT.finditer(line)]
+    for m in _RE_RELAY_AFTER.finditer(line):
+        start = m.end()
+        end = len(line)
+        for j in range(start, len(line)):
+            if line[j] in "。！？":
+                end = j
+                break
+        ranges.append((start, end))
+    return ranges
+
+
+def _pos_in_ranges(pos: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(a <= pos < b for a, b in ranges)
+
+
+def _third_party_sibling_token(line: str, start: int, token: str) -> bool:
+    """仅当该处哥哥/妹妹紧挨第三人指代前缀，或属「哥哥的/妹妹的」物主用法。"""
+    prefix = line[max(0, start - 8) : start]
+    if _RE_TP_SIBLING_PREFIX.search(prefix):
+        return True
+    after = line[start + len(token) : start + len(token) + 1]
+    if token in ("哥哥", "妹妹") and after in ("的", "地"):
+        if re.search(r"(你|昭昭|灿灿|姐姐|弟弟)$", prefix):
+            return False
+        return True
+    return False
+
+
+def _ge_positions_inside_gege(line: str) -> frozenset[int]:
+    """「哥哥」占用的字位，单字扫描时整段跳过。"""
+    occupied: set[int] = set()
+    for m in re.finditer("哥哥", line):
+        occupied.add(m.start())
+        occupied.add(m.start() + 1)
+    return frozenset(occupied)
+
+
+def _cancan_direct_ge_to_zhao(line: str, start: int) -> bool:
+    """灿灿单字「哥」高置信直呼弟弟（不含哥哥 内字位、表哥等）。"""
+    if start in _ge_positions_inside_gege(line):
+        return False
+    if start > 0 and line[start - 1] in "表堂舅老":
+        return False
+    if re.match(r"(?:昭昭[，,])?(?:你)?哥[，,！？吧呢啊]", line[start:]):
+        return True
+    if start == 0 and len(line) > start + 1 and line[start + 1] in "，,！？":
+        return True
+    window = line[max(0, start - 2) : start + 3]
+    return bool(re.search(r"叫你?哥", window))
+
+
+def _sibling_address_violations(speaker: str, line: str) -> list[str]:
+    """按片段识别称谓对象，避免整句第三人豁免。"""
+    relay = _relay_or_quote_ranges(line)
+    msgs: list[str] = []
+
+    def in_relay(start: int) -> bool:
+        return _pos_in_ranges(start, relay)
+
+    if speaker == "昭昭":
+        for m in re.finditer(r"哥哥|妹妹", line):
+            token = m.group(0)
+            if in_relay(m.start()):
+                continue
+            if _third_party_sibling_token(line, m.start(), token):
+                continue
+            if token == "哥哥":
+                msgs.append("昭昭应称姐姐，勿称哥哥")
+            else:
+                msgs.append("昭昭不应把灿灿叫妹妹")
+            break
+    elif speaker == "灿灿":
+        for m in re.finditer(r"哥哥|妹妹", line):
+            token = m.group(0)
+            if in_relay(m.start()):
+                continue
+            if _third_party_sibling_token(line, m.start(), token):
+                continue
+            if token == "哥哥":
+                msgs.append("灿灿不应把昭昭叫哥哥")
+            else:
+                msgs.append("灿灿应称弟弟，勿称妹妹")
+            break
+        if not msgs:
+            gege_pos = _ge_positions_inside_gege(line)
+            for m in re.finditer(r"哥", line):
+                if m.start() in gege_pos:
+                    continue
+                if in_relay(m.start()):
+                    continue
+                ctx = line[max(0, m.start() - 1) : m.end() + 2]
+                if re.search(r"哥们|大哥|小哥", ctx):
+                    continue
+                if _cancan_direct_ge_to_zhao(line, m.start()):
+                    msgs.append("灿灿把弟弟叫成哥")
+                    break
+    return msgs
+
+
+def collect_sibling_address_issues(story: dict) -> list[dict[str, Any]]:
+    """姐弟互称硬错：高置信度，供 gold_chat 终验与润色共用。"""
+    issues: list[dict[str, Any]] = []
+    for i, row in enumerate(_dialogue(story), 1):
+        speaker = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if not line or speaker not in ("昭昭", "灿灿"):
+            continue
+        violations = _sibling_address_violations(speaker, line)
+        if not violations:
+            continue
+        issues.append({
+            "lines": [i],
+            "kind": "称谓",
+            "desc": f"{violations[0]}：{line}",
+            "fix": "姐弟互称用姐姐/弟弟或名字，勿哥哥/妹妹/哥",
+        })
+    return issues
+
+
+def collect_export_blocking_local_issues(story: dict) -> list[dict[str, Any]]:
+    """终验本地硬拦：明显重复 + 称谓错位。"""
+    repeats = [
+        it
+        for it in collect_local_issues(story)
+        if it.get("kind") == "重复"
+    ]
+    address = collect_sibling_address_issues(story)
+    return merge_issues(repeats, address)
+
+
+def collect_escalation_chatter_signals(story: dict) -> list[str]:
+    """争吵套话密度：仅审核信号，不硬拦。"""
+    rows = _dialogue(story)
+    text = "".join(str(r.get("line") or "") for r in rows)
+    counts = {p: text.count(p) for p in _ESCALATION_CHATTER_PHRASES}
+    total = sum(counts.values())
+    if total <= 2:
+        return []
+    parts = [f"{p}×{n}" for p, n in counts.items() if n]
+    return [f"争吵套话偏多（审核信号）：{'，'.join(parts)}"]
+
+
+def _quoted_citations_in_desc(desc: str) -> list[str]:
+    return [q.strip() for q in re.findall(r"「([^」]+)」", desc) if q.strip()]
+
+
+def _issue_has_line_evidence(
+    issue: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> bool:
+    desc = str(issue.get("desc") or "")
+    nos = issue.get("lines")
+    if not isinstance(nos, list):
+        return False
+    line_texts: list[str] = []
+    for no in nos:
+        try:
+            idx = int(no) - 1
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < len(rows):
+            line_texts.append(str(rows[idx].get("line") or ""))
+    if not line_texts:
+        return False
+
+    quotes = _quoted_citations_in_desc(desc)
+    if quotes:
+        if any(len(q) < 2 for q in quotes):
+            return False
+        return all(any(q in ln for ln in line_texts) for q in quotes)
+
+    if len(desc) < 10:
+        return False
+    for line in line_texts:
+        for size in range(min(len(line), 12), 3, -1):
+            for start in range(len(line) - size + 1):
+                snip = line[start : start + size]
+                if snip in desc:
+                    return True
+    return False
+
+
+def _normalize_issue_line_numbers(nos: Any) -> list[int] | None:
+    if isinstance(nos, int):
+        return [int(nos)]
+    if isinstance(nos, list):
+        if not nos:
+            return None
+        picked: list[int] = []
+        for n in nos:
+            if not isinstance(n, (int, float)):
+                return None
+            picked.append(int(n))
+        return picked
+    return None
+
+
+def _validate_export_review_raw(
+    raw: dict[str, Any],
+    *,
+    line_count: int,
+) -> str | None:
+    """审读 JSON 形状不合法时返回错误说明，合法则 None。"""
+    issues = raw.get("issues")
+    if not isinstance(issues, list):
+        return "issues 须为数组"
+    for idx, item in enumerate(issues):
+        if not isinstance(item, dict):
+            return f"issues[{idx}] 须为对象"
+        kind = str(item.get("kind") or "").strip()
+        if not kind:
+            return f"issues[{idx}].kind 无效"
+        if kind not in REVIEW_KINDS:
+            return f"issues[{idx}].kind 未识别"
+        nos = _normalize_issue_line_numbers(item.get("lines"))
+        if nos is None:
+            return f"issues[{idx}].lines 无效"
+        for n in nos:
+            if n < 1 or n > line_count:
+                return f"issues[{idx}].lines 越界"
+        desc = item.get("desc")
+        if not isinstance(desc, str) or not str(desc).strip():
+            return f"issues[{idx}].desc 无效"
+    humor = raw.get("humor")
+    if humor is not None and not isinstance(humor, dict):
+        return "humor 须为对象或省略"
+    return None
+
+
+def filter_llm_export_blocking_issues(
+    issues: list[dict[str, Any]],
+    story: dict,
+) -> list[dict[str, Any]]:
+    """LLM 严重矛盾/称谓/错位：须带行号与台词证据才拦导出。"""
+    rows = _dialogue(story)
+    out: list[dict[str, Any]] = []
+    for it in issues:
+        kind = str(it.get("kind") or "")
+        if kind not in _LLM_EXPORT_BLOCKING_KINDS:
+            continue
+        if not _issue_has_line_evidence(it, rows):
+            continue
+        out.append(it)
+    return out
+
+
+class ExportSemanticReviewResult:
+    """gold_chat 导出前语义审读结果。"""
+
+    __slots__ = ("completed", "issues", "humor", "error")
+
+    def __init__(
+        self,
+        *,
+        completed: bool,
+        issues: list[dict[str, Any]] | None = None,
+        humor: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        self.completed = completed
+        self.issues = issues or []
+        self.humor = humor
+        self.error = error
+
+
+def run_export_semantic_review(
+    theme: str,
+    story: dict[str, Any],
+) -> ExportSemanticReviewResult:
+    """单次 LLM 审读；completed=False 表示超时/解析失败（非稿子过错）。"""
+    from app.services.llm import llm_mgr
+
+    client = llm_mgr._get_client()
+    chat_json = getattr(client, "_chat_json", None)
+    if not callable(chat_json):
+        return ExportSemanticReviewResult(
+            completed=False,
+            error="LLM 客户端不可用",
+        )
+    system, user = build_review_prompts(theme, story)
+    try:
+        raw, _ = chat_json(
+            system,
+            user,
+            thinking_enabled=False,
+            temperature=0.0,
+        )
+    except Exception as exc:
+        logger.warning("[GOLD_CHAT] export semantic review call failed: %s", exc)
+        return ExportSemanticReviewResult(
+            completed=False,
+            error=str(exc) or "LLM 调用失败",
+        )
+    if not isinstance(raw, dict) or "issues" not in raw:
+        return ExportSemanticReviewResult(
+            completed=False,
+            error="审读 JSON 缺 issues 字段",
+        )
+    n_lines = len(story.get("dialogue") or [])
+    shape_err = _validate_export_review_raw(raw, line_count=n_lines)
+    if shape_err:
+        return ExportSemanticReviewResult(
+            completed=False,
+            error=f"审读 JSON 格式无效：{shape_err}",
+        )
+    parsed = parse_review_issues(raw, line_count=n_lines, for_export=True)
+    return ExportSemanticReviewResult(
+        completed=True,
+        issues=parsed,
+        humor=parse_humor(raw),
+    )
+
+
 def collect_wording_issues(
     story: dict,
     *,
@@ -386,24 +727,11 @@ def collect_wording_issues(
     lines = [str(r.get("line") or "").strip() for r in rows]
     n = len(lines)
     open_len = len(story.get("discovery_opening") or [])
-    out: list[dict[str, Any]] = []
+    out: list[dict[str, Any]] = list(collect_sibling_address_issues(story))
     for i, row in enumerate(rows, 1):
         line = str(row.get("line") or "").strip()
         if not line:
             continue
-        # 称谓性别校验：本故事只有昭昭（7岁弟弟/男孩）、灿灿（10岁姐姐/女孩），
-        # 没有其他称谓对象——台词出现「哥哥」必是错把灿灿当哥哥、「妹妹」必是
-        # 错把昭昭当妹妹。属不动结构的原地改字，开场片头也查（_on_design_line
-        # 会跳过开场，而 v35 酸奶稿开场昭昭把灿灿喊成「哥哥」就发生在开场）。
-        if "哥哥" in line or "妹妹" in line:
-            out.append({
-                "lines": [i],
-                "kind": "称谓",
-                "desc": f"称谓性别不符：{line}",
-                "fix": "「哥哥」改成「姐姐」（灿灿是姐姐，昭昭喊她）；"
-                       "「妹妹」改成「弟弟」（昭昭是弟弟）；别把姐姐叫哥哥、"
-                       "弟弟叫妹妹",
-            })
         # 妈妈句未点名主题物（节拍表主题物随稿携带）——定向喂润色重写
         theme_object = str((story.get("_beats_theme_object") or "")).strip()
         if theme_object:
@@ -714,7 +1042,12 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
     return system, user
 
 
-def parse_review_issues(raw: Any, *, line_count: int) -> list[dict[str, Any]]:
+def parse_review_issues(
+    raw: Any,
+    *,
+    line_count: int,
+    for_export: bool = False,
+) -> list[dict[str, Any]]:
     """解析审读输出，丢掉行号越界与类型不认的条目。"""
     if not isinstance(raw, dict):
         return []
@@ -755,7 +1088,7 @@ def parse_review_issues(raw: Any, *, line_count: int) -> list[dict[str, Any]]:
     kept: list[dict[str, Any]] = []
     style_seen = 0
     for it in out:
-        if it["kind"] == "书面":
+        if it["kind"] == "书面" and not for_export:
             if style_seen >= 2:
                 continue
             style_seen += 1
@@ -1271,7 +1604,11 @@ def apply_review_to_quality(
     ``apply_penalty=False``：仅注入好笑与 ``review_issues``（如 gold_chat 导入），
     硬伤待润色后再扣；正式 ``run_daily_story_review`` 仍为 True。
     """
-    from app.services.daily_story.quality import HUMOR_PUBLISH_MIN, _grade_from_score
+    from app.services.daily_story.quality import (
+        HUMOR_PUBLISH_MIN,
+        _grade_from_score,
+        enrich_quality_acceptance_defaults,
+    )
 
     quality = story.get("quality")
     if not isinstance(quality, dict):
@@ -1315,9 +1652,11 @@ def apply_review_to_quality(
             humor=humor,
             review_penalty_points=points,
         )
+        enrich_quality_acceptance_defaults(quality)
         return story
 
     if not points:
+        enrich_quality_acceptance_defaults(quality)
         return story
     score = max(0, int(quality.get("score") or 0) - points)
     quality["score"] = score
@@ -1327,6 +1666,7 @@ def apply_review_to_quality(
     quality["summary"] = (
         f"{head}，另有{len(reasons) - 1}项" if len(reasons) > 1 else head
     )
+    enrich_quality_acceptance_defaults(quality)
     return story
 
 
