@@ -799,6 +799,145 @@ def patch_k_b_parent_closing_voice(story: dict) -> list[str]:
     return notes
 
 
+def patch_k_b_fix_parent_incite(story: dict) -> list[str]:
+    """K-B：家长「接着打」类怂恿改挡回旁观。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        RE_KB_PARENT_INCITE,
+        k_close_mode_from_story,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story) or k_close_mode_from_story(story) != K_B_CHILD_SELF_RESOLVE:
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        if sp not in _PARENT_SPEAKERS:
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line or not RE_KB_PARENT_INCITE.search(line):
+            continue
+        if re.search(r"吃饭|端碗|吃我的", line):
+            new_line = "不评理。我吃我的，别找我说。"
+        elif re.search(r"不评理|规矩", line):
+            new_line = "不评理。规矩在墙上，别找我说。"
+        else:
+            new_line = "我不掺和。你们自己吵，别找我评。"
+        item["line"] = new_line
+        notes.append(f"K_B家长怂恿→挡回[{i + 1}]")
+    return notes
+
+
+def patch_k_b_clean_line_fragments(story: dict) -> list[str]:
+    """K-B：剥…破碎尾词、收成可配音完整句。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        RE_KB_LINE_FRAGMENT,
+        k_close_mode_from_story,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story) or k_close_mode_from_story(story) != K_B_CHILD_SELF_RESOLVE:
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    _re_incomplete_swap = re.compile(
+        r"((?:拿|抢|拽).{0,14}?(?:蓝|红|绿|黄|块|色)的?)换吧"
+    )
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if not line or sp in _PARENT_SPEAKERS:
+            continue
+        new_line = line
+        if RE_KB_LINE_FRAGMENT.search(new_line):
+            new_line = re.sub(
+                r"([啊呀吧呢]+)[！？。!?][\.…]+(?:了呢|了吧|了啊)?[\.…]*",
+                r"\1！",
+                new_line,
+            )
+            new_line = re.sub(r"[\.…]{2,}(?:了呢|了吧|了啊)?[\.…]*", "", new_line)
+            new_line = re.sub(
+                r"[\.…]+(?:了呢|了吧|了啊)?[\.…]*$",
+                "",
+                new_line,
+            ).strip("，, ")
+        m_inc = _re_incomplete_swap.search(new_line)
+        if m_inc:
+            new_line = new_line.replace(m_inc.group(0), f"{m_inc.group(1)}换的")
+        if new_line != line:
+            if not new_line:
+                continue
+            if new_line[-1] not in "？！。!?":
+                new_line = f"{new_line}！"
+            item["line"] = new_line
+            notes.append(f"K_B清碎句[{i + 1}]")
+    return notes
+
+
+def patch_k_b_trim_defiance_run(story: dict) -> list[str]:
+    """K-B：恢复互动前「不服/试试」堆叠超过 4 句则删中间（删句不替固定口癖）。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        RE_KB_CHILD_RESOLVE,
+        RE_KB_DEFIANCE_FILLER,
+        k_close_mode_from_story,
+    )
+
+    notes: list[str] = []
+    if not _is_k(story) or k_close_mode_from_story(story) != K_B_CHILD_SELF_RESOLVE:
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    idxs = _dialogue_idxs(dialogue)
+    parent_i: int | None = None
+    for i in reversed(idxs):
+        if str(dialogue[i].get("speaker") or "").strip() in _PARENT_SPEAKERS:
+            parent_i = i
+            break
+    resolve_i: int | None = None
+    for i in reversed(idxs):
+        if parent_i is not None and i >= parent_i:
+            continue
+        sp = str(dialogue[i].get("speaker") or "").strip()
+        if sp not in _KID_SPEAKERS:
+            continue
+        ln = str(dialogue[i].get("line") or "").strip()
+        if RE_KB_CHILD_RESOLVE.search(ln):
+            resolve_i = i
+            break
+    if resolve_i is None:
+        resolve_i = parent_i if parent_i is not None else len(dialogue)
+    hit_idxs: list[int] = []
+    for i in idxs:
+        if i >= resolve_i:
+            continue
+        sp = str(dialogue[i].get("speaker") or "").strip()
+        if sp not in _KID_SPEAKERS:
+            continue
+        ln = str(dialogue[i].get("line") or "").strip()
+        if RE_KB_DEFIANCE_FILLER.search(ln):
+            hit_idxs.append(i)
+    if len(hit_idxs) <= 4:
+        return notes
+    drop = set(hit_idxs[2:-1])
+    kept = [x for k, x in enumerate(dialogue) if k not in drop]
+    if not _k_patch_can_drop_duplicate_lines(story, kept):
+        return notes
+    story["dialogue"] = kept
+    notes.append(f"K_B压不服堆叠×{len(drop)}")
+    return notes
+
+
 def patch_k_b_ground_punchline_explain(story: dict) -> list[str]:
     """K-B：punchline 勿写正文未呈现的动作（如勾肩搭背）。"""
     from app.services.daily_story.story_types.k.close_mode import (
@@ -2276,16 +2415,21 @@ def patch_k_body(story: dict) -> list[str]:
         notes.extend(patch_k_pin_advise_fail_close(story))
     else:
         notes.extend(patch_k_b_ground_punchline_explain(story))
+        notes.extend(patch_k_b_fix_parent_incite(story))
+        notes.extend(patch_k_b_clean_line_fragments(story))
         notes.extend(patch_k_b_trim_stalemate_loop(story))
+        notes.extend(patch_k_b_trim_defiance_run(story))
         notes.extend(patch_k_b_compress_repeat_kid_lines(story))
         notes.extend(patch_k_b_collapse_duplicate_resolve_invites(story))
         notes.extend(patch_k_b_ensure_self_resolve_tail(story))
         notes.extend(patch_k_b_collapse_duplicate_resolve_invites(story))
         notes.extend(patch_k_b_parent_closing_voice(story))
         notes.extend(patch_k_strip_h_reconcile_tail(story))
+        notes.extend(patch_k_b_clean_line_fragments(story))
         notes.extend(patch_k_b_compress_repeat_kid_lines(story))
         notes.extend(patch_k_dedupe_near_lines(story))
         notes.extend(patch_k_strip_pad_junk(story))
+        notes.extend(patch_k_b_clean_line_fragments(story))
         notes.extend(patch_k_bind_press_roles(story))
         notes.extend(patch_k_fix_consecutive_keep_press(story))
     return notes

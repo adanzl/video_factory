@@ -49,6 +49,9 @@ def collect_k_humor_issues(
             issues.append("K末段缺僵持不和好")
     elif mode == K_B_CHILD_SELF_RESOLVE:
         from app.services.daily_story.story_types.k.close_mode import (
+            RE_KB_DEFIANCE_FILLER,
+            RE_KB_LINE_FRAGMENT,
+            RE_KB_PARENT_INCITE,
             RE_KB_PARENT_PASSIVE,
         )
         from app.services.daily_story.story_types.k.resolve_check import (
@@ -60,8 +63,16 @@ def collect_k_humor_issues(
             for sp, ln in zip(spk, lines, strict=False)
             if sp in ("妈妈", "爸爸")
         )
+
         if parent_blob and not RE_KB_PARENT_PASSIVE.search(parent_blob):
             issues.append("K_B缺家长挡回/旁观")
+        if parent_blob and RE_KB_PARENT_INCITE.search(parent_blob):
+            issues.append("K_B家长勿怂恿接着打")
+        if any(RE_KB_LINE_FRAGMENT.search(ln) for ln in lines):
+            issues.append("K_B对白勿破碎尾词")
+        defiance_n = sum(1 for ln in lines if RE_KB_DEFIANCE_FILLER.search(ln))
+        if defiance_n > 5:
+            issues.append("K_B争执段过长勿堆不服试试")
         if not kid_self_resolve_in_tail(spk, lines):
             issues.append("K_B末段缺自行恢复互动")
     issues.extend(collect_k_dialogue_suspicions(lines, spk))
