@@ -161,16 +161,30 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
         errors.append("E类正文过短，不足以完成妈妈破功收束（至少约 8 句对白）")
         return
 
-    # 整篇交替（含妈妈）。钓鱼开场末句是妈妈立规时，正文第 1 句常被写成
-    # 妈妈再开脱，拼缝只拦姐弟连说，这里把妈妈连说一并拦住。
+    # 妈妈/家长禁止连说；姐弟与提示词一致，最多连续 2 句（第 3 句连说才拦）。
     for i in range(1, n):
-        if speakers[i] and speakers[i] == speakers[i - 1]:
+        if not speakers[i] or speakers[i] != speakers[i - 1]:
+            continue
+        sp = speakers[i]
+        if sp in ("昭昭", "灿灿"):
+            run = 2
+            j = i - 2
+            while j >= 0 and speakers[j] == sp:
+                run += 1
+                j -= 1
+            if run <= 2:
+                continue
             errors.append(
-                f"E类对白须交替发言[{i}]：{speakers[i]}连说两句"
-                "（含正文第1句与开场末句衔接处）；"
-                "开场末句妈妈立规后下一句须孩子抓现行，禁止妈妈连说开脱",
+                f"E类姐弟连说≥3句[{i}]：{sp}连续{run}句；"
+                "同一人最多连续2句，随后须由对方或妈妈接话",
             )
             return
+        errors.append(
+            f"E类对白须交替发言[{i}]：{sp}连说两句"
+            "（含正文第1句与开场末句衔接处）；"
+            "开场末句妈妈立规后下一句须孩子抓现行，禁止妈妈连说开脱",
+        )
+        return
 
     topic_anchor = (
         str(story.get("conflict_core") or "")

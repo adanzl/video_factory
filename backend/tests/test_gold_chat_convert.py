@@ -834,6 +834,9 @@ def test_gold_chat_align_refine_prompts_are_type_scoped():
     assert "保真-M5" not in j_all
     assert "不打了" not in j_all
     assert "拉手" not in j_all
+    assert "不得减少正文总字数" not in j_all
+    assert "改短" in j_all or "改短或扩写" in j_all
+    assert "≥240" in user_j or "≥{chars_min}" not in user_j
 
     # 否定契约：不和好 + 妈妈不出场 → 禁止和好/定责
     deny_closing = "灿灿压住，昭昭怂退，不和好，妈妈不出场"
