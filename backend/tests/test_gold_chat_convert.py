@@ -446,6 +446,46 @@ def test_gold_story_to_gold_chat(monkeypatch):
     assert out["quality"]["structure_score"] == 80
 
 
+def test_convert_failure_preserves_existing_export(tmp_path, monkeypatch):
+    from app.services.gold_story.gold_chat.finalize import GoldChatAcceptanceBlocked
+
+    sid = "BV1KEEPEXPORT"
+    export_dir = tmp_path / "gold_chat"
+    export_dir.mkdir(parents=True)
+    json_path = export_dir / f"{sid}.json"
+    original = '{"keep": true}'
+    json_path.write_text(original, encoding="utf-8")
+
+    row = _sample_row()
+    row["source_id"] = sid
+    row["id"] = 96
+
+    monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: export_dir)
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: export_dir)
+    _bypass_structure_gate(monkeypatch)
+    monkeypatch.setattr(gc, "gold_story_to_gold_chat", lambda _r: _sample_chat())
+    monkeypatch.setattr(
+        gc,
+        "apply_gold_chat_normalizations",
+        lambda chat, **_kw: (chat, []),
+    )
+    monkeypatch.setattr(gc, "_refine_after_normalize", lambda chat, _row: chat)
+    monkeypatch.setattr(gc, "_rebuild_h3a_h3b_on_convert", lambda r: r)
+    monkeypatch.setattr(gc, "_persist_structure_correction", lambda r, _n: r)
+    monkeypatch.setattr(gc, "_resolve_structure_row", lambda r: (r, []))
+    monkeypatch.setattr(gc, "_persist_m5_h_contract_if_needed", lambda r: r)
+
+    def _fail_finalize(*_args, **_kwargs):
+        raise GoldChatAcceptanceBlocked("终检语义硬伤：第[2]句·错位：测试")
+
+    monkeypatch.setattr(gcf, "run_gold_chat_finalize", _fail_finalize)
+
+    with pytest.raises(GoldChatAcceptanceBlocked):
+        gc.convert_gold_chat(row)
+
+    assert json_path.read_text(encoding="utf-8") == original
+
+
 def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
     """重转切入点：用 story_raw+H3 重跑 H3a/H3b 写回契约。"""
     patched: dict = {}

@@ -36,6 +36,7 @@ from app.services.gold_story.gold_chat.patch import (
     patch_m5_break_sibling_consecutive,
 )
 from app.services.gold_story.gold_chat.prompts import (
+    format_semantic_acceptance_feedback,
     format_structure_score_feedback,
 )
 from app.services.gold_story.gold_chat.validate import (
@@ -47,6 +48,7 @@ from app.services.gold_story.scene import sanitize_banned_literals
 logger = logging.getLogger(__name__)
 
 _GOLD_CHAT_STRUCTURE_LIFT_MAX = 2
+_GOLD_CHAT_SEMANTIC_REPAIR_MAX = 2
 
 
 class GoldChatAcceptanceBlocked(ValueError):
@@ -68,7 +70,7 @@ def run_gold_chat_final_acceptance(
     from app.services.daily_story.review import (
         collect_escalation_chatter_signals,
         collect_export_blocking_local_issues,
-        filter_llm_export_blocking_issues,
+        partition_llm_export_blocking_issues,
         run_export_semantic_review,
     )
 
@@ -92,7 +94,20 @@ def run_gold_chat_final_acceptance(
             or "语义审核未完成（LLM 超时或解析失败），已保留上次导出稿",
         )
 
-    llm_block = filter_llm_export_blocking_issues(review.issues, chat)
+    llm_block, bad_evidence = partition_llm_export_blocking_issues(
+        review.issues,
+        chat,
+    )
+    if bad_evidence:
+        parts = [
+            f"第{it['lines']}句·{it['kind']}：{it['desc']}"
+            for it in bad_evidence[:5]
+        ]
+        raise GoldChatAcceptanceIncomplete(
+            "审核证据无效（"
+            + "；".join(parts)
+            + "），已保留上次导出稿",
+        )
     if llm_block:
         parts = [
             f"第{it['lines']}句·{it['kind']}：{it['desc']}"
@@ -117,6 +132,76 @@ def run_gold_chat_final_acceptance(
         bool(review.humor),
     )
     return chat
+
+
+def run_gold_chat_final_acceptance_with_semantic_repair(
+    chat: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    sid: str,
+    st_final: str,
+    banned: list[str],
+    mom_max: int,
+    source_type: str,
+    attach_score,
+    gate_score,
+    normalize_chat,
+    fix_llm,
+    validate_chat,
+    dialogue_seed: list[Any] | None = None,
+    max_repairs: int = _GOLD_CHAT_SEMANTIC_REPAIR_MAX,
+) -> tuple[dict[str, Any], int]:
+    """语义终检：Blocked 且为语义硬伤时定点 LLM 修稿；Incomplete 不修。"""
+    from app.services.daily_story.quality import structure_score_of
+    from app.services.gold_story.gold_chat.convert import (
+        patch_gold_chat_consecutive_siblings,
+    )
+
+    current = dict(chat)
+    last_struct = 0
+    q0 = current.get("quality")
+    if isinstance(q0, dict):
+        last_struct = structure_score_of(q0)
+    last_semantic_err: str | None = None
+    attempts = max(0, int(max_repairs)) + 1
+    for attempt in range(attempts):
+        try:
+            accepted = run_gold_chat_final_acceptance(current, row, sid=sid)
+            q = accepted.get("quality")
+            if isinstance(q, dict):
+                last_struct = structure_score_of(q) or last_struct
+            return accepted, int(last_struct)
+        except GoldChatAcceptanceIncomplete:
+            raise
+        except GoldChatAcceptanceBlocked as exc:
+            msg = str(exc).strip()
+            is_semantic = msg.startswith("终检语义硬伤")
+            if not is_semantic or attempt >= attempts - 1:
+                raise
+            last_semantic_err = msg
+            prompt = format_semantic_acceptance_feedback(msg)
+            if last_semantic_err and attempt > 0:
+                prompt = f"{prompt}\n【上一轮未过】{last_semantic_err}"
+            lifted = fix_llm(
+                current,
+                prompt,
+                banned_literals=[str(x) for x in banned],
+                mom_lines_max=int(mom_max),
+            )
+            lifted = normalize_chat(lifted)
+            if st_final:
+                lifted["story_type"] = st_final
+            lifted, _ = patch_sanitize_pad_suffix(lifted)
+            lifted, _ = patch_sanitize_pad_particles(lifted)
+            lifted, _ = patch_gold_chat_consecutive_siblings(
+                lifted,
+                dialogue_seed=dialogue_seed,
+            )
+            validate_chat(lifted)
+            lifted = attach_score(lifted, row)
+            last_struct = int(gate_score(lifted))
+            current = lifted
+    raise GoldChatAcceptanceBlocked(last_semantic_err or "终检语义硬伤")
 
 
 def _k_fix_scene_title(chat: dict[str, Any], row: dict[str, Any]) -> None:
@@ -767,13 +852,23 @@ def run_gold_chat_finalize(
             kinds = "、".join(str(x.get("kind") or "") for x in blocking_ex[:3])
             raise ValueError(f"align_export:{kinds}")
     # 终检前再清一次姐弟连说（垫字/精修可能重新制造）
-    from app.services.daily_story.prompts import _patch_consecutive_speakers
+    from app.services.gold_story.gold_chat.convert import (
+        patch_gold_chat_consecutive_siblings,
+    )
 
     chat = dict(chat)
     st_final = str(row.get("structure_type") or chat.get("story_type") or "").strip().upper()
     if st_final:
         chat["story_type"] = st_final
-    consecutive_notes = _patch_consecutive_speakers(chat)
+    seed_for_consecutive = (
+        payload0.get("dialogue_seed")
+        if isinstance(payload0.get("dialogue_seed"), list)
+        else None
+    )
+    chat, consecutive_notes = patch_gold_chat_consecutive_siblings(
+        chat,
+        dialogue_seed=seed_for_consecutive,
+    )
     if consecutive_notes:
         logger.info(
             "gold_chat pre-score consecutive patch: %s",
@@ -905,7 +1000,29 @@ def run_gold_chat_finalize(
         source_type=source_type,
         mom_lines_max=int(mom_max),
     )
-    chat = run_gold_chat_final_acceptance(chat, row, sid=sid)
+    def _validate_for_acceptance(c: dict[str, Any]) -> None:
+        validate_gold_chat(
+            c,
+            banned_literals=[str(x) for x in banned],
+            source_type=source_type,
+            mom_lines_max=int(mom_max),
+        )
+
+    chat, struct = run_gold_chat_final_acceptance_with_semantic_repair(
+        chat,
+        row,
+        sid=sid,
+        st_final=st_final,
+        banned=[str(x) for x in banned],
+        mom_max=int(mom_max),
+        source_type=source_type,
+        attach_score=_attach_gold_chat_structure_score,
+        gate_score=_gate_gold_chat_structure_score,
+        normalize_chat=_normalize_chat_speakers,
+        fix_llm=_fix_chat_with_llm,
+        validate_chat=_validate_for_acceptance,
+        dialogue_seed=seed_for_consecutive,
+    )
     logger.info(
         "[GOLD_CHAT] convert %s structure_score=%s lines=%s chars=%s",
         sid,

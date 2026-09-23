@@ -482,6 +482,7 @@ def apply_gold_chat_body_pipeline(
     chat: dict[str, Any],
     *,
     structure_type: str,
+    dialogue_seed: list[Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """金稿对白 → 日常成熟 patch 链。
 
@@ -491,11 +492,22 @@ def apply_gold_chat_body_pipeline(
     if not st or not isinstance(chat, dict):
         return chat, []
     from app.services.daily_story.prompts import try_local_patch_daily_story_body
+    from app.services.gold_story.gold_chat.convert import (
+        patch_gold_chat_consecutive_siblings,
+    )
 
     out = dict(chat)
     out["story_type"] = st
-    patched, notes = try_local_patch_daily_story_body(out)
-    return patched, list(notes or [])
+    patched, notes = try_local_patch_daily_story_body(
+        out,
+        skip_consecutive_speaker_flip=True,
+    )
+    patched, cn = patch_gold_chat_consecutive_siblings(
+        patched,
+        dialogue_seed=dialogue_seed,
+    )
+    notes = list(notes or []) + list(cn or [])
+    return patched, notes
 
 
 def apply_gold_chat_strip_filler(chat: dict[str, Any]) -> list[str]:

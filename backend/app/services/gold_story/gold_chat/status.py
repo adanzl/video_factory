@@ -82,13 +82,17 @@ def clear_gold_chat_failure(gold_story_id: int, *, source_id: str = "") -> None:
     gid = int(gold_story_id)
     if gid <= 0:
         return
+    row = repo_gold_story.get_story(gid)
+    payload = row.get("payload") or {}
+    had_error = bool(str(payload.get("gold_chat_last_error") or "").strip())
     repo_gold_story.patch_story_payload(
         gid,
         {key: None for key in _GOLD_CHAT_ERROR_CLEAR_KEYS}
         | {"gold_chat_last_error_stage": None},
     )
-    logger.info(
-        "[GOLD_CHAT] failure cleared id=%s source_id=%s",
-        gid,
-        source_id or "?",
-    )
+    if had_error:
+        logger.info(
+            "[GOLD_CHAT] 导出成功，历史失败状态已清理 id=%s source_id=%s",
+            gid,
+            source_id or "?",
+        )
