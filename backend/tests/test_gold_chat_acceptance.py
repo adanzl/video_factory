@@ -13,6 +13,7 @@ from app.services.daily_story.quality import (
 )
 from app.services.daily_story.review import (
     ExportSemanticReviewResult,
+    _normalize_missing_beat,
     _validate_export_review_raw,
     collect_escalation_chatter_signals,
     collect_export_blocking_local_issues,
@@ -21,6 +22,10 @@ from app.services.daily_story.review import (
     partition_llm_export_blocking_issues,
     parse_review_issues,
     run_export_semantic_review,
+)
+from app.services.gold_story.gold_chat.convert import (
+    patch_break_consecutive_keep_seed,
+    patch_gold_chat_consecutive_siblings,
 )
 from app.services.gold_story.gold_chat.finalize import (
     GoldChatAcceptanceBlocked,
@@ -763,3 +768,190 @@ def test_semantic_incomplete_does_not_trigger_repair(mock_acceptance):
             validate_chat=lambda _c: None,
         )
     assert fix_calls == []
+
+
+def test_patch_break_consecutive_does_not_insert_fixed_bridge():
+    story = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，你别打姐姐，你打我！"},
+            {"speaker": "昭昭", "line": "我屁股Q弹呀，你打一下试试。"},
+        ],
+    }
+    out, changed = patch_break_consecutive_keep_seed(story)
+    assert changed is False
+    assert len(out["dialogue"]) == 2
+    joined = " ".join(str(x.get("line") or "") for x in out["dialogue"])
+    assert "听我说完" not in joined
+
+
+def test_consecutive_sibling_merge_keeps_same_speaker_explanation():
+    story = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，你打我。"},
+            {"speaker": "昭昭", "line": "我屁股很Q弹。"},
+            {"speaker": "灿灿", "line": "你胡说什么呢。"},
+        ],
+    }
+    out, notes = patch_gold_chat_consecutive_siblings(story)
+    zhao_lines = [
+        str(x.get("line") or "")
+        for x in out["dialogue"]
+        if x.get("speaker") == "昭昭"
+    ]
+    assert any("Q弹" in ln for ln in zhao_lines)
+    assert any("你打我" in ln for ln in zhao_lines) or len(zhao_lines) == 1
+    assert not any("听我说完" in n for n in notes)
+
+
+def _sample_beat_chain() -> list[dict[str, str]]:
+    return [
+        {"speaker": "妈妈", "intent": "因作业未做批评灿灿"},
+        {"speaker": "昭昭", "intent": "护姐姐挨打"},
+    ]
+
+
+def test_contract_gap_blocking_and_invalid_evidence():
+    beat_chain = _sample_beat_chain()
+    story = _story(
+        [
+            {"speaker": "昭昭", "line": "妈，你打我，别打姐姐。"},
+            {"speaker": "妈妈", "line": "你又胡闹什么？"},
+        ],
+    )
+    valid_gap = [
+        {
+            "lines": [1],
+            "kind": "缺前提",
+            "missing_beat": {"beat": 1, "intent": "因作业未做批评灿灿"},
+            "desc": "解围前未交代妈妈因作业批评",
+            "fix": "补触发",
+            "evidence": [{"line": 1, "quote": "别打姐姐"}],
+        },
+    ]
+    assert (
+        len(
+            filter_llm_export_blocking_issues(
+                valid_gap,
+                story,
+                beat_chain=beat_chain,
+            ),
+        )
+        == 1
+    )
+    fake_gap = [
+        {
+            "lines": [1],
+            "kind": "缺前提",
+            "missing_beat": {"intent": "妈妈批评作业"},
+            "desc": "缺前提",
+            "fix": "补",
+            "evidence": [{"line": 1, "quote": "别打姐姐"}],
+        },
+    ]
+    valid, bad = partition_llm_export_blocking_issues(
+        fake_gap,
+        story,
+        beat_chain=beat_chain,
+    )
+    assert valid == []
+    assert len(bad) == 1
+
+
+def test_contract_gap_rejects_fictional_beat_or_bad_types():
+    beat_chain = _sample_beat_chain()
+    story = _story(
+        [
+            {"speaker": "昭昭", "line": "妈，你打我，别打姐姐。"},
+        ],
+    )
+    base = {
+        "lines": [1],
+        "kind": "缺前提",
+        "desc": "缺前提",
+        "fix": "补",
+        "evidence": [{"line": 1, "quote": "别打姐姐"}],
+    }
+    for mb in (
+        {"beat": 999, "intent": "因作业未做批评灿灿"},
+        {"beat": True, "intent": "因作业未做批评灿灿"},
+        {"beat": 1, "intent": "虚构事件不在契约里"},
+    ):
+        valid, bad = partition_llm_export_blocking_issues(
+            [{**base, "missing_beat": mb}],
+            story,
+            beat_chain=beat_chain,
+        )
+        assert valid == []
+        assert len(bad) == 1
+    float_issue = [
+        {
+            **base,
+            "missing_beat": {"beat": 1.9, "intent": "因作业未做批评灿灿"},
+        },
+    ]
+    assert _normalize_missing_beat(float_issue[0]["missing_beat"]) is None
+
+
+def test_interjection_blocking_positive_and_negative():
+    story = _story(
+        [
+            {"speaker": "灿灿", "line": "等等，先听我说完！"},
+            {"speaker": "昭昭", "line": "所以你要赔我橡皮。"},
+            {"speaker": "灿灿", "line": "行，我赔。"},
+        ],
+    )
+    good = [
+        {
+            "lines": [1, 2],
+            "kind": "无效插话",
+            "desc": "插话后未接续原解释",
+            "fix": "删插话或补接续",
+            "evidence": [
+                {"line": 1, "quote": "先听我说完"},
+                {"line": 2, "quote": "赔我橡皮"},
+            ],
+        },
+    ]
+    assert len(filter_llm_export_blocking_issues(good, story)) == 1
+
+    hollow = [
+        {
+            "lines": [1, 2],
+            "kind": "无效插话",
+            "desc": "空插话",
+            "fix": "改",
+            "evidence": [{"line": 1, "quote": "先听我说完"}],
+        },
+    ]
+    valid, bad = partition_llm_export_blocking_issues(hollow, story)
+    assert valid == []
+    assert len(bad) == 1
+
+
+def test_premise_in_dialogue_not_flagged_as_gap():
+    beat_chain = _sample_beat_chain()
+    story = _story(
+        [
+            {"speaker": "妈妈", "line": "灿灿，作业怎么还没写？"},
+            {"speaker": "昭昭", "line": "妈，你打我，别骂姐姐。"},
+        ],
+    )
+    issue = [
+        {
+            "lines": [2],
+            "kind": "缺前提",
+            "missing_beat": {"beat": 1, "intent": "因作业未做批评灿灿"},
+            "desc": "未交代作业批评",
+            "fix": "补",
+            "evidence": [{"line": 2, "quote": "别骂姐姐"}],
+        },
+    ]
+    valid, bad = partition_llm_export_blocking_issues(
+        issue,
+        story,
+        beat_chain=beat_chain,
+    )
+    assert valid == []
+    assert len(bad) == 1

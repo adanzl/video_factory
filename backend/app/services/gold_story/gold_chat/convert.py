@@ -419,17 +419,6 @@ def patch_gold_chat_consecutive_siblings(
             continue
         i += 1
 
-    for _ in range(6):
-        out, changed = patch_break_consecutive_keep_seed(
-            out,
-            dialogue_seed=dialogue_seed,
-            bridge_cap=3,
-            protect_tail=protect_tail,
-        )
-        if changed:
-            notes.append("连说插接话")
-        if not changed:
-            break
     return out, notes
 
 
@@ -440,54 +429,9 @@ def patch_break_consecutive_keep_seed(
     bridge_cap: int = 2,
     protect_tail: int = 0,
 ) -> tuple[dict[str, Any], bool]:
-    """打散同人连说：只插对方短接话，不改已有句 speaker（保 seed/求否方向）。"""
-    import copy
-
-    from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
-
-    out = copy.deepcopy(story)
-    dialogue = out.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 2:
-        return story, False
-
-    changed = False
-    i = 1
-    guard = 0
-    while i < len(dialogue) and guard < 12:
-        guard += 1
-        if protect_tail and i >= len(dialogue) - protect_tail:
-            i += 1
-            continue
-        a, b = dialogue[i - 1], dialogue[i]
-        if not isinstance(a, dict) or not isinstance(b, dict):
-            i += 1
-            continue
-        sa = str(a.get("speaker") or "").strip()
-        sb = str(b.get("speaker") or "").strip()
-        if sa not in {"昭昭", "灿灿"} or sa != sb:
-            i += 1
-            continue
-        if len(dialogue) >= CHAT_LINE_COUNT_MAX:
-            break
-        other = "灿灿" if sa == "昭昭" else "昭昭"
-        bridges = (
-            "等等，先听我说完！",
-            "你别插嘴，轮到我了！",
-            "先别吵，听清楚！",
-        )
-        used = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
-        bridge_n = sum(1 for br in bridges if br in used)
-        if bridge_n >= bridge_cap:
-            i += 1
-            continue
-        text = next((br for br in bridges if br not in used), None)
-        if not text:
-            i += 1
-            continue
-        dialogue.insert(i, {"speaker": other, "line": text})
-        changed = True
-        i += 2
-    return out, changed
+    """保留 API；不再插入固定接话（连说由 merge + 扩写/终检修稿处理）。"""
+    del dialogue_seed, bridge_cap, protect_tail
+    return story, False
 
 
 def _gold_chat_j_pre_score_polish(

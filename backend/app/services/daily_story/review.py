@@ -33,6 +33,8 @@ REVIEW_KINDS: tuple[str, ...] = (
     "动作误说",
     "接不上",
     "无效证据",
+    "缺前提",
+    "无效插话",
     "其他",
 )
 
@@ -50,6 +52,8 @@ _KIND_PENALTY: dict[str, int] = {
     "动作误说": 5,
     "接不上": 8,
     "无效证据": 8,
+    "缺前提": 8,
+    "无效插话": 8,
     "其他": 3,
 }
 REVIEW_PENALTY_CAP = 25
@@ -399,6 +403,8 @@ _LLM_EXPORT_BLOCKING_KINDS: frozenset[str] = frozenset({
     "错位",
     "接不上",
     "语病",
+    "缺前提",
+    "无效插话",
 })
 
 
@@ -635,6 +641,207 @@ def _issue_has_line_evidence(
     return issue_lines <= covered
 
 
+def _strict_beat_number(value: Any) -> int | None:
+    """契约 beat 编号：仅接受 JSON 整数，排除 bool 与 float 截断。"""
+    if isinstance(value, bool):
+        return None
+    if type(value) is not int:
+        return None
+    return value
+
+
+def _normalize_missing_beat(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    intent = str(raw.get("intent") or raw.get("event") or "").strip()
+    beat_raw = raw.get("beat")
+    beat_no: int | None = None
+    if "beat" in raw:
+        if beat_raw is None:
+            return None
+        beat_no = _strict_beat_number(beat_raw)
+        if beat_no is None:
+            return None
+    if not intent and beat_no is None:
+        return None
+    out: dict[str, Any] = {}
+    if intent:
+        out["intent"] = intent
+    if beat_no is not None:
+        out["beat"] = beat_no
+    return out if out else None
+
+
+def _beat_chain_entry(
+    beat_chain: list[Any] | None,
+    beat_no: int,
+) -> dict[str, Any] | None:
+    if not isinstance(beat_chain, list) or beat_no < 1:
+        return None
+    if beat_no > len(beat_chain):
+        return None
+    item = beat_chain[beat_no - 1]
+    return item if isinstance(item, dict) else None
+
+
+def _intent_matches_chain(reported: str, chain_intent: str) -> bool:
+    r, c = reported.strip(), chain_intent.strip()
+    if not r or not c:
+        return False
+    return r == c or r in c or c in r
+
+
+def _missing_beat_matches_chain(
+    mb: dict[str, Any],
+    beat_chain: list[Any] | None,
+) -> bool:
+    beat_no = mb.get("beat")
+    if not isinstance(beat_no, int):
+        return False
+    intent = str(mb.get("intent") or "").strip()
+    if not intent:
+        return False
+    entry = _beat_chain_entry(beat_chain, beat_no)
+    if entry is None:
+        return False
+    chain_intent = str(entry.get("intent") or "").strip()
+    return _intent_matches_chain(intent, chain_intent)
+
+
+def _contract_beat_premise_in_dialogue(
+    beat_no: int,
+    beat_chain: list[Any],
+    rows: list[dict[str, Any]],
+    *,
+    before_line: int,
+) -> bool:
+    """触发拍 intent 片段已在问题行之前对白出现则不算缺前提（防误报）。"""
+    entry = _beat_chain_entry(beat_chain, beat_no)
+    if entry is None:
+        return False
+    chain_intent = str(entry.get("intent") or "").strip()
+    if len(chain_intent) < 2:
+        return False
+    sp = str(entry.get("speaker") or "").strip()
+    parts: list[str] = []
+    for i, row in enumerate(rows, 1):
+        if i >= before_line:
+            break
+        if sp and str(row.get("speaker") or "").strip() != sp:
+            continue
+        parts.append(str(row.get("line") or ""))
+    blob = "".join(parts)
+    if not blob:
+        return False
+    for n in range(min(len(chain_intent), 12), 1, -1):
+        for start in range(0, len(chain_intent) - n + 1):
+            frag = chain_intent[start : start + n]
+            if len(frag) >= 2 and frag in blob:
+                return True
+    return False
+
+
+def format_export_blocking_issue_summary(item: dict[str, Any]) -> str:
+    """终检硬拦条目摘要（含已核实的 missing_beat）。"""
+    lines = item.get("lines")
+    line_txt = lines if isinstance(lines, list) else [lines]
+    base = f"第{line_txt}句·{item.get('kind')}：{item.get('desc')}"
+    mb = item.get("missing_beat")
+    if isinstance(mb, dict):
+        beat = mb.get("beat")
+        intent = str(mb.get("intent") or "").strip()
+        if beat is not None or intent:
+            base += f"（缺失契约 beat={beat} {intent}）".rstrip()
+    return base
+
+
+def _issue_has_contract_gap_evidence(
+    issue: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> bool:
+    """缺前提：missing_beat 描述契约事件，evidence 只引现有对白，勿伪造缺失句。"""
+    mb = _normalize_missing_beat(issue.get("missing_beat"))
+    if mb is None:
+        return False
+    if not _missing_beat_matches_chain(mb, beat_chain):
+        return False
+    nos = issue.get("lines")
+    if not isinstance(nos, list) or not nos:
+        return False
+    issue_lines: set[int] = set()
+    for no in nos:
+        line_no = _strict_issue_line_number(no)
+        if line_no is None:
+            return False
+        issue_lines.add(line_no)
+
+    evidence = issue.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return False
+
+    hit_lines: set[int] = set()
+    for ev in evidence:
+        if not isinstance(ev, dict):
+            return False
+        line_no = _strict_issue_line_number(ev.get("line"))
+        if line_no is None or line_no not in issue_lines:
+            return False
+        quote_raw = ev.get("quote")
+        if not isinstance(quote_raw, str):
+            return False
+        quote = quote_raw.strip()
+        if len(quote) < 2:
+            return False
+        idx = line_no - 1
+        if not (0 <= idx < len(rows)):
+            return False
+        line_text = str(rows[idx].get("line") or "")
+        if quote not in line_text:
+            return False
+        hit_lines.add(line_no)
+    if not hit_lines:
+        return False
+    beat_no = mb.get("beat")
+    if (
+        isinstance(beat_no, int)
+        and isinstance(beat_chain, list)
+        and beat_chain
+        and _contract_beat_premise_in_dialogue(
+            beat_no,
+            beat_chain,
+            rows,
+            before_line=min(issue_lines),
+        )
+    ):
+        logger.info(
+            "[REVIEW] export gap suppressed: premise in dialogue "
+            "beat=%s before_line=%s intent=%s",
+            beat_no,
+            min(issue_lines),
+            mb.get("intent"),
+        )
+        return False
+    return True
+
+
+def _issue_has_blocking_evidence(
+    issue: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> bool:
+    kind = str(issue.get("kind") or "")
+    if kind == "缺前提":
+        return _issue_has_contract_gap_evidence(
+            issue,
+            rows,
+            beat_chain=beat_chain,
+        )
+    return _issue_has_line_evidence(issue, rows)
+
+
 def _normalize_issue_line_numbers(nos: Any) -> list[int] | None:
     one = _strict_issue_line_number(nos)
     if one is not None:
@@ -678,6 +885,9 @@ def _validate_export_review_raw(
         desc = item.get("desc")
         if not isinstance(desc, str) or not str(desc).strip():
             return f"issues[{idx}].desc 无效"
+        if "missing_beat" in item:
+            if _normalize_missing_beat(item.get("missing_beat")) is None:
+                return f"issues[{idx}].missing_beat 无效"
         if "evidence" in item:
             parsed_ev = _parse_issue_evidence_entries(
                 item.get("evidence"),
@@ -695,6 +905,8 @@ def _validate_export_review_raw(
 def partition_llm_export_blocking_issues(
     issues: list[dict[str, Any]],
     story: dict,
+    *,
+    beat_chain: list[Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """导出硬拦：证据有效 vs 报了硬伤但 evidence 无效。"""
     rows = _dialogue(story)
@@ -704,7 +916,7 @@ def partition_llm_export_blocking_issues(
         kind = str(it.get("kind") or "")
         if kind not in _LLM_EXPORT_BLOCKING_KINDS:
             continue
-        if _issue_has_line_evidence(it, rows):
+        if _issue_has_blocking_evidence(it, rows, beat_chain=beat_chain):
             valid.append(it)
         else:
             invalid_evidence.append(it)
@@ -714,9 +926,15 @@ def partition_llm_export_blocking_issues(
 def filter_llm_export_blocking_issues(
     issues: list[dict[str, Any]],
     story: dict,
+    *,
+    beat_chain: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     """LLM 严重矛盾/称谓/错位/接不上/语病：须 evidence 有效才拦导出。"""
-    valid, _ = partition_llm_export_blocking_issues(issues, story)
+    valid, _ = partition_llm_export_blocking_issues(
+        issues,
+        story,
+        beat_chain=beat_chain,
+    )
     return valid
 
 
@@ -739,9 +957,25 @@ class ExportSemanticReviewResult:
         self.error = error
 
 
+def _format_beat_chain_for_review(beat_chain: list[Any] | None) -> str:
+    if not isinstance(beat_chain, list) or not beat_chain:
+        return ""
+    lines: list[str] = ["scene_contract.beat_chain（终检须对照，不可只读 setting）："]
+    for i, beat in enumerate(beat_chain, 1):
+        if not isinstance(beat, dict):
+            continue
+        sp = str(beat.get("speaker") or "").strip()
+        intent = str(beat.get("intent") or "").strip()
+        if intent:
+            lines.append(f"{i}. {sp or '?'}：{intent}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def run_export_semantic_review(
     theme: str,
     story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
 ) -> ExportSemanticReviewResult:
     """单次 LLM 审读；completed=False 表示超时/解析失败（非稿子过错）。"""
     from app.services.llm import llm_mgr
@@ -757,7 +991,11 @@ def run_export_semantic_review(
         Callable[..., tuple[dict[str, Any], str | None]],
         chat_json_raw,
     )
-    system, user = build_review_prompts(theme, story)
+    system, user = build_review_prompts(
+        theme,
+        story,
+        beat_chain=beat_chain,
+    )
     try:
         llm_payload = cast(
             tuple[dict[str, Any], str | None],
@@ -988,8 +1226,27 @@ def collect_wording_issues(
     return out[:REVIEW_MAX_ISSUES]
 
 
-def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
+def build_review_prompts(
+    theme: str,
+    story: dict,
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[str, str]:
     """审读提示：读者视角挑硬伤与口语感（书面/绕口/旁白腔）。"""
+    export_beat_block = ""
+    if beat_chain:
+        export_beat_block = (
+            "\n\n【gold_chat 终检 · beat 契约】\n"
+            "除逐句读对白外，须对照 beat_chain 核对：\n"
+            "13 缺前提：回应/解围依赖的触发事件在前面对白中未成立"
+            "（setting/conflict_core 不算已交代）；"
+            "issues 须带 missing_beat（契约 intent/beat），"
+            "evidence 只引**现有**依赖句 quote，禁止伪造缺失句引文。\n"
+            "14 无效插话：「听我说完/别插嘴/先别吵」类插话后无实质接续，"
+            "或插话把同一人本应连贯的解释拆断；"
+            "evidence 须含插话句 + 后续（或前句）quote。\n"
+            "合理同人连续解释（如先求打再解释 Q 弹）勿报无效插话。\n"
+        )
     system = (
         "你是儿童短视频文案的审稿人，不是作者。"
         "你的唯一任务是像观众一样逐句读这段对白，挑出「读着出戏」的硬伤。\n"
@@ -1040,7 +1297,8 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         "孩子却还在花几句证明「这双就是出门的鞋」——该拆的是「不算」）。\n"
         "  故意荒诞的开脱（钥匙会跑、地板长花纹）是笑点设定，"
         "只要接住了话头就别报。\n"
-        "12 其他：上面装不下但确实读着出戏的。\n\n"
+        "12 其他：上面装不下但确实读着出戏的。\n"
+        f"{export_beat_block}"
         "下面几处是本类结构设计，即使看着像重复也别报：\n"
         "- 开场两句是片头定格，与正文开头重合是正常拼接；\n"
         "- 最后一句大人认输软收，倒数第二句孩子引用大人原话闭环。\n"
@@ -1088,8 +1346,10 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         "- evidence 元素：{\"line\":行号,\"quote\":\"从对白该行**原样复制**的连续子串，≥2字}；"
         "禁止改写、缩写、拼接两句。\n"
         "- issues.lines 里每一句，evidence 至少覆盖一条（跨句矛盾/接不上须逐句摘录）。\n"
-        "- kind 为矛盾/称谓/错位/接不上/语病时 evidence 必填且 quote 须能在该行对白中"
-        "逐字找到；重复类仍以本地检测为主，报重复时也请给 evidence 便于人读。\n\n"
+        "- kind 为矛盾/称谓/错位/接不上/语病/缺前提/无效插话时 evidence 必填"
+        "（缺前提另须 missing_beat）；quote 须能在该行对白中逐字找到；"
+        "重复类仍以本地检测为主，报重复时也请给 evidence 便于人读。\n"
+        "缺前提示例见 missing_beat + evidence（勿伪造缺失句 quote）。\n\n"
         "只输出 JSON：\n"
         '{"facts":["3昭昭分工:自己藏车、灿灿藏零食","5锅里没米","6剩饭被倒掉"],'
         '"chain":{"争议点":"妈妈承认没换鞋，辩「拿东西不算进屋」",'
@@ -1118,12 +1378,14 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         "formulaic 套路好笑（抛判据→加赛→扣原话这种能套进模板的笑点）/ "
         "none 无明显好笑点。"
     )
+    beat_text = _format_beat_chain_for_review(beat_chain)
     user = (
         f"主题：{theme}\n"
         f"场景：{story.get('setting') or ''}\n"
         f"矛盾内核：{story.get('conflict_core') or ''}\n\n"
+        f"{beat_text + chr(10) + chr(10) if beat_text else ''}"
         f"对白：\n{numbered_dialogue(story)}\n\n"
-        "逐句读一遍，按上面 10 类输出 JSON。"
+        "逐句读一遍，按上面类别输出 JSON。"
     )
     return system, user
 
@@ -1171,6 +1433,9 @@ def parse_review_issues(
             )
             if parsed_ev is not None:
                 entry["evidence"] = parsed_ev
+        mb = _normalize_missing_beat(item.get("missing_beat"))
+        if mb is not None:
+            entry["missing_beat"] = mb
         out.append(entry)
     # 严重度优先：避免「书面」等轻问题先占满名额，把「矛盾/语病」挤掉；
     # 风格类「书面」最多计 2 条，其余类型仍受 REVIEW_MAX_ISSUES 总控。
