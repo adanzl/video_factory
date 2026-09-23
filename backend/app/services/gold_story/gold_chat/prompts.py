@@ -929,6 +929,19 @@ def format_structure_score_feedback(
     return "\n".join(parts)
 
 
+def format_semantic_acceptance_feedback(error: str) -> str:
+    """终检语义硬伤后的定点修稿指令（保留主线，修问题句及必要上下文）。"""
+    err = str(error or "").strip()
+    parts = [
+        "【终检语义硬伤·定点修稿】",
+        "保留主线冲突与类型收束，只改问题句及必要上下句。",
+        "speaker 与 line 须一致：谁做动作、谁被打、「我/你/姐/哥」指代前后连贯。",
+        "禁止仅为交替发言而换 speaker；可合并同人重复句或补短接话。",
+        f"机审：{err}",
+    ]
+    return "\n".join(parts)
+
+
 def format_seed_span_block(
     seed: list[Any] | None,
     *,

@@ -353,11 +353,92 @@ def _realign_j_role_speakers(
     return out
 
 
+_MERGE_CONTINUATION = re.compile(
+    r"^(所以|而且|那|然后|就是|还|再|可|但|不过|我|你)"
+)
+
+
+def _can_merge_consecutive_sibling_lines(line_a: str, line_b: str) -> bool:
+    la = str(line_a or "").strip()
+    lb = str(line_b or "").strip()
+    if not la or not lb:
+        return False
+    merged = la.rstrip("。！？…!?") + "，" + lb
+    if len(merged) > CHAT_MAX_LINE_CHARS:
+        return False
+    if _MERGE_CONTINUATION.search(lb):
+        return True
+    return la[-1] not in "。！？!?."
+
+
+def patch_gold_chat_consecutive_siblings(
+    story: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """金稿连说：先合并同人续句，再插接话；禁止仅 flip speaker 保交替。"""
+    import copy
+
+    from app.services.daily_story.prompts import _patch_q_break_consecutive_insert
+    from app.services.daily_story.story_types import resolve_story_type_code
+
+    notes: list[str] = []
+    out = copy.deepcopy(story)
+    code = resolve_story_type_code(out)
+    if code == "B":
+        return out, notes
+    if code == "Q":
+        notes.extend(_patch_q_break_consecutive_insert(out))
+        return out, notes
+
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
+        return out, notes
+
+    protect_tail = 4 if code in ("C", "D") else 0
+
+    i = 1
+    while i < len(dialogue):
+        if protect_tail and i >= len(dialogue) - protect_tail:
+            break
+        a, b = dialogue[i - 1], dialogue[i]
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            i += 1
+            continue
+        sa = str(a.get("speaker") or "").strip()
+        sb = str(b.get("speaker") or "").strip()
+        if sa not in {"昭昭", "灿灿"} or sa != sb:
+            i += 1
+            continue
+        la = str(a.get("line") or "").strip()
+        lb = str(b.get("line") or "").strip()
+        if _can_merge_consecutive_sibling_lines(la, lb):
+            a["line"] = la.rstrip("。！？…!?") + "，" + lb
+            dialogue.pop(i)
+            notes.append(f"连说合并[{i}]")
+            continue
+        i += 1
+
+    for _ in range(6):
+        out, changed = patch_break_consecutive_keep_seed(
+            out,
+            dialogue_seed=dialogue_seed,
+            bridge_cap=3,
+            protect_tail=protect_tail,
+        )
+        if changed:
+            notes.append("连说插接话")
+        if not changed:
+            break
+    return out, notes
+
+
 def patch_break_consecutive_keep_seed(
     story: dict[str, Any],
     *,
     dialogue_seed: list[Any] | None = None,
     bridge_cap: int = 2,
+    protect_tail: int = 0,
 ) -> tuple[dict[str, Any], bool]:
     """打散同人连说：只插对方短接话，不改已有句 speaker（保 seed/求否方向）。"""
     import copy
@@ -374,6 +455,9 @@ def patch_break_consecutive_keep_seed(
     guard = 0
     while i < len(dialogue) and guard < 12:
         guard += 1
+        if protect_tail and i >= len(dialogue) - protect_tail:
+            i += 1
+            continue
         a, b = dialogue[i - 1], dialogue[i]
         if not isinstance(a, dict) or not isinstance(b, dict):
             i += 1
@@ -887,7 +971,12 @@ def apply_gold_chat_normalizations(
     if st:
         # M2+C 已有专用 patch 链；勿再走 daily_story 的连说改 speaker / 整件肉 filler
         if not (st == "C" and mech.upper() == "M2"):
-            chat, type_notes = apply_gold_chat_body_pipeline(chat, structure_type=st)
+            seed_raw = payload.get("dialogue_seed")
+            chat, type_notes = apply_gold_chat_body_pipeline(
+                chat,
+                structure_type=st,
+                dialogue_seed=seed_raw if isinstance(seed_raw, list) else None,
+            )
             notes.extend(type_notes)
         from app.services.gold_story.scene import (
             patch_dialogue_narration_to_speech,

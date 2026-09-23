@@ -1573,7 +1573,9 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
 
         data["gold_beat_chain"] = beat_chain
         data, type_notes = apply_gold_chat_body_pipeline(
-            data, structure_type=structure_type
+            data,
+            structure_type=structure_type,
+            dialogue_seed=seed,
         )
         from app.services.gold_story.scene import (
             patch_dialogue_narration_to_speech,
@@ -1639,7 +1641,9 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             data, _ = patch_sanitize_pad_suffix(data)
         if str(structure_type or "").upper() == "Q":
             data, q_notes = apply_gold_chat_body_pipeline(
-                data, structure_type="Q"
+                data,
+                structure_type="Q",
+                dialogue_seed=seed,
             )
             if q_notes:
                 type_notes = list(type_notes) + list(q_notes)[:4]

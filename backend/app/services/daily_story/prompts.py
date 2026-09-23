@@ -4611,7 +4611,11 @@ def _patch_setting_parent_without_line(story: dict) -> list[str]:
     return notes
 
 
-def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
+def try_local_patch_daily_story_body(
+    story: dict,
+    *,
+    skip_consecutive_speaker_flip: bool = False,
+) -> tuple[dict, list[str]]:
     """校验前确定性修补：超长句/字数小缺口/引话/setting家长。
 
     能修则少打一轮 LLM；修不干净仍交重试。
@@ -4620,6 +4624,11 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
         return story, []
     out = _clone_story(story)
     notes: list[str] = []
+
+    def _patch_consecutive() -> list[str]:
+        if skip_consecutive_speaker_flip:
+            return []
+        return _patch_consecutive_speakers(out)
     notes.extend(_patch_speaker_aliases(out))
     # 昭昭口中「灿灿」→「姐姐」（礼貌称呼）
     from app.services.daily_story.review import rewrite_zhao_cancan_to_jiejie
@@ -4639,18 +4648,18 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
         notes.append("昭昭口中灿灿改姐姐")
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_setting_parent_without_line(out))
-    notes.extend(_patch_consecutive_speakers(out))
+    notes.extend(_patch_consecutive())
     notes.extend(patch_type_body(out))
     notes.extend(_patch_vocative_punctuation(out))
     notes.extend(_patch_overlong_lines(out))
-    notes.extend(_patch_consecutive_speakers(out))
+    notes.extend(_patch_consecutive())
     notes.extend(patch_type_body(out))
-    notes.extend(_patch_consecutive_speakers(out))
+    notes.extend(_patch_consecutive())
     # 字数垫最后做：避免被 patch_type_body / 截断吃掉
     # （D 在 _patch_body_char_budget 内直接跳过，不做本地修补）
     notes.extend(_patch_body_char_budget(out))
     notes.extend(_patch_overlong_lines(out))
-    notes.extend(_patch_consecutive_speakers(out))
+    notes.extend(_patch_consecutive())
     # Q：末轮连说后可能再冲角色绑定，收尾再归位一次
     if resolve_story_type_code(out) == "Q":
         notes.extend(patch_type_body(out))

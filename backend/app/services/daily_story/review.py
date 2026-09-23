@@ -398,6 +398,7 @@ _LLM_EXPORT_BLOCKING_KINDS: frozenset[str] = frozenset({
     "称谓",
     "错位",
     "接不上",
+    "语病",
 })
 
 
@@ -546,57 +547,107 @@ def collect_escalation_chatter_signals(story: dict) -> list[str]:
     return [f"争吵套话偏多（审核信号）：{'，'.join(parts)}"]
 
 
-def _quoted_citations_in_desc(desc: str) -> list[str]:
-    return [q.strip() for q in re.findall(r"「([^」]+)」", desc) if q.strip()]
+def _strict_issue_line_number(value: Any) -> int | None:
+    """审读行号：仅接受 JSON 整数，排除 bool 与 float 截断。"""
+    if isinstance(value, bool):
+        return None
+    if type(value) is not int:
+        return None
+    return value
+
+
+def _parse_issue_evidence_entries(
+    raw: Any,
+    *,
+    allowed_lines: frozenset[int],
+    line_count: int,
+) -> list[dict[str, int | str]] | None:
+    """evidence 形状非法时返回 None；省略 evidence 键时由调用方传 raw=None。"""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return None
+    out: list[dict[str, int | str]] = []
+    for ev in raw:
+        if not isinstance(ev, dict):
+            return None
+        line_no = _strict_issue_line_number(ev.get("line"))
+        if line_no is None:
+            return None
+        if line_no < 1 or line_no > line_count:
+            return None
+        if line_no not in allowed_lines:
+            return None
+        quote = ev.get("quote")
+        if not isinstance(quote, str):
+            return None
+        q = quote.strip()
+        if len(q) < 2:
+            return None
+        out.append({"line": line_no, "quote": q})
+    return out
 
 
 def _issue_has_line_evidence(
     issue: dict[str, Any],
     rows: list[dict[str, Any]],
 ) -> bool:
-    desc = str(issue.get("desc") or "")
+    """逐条核对 evidence.quote 是否为对应行的连续子串，且覆盖 issue.lines。"""
     nos = issue.get("lines")
-    if not isinstance(nos, list):
+    if not isinstance(nos, list) or not nos:
         return False
-    line_texts: list[str] = []
+    issue_lines: set[int] = set()
     for no in nos:
-        try:
-            idx = int(no) - 1
-        except (TypeError, ValueError):
-            continue
-        if 0 <= idx < len(rows):
-            line_texts.append(str(rows[idx].get("line") or ""))
-    if not line_texts:
-        return False
-
-    quotes = _quoted_citations_in_desc(desc)
-    if quotes:
-        if any(len(q) < 2 for q in quotes):
+        line_no = _strict_issue_line_number(no)
+        if line_no is None:
             return False
-        return all(any(q in ln for ln in line_texts) for q in quotes)
-
-    if len(desc) < 10:
+        issue_lines.add(line_no)
+    if not issue_lines:
         return False
-    for line in line_texts:
-        for size in range(min(len(line), 12), 3, -1):
-            for start in range(len(line) - size + 1):
-                snip = line[start : start + size]
-                if snip in desc:
-                    return True
-    return False
+
+    evidence = issue.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return False
+
+    covered: set[int] = set()
+    for ev in evidence:
+        if not isinstance(ev, dict):
+            return False
+        line_no = _strict_issue_line_number(ev.get("line"))
+        if line_no is None:
+            return False
+        if line_no not in issue_lines:
+            return False
+        quote_raw = ev.get("quote")
+        if not isinstance(quote_raw, str):
+            return False
+        quote = quote_raw.strip()
+        if len(quote) < 2:
+            return False
+        idx = line_no - 1
+        if not (0 <= idx < len(rows)):
+            return False
+        line_text = str(rows[idx].get("line") or "")
+        if quote not in line_text:
+            return False
+        covered.add(line_no)
+
+    return issue_lines <= covered
 
 
 def _normalize_issue_line_numbers(nos: Any) -> list[int] | None:
-    if isinstance(nos, int):
-        return [int(nos)]
+    one = _strict_issue_line_number(nos)
+    if one is not None:
+        return [one]
     if isinstance(nos, list):
         if not nos:
             return None
         picked: list[int] = []
         for n in nos:
-            if not isinstance(n, (int, float)):
+            line_no = _strict_issue_line_number(n)
+            if line_no is None:
                 return None
-            picked.append(int(n))
+            picked.append(line_no)
         return picked
     return None
 
@@ -627,27 +678,46 @@ def _validate_export_review_raw(
         desc = item.get("desc")
         if not isinstance(desc, str) or not str(desc).strip():
             return f"issues[{idx}].desc 无效"
+        if "evidence" in item:
+            parsed_ev = _parse_issue_evidence_entries(
+                item.get("evidence"),
+                allowed_lines=frozenset(nos),
+                line_count=line_count,
+            )
+            if parsed_ev is None:
+                return f"issues[{idx}].evidence 无效"
     humor = raw.get("humor")
     if humor is not None and not isinstance(humor, dict):
         return "humor 须为对象或省略"
     return None
 
 
-def filter_llm_export_blocking_issues(
+def partition_llm_export_blocking_issues(
     issues: list[dict[str, Any]],
     story: dict,
-) -> list[dict[str, Any]]:
-    """LLM 严重矛盾/称谓/错位：须带行号与台词证据才拦导出。"""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """导出硬拦：证据有效 vs 报了硬伤但 evidence 无效。"""
     rows = _dialogue(story)
-    out: list[dict[str, Any]] = []
+    valid: list[dict[str, Any]] = []
+    invalid_evidence: list[dict[str, Any]] = []
     for it in issues:
         kind = str(it.get("kind") or "")
         if kind not in _LLM_EXPORT_BLOCKING_KINDS:
             continue
-        if not _issue_has_line_evidence(it, rows):
-            continue
-        out.append(it)
-    return out
+        if _issue_has_line_evidence(it, rows):
+            valid.append(it)
+        else:
+            invalid_evidence.append(it)
+    return valid, invalid_evidence
+
+
+def filter_llm_export_blocking_issues(
+    issues: list[dict[str, Any]],
+    story: dict,
+) -> list[dict[str, Any]]:
+    """LLM 严重矛盾/称谓/错位/接不上/语病：须 evidence 有效才拦导出。"""
+    valid, _ = partition_llm_export_blocking_issues(issues, story)
+    return valid
 
 
 class ExportSemanticReviewResult:
@@ -1006,6 +1076,12 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         "第三步 checks：前 11 类**每一类都必须表态**，"
         "写「无」或写清哪几句有问题，不许省略某一类。\n"
         "第四步 issues：把 checks 里判「有」的逐条展开。\n\n"
+        "issues 每条须带 evidence 数组，供程序核对原句（勿只在 desc 里写「」概括）：\n"
+        "- evidence 元素：{\"line\":行号,\"quote\":\"从对白该行**原样复制**的连续子串，≥2字}；"
+        "禁止改写、缩写、拼接两句。\n"
+        "- issues.lines 里每一句，evidence 至少覆盖一条（跨句矛盾/接不上须逐句摘录）。\n"
+        "- kind 为矛盾/称谓/错位/接不上/语病时 evidence 必填且 quote 须能在该行对白中"
+        "逐字找到；重复类仍以本地检测为主，报重复时也请给 evidence 便于人读。\n\n"
         "只输出 JSON：\n"
         '{"facts":["3昭昭分工:自己藏车、灿灿藏零食","5锅里没米","6剩饭被倒掉"],'
         '"chain":{"争议点":"妈妈承认没换鞋，辩「拿东西不算进屋」",'
@@ -1017,6 +1093,8 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         '"接不上":"无","无效证据":"第8句"},'
         '"issues":[{"lines":[5,6],"kind":"矛盾",'
         '"desc":"第5句说锅里一粒米都没有，第6句又说把剩饭倒掉了",'
+        '"evidence":[{"line":5,"quote":"一粒米都没有"},'
+        '{"line":6,"quote":"把剩饭倒掉了"}],'
         '"fix":"第6句改成…"}],'
         '"humor":{"funny_score":14,"best_moment":"我正看到关键处，你等会儿",'
         '"humor_type":"natural"}}\n'
@@ -1061,27 +1139,31 @@ def parse_review_issues(
         kind = str(item.get("kind") or "").strip()
         if kind not in REVIEW_KINDS:
             kind = "其他"
-        nos = item.get("lines")
-        if isinstance(nos, int):
-            nos = [nos]
-        if not isinstance(nos, list):
+        nos_raw = item.get("lines")
+        nos = _normalize_issue_line_numbers(nos_raw)
+        if nos is None:
             continue
-        picked = [
-            int(n)
-            for n in nos
-            if isinstance(n, (int, float)) and 1 <= int(n) <= line_count
-        ]
+        picked = [n for n in nos if 1 <= n <= line_count]
         if not picked:
             continue
         desc = str(item.get("desc") or "").strip()
         if not desc:
             continue
-        out.append({
+        entry: dict[str, Any] = {
             "lines": picked,
             "kind": kind,
             "desc": desc,
             "fix": str(item.get("fix") or "").strip(),
-        })
+        }
+        if "evidence" in item:
+            parsed_ev = _parse_issue_evidence_entries(
+                item.get("evidence"),
+                allowed_lines=frozenset(picked),
+                line_count=line_count,
+            )
+            if parsed_ev is not None:
+                entry["evidence"] = parsed_ev
+        out.append(entry)
     # 严重度优先：避免「书面」等轻问题先占满名额，把「矛盾/语病」挤掉；
     # 风格类「书面」最多计 2 条，其余类型仍受 REVIEW_MAX_ISSUES 总控。
     out.sort(key=lambda it: -_KIND_PENALTY.get(it["kind"], 0))
