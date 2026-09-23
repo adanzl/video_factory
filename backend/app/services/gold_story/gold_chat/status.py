@@ -27,8 +27,15 @@ def format_gold_chat_error(exc: BaseException) -> str:
     return exc.__class__.__name__
 
 
-def gold_chat_error_from_payload(payload: dict[str, Any] | None) -> dict[str, str] | None:
+def gold_chat_error_from_payload(
+    payload: dict[str, Any] | None,
+    *,
+    has_gold_chat: bool = False,
+) -> dict[str, str] | None:
     if not isinstance(payload, dict):
+        return None
+    # 磁盘上已有导出稿时，末次「重转失败」仍留 payload 日志，但列表/详情勿挡「已导出」
+    if has_gold_chat or str(payload.get("gold_chat_exported_at") or "").strip():
         return None
     err = str(payload.get("gold_chat_last_error") or "").strip()
     if not err:
