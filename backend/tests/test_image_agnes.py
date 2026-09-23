@@ -12,6 +12,7 @@ from app.services.segment.image.image_agnes import (
     AgnesImageVerifyFailed,
     _VERIFY_MAX_ATTEMPTS,
     _to_agnes_size,
+    _verify_upstream_media_url_fetch_error,
 )
 
 
@@ -685,6 +686,88 @@ def test_parse_hardfail_arm_answer() -> None:
     assert AgnesImageProvider._parse_hardfail_arm_answer(
         "项1: 2\n项2: 不清楚"
     ) == (2, None)
+
+
+def test_verify_upstream_media_url_fetch_error() -> None:
+    resp = MagicMock()
+    resp.status_code = 400
+    resp.json = MagicMock(
+        return_value={
+            "error": {
+                "message": (
+                    'BadRequestError: Timed out while downloading media URL: '
+                    "https://platform-outputs.agnes-ai.space/x.png"
+                )
+            }
+        }
+    )
+    assert _verify_upstream_media_url_fetch_error(resp) is True
+
+    resp_ok = MagicMock()
+    resp_ok.status_code = 400
+    resp_ok.json = MagicMock(return_value={"error": {"message": "content policy"}})
+    assert _verify_upstream_media_url_fetch_error(resp_ok) is False
+
+
+def test_verify_image_falls_back_to_base64_on_cdn_fetch_error(tmp_path: Path) -> None:
+    provider = AgnesImageProvider()
+    img = PILImage.new("RGB", (64, 64), "red")
+    path = tmp_path / "1.png"
+    img.save(path)
+    cdn = "https://platform-outputs.agnes-ai.space/images/out.png"
+    path.with_name(path.name + ".agnes_source_url").write_text(cdn, encoding="utf-8")
+
+    resp_cdn_fail = MagicMock()
+    resp_cdn_fail.status_code = 400
+    resp_cdn_fail.ok = False
+    resp_cdn_fail.json = MagicMock(
+        return_value={
+            "error": {
+                "message": (
+                    "Error while loading data ImageData: Timed out while "
+                    "downloading media URL"
+                )
+            }
+        }
+    )
+
+    resp_ok = MagicMock()
+    resp_ok.status_code = 200
+    resp_ok.ok = True
+    resp_ok.json = MagicMock(
+        return_value={
+            "choices": [{"message": {"content": "项1: 是\n项2: 是\n项3: 是"}}]
+        }
+    )
+    posted_urls: list[str] = []
+
+    def fake_post(_url, *, headers, json, timeout):  # noqa: ANN001, ARG001
+        posted_urls.append(json["messages"][1]["content"][1]["image_url"]["url"])
+        return resp_cdn_fail if len(posted_urls) == 1 else resp_ok
+
+    with (
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[AgnesApiKey("primary", "k")],
+        ),
+        patch("app.services.segment.image.image_agnes.requests.post", side_effect=fake_post),
+        patch.object(provider, "_run_blocking_cancellable", side_effect=lambda fn: fn()),
+        patch.object(
+            AgnesImageProvider,
+            "_evaluate_verify_response",
+            return_value=True,
+        ),
+    ):
+        ok = provider._verify_image(  # noqa: SLF001
+            "客厅昭昭",
+            path,
+            expected_speakers=["昭昭"],
+        )
+
+    assert ok is True
+    assert len(posted_urls) == 2
+    assert posted_urls[0] == cdn
+    assert posted_urls[1].startswith("data:image/jpeg;base64,")
 
 
 def test_crop_zone_data_url_zooms(tmp_path: Path) -> None:
