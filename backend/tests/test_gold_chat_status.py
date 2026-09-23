@@ -60,3 +60,15 @@ def test_gold_chat_error_from_payload_empty():
     assert gold_chat_error_from_payload(None) is None
     assert gold_chat_error_from_payload({}) is None
     assert gold_chat_error_from_payload({"gold_chat_last_error": "  "}) is None
+
+
+def test_gold_chat_error_suppressed_when_export_on_disk():
+    payload = {
+        "gold_chat_last_error": "终检本地硬伤：重复",
+        "gold_chat_last_failed_at": "2026-09-23T03:07:25+00:00",
+        "gold_chat_exported_at": "2026-09-23T03:07:11+00:00",
+    }
+    assert gold_chat_error_from_payload(payload, has_gold_chat=True) is None
+    assert gold_chat_error_from_payload(payload, has_gold_chat=False) is None
+    bare_fail = {"gold_chat_last_error": "structure_score:60"}
+    assert gold_chat_error_from_payload(bare_fail)["error"] == "structure_score:60"

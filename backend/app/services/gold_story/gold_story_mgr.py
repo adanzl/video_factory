@@ -358,7 +358,10 @@ def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
         **summary,
     }
     # 列表「对话稿」列：失败与未导出需可区分（详情已有 gold_chat_error）
-    gold_chat_error = gold_chat_error_from_payload(payload)
+    gold_chat_error = gold_chat_error_from_payload(
+        payload,
+        has_gold_chat=bool(summary.get("has_gold_chat")),
+    )
     if gold_chat_error is not None:
         out["gold_chat_error"] = gold_chat_error
     return out
@@ -524,7 +527,10 @@ class GoldStoryMgr:
                 "scene_title": payload.get("gold_chat_scene_title"),
             }
 
-        gold_chat_error = gold_chat_error_from_payload(payload)
+        gold_chat_error = gold_chat_error_from_payload(
+            payload,
+            has_gold_chat=has_gold_chat,
+        )
         out = {
             **_row_to_detail_header(row),
             "dump": _row_to_dump(row),
