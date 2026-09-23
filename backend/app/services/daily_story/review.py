@@ -708,39 +708,6 @@ def _missing_beat_matches_chain(
     return _intent_matches_chain(intent, chain_intent)
 
 
-def _contract_beat_premise_in_dialogue(
-    beat_no: int,
-    beat_chain: list[Any],
-    rows: list[dict[str, Any]],
-    *,
-    before_line: int,
-) -> bool:
-    """触发拍 intent 片段已在问题行之前对白出现则不算缺前提（防误报）。"""
-    entry = _beat_chain_entry(beat_chain, beat_no)
-    if entry is None:
-        return False
-    chain_intent = str(entry.get("intent") or "").strip()
-    if len(chain_intent) < 2:
-        return False
-    sp = str(entry.get("speaker") or "").strip()
-    parts: list[str] = []
-    for i, row in enumerate(rows, 1):
-        if i >= before_line:
-            break
-        if sp and str(row.get("speaker") or "").strip() != sp:
-            continue
-        parts.append(str(row.get("line") or ""))
-    blob = "".join(parts)
-    if not blob:
-        return False
-    for n in range(min(len(chain_intent), 12), 1, -1):
-        for start in range(0, len(chain_intent) - n + 1):
-            frag = chain_intent[start : start + n]
-            if len(frag) >= 2 and frag in blob:
-                return True
-    return False
-
-
 def format_export_blocking_issue_summary(item: dict[str, Any]) -> str:
     """终检硬拦条目摘要（含已核实的 missing_beat）。"""
     lines = item.get("lines")
@@ -801,29 +768,7 @@ def _issue_has_contract_gap_evidence(
         if quote not in line_text:
             return False
         hit_lines.add(line_no)
-    if not hit_lines:
-        return False
-    beat_no = mb.get("beat")
-    if (
-        isinstance(beat_no, int)
-        and isinstance(beat_chain, list)
-        and beat_chain
-        and _contract_beat_premise_in_dialogue(
-            beat_no,
-            beat_chain,
-            rows,
-            before_line=min(issue_lines),
-        )
-    ):
-        logger.info(
-            "[REVIEW] export gap suppressed: premise in dialogue "
-            "beat=%s before_line=%s intent=%s",
-            beat_no,
-            min(issue_lines),
-            mb.get("intent"),
-        )
-        return False
-    return True
+    return bool(hit_lines)
 
 
 def _issue_has_blocking_evidence(

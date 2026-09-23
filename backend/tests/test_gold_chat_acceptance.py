@@ -930,28 +930,31 @@ def test_interjection_blocking_positive_and_negative():
     assert len(bad) == 1
 
 
-def test_premise_in_dialogue_not_flagged_as_gap():
+def test_contract_gap_not_downgraded_by_name_or_prop_substring():
+    """人名/道具词与契约 intent 两字重合，不得把缺前提降为证据无效。"""
     beat_chain = _sample_beat_chain()
-    story = _story(
-        [
-            {"speaker": "妈妈", "line": "灿灿，作业怎么还没写？"},
-            {"speaker": "昭昭", "line": "妈，你打我，别骂姐姐。"},
-        ],
-    )
-    issue = [
-        {
-            "lines": [2],
-            "kind": "缺前提",
-            "missing_beat": {"beat": 1, "intent": "因作业未做批评灿灿"},
-            "desc": "未交代作业批评",
-            "fix": "补",
-            "evidence": [{"line": 2, "quote": "别骂姐姐"}],
-        },
-    ]
-    valid, bad = partition_llm_export_blocking_issues(
-        issue,
-        story,
-        beat_chain=beat_chain,
-    )
-    assert valid == []
-    assert len(bad) == 1
+    gap_issue = {
+        "lines": [2],
+        "kind": "缺前提",
+        "missing_beat": {"beat": 1, "intent": "因作业未做批评灿灿"},
+        "desc": "解围前未交代妈妈因作业批评",
+        "fix": "补触发",
+        "evidence": [{"line": 2, "quote": "别骂姐姐"}],
+    }
+    for prior_line in (
+        "灿灿，今天吃什么？",
+        "作业写得真好，表扬你！",
+    ):
+        story = _story(
+            [
+                {"speaker": "妈妈", "line": prior_line},
+                {"speaker": "昭昭", "line": "妈，你打我，别骂姐姐。"},
+            ],
+        )
+        valid, bad = partition_llm_export_blocking_issues(
+            [gap_issue],
+            story,
+            beat_chain=beat_chain,
+        )
+        assert len(bad) == 0, prior_line
+        assert len(valid) == 1, prior_line
