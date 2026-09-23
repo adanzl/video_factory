@@ -1064,6 +1064,60 @@ def _gate_gold_chat_structure_score(chat: dict[str, Any]) -> int:
     return struct
 
 
+def _format_gold_chat_dialogue_tail3(chat: dict[str, Any]) -> str:
+    dialogue = chat.get("dialogue")
+    if not isinstance(dialogue, list):
+        return ""
+    parts: list[str] = []
+    for item in dialogue[-3:]:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if sp or line:
+            parts.append(f"{sp}:{line}")
+    return " | ".join(parts)
+
+
+def log_gold_chat_structure_score_fail(
+    chat: dict[str, Any],
+    quality: dict[str, Any] | None,
+    *,
+    structure_type: str = "",
+) -> None:
+    """结构分终检失败：记录类型、扣分项与末三句，便于对照规则。"""
+    q = quality if isinstance(quality, dict) else {}
+    reasons = [str(r) for r in (q.get("reasons") or [])]
+    cons = [
+        r
+        for r in reasons
+        if any(
+            p in r
+            for p in (
+                "缺",
+                "未",
+                "拖",
+                "不足",
+                "软收",
+                "连说",
+                "跑题",
+                "说人话",
+                "-",
+            )
+        )
+    ]
+    logger.info(
+        "gold_chat structure_score fail type=%s score=%s summary=%s "
+        "cons=%s tail3=%s pros=%s",
+        structure_type or chat.get("story_type") or "?",
+        q.get("structure_score") or q.get("score"),
+        q.get("summary"),
+        cons[:8],
+        _format_gold_chat_dialogue_tail3(chat),
+        [r for r in reasons if r not in cons][:6],
+    )
+
+
 def _persist_m5_h_contract_if_needed(row: dict[str, Any]) -> dict[str, Any]:
     """M5+H 契约修复回写 DB，返回刷新后的 row。"""
     gid = int(row.get("id") or 0)
