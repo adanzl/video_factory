@@ -806,6 +806,14 @@ def score_daily_story(
     # 偶发第 4 句不应直接打到发布线以下（仍保留 ≥5 的惩罚）
     if str(story.get("closing_mode") or "").strip() == "authority_punchline":
         mom_penalty_at = max(mom_penalty_at, 5)
+    contract_mom_raw = story.get("_gold_chat_mom_lines_max")
+    if contract_mom_raw is not None:
+        try:
+            contract_mom = max(0, int(contract_mom_raw))
+            # 契约允许 N 句时，第 N+1 句起才扣「偏多」（与 validate mom_lines_max 一致）
+            mom_penalty_at = max(mom_penalty_at, contract_mom + 1)
+        except (TypeError, ValueError):
+            pass
     if mom_n >= mom_penalty_at:
         score -= profile.mom_lines_penalty
         cons.append(f"妈妈台词偏多（{mom_n}句）")
@@ -951,6 +959,7 @@ def score_daily_story(
             cons.extend(tail_cons)
 
     structure_score = max(0, min(STRUCTURE_SCORE_CAP, score))
+    structure_cons = list(cons)
     # humor_regex_points：离线诊断（cons→修订 hint），不计入 score / 总分。
     humor_regex_points, humor_pros, humor_cons = _score_funniness(
         lines,
@@ -974,6 +983,7 @@ def score_daily_story(
         "structure_score": structure_score,
         "humor_regex_points": humor_regex_points,
         "summary": summary,
+        "structure_cons": structure_cons,
         "reasons": [*pros, *cons],
     }
 
@@ -1029,6 +1039,31 @@ def _build_summary(
     if grade == "偏弱":
         return "无明显亮点"
     return "结构完整，收束一般"
+
+
+def structure_cons_for_log(quality: dict[str, Any] | None) -> list[str]:
+    """结构扣分项：日志与扩写反馈共用。"""
+    if not isinstance(quality, dict):
+        return []
+    if "structure_cons" in quality:
+        raw_cons = quality.get("structure_cons")
+        if isinstance(raw_cons, list):
+            return [str(r) for r in raw_cons if str(r).strip()]
+        return []
+    reasons = [str(r) for r in (quality.get("reasons") or [])]
+    markers = (
+        "缺",
+        "未",
+        "拖",
+        "不足",
+        "软收",
+        "连说",
+        "跑题",
+        "说人话",
+        "偏多",
+        "-",
+    )
+    return [r for r in reasons if any(p in r for p in markers)]
 
 
 def structure_score_of(quality: dict[str, Any] | None) -> int:

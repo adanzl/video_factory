@@ -1109,3 +1109,111 @@ def test_reject_message_not_pad_when_missing_fields():
     assert "校验驳回" in msg
     assert "本地垫字仍不足" not in msg
     assert gc._has_non_short_hard_errors(err)
+
+
+def test_structure_cons_lists_mom_penalty_and_log_cons():
+    from app.services.daily_story.quality import (
+        score_daily_story,
+        structure_cons_for_log,
+    )
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "你作业写完了吗？"},
+        {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打我吧。"},
+        {"speaker": "妈妈", "line": "你说什么？"},
+        {"speaker": "灿灿", "line": "噗，弹簧屁股吗？"},
+        {"speaker": "妈妈", "line": "都给我消停。"},
+        {"speaker": "昭昭", "line": "因为弹，所以打了不哭呀。"},
+        {"speaker": "灿灿", "line": "为什么？"},
+        {"speaker": "昭昭", "line": "因为Q弹就能救场呀。"},
+        {"speaker": "灿灿", "line": "你这歪理也太绝了。"},
+        {"speaker": "昭昭", "line": "我说得通吧。"},
+        {"speaker": "灿灿", "line": "那……我说不过你。"},
+        {"speaker": "昭昭", "line": "行吧。"},
+    ]
+    base = {
+        "story_type": "N",
+        "conflict_core": "Q弹救场",
+        "punchline_explain": "N类正经胡说",
+        "dialogue": dialogue,
+    }
+    q_default = score_daily_story(dict(base))
+    cons_default = q_default.get("structure_cons") or []
+    assert any("妈妈台词偏多（3句）" in str(c) for c in cons_default)
+    assert structure_cons_for_log(q_default)
+
+    with_contract = dict(base)
+    with_contract["_gold_chat_mom_lines_max"] = 3
+    q_contract = score_daily_story(with_contract)
+    cons_contract = q_contract.get("structure_cons") or []
+    assert not any("妈妈台词偏多" in str(c) for c in cons_contract)
+
+    over = dict(with_contract)
+    over["dialogue"] = list(dialogue) + [
+        {"speaker": "妈妈", "line": "灿灿快去写作业。"},
+    ]
+    q_over = score_daily_story(over)
+    assert any("妈妈台词偏多（4句）" in str(c) for c in q_over.get("structure_cons") or [])
+
+
+def test_structure_score_feedback_and_fail_log_use_structure_cons():
+    import logging
+
+    from app.services.gold_story.gold_chat.prompts import (
+        format_structure_score_feedback,
+    )
+
+    quality = {
+        "structure_score": 70,
+        "structure_cons": ["妈妈台词偏多（3句）"],
+        "reasons": ["结构70", "妈妈台词偏多（3句）"],
+    }
+    fb = format_structure_score_feedback("structure_score:70", {"quality": quality})
+    assert "偏多" in fb
+
+    logger_name = "app.services.gold_story.gold_chat.convert"
+    mod_logger = logging.getLogger(logger_name)
+    captured: list[str] = []
+
+    class _CaptureHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record.getMessage())
+
+    handler = _CaptureHandler()
+    handler.setLevel(logging.INFO)
+    saved_level = mod_logger.level
+    saved_propagate = mod_logger.propagate
+    saved_handlers = mod_logger.handlers[:]
+    try:
+        mod_logger.handlers = [handler]
+        mod_logger.propagate = False
+        mod_logger.setLevel(logging.INFO)
+        chat = {"story_type": "N", "dialogue": [{"speaker": "昭昭", "line": "测"}]}
+        gc.log_gold_chat_structure_score_fail(chat, quality, structure_type="N")
+    finally:
+        mod_logger.setLevel(saved_level)
+        mod_logger.propagate = saved_propagate
+        mod_logger.handlers[:] = saved_handlers
+
+    assert captured
+    assert "妈妈台词偏多" in captured[0]
+    assert "reasons=" in captured[0]
+
+
+def test_structure_cons_excludes_humor_regex_diagnostics():
+    from app.services.daily_story.quality import structure_cons_for_log
+
+    quality = {
+        "structure_cons": ["妈妈台词偏多（3句）"],
+        "reasons": [
+            "结构70",
+            "妈妈台词偏多（3句）",
+            "好笑诊断：末句缺回旋",
+        ],
+    }
+    cons = structure_cons_for_log(quality)
+    assert cons == ["妈妈台词偏多（3句）"]
+    assert not any("好笑" in c for c in cons)
+
+    empty_key = {"structure_cons": [], "reasons": ["好笑诊断：xxx"]}
+    assert structure_cons_for_log(empty_key) == []

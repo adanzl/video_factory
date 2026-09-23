@@ -912,14 +912,9 @@ def format_structure_score_feedback(
         struct = structure_score_of(quality)
         if struct:
             parts.append(f"当前结构分：{struct}")
-        cons = [
-            str(r)
-            for r in (quality.get("reasons") or [])  # type: ignore[arg-type,union-attr,assignment]
-            if any(
-                str(r).startswith(p) or p in str(r)
-                for p in ("缺", "未", "拖", "不足", "勿", "过", "偏", "跑题", "-")
-            )
-        ][:5]
+        from app.services.daily_story.quality import structure_cons_for_log
+
+        cons = structure_cons_for_log(quality)[:5]  # type: ignore[arg-type]
         for c in cons:
             parts.append(f"- {c}")
         hints = build_quality_revision_hints(quality, story=story).strip()  # type: ignore[arg-type,union-attr,assignment]

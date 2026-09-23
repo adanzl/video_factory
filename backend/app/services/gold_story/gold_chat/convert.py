@@ -1130,6 +1130,20 @@ def _attach_gold_chat_structure_score(
         or row.get("source_id")
         or ""
     ).strip()
+    payload_raw = row.get("payload")
+    payload: dict[str, Any] = (
+        payload_raw if isinstance(payload_raw, dict) else {}
+    )
+    scene_contract: dict[str, Any] = {}
+    sc_raw = payload.get("scene_contract")
+    if isinstance(sc_raw, dict):
+        scene_contract = sc_raw
+    mom_contract = scene_contract.get("mom_lines_max")
+    if mom_contract is not None:
+        try:
+            out["_gold_chat_mom_lines_max"] = int(mom_contract)
+        except (TypeError, ValueError):
+            pass
     # 按正文一体计分：勿把前 2 句 sync 成 discovery_opening 再扣开场分
     out.pop("discovery_opening", None)
     attach_daily_story_quality(out, theme=theme, finalize=True, skip_relevancy=True)
@@ -1175,35 +1189,20 @@ def log_gold_chat_structure_score_fail(
     structure_type: str = "",
 ) -> None:
     """结构分终检失败：记录类型、扣分项与末三句，便于对照规则。"""
+    from app.services.daily_story.quality import structure_cons_for_log
+
     q = quality if isinstance(quality, dict) else {}
     reasons = [str(r) for r in (q.get("reasons") or [])]
-    cons = [
-        r
-        for r in reasons
-        if any(
-            p in r
-            for p in (
-                "缺",
-                "未",
-                "拖",
-                "不足",
-                "软收",
-                "连说",
-                "跑题",
-                "说人话",
-                "-",
-            )
-        )
-    ]
+    cons = structure_cons_for_log(q)
     logger.info(
         "gold_chat structure_score fail type=%s score=%s summary=%s "
-        "cons=%s tail3=%s pros=%s",
+        "cons=%s reasons=%s tail3=%s",
         structure_type or chat.get("story_type") or "?",
         q.get("structure_score") or q.get("score"),
         q.get("summary"),
-        cons[:8],
+        cons[:12],
+        reasons[:20],
         _format_gold_chat_dialogue_tail3(chat),
-        [r for r in reasons if r not in cons][:6],
     )
 
 
