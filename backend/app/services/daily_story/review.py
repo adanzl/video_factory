@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 logger = logging.getLogger(__name__)
 
@@ -747,20 +747,28 @@ def run_export_semantic_review(
     from app.services.llm import llm_mgr
 
     client = llm_mgr._get_client()
-    chat_json = getattr(client, "_chat_json", None)
-    if not callable(chat_json):
+    chat_json_raw = getattr(client, "_chat_json", None)
+    if not callable(chat_json_raw):
         return ExportSemanticReviewResult(
             completed=False,
             error="LLM 客户端不可用",
         )
+    chat_json: Callable[..., tuple[dict[str, Any], str | None]] = cast(
+        Callable[..., tuple[dict[str, Any], str | None]],
+        chat_json_raw,
+    )
     system, user = build_review_prompts(theme, story)
     try:
-        raw, _ = chat_json(
-            system,
-            user,
-            thinking_enabled=False,
-            temperature=0.0,
+        llm_payload = cast(
+            tuple[dict[str, Any], str | None],
+            chat_json(
+                system,
+                user,
+                thinking_enabled=False,
+                temperature=0.0,
+            ),
         )
+        raw, _ = llm_payload
     except Exception as exc:
         logger.warning("[GOLD_CHAT] export semantic review call failed: %s", exc)
         return ExportSemanticReviewResult(
