@@ -1767,57 +1767,65 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             except ValueError as score_exc:
                 last_err = str(score_exc)
                 # 已过 align 的稿：先定点抬结构，避免整开扩写空转
+                lifted: dict[str, Any] | None = None
+                feedback_story = chat
                 try:
                     fb = format_structure_score_feedback(last_err, chat)
                     if gaps:
                         fb = fb + "\n" + "\n".join(
                             f"- {g}：请在对白中补全，勿另起无关剧情" for g in gaps[:3]
                         )
-                    lifted = _fix_chat_with_llm(
+                    draft = _fix_chat_with_llm(
                         chat,
                         fb or last_err,
                         banned_literals=banned_list,
                         mom_lines_max=mom_int,
                     )
-                    lifted = _normalize_chat_speakers(lifted)
+                    draft = _normalize_chat_speakers(draft)
                     if structure_type:
-                        lifted["story_type"] = structure_type
-                    lifted, _ = patch_c_force_sibling_alternate(lifted)
-                    lifted, _ = patch_c_possession_criterion(lifted)
-                    lifted, _ = patch_sanitize_c_tone_stack(lifted)
-                    lifted, _ = patch_sanitize_pad_suffix(lifted)
-                    lifted, _ = _ensure_gold_chat_min_chars(lifted)
-                    lifted, _ = patch_m2_c_structure(
-                        lifted,
+                        draft["story_type"] = structure_type
+                    draft, _ = patch_c_force_sibling_alternate(draft)
+                    draft, _ = patch_c_possession_criterion(draft)
+                    draft, _ = patch_sanitize_c_tone_stack(draft)
+                    draft, _ = patch_sanitize_pad_suffix(draft)
+                    draft, _ = _ensure_gold_chat_min_chars(draft)
+                    draft, _ = patch_m2_c_structure(
+                        draft,
                         structure_type=structure_type,
                         mechanism=mechanism,
-                        theme=str(row.get("title") or lifted.get("scene_title") or ""),
+                        theme=str(row.get("title") or draft.get("scene_title") or ""),
                         payload=payload,
                     )
-                    lifted, _ = _post_align_j_closing_touchup(
-                        lifted, structure_type=structure_type
+                    draft, _ = _post_align_j_closing_touchup(
+                        draft, structure_type=structure_type
                     )
                     if conflict_core:
-                        lifted["conflict_core"] = conflict_core
-                    lifted = _attach_gold_chat_structure_score(lifted, row)
+                        draft["conflict_core"] = conflict_core
+                    lifted = _attach_gold_chat_structure_score(draft, row)
+                    feedback_story = lifted
                     _gate_gold_chat_structure_score(lifted)
                     return lifted
-                except ValueError:
-                    pass
+                except ValueError as lift_exc:
+                    lift_err = str(lift_exc).strip()
+                    last_err = lift_err or last_err
+                    feedback_story = lifted if isinstance(lifted, dict) else chat
                 from app.services.gold_story.gold_chat.convert import (
                     log_gold_chat_structure_score_fail,
                 )
 
+                q_fb = (
+                    cast(dict[str, Any], feedback_story.get("quality"))
+                    if isinstance(feedback_story.get("quality"), dict)
+                    else {}
+                )
                 log_gold_chat_structure_score_fail(
-                    chat,
-                    cast(dict[str, Any], chat.get("quality"))
-                    if isinstance(chat.get("quality"), dict)
-                    else {},
+                    feedback_story,
+                    q_fb,
                     structure_type=str(structure_type or ""),
                 )
                 expand_feedback_block = format_expand_regen_feedback(
                     last_err,
-                    chat,
+                    feedback_story,
                     structure_type=structure_type,
                     mechanism=mechanism,
                     closing_intent=closing,
