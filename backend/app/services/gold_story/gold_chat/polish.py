@@ -129,6 +129,7 @@ def _apply_gold_chat_polish_fixes(
     banned_literals: list[str] | None = None,
     source_type: str = "field",
     mom_lines_max: int = 0,
+    rejection_reasons: list[str] | None = None,
 ) -> tuple[dict[str, Any], set[int]]:
     from app.services.gold_story.gold_chat.convert import (
         _ensure_gold_chat_min_chars,
@@ -136,6 +137,10 @@ def _apply_gold_chat_polish_fixes(
         validate_gold_chat,
     )
     from app.services.daily_story.review import apply_spot_fixes, fix_line_numbers
+
+    def _record_rejection(reason: str) -> None:
+        if rejection_reasons is not None:
+            rejection_reasons.append(reason)
 
     accepted: set[int] = set()
     for no in fix_line_numbers(raw_fixes):
@@ -164,17 +169,21 @@ def _apply_gold_chat_polish_fixes(
                         )
                         fixed = padded
                     except ValueError as exc2:
+                        reason = str(exc2)
                         logger.info(
                             "gold_chat polish line %d dropped: %s",
                             no,
-                            exc2,
+                            reason,
                         )
+                        _record_rejection(reason)
                         continue
                 else:
-                    logger.info("gold_chat polish line %d dropped: %s", no, exc)
+                    logger.info("gold_chat polish line %d dropped: %s", no, err)
+                    _record_rejection(err)
                     continue
             else:
-                logger.info("gold_chat polish line %d dropped: %s", no, exc)
+                logger.info("gold_chat polish line %d dropped: %s", no, err)
+                _record_rejection(err)
                 continue
         accepted = trial
     if not accepted:
@@ -193,7 +202,9 @@ def _apply_gold_chat_polish_fixes(
         )
     except ValueError as exc:
         # 垫字/去叠语气后仍不过 hard：丢弃本轮定点改，交上层重试或报 align
-        logger.info("gold_chat polish batch dropped: %s", exc)
+        reason = str(exc)
+        logger.info("gold_chat polish batch dropped: %s", reason)
+        _record_rejection(reason)
         return chat, set()
     return fixed, accepted
 

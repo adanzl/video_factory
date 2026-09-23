@@ -114,6 +114,7 @@ def refine_gold_chat_align(
     data = _normalize_chat_speakers(dict(story))
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
+    repair_feedback: list[dict[str, Any]] = []
     if row:
         payload = cast(dict[str, Any], row.get("payload") or {})
         mode = str(payload.get("closing_mode") or "").strip()
@@ -240,7 +241,7 @@ def refine_gold_chat_align(
         try:
             raw = _align_refine_with_llm(
                 data,
-                blocking + warn,
+                blocking + warn + repair_feedback,
                 align_block=align_block,
                 banned_literals=banned,
                 mom_lines_max=mom_max,
@@ -255,14 +256,31 @@ def refine_gold_chat_align(
                     f"align_refine_failed:LLM截断:{refine_exc}"
                 ) from refine_exc
             raise
+        rejected: list[str] = []
         fixed, accepted = _apply_gold_chat_polish_fixes(
             data,
             raw,
             banned_literals=banned,
             mom_lines_max=mom_max,
+            rejection_reasons=rejected,
         )
         if not accepted:
-            break
+            if not rejected:
+                break  # 模型没有提供有效修改，避免无反馈重复调用
+
+            repair_feedback = [{
+                "lines": [],
+                "kind": "精修未应用",
+                "desc": "；".join(dict.fromkeys(rejected)),
+                "fix": (
+                    "上一轮修改未应用，请基于当前稿重新修改；"
+                    "同时满足正文最小字数、妈妈台词上限和类型契约，"
+                    "不要靠重复语气词补字。"
+                ),
+            }]
+            continue
+
+        repair_feedback = []
         data = _normalize_chat_speakers(fixed)
         try:
             data = _prepare_chat_for_validate(
@@ -373,6 +391,10 @@ def refine_gold_chat_align(
             kind = str(x.get("kind") or "")
             desc = str(x.get("desc") or "").strip()
             parts.append(f"{kind}:{desc}" if desc else kind)
+        if repair_feedback:
+            parts.append(
+                "精修未应用：" + str(repair_feedback[0].get("desc") or "")
+            )
         raise ValueError(f"align_refine_failed:{'；'.join(parts)}")
     if warn_remain:
         logger.info(
