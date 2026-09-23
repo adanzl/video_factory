@@ -30,13 +30,13 @@ def _m5h_dialogue_v1() -> list[dict[str, str]]:
 
 
 def _m5h_refine_fixes() -> list[dict[str, str | int]]:
-    """Pass 2 mock 定点修稿 → v2 结构。"""
+    """Pass 2 mock 定点修稿 → v2 结构（行号按连说合并后的 v1 稿）。"""
     return [
         {"no": 1, "line": "我在画小兔子呢，你也画你的别捣乱！"},
         {"no": 3, "line": "哼，我偏要涂一下，弄坏你的画！"},
         {"no": 9, "line": "家规就是谁先动手谁道歉！"},
-        {"no": 15, "line": "昭昭先弄画不对，灿灿也别推人。"},
-        {"no": 17, "line": "以后还打不打架？"},
+        {"no": 14, "line": "昭昭先弄画不对，灿灿也别推人。"},
+        {"no": 16, "line": "以后还打不打架？"},
     ]
 
 
@@ -314,7 +314,10 @@ def test_collect_align_issues_pipeline_draft_flags_merge_and_invent():
 
 
 def test_refine_gold_chat_align_applies_spot_fixes(monkeypatch):
+    from app.services.daily_story.story_types import apply_gold_chat_body_pipeline
+
     story = _m5h_story(_m5h_dialogue_v1())
+    story, _ = apply_gold_chat_body_pipeline(story, structure_type="H")
 
     def fake_refine(_story, _issues, **_kw):
         return {"fixes": _m5h_refine_fixes()}
@@ -330,7 +333,7 @@ def test_refine_gold_chat_align_applies_spot_fixes(monkeypatch):
         closing_intent=_CLOSING,
         bail_on_structural=False,
     )
-    assert "家规就是" in out["dialogue"][8]["line"]
+    assert any("家规就是" in str(d.get("line") or "") for d in out["dialogue"])
     assert _issues(out) == []
 
 

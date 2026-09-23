@@ -70,6 +70,7 @@ def run_gold_chat_final_acceptance(
     from app.services.daily_story.review import (
         collect_escalation_chatter_signals,
         collect_export_blocking_local_issues,
+        format_export_blocking_issue_summary,
         partition_llm_export_blocking_issues,
         run_export_semantic_review,
     )
@@ -87,7 +88,17 @@ def run_gold_chat_final_acceptance(
             "终检本地硬伤：" + "；".join(parts),
         )
 
-    review = run_export_semantic_review(theme, chat)
+    payload_raw = row.get("payload")
+    payload: dict[str, Any] = (
+        payload_raw if isinstance(payload_raw, dict) else {}
+    )
+    scene_contract: dict[str, Any] = {}
+    sc_raw = payload.get("scene_contract")
+    if isinstance(sc_raw, dict):
+        scene_contract = sc_raw
+    beat_chain_raw = scene_contract.get("beat_chain")
+    beat_chain = beat_chain_raw if isinstance(beat_chain_raw, list) else None
+    review = run_export_semantic_review(theme, chat, beat_chain=beat_chain)
     if not review.completed:
         raise GoldChatAcceptanceIncomplete(
             review.error
@@ -97,10 +108,11 @@ def run_gold_chat_final_acceptance(
     llm_block, bad_evidence = partition_llm_export_blocking_issues(
         review.issues,
         chat,
+        beat_chain=beat_chain,
     )
     if bad_evidence:
         parts = [
-            f"第{it['lines']}句·{it['kind']}：{it['desc']}"
+            format_export_blocking_issue_summary(it)
             for it in bad_evidence[:5]
         ]
         raise GoldChatAcceptanceIncomplete(
@@ -110,7 +122,7 @@ def run_gold_chat_final_acceptance(
         )
     if llm_block:
         parts = [
-            f"第{it['lines']}句·{it['kind']}：{it['desc']}"
+            format_export_blocking_issue_summary(it)
             for it in llm_block[:5]
         ]
         raise GoldChatAcceptanceBlocked(
