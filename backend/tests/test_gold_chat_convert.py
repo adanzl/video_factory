@@ -9,6 +9,7 @@ import pytest
 
 from app.services.gold_story.gold_chat import convert as gc
 from app.services.gold_story.gold_chat import expand as gex
+from app.services.gold_story.gold_chat import finalize as gcf
 from app.services.gold_story.gold_chat import refine as grf
 from app.services.gold_story.gold_chat import export as gce
 
@@ -157,6 +158,46 @@ def test_gate_gold_chat_structure_score_ok():
     assert gc._gate_gold_chat_structure_score(
         {"quality": {"structure_score": 80, "score": 80}}
     ) == 80
+
+
+def test_lift_structure_second_prompt_includes_previous_validation_error():
+    """定点修稿第二轮须带上轮校验/门控错误，勿只重复结构分反馈。"""
+    prompts: list[str] = []
+    chat = _sample_chat()
+    chat["quality"] = {
+        "structure_score": 60,
+        "score": 60,
+        "reasons": ["无破功软收"],
+    }
+    row = _sample_row()
+
+    def fake_fix(_chat: dict, fb: str, **_kwargs: object) -> dict:
+        prompts.append(fb)
+        out = dict(_chat)
+        if len(prompts) == 1:
+            raise ValueError("正文总字数须≥240")
+        out["quality"] = {"structure_score": 80, "score": 80, "reasons": []}
+        return out
+
+    out, struct = gcf._lift_gold_chat_structure_with_llm(
+        chat,
+        row,
+        st_final="N",
+        mech="M6",
+        banned=[],
+        mom_max=1,
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fake_fix,
+        validate_chat=lambda _c: None,
+        max_attempts=2,
+    )
+    assert struct == 80
+    assert len(prompts) == 2
+    assert "正文总字数须≥240" in prompts[1]
+    assert "上一轮未过" in prompts[1]
+    assert out["quality"]["structure_score"] == 80
 
 
 def test_attach_gold_chat_structure_score_writes_quality():

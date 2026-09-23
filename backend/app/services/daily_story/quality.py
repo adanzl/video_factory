@@ -31,6 +31,7 @@ from app.services.daily_story.prompts import (
 from app.services.daily_story.story_types.model import STORY_TYPE_LABELS
 from app.services.daily_story.story_types.quality import (
     closing_satisfied,
+    punchline_close_exempts_limp_soft,
     quality_profile_for_code,
     resolve_quality_profile,
     score_punchline_for_profile,
@@ -868,17 +869,28 @@ def score_daily_story(
         cons.append("耍赖软收")
         weak_hit = True
 
+    punch_bonus, punch_details = score_punchline_for_profile(
+        profile, lines, speakers, prev2, last, story=story,
+    )
+
     # ── 收束破功：达标制（先破功再软收 / 末句破功 = 达标不减分）──
     limp = any(m in last for m in _LIMP_SOFT_CLOSE_MARKERS)
     punched = any(m in prev2 for m in profile.punch_before_soft_markers) or any(
         m in prev2 or m in last for m in _STRONG_END_MARKERS
     )
-    if limp and not punched:
+    limp_exempt = punch_bonus > 0 and punchline_close_exempts_limp_soft(
+        punch_details,
+        profile_code=profile.code,
+        close_text=prev2 + last,
+    )
+    if limp and not punched and not limp_exempt:
         score -= 20
         cons.append("无破功软收")
         weak_hit = True
     elif limp and punched:
         pros.append("先破功再软收")
+    elif limp and limp_exempt:
+        pros.append("类型收束软尾（已达标）")
     elif any(m in last for m in _STRONG_END_MARKERS):
         pros.append("末句有破功落点")
 
@@ -907,9 +919,6 @@ def score_daily_story(
         pros.extend(red_details)
 
     # ── 收束形态（满分 8）：有回旋镖/反转/破功落点 = 达标；无 = 扣满 ──
-    punch_bonus, punch_details = score_punchline_for_profile(
-        profile, lines, speakers, prev2, last, story=story,
-    )
     humor_issues = _collect_humor_issues(
         lines,
         type_code=profile.code,

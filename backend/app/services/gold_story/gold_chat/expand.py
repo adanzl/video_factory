@@ -1800,35 +1800,16 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                     return lifted
                 except ValueError:
                     pass
-                quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
-                    chat.get("quality"), dict
-                ) else {}
-                reasons = [str(r) for r in (quality.get("reasons") or [])]
-                cons = [
-                    r
-                    for r in reasons
-                    if any(
-                        p in r
-                        for p in (
-                            "缺",
-                            "未",
-                            "拖",
-                            "不足",
-                            "软收",
-                            "跑题",
-                            "说人话",
-                            "连说",
-                            "-",
-                        )
-                    )
-                ]
-                logger.info(
-                    "gold_chat structure_score fail score=%s summary=%s "
-                    "cons=%s pros=%s",
-                    quality.get("structure_score") or quality.get("score"),
-                    quality.get("summary"),
-                    cons[:8],
-                    reasons[:6],
+                from app.services.gold_story.gold_chat.convert import (
+                    log_gold_chat_structure_score_fail,
+                )
+
+                log_gold_chat_structure_score_fail(
+                    chat,
+                    cast(dict[str, Any], chat.get("quality"))
+                    if isinstance(chat.get("quality"), dict)
+                    else {},
+                    structure_type=str(structure_type or ""),
                 )
                 expand_feedback_block = format_expand_regen_feedback(
                     last_err,

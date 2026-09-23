@@ -23,20 +23,25 @@ def score_punchline(
     prev2: str,
     last: str,
 ) -> tuple[int, list[str]]:
-    del speakers, prev2, last
+    del speakers
     n = len(lines)
     if n < 4:
         return 0, []
 
     body = "".join(lines)
     tail6 = "".join(lines[-6:])
+    tail4 = "".join(lines[-4:])
+    close_blob = prev2 + last
     if RE_A_BACKFIRE.search(tail6):
         return 0, ["N收束含A式反噬标记"]
 
     has_q = bool(RE_CHALLENGE.search(body) and RE_WHY.search(body))
     has_reason = bool(RE_SOLEMN_REASON.search(body))
-    has_stun = bool(RE_STUN_CLOSE.search(body) or RE_STUN_CLOSE.search(tail6))
-    if not (has_reason and (has_q or has_stun)):
+    # 愣住须落在收束窗（末四拍或末三句），勿把中段「接不住」当收束达标
+    has_stun_close = bool(
+        RE_STUN_CLOSE.search(close_blob) or RE_STUN_CLOSE.search(tail4)
+    )
+    if not (has_reason and (has_q or has_stun_close)):
         return 0, []
 
     bonus = 0
@@ -46,7 +51,7 @@ def score_punchline(
     if has_reason:
         bonus = 5
         details.append("一本正经自洽")
-    if has_stun:
+    if has_stun_close:
         bonus = 8 if has_reason else 5
         details.append("愣住收束")
     elif has_reason:

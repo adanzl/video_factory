@@ -266,6 +266,39 @@ def closing_satisfied(pros: list[str], profile: TypeQualityProfile) -> bool:
     return any(any(m in r for m in markers) for r in pros)
 
 
+_PUNCH_LIMP_EXEMPT_MARKERS = (
+    "愣住",
+    "暖收",
+    "半暖",
+    "权威点题",
+    "回旋",
+    "闭环",
+    "破功",
+    "点题",
+)
+_PUNCH_LIMP_EXEMPT_BLOCK = ("缺", "未落位", "偏弱", "含A式", "含反噬")
+
+
+def punchline_close_exempts_limp_soft(
+    punch_details: list[str],
+    *,
+    profile_code: str = "",
+    close_text: str = "",
+) -> bool:
+    """类型收束形态已达标时，勿再扣通用「无破功软收」（如 N 愣住、G 暖收）。"""
+    text = " ".join(str(x) for x in punch_details)
+    if any(b in text for b in _PUNCH_LIMP_EXEMPT_BLOCK):
+        return False
+    if not any(m in text for m in _PUNCH_LIMP_EXEMPT_MARKERS):
+        return False
+    if "愣住" in text and profile_code == "N":
+        from app.services.daily_story.story_types.n.validate import RE_STUN_CLOSE
+
+        if not RE_STUN_CLOSE.search(str(close_text or "")):
+            return False
+    return True
+
+
 def _register_profiles() -> dict[str, TypeQualityProfile]:
     from app.services.daily_story.story_types.a import quality as qa
     from app.services.daily_story.story_types.b import quality as qb
