@@ -55,6 +55,10 @@ class GoldChatAcceptanceBlocked(ValueError):
     """终检高置信度硬伤，禁止导出。"""
 
 
+class GoldChatLocalDuplicateBlocked(GoldChatAcceptanceBlocked):
+    """仅本地重复硬伤，可进入有限次定点修稿。"""
+
+
 class GoldChatAcceptanceIncomplete(Exception):
     """语义审核未完成（超时/解析失败），非稿子过错。"""
 
@@ -84,9 +88,12 @@ def run_gold_chat_final_acceptance(
             f"第{it['lines']}句·{it['kind']}：{it['desc']}"
             for it in local_block[:5]
         ]
-        raise GoldChatAcceptanceBlocked(
-            "终检本地硬伤：" + "；".join(parts),
+        error_type = (
+            GoldChatLocalDuplicateBlocked
+            if all(it["kind"] == "重复" for it in local_block)
+            else GoldChatAcceptanceBlocked
         )
+        raise error_type("终检本地硬伤：" + "；".join(parts))
 
     payload_raw = row.get("payload")
     payload: dict[str, Any] = (
@@ -163,7 +170,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     dialogue_seed: list[Any] | None = None,
     max_repairs: int = _GOLD_CHAT_SEMANTIC_REPAIR_MAX,
 ) -> tuple[dict[str, Any], int]:
-    """语义终检：Blocked 且为语义硬伤时定点 LLM 修稿；Incomplete 不修。"""
+    """语义硬伤或本地重复最多修两次；审核未完成不改稿。"""
     from app.services.daily_story.quality import structure_score_of
     from app.services.gold_story.gold_chat.convert import (
         patch_gold_chat_consecutive_siblings,
@@ -188,7 +195,8 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
         except GoldChatAcceptanceBlocked as exc:
             msg = str(exc).strip()
             is_semantic = msg.startswith("终检语义硬伤")
-            if not is_semantic or attempt >= attempts - 1:
+            repairable = is_semantic or isinstance(exc, GoldChatLocalDuplicateBlocked)
+            if not repairable or attempt >= attempts - 1:
                 raise
             last_semantic_err = msg
             prompt = format_semantic_acceptance_feedback(msg)
