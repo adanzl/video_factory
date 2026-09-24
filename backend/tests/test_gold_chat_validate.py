@@ -1021,6 +1021,107 @@ def test_opening_causality_rejects_q96_export_style_late_mom_react():
     assert "未见" in kinds or "缺少" in kinds or "起跳" in kinds
 
 
+def test_opening_causality_rejects_late_parent_trigger_even_if_interrupt_repeats_later():
+    """服务器 #96 形状：妈妈第7句才出现，后面另一个昭昭句不能让 opening 重新起算。"""
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        opening_causality_passes,
+    )
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "定责：批评灿灿作业没做，气氛紧张"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：一脸认真提出打自己Q弹屁股的离谱请求"},
+        {"beat": 3, "speaker": "灿灿", "intent": "破功：忍不住笑出声，紧张场景瞬间破碎"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我……我马上写，妈妈你别生气，我这就拿笔"},
+            {"speaker": "昭昭", "line": "妈妈，你打我的Q弹屁股吧，别骂姐姐了"},
+            {"speaker": "灿灿", "line": "昭昭你闭嘴，谁要你替我挨打"},
+            {"speaker": "昭昭", "line": "我的比姐姐的弹，你试试就知道，一拍就弹回来"},
+            {"speaker": "灿灿", "line": "你屁股是弹簧吗，还一拍就弹回来"},
+            {"speaker": "昭昭", "line": "因为姐姐屁股不弹，打了也不长记性，我的才管用"},
+            {"speaker": "妈妈", "line": "昭昭，你凑什么热闹，作业没写还来捣乱"},
+            {"speaker": "灿灿", "line": "噗，没忍住笑出声，昭昭你屁股是弹簧吗"},
+            {"speaker": "昭昭", "line": "你听，Q弹，妈妈你摸，我没骗你"},
+        ]
+    }
+
+    assert not opening_causality_passes(story, beat, mom_lines_max=2)
+    issues = collect_opening_causality_issues(story, beat, mom_lines_max=2)
+    assert any("第1句未落地" in str(item.get("desc") or "") for item in issues)
+
+
+def test_opening_causality_patch_does_not_move_wrong_sibling_parent_line_to_front():
+    """beat1 点名灿灿时，妈妈训昭昭的通用“作业没写”句不能被搬成首句。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "定责：批评灿灿作业没做，气氛紧张"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：一脸认真提出打自己Q弹屁股的离谱请求"},
+    ]
+    story = {
+        "conflict_core": "妈妈批评灿灿作业没做，昭昭插嘴求打自己Q弹屁股",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我……我马上写，妈妈你别生气，我这就拿笔"},
+            {"speaker": "昭昭", "line": "妈妈，你打我的Q弹屁股吧，别骂姐姐了"},
+            {"speaker": "妈妈", "line": "昭昭，你凑什么热闹，作业没写还来捣乱"},
+            {"speaker": "昭昭", "line": "我的比姐姐的弹，你试试就知道"},
+        ],
+    }
+
+    fixed, ok = apply_opening_causality_local_patch(
+        story, beat_chain=beat, mom_lines_max=2,
+    )
+
+    assert ok
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert "灿灿" in fixed["dialogue"][0]["line"]
+    assert "作业" in fixed["dialogue"][0]["line"]
+    assert "昭昭，你凑什么热闹" not in fixed["dialogue"][0]["line"]
+    assert opening_causality_passes(fixed, beat, mom_lines_max=2)
+
+
+def test_opening_causality_patch_server_shape_drops_late_duplicate_trigger_before_parent_close():
+    """插入正确 beat1 后，妈妈配额应删迟到重复训话，保留后段收束反应。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "定责：批评灿灿作业没做，气氛紧张"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：一脸认真提出打自己Q弹屁股的离谱请求"},
+    ]
+    story = {
+        "conflict_core": "妈妈批评灿灿作业没做，昭昭插嘴求打自己Q弹屁股",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我……我马上写，妈妈你别生气，我这就拿笔"},
+            {"speaker": "昭昭", "line": "妈妈，你打我的Q弹屁股吧，别骂姐姐了"},
+            {"speaker": "妈妈", "line": "昭昭，你凑什么热闹，作业没写还来捣乱"},
+            {"speaker": "灿灿", "line": "噗，没忍住笑出声"},
+            {"speaker": "妈妈", "line": "你们俩一个比一个会捣乱，我真是拿你们没办法"},
+        ],
+    }
+
+    fixed, ok = apply_opening_causality_local_patch(
+        story, beat_chain=beat, mom_lines_max=2,
+    )
+
+    assert ok
+    lines = [str(row.get("line") or "") for row in fixed["dialogue"]]
+    mom_lines = [
+        str(row.get("line") or "")
+        for row in fixed["dialogue"]
+        if row.get("speaker") == "妈妈"
+    ]
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert "灿灿" in fixed["dialogue"][0]["line"]
+    assert not any("昭昭，你凑什么热闹" in line for line in lines)
+    assert any("拿你们没办法" in line for line in mom_lines)
+    assert len(mom_lines) == 2
+    assert opening_causality_passes(fixed, beat, mom_lines_max=2)
+
+
 def test_opening_causality_mom_blame_zhao_interrupt_mom_stun_ok():
     """妈妈→昭昭→妈妈 开场（#96 类），首句责备不得误判为愣住。"""
     from app.services.gold_story.gold_chat.validate import (

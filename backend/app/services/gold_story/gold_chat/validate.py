@@ -1785,10 +1785,17 @@ def _line_fulfills_beat(
     line = str(line or "").strip()
     if not line:
         return False
+    acts = _intent_speech_acts(intent)
+    if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
+        # 权威触发明确点名某个孩子时，不能让“正在训另一个孩子”的家长句
+        # 即使碰巧命中通用 anchor，也不能误充 beat1；不点名的自然口语仍可匹配。
+        named_kids = {name for name in ("昭昭", "灿灿") if name in intent}
+        line_kids = {name for name in ("昭昭", "灿灿") if name in line}
+        if named_kids and line_kids and not (named_kids & line_kids):
+            return False
     anchors = _intent_anchor_tokens(intent)
     if anchors and any(token in line for token in anchors):
         return True
-    acts = _intent_speech_acts(intent)
     if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
         authority_kind = _opening_authority_intent_kind(intent)
         if authority_kind == "blame":
@@ -1904,45 +1911,38 @@ def collect_opening_causality_issues(
             "在前段对白补触发事件（勿写进 setting）"
         )
 
-    # 首句若是后序 beat 的辩解/插嘴，而触发 beat 尚未出现 → 硬拦
+    # 触发型 beat1（责备/定责/立规）就是开场因果起点：必须由第1句落地。
+    # 不能允许“第7句才补一个妈妈触发，再从后面挑另一个 beat2”来伪造顺序。
     first_row = rows[0]
     first_sp = str(first_row.get("speaker") or "").strip()
     first_line = str(first_row.get("line") or "").strip()
     beat1_no, beat1_entry = opening[0]
     beat2_no, beat2_entry = opening[1]
     beat1_acts = _intent_speech_acts(str(beat1_entry.get("intent") or ""))
-    if "trigger" in beat1_acts:
-        first_is_later_reaction = (
-            _line_fulfills_beat(first_sp, first_line, beat2_entry)
-            or (
-                first_sp in {"昭昭", "灿灿"}
-                and _RE_DEFEND_LINE.search(first_line)
-                and beat1_no not in fulfilled
-            )
-        )
-        if first_is_later_reaction:
-            issues.append(
-                {
-                    "lines": [1],
-                    "kind": "开场因果",
-                    "desc": (
-                        f"对白以{_beat_summary(beat2_entry, beat2_no)}起跳，"
-                        f"未见{_beat_summary(beat1_entry, beat1_no)}；"
-                        "setting 不算开场"
-                    ),
-                    "fix": _quota_fix(
-                        f"在第1句前插入或由{beat1_entry.get('speaker')}说出"
-                        f"触发事件（{beat1_entry.get('intent')}），"
-                        f"须早于{beat2_entry.get('speaker')}的后续反应",
-                    ),
-                    "missing_beat": {
-                        "beat": beat1_no,
-                        "intent": str(beat1_entry.get("intent") or "").strip(),
-                    },
-                    "before_reaction_beat": beat2_no,
-                    "before_line_no": 1,
+    if "trigger" in beat1_acts and not _line_fulfills_beat(
+        first_sp, first_line, beat1_entry
+    ):
+        issues.append(
+            {
+                "lines": [1],
+                "kind": "开场因果",
+                "desc": (
+                    f"第1句未落地{_beat_summary(beat1_entry, beat1_no)}；"
+                    "触发型 beat1 必须是可见对白开场，setting/背景和后段补票都不算"
+                ),
+                "fix": _quota_fix(
+                    f"由{beat1_entry.get('speaker')}在第1句说出"
+                    f"触发事件（{beat1_entry.get('intent')}），"
+                    f"再进入{beat2_entry.get('speaker')}的后续反应",
+                ),
+                "missing_beat": {
+                    "beat": beat1_no,
+                    "intent": str(beat1_entry.get("intent") or "").strip(),
                 },
-            )
+                "before_reaction_beat": beat2_no,
+                "before_line_no": 1,
+            },
+        )
 
     for idx in range(len(opening) - 1):
         beat_i_no, beat_i = opening[idx]

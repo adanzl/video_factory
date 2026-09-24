@@ -2121,7 +2121,9 @@ def apply_opening_causality_local_patch(
     import copy
 
     from app.services.gold_story.gold_chat.validate import (
+        _RE_ACCOUNTABILITY_LINE,
         _RE_BLAME_LINE,
+        _RE_PARENT_TRIGGER_LINE,
         _RE_STUN_REACT_LINE,
         _beat_chain_entries,
         _line_fulfills_beat,
@@ -2180,12 +2182,19 @@ def apply_opening_causality_local_patch(
             if str(r.get("speaker") or "").strip() == speaker
         )
         if mom_max >= 0 and mom_n >= mom_max:
-            for j in range(len(dlg) - 1, -1, -1):
-                row = dlg[j]
+            # 新 beat1 已补在最前面时，先删后段重复的家长触发，保留愣住/收束反应。
+            # 这样不会为了配额把真正的反应句删掉，却留下一个迟到且可能对象错位的“再次训话”。
+            for j, row in enumerate(dlg):
                 if str(row.get("speaker") or "").strip() != speaker:
                     continue
                 line = str(row.get("line") or "")
-                if _RE_STUN_REACT_LINE.search(line) and not _RE_BLAME_LINE.search(line):
+                if _RE_STUN_REACT_LINE.search(line):
+                    continue
+                if (
+                    _RE_ACCOUNTABILITY_LINE.search(line)
+                    or _RE_BLAME_LINE.search(line)
+                    or _RE_PARENT_TRIGGER_LINE.search(line)
+                ):
                     dlg.pop(j)
                     changed = True
                     break
@@ -2195,11 +2204,24 @@ def apply_opening_causality_local_patch(
                 if str(r.get("speaker") or "").strip() == speaker
             )
             if mom_n >= mom_max and mom_max >= 0:
+                # 仍超额时优先删非愣住/非收束家长句；愣住类只作为最后兜底。
+                removed = False
                 for j in range(len(dlg) - 1, -1, -1):
-                    if str(dlg[j].get("speaker") or "").strip() == speaker:
-                        dlg.pop(j)
-                        changed = True
-                        break
+                    row = dlg[j]
+                    if str(row.get("speaker") or "").strip() != speaker:
+                        continue
+                    if _RE_STUN_REACT_LINE.search(str(row.get("line") or "")):
+                        continue
+                    dlg.pop(j)
+                    changed = True
+                    removed = True
+                    break
+                if not removed:
+                    for j in range(len(dlg) - 1, -1, -1):
+                        if str(dlg[j].get("speaker") or "").strip() == speaker:
+                            dlg.pop(j)
+                            changed = True
+                            break
         dlg.insert(0, new_row)
         changed = True
 
