@@ -743,6 +743,68 @@ def test_n_type_patch_promotes_existing_question_to_challenge_without_new_plot()
     assert not any("设问/考验" in error for error in after)
 
 
+def test_n_type_patch_promotes_late_existing_question_to_challenge():
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+    from app.services.daily_story.story_types.n.validate import append_n_body_errors
+
+    story = {
+        "story_type": "N",
+        "punchline_explain": "N类测试",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "把作业写完再说。"},
+            {"speaker": "昭昭", "line": "我就是想问一个问题。"},
+            {"speaker": "灿灿", "line": "为什么非得现在写？"},
+            {"speaker": "昭昭", "line": "因为早写完就能早点玩。"},
+            {"speaker": "灿灿", "line": "这个理由听着还挺正经。"},
+            {"speaker": "昭昭", "line": "屁股是橡皮吗？"},
+            {"speaker": "灿灿", "line": "你怎么突然问这个。"},
+            {"speaker": "昭昭", "line": "我就随口一问。"},
+        ],
+    }
+    before: list[str] = []
+    append_n_body_errors(story, before)
+    assert any("设问/考验" in error for error in before)
+
+    out, notes = apply_gold_chat_type_patch(story, structure_type="N")
+    after: list[str] = []
+    append_n_body_errors(out, after)
+
+    assert "N已有问句补设问框架第6句" in notes
+    assert out["dialogue"][5]["line"] == "你说，屁股是橡皮吗？"
+    assert not any("设问/考验" in error for error in after)
+
+
+def test_n_type_patch_promotes_existing_post_reason_reaction_to_stun():
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+    from app.services.daily_story.story_types.n.validate import append_n_body_errors
+
+    story = {
+        "story_type": "N",
+        "punchline_explain": "N类测试",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "如果只能选一个，你选姐姐还是我？"},
+            {"speaker": "灿灿", "line": "我选姐姐。"},
+            {"speaker": "昭昭", "line": "为什么？"},
+            {"speaker": "灿灿", "line": "因为姐姐笑起来像小太阳。"},
+            {"speaker": "昭昭", "line": "你这理由我还真没想到。"},
+            {"speaker": "灿灿", "line": "我可是认真想过的。"},
+            {"speaker": "昭昭", "line": "那今天就先听你的。"},
+            {"speaker": "灿灿", "line": "我就知道你会懂。"},
+        ],
+    }
+    before: list[str] = []
+    append_n_body_errors(story, before)
+    assert any("愣住/接不住" in error for error in before)
+
+    out, notes = apply_gold_chat_type_patch(story, structure_type="N")
+    after: list[str] = []
+    append_n_body_errors(out, after)
+
+    assert "N自洽后显式化愣住反应第7句" in notes
+    assert out["dialogue"][6]["line"].startswith("行吧，")
+    assert not any("愣住/接不住" in error for error in after)
+
+
 def test_n_type_patch_does_not_turn_stun_close_into_reason():
     from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
