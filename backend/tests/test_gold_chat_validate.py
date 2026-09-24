@@ -875,6 +875,56 @@ def test_opening_causality_accepts_parent_rule_trigger():
     assert not collect_opening_causality_issues(story, beat, mom_lines_max=1)
 
 
+def test_opening_causality_accepts_parent_accountability_trigger():
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        opening_causality_passes,
+    )
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "定责：昭昭先动手不对，先道歉"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
+    ]
+    story = {
+        "gold_beat_chain": beat,
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭，你先动手不对，先道歉。"},
+            {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+        ],
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=1)
+    assert not collect_opening_causality_issues(story, beat, mom_lines_max=1)
+
+
+def test_opening_causality_local_patch_repairs_accountability_homework_opening():
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "定责：灿灿作业没写，先把作业补上"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
+    ]
+    story = {
+        "gold_beat_chain": beat,
+        "conflict_core": "灿灿作业没写",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我本来就要写，就是忘带本子嘛！"},
+            {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+            {"speaker": "妈妈", "line": "你说什么？手停在半空。"},
+        ],
+    }
+
+    assert not opening_causality_passes(story, beat, mom_lines_max=2)
+    fixed, ok = apply_opening_causality_local_patch(
+        story, beat_chain=beat, mom_lines_max=2,
+    )
+    assert ok
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert "作业" in fixed["dialogue"][0]["line"]
+    assert opening_causality_passes(fixed, beat, mom_lines_max=2)
+
+
 _MOM_ZHAO_MOM_OPENING_BEAT = [
     {"beat": 1, "speaker": "妈妈", "intent": "责备：作业还没写"},
     {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},

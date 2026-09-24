@@ -114,6 +114,39 @@ def test_final_acceptance_opening_causality_enters_repair(mock_review):
     assert mock_review.called
 
 
+@patch("app.services.daily_story.review.run_export_semantic_review")
+def test_final_acceptance_repairs_accountability_opening_before_review(mock_review):
+    mock_review.return_value = ExportSemanticReviewResult(
+        completed=True,
+        issues=[],
+        humor=None,
+        error=None,
+    )
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "定责：灿灿作业没写，先把作业补上"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
+    ]
+    row = {
+        "title": "测试",
+        "payload": {"scene_contract": {"beat_chain": beat, "mom_lines_max": 2}},
+    }
+    bad = _story(
+        [
+            {"speaker": "灿灿", "line": "我本来就要写，就是忘带本子嘛！"},
+            {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+            {"speaker": "妈妈", "line": "你说什么？手停在半空。"},
+        ],
+    )
+    bad["conflict_core"] = "灿灿作业没写"
+    bad["gold_beat_chain"] = beat
+
+    out = run_gold_chat_final_acceptance(bad, row, sid="BV_TEST")
+
+    assert out["dialogue"][0]["speaker"] == "妈妈"
+    assert "作业" in out["dialogue"][0]["line"]
+    assert mock_review.called
+
+
 def test_cancan_ge_direct_address_blocks():
     issues = collect_sibling_address_issues(
         _story([{"speaker": "灿灿", "line": "哥，你别装可怜！"}]),

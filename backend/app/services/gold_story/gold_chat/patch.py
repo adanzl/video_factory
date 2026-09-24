@@ -1643,8 +1643,7 @@ def _authority_beat0(
 def _intent_to_rule_line(intent: str) -> str:
     """beat0 intent → 可说出口的短立规句（须命中立规槽正则）。"""
     text = str(intent or "").strip()
-    text = re.sub(r"^立规[：:]", "", text).strip()
-    text = re.sub(r"^约好[：:]", "", text).strip()
+    text = re.sub(r"^(?:立规|约好|规定|规矩|定规|说好|约定)[：:]", "", text).strip()
     if not text:
         text = "谁先完成谁先用"
     # 无抽象立规槽时补「说好了，」保证机审可识别（不绑单篇词）
@@ -2077,25 +2076,32 @@ def patch_authority_trim_after_cede(
     return out, True
 
 
-def _intent_to_blame_opening_line(intent: str, story: dict[str, Any]) -> str:
-    """beat1 责备 intent → 妈妈可说出口的首句（命中 blame 机读）。"""
-    from app.services.gold_story.gold_chat.validate import _RE_BLAME_LINE
+def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str:
+    """beat1 权威触发 intent → 可说出口首句；责备/立规/定责共用。"""
+    from app.services.gold_story.gold_chat.validate import (
+        _RE_BLAME_LINE,
+        _opening_authority_intent_kind,
+    )
 
-    text = str(intent or "").strip()
-    intent_tag = text.split("：", 1)[0].strip()
-    text = re.sub(r"^责备[：:]", "", text).strip()
-    text = re.sub(r"^批评[：:]", "", text).strip()
-    text = re.sub(r"^立规[：:]", "", text).strip()
-    if re.search(r"立规|约好|规定|规矩", intent_tag) and not (
+    raw = str(intent or "").strip()
+    authority_kind = _opening_authority_intent_kind(raw)
+    parts = re.split(r"[：:]", raw, maxsplit=1)
+    text = parts[1].strip() if len(parts) == 2 else raw
+    if authority_kind == "rule" and not (
         "作业" in text or "没写" in text or "没做" in text
     ):
-        return _intent_to_rule_line(intent)
+        return _intent_to_rule_line(raw)
     text = re.sub(r"[，,]?气氛紧张", "", text).strip()
     core = str(story.get("conflict_core") or "")
     blob = f"{text}{core}"
     if "作业" in blob or "没写" in blob or "没做" in blob:
         who = "灿灿" if "灿灿" in text or "灿灿" in core else "你"
         return f"{who}，怎么作业还没写？别磨蹭了！"
+    if authority_kind == "accountability" and text:
+        spoken = re.sub(r"^(?:指出|点明|明确|认定|判定)[：：,， ]*", "", text).strip()
+        if spoken:
+            line = spoken if spoken.endswith(("。", "！", "？")) else f"{spoken}。"
+            return line[:28] + ("。" if len(line) > 28 else "")
     if text and _RE_BLAME_LINE.search(text):
         line = text if text.endswith(("。", "！", "？")) else f"{text}？"
         return line[:28] + ("。" if len(line) > 28 else "")
@@ -2166,7 +2172,7 @@ def apply_opening_causality_local_patch(
         intent = str(beat1_entry.get("intent") or "")
         new_row = {
             "speaker": speaker,
-            "line": _intent_to_blame_opening_line(intent, story),
+            "line": _intent_to_authority_opening_line(intent, story),
         }
         mom_n = sum(
             1

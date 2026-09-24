@@ -1640,6 +1640,7 @@ _RE_INTENT_TRIGGER = re.compile(
 )
 _RE_INTENT_BLAME = re.compile(r"责备|批评|指责|训斥|责骂")
 _RE_INTENT_RULE = re.compile(r"立规|约好|规定|规矩|定规|说好|约定")
+_RE_INTENT_ACCOUNTABILITY = re.compile(r"定责|问责|归责|追责|判责|分责")
 _RE_INTENT_INTERRUPT = re.compile(r"插嘴|打断|岔|救场|转移|离谱|请求|打岔")
 _RE_INTENT_DEFEND = re.compile(r"辩解|推托|忘|本来|没做|没写|推脱|借口")
 _RE_INTENT_STUN = re.compile(r"愣|停|放下|叹气|接不住|傻眼")
@@ -1650,6 +1651,9 @@ _RE_PARENT_TRIGGER_LINE = re.compile(
 _RE_BLAME_LINE = re.compile(
     r"(?:作业|没写|没做|磨蹭|别拖|写完了吗|赶快写|还不写|"
     r"像什么样子|批评|责备)",
+)
+_RE_ACCOUNTABILITY_LINE = re.compile(
+    r"(?:谁先|先(?:动手|推|打|抢|弄|拿)|不对|不该|有错|负责|责任|道歉|补上|补完)",
 )
 _RE_STUN_REACT_LINE = re.compile(r"你说什么|手停|停在半空|愣")
 _RE_DEFEND_LINE = re.compile(
@@ -1706,15 +1710,34 @@ def _beat_chain_entries(chain: list[Any]) -> list[tuple[int, dict[str, Any]]]:
     return out
 
 
+def _opening_authority_intent_kind(intent: str) -> str:
+    """自由文本 beat 标签归一成 opening 权威触发类别；只看冒号前标签。"""
+    text = str(intent or "")
+    tag = re.split(r"[：:]", text, maxsplit=1)[0].strip()
+    if _RE_INTENT_BLAME.search(tag):
+        return "blame"
+    if _RE_INTENT_RULE.search(tag):
+        return "rule"
+    if _RE_INTENT_ACCOUNTABILITY.search(tag):
+        return "accountability"
+    if _RE_INTENT_TRIGGER.search(tag):
+        return "trigger"
+    return ""
+
+
 def _intent_speech_acts(intent: str) -> set[str]:
     """优先用 intent 冒号前标签，避免「愣住：…批评」整段误标 trigger。"""
     text = str(intent or "")
     tag = text.split("：", 1)[0].strip()
     body = text.split("：", 1)[1].strip() if "：" in text else ""
     acts: set[str] = set()
-    if _RE_INTENT_TRIGGER.search(tag) or _RE_INTENT_BLAME.search(tag):
+    if _opening_authority_intent_kind(text):
         acts.add("trigger")
-    elif body and _RE_INTENT_TRIGGER.search(body) and not _RE_INTENT_STUN.search(tag):
+    elif body and (
+        _RE_INTENT_TRIGGER.search(body)
+        or _RE_INTENT_RULE.search(body)
+        or _RE_INTENT_ACCOUNTABILITY.search(body)
+    ) and not _RE_INTENT_STUN.search(tag):
         acts.add("trigger")
     if _RE_INTENT_INTERRUPT.search(tag) or (
         body and _RE_INTENT_INTERRUPT.search(body) and not acts
@@ -1729,7 +1752,11 @@ def _intent_speech_acts(intent: str) -> set[str]:
     ):
         acts.add("stun")
     if not acts:
-        if _RE_INTENT_TRIGGER.search(text):
+        if (
+            _RE_INTENT_TRIGGER.search(text)
+            or _RE_INTENT_RULE.search(text)
+            or _RE_INTENT_ACCOUNTABILITY.search(text)
+        ):
             acts.add("trigger")
         if _RE_INTENT_INTERRUPT.search(text):
             acts.add("interrupt")
@@ -1763,8 +1790,8 @@ def _line_fulfills_beat(
         return True
     acts = _intent_speech_acts(intent)
     if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
-        intent_tag = str(intent or "").split("：", 1)[0]
-        if _RE_INTENT_BLAME.search(intent_tag):
+        authority_kind = _opening_authority_intent_kind(intent)
+        if authority_kind == "blame":
             if _RE_STUN_REACT_LINE.search(line) and not _RE_BLAME_LINE.search(line):
                 return False
             if anchors and any(token in line for token in anchors):
@@ -1773,8 +1800,18 @@ def _line_fulfills_beat(
                 _RE_BLAME_LINE.search(line)
                 or _RE_PARENT_TRIGGER_LINE.search(line)
             )
-        if _RE_INTENT_RULE.search(intent_tag):
+        if authority_kind == "rule":
             return bool(RE_AUTH_RULE_SLOT.search(line))
+        if authority_kind == "accountability":
+            if _RE_STUN_REACT_LINE.search(line) and not (
+                _RE_BLAME_LINE.search(line) or _RE_ACCOUNTABILITY_LINE.search(line)
+            ):
+                return False
+            return bool(
+                _RE_ACCOUNTABILITY_LINE.search(line)
+                or _RE_BLAME_LINE.search(line)
+                or _RE_PARENT_TRIGGER_LINE.search(line)
+            )
         return bool(_RE_PARENT_TRIGGER_LINE.search(line))
     if "defend" in acts and speaker in {"昭昭", "灿灿"}:
         return bool(_RE_DEFEND_LINE.search(line))
