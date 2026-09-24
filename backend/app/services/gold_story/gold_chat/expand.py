@@ -1297,7 +1297,7 @@ def gold_story_to_gold_chat(
         GoldChatRepairBudget,
         GoldChatRepairExhausted,
         build_candidate_repair_feedback,
-        collect_candidate_repair_errors,
+        prepare_candidate_for_acceptance,
     )
 
     budget: GoldChatRepairBudget = (
@@ -1770,10 +1770,10 @@ def gold_story_to_gold_chat(
             # 留在当前候选上修复；预算耗尽才退出，不丢稿重抽。
             repair_error = ""
             while True:
-                chat = _attach_gold_chat_structure_score(chat, row)
-                candidate_errors = collect_candidate_repair_errors(
+                chat, candidate_errors = prepare_candidate_for_acceptance(
                     chat, mom_lines_max=mom_int, banned_literals=banned_list,
                 )
+                chat = _attach_gold_chat_structure_score(chat, row)
                 try:
                     _gate_gold_chat_structure_score(chat)
                 except ValueError as gate_exc:

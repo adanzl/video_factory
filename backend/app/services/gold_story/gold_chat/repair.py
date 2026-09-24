@@ -104,26 +104,50 @@ def collect_candidate_repair_errors(
     *,
     mom_lines_max: int,
     banned_literals: list[str] | None = None,
+    skip_pad_sanitize: bool = False,
 ) -> list[str]:
-    """基于当前正文同时收集硬校验与垫字问题，不修改稿子。"""
+    """基于当前正文收集硬校验与剩余垫字问题（可选先机械清明确垫字）。"""
     from app.services.gold_story.gold_chat.convert import validate_gold_chat
+    from app.services.gold_story.gold_chat.pad_stack import apply_clear_pad_sanitize
     from app.services.daily_story.review import (
         collect_pad_stack_issues,
         format_export_blocking_issue_summary,
     )
 
+    story = dict(candidate)
+    if not skip_pad_sanitize:
+        story, _ = apply_clear_pad_sanitize(story)
     errors: list[str] = []
     try:
         validate_gold_chat(
-            candidate, mom_lines_max=mom_lines_max, banned_literals=banned_literals,
+            story, mom_lines_max=mom_lines_max, banned_literals=banned_literals,
         )
     except ValueError as exc:
         errors.append(str(exc))
     errors.extend(
         format_export_blocking_issue_summary(issue)
-        for issue in collect_pad_stack_issues(candidate)
+        for issue in collect_pad_stack_issues(story)
     )
     return errors
+
+
+def prepare_candidate_for_acceptance(
+    candidate: dict[str, Any],
+    *,
+    mom_lines_max: int,
+    banned_literals: list[str] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """先清明确垫字，再验收字数/结构/对齐相关硬错误。"""
+    from app.services.gold_story.gold_chat.pad_stack import apply_clear_pad_sanitize
+
+    cleaned, _ = apply_clear_pad_sanitize(dict(candidate))
+    errors = collect_candidate_repair_errors(
+        cleaned,
+        mom_lines_max=mom_lines_max,
+        banned_literals=banned_literals,
+        skip_pad_sanitize=True,
+    )
+    return cleaned, errors
 
 
 def collect_candidate_consecutive_notes(candidate: dict[str, Any]) -> list[str]:
@@ -159,8 +183,10 @@ def build_candidate_repair_feedback(
         DAILY_STORY_BODY_CHARS_MIN,
         dialogue_total_chars,
     )
+    from app.services.gold_story.gold_chat.pad_stack import apply_clear_pad_sanitize
     from app.services.gold_story.gold_chat.prompts import format_align_issues_block
 
+    candidate, _ = apply_clear_pad_sanitize(dict(candidate))
     dialogue = candidate.get("dialogue") or []
     mom_count = sum(
         1
@@ -174,7 +200,9 @@ def build_candidate_repair_feedback(
         f"妈妈 {mom_count} 句（上限 {max(0, int(mom_lines_max))}）。"
     )
     align_block = format_align_issues_block(align_issues) if align_issues else "（无）"
-    errors = collect_candidate_repair_errors(candidate, mom_lines_max=mom_lines_max)
+    errors = collect_candidate_repair_errors(
+        candidate, mom_lines_max=mom_lines_max, skip_pad_sanitize=True,
+    )
     previous_errors = [error for error in dict.fromkeys(validation_errors) if error not in errors]
     notes = collect_candidate_consecutive_notes(candidate)
     val_txt = "；".join(errors) if errors else "（无）"
@@ -190,4 +218,10 @@ def build_candidate_repair_feedback(
         "保留开场触发与角色归属；压缩重复收场或重复含义；"
         "禁止换 speaker 凑额度、禁止语气词凑字。",
     ]
+    if total < DAILY_STORY_BODY_CHARS_MIN:
+        deficit = int(DAILY_STORY_BODY_CHARS_MIN) - int(total)
+        parts.append(
+            f"缺 {deficit} 字：只在中段补事件/动作/神态/互怼内容，"
+            "禁止追加呢呀吧或「好不好呀」等语气词凑字。"
+        )
     return "\n".join(parts)
