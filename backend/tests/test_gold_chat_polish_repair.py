@@ -299,6 +299,79 @@ def test_refine_align_validate_repair_restores_rule_opening_without_second_budge
     assert out["dialogue"][0]["speaker"] == "妈妈"
 
 
+def test_refine_seed_n_challenge_and_opening_are_local_before_align_budget(monkeypatch):
+    from app.services.daily_story.story_types.n.validate import RE_CHALLENGE
+    from app.services.gold_story.gold_chat import refine as grf
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat_chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：谁先动手谁先道歉"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
+    ]
+    dialogue_seed = [
+        {"speaker": "灿灿", "intent": "屁股是橡皮吗"},
+    ]
+    story = _story([
+        {"speaker": "灿灿", "line": "我本来就要写，就是忘了嘛。"},
+        {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+        {"speaker": "妈妈", "line": "你们两个别打岔。"},
+        {"speaker": "昭昭", "line": "屁股是橡皮吗？"},
+        {"speaker": "昭昭", "line": "为什么你会这么想？"},
+        {"speaker": "灿灿", "line": "因为它弹一下还会回来。"},
+        {"speaker": "昭昭", "line": "行吧，我服了。"},
+        {"speaker": "灿灿", "line": "我这次说得很认真。"},
+    ])
+
+    def collect(chat, **kwargs):
+        issues = []
+        rows = [x for x in chat.get("dialogue") or [] if isinstance(x, dict)]
+        seed_row = next((x for x in rows if "屁股是橡皮吗" in str(x.get("line") or "")), None)
+        if not seed_row or seed_row.get("speaker") != "灿灿":
+            issues.append({"kind": "保真-seed角色", "desc": "seed speaker 错位", "fix": "归位"})
+        body = "".join(str(x.get("line") or "") for x in rows)
+        if not RE_CHALLENGE.search(body):
+            issues.append({"kind": "对齐-类型契约", "desc": "N缺设问/考验", "fix": "补设问"})
+        if not opening_causality_passes(chat, beat_chain, mom_lines_max=3):
+            issues.append({"kind": "开场因果", "desc": "缺 beat=1 妈妈立规", "fix": "前移"})
+        return issues
+
+    monkeypatch.setattr(grf, "collect_align_issues", collect)
+    monkeypatch.setattr(
+        grf,
+        "_prepare_chat_for_validate_after_local_length_close",
+        lambda chat, **kwargs: dict(chat),
+    )
+    monkeypatch.setattr(
+        grf,
+        "_align_refine_with_llm",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("三项可确定契约齐全后不应进入 align LLM")
+        ),
+    )
+    budget = GoldChatRepairBudget(max_repairs=2)
+
+    out = grf.refine_gold_chat_align(
+        story,
+        structure_type="N",
+        mechanism="M6",
+        align_block="",
+        mom_lines_max=3,
+        beat_chain=beat_chain,
+        dialogue_seed=dialogue_seed,
+        max_rounds=1,
+        bail_on_structural=False,
+        repair_budget=budget,
+    )
+
+    rows = [x for x in out.get("dialogue") or [] if isinstance(x, dict)]
+    seed_row = next(x for x in rows if "屁股是橡皮吗" in str(x.get("line") or ""))
+    assert seed_row["speaker"] == "灿灿"
+    assert RE_CHALLENGE.search("".join(str(x.get("line") or "") for x in rows))
+    assert opening_causality_passes(out, beat_chain, mom_lines_max=3)
+    assert rows[0]["speaker"] == "妈妈"
+    assert budget.used == 0
+
+
 def test_refine_n_contract_and_clean_shortage_are_local_before_budget(monkeypatch):
     from app.services.daily_story.prompts import dialogue_total_chars
     from app.services.gold_story.gold_chat import refine as grf

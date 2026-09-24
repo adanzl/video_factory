@@ -51,6 +51,7 @@ from app.services.gold_story.gold_chat.prompts import (
     format_align_refine_user,
 )
 from app.services.gold_story.gold_chat.validate import (
+    apply_seed_phrase_speaker_align,
     collect_align_issues,
     is_structural_align_kind,
     should_reexpand,
@@ -139,9 +140,18 @@ def _stabilize_refine_candidate(
     structure_type: str,
     beat_chain: list[Any] | None,
     mom_lines_max: int,
+    dialogue_seed: list[Any] | None = None,
+    mechanism: str = "",
 ) -> dict[str, Any]:
-    """LLM 改稿后先恢复本地硬约束，避免 opening/妈妈句数继续消耗修稿预算。"""
+    """align 前后统一恢复可确定的 seed/opening/type 硬约束，不消耗 LLM 预算。"""
     data = _normalize_chat_speakers(dict(candidate))
+    if dialogue_seed:
+        data, seed_patched = apply_seed_phrase_speaker_align(
+            data,
+            dialogue_seed=dialogue_seed,
+        )
+        if seed_patched:
+            logger.info("gold_chat refine local seed speaker align")
     data = _apply_gold_chat_local_hard_repairs(
         data,
         structure_type=structure_type,
@@ -153,11 +163,20 @@ def _stabilize_refine_candidate(
         mom_lines_max=mom_lines_max,
     )
     if opening_patched:
-        logger.info("gold_chat refine post-llm opening causality local patch")
+        logger.info("gold_chat refine local opening causality patch")
     data = _stabilize_n_contract_candidate(
         data,
         structure_type=structure_type,
+        mechanism=mechanism,
     )
+    # opening/type patch 可能移动或改写台词；最后再归位一次 seed speaker。
+    if dialogue_seed:
+        data, seed_repatched = apply_seed_phrase_speaker_align(
+            data,
+            dialogue_seed=dialogue_seed,
+        )
+        if seed_repatched:
+            logger.info("gold_chat refine local seed speaker realign after contract patch")
     return _normalize_chat_speakers(data)
 
 def _align_refine_with_llm(
@@ -233,12 +252,16 @@ def refine_gold_chat_align(
             data["closing_mode"] = mode
 
     for _round in range(max(1, int(max_rounds))):
-        if st == "N":
-            data = _stabilize_n_contract_candidate(
-                data,
-                structure_type=st,
-                mechanism=mech,
-            )
+        # 先闭合所有可确定的本地契约，再收集 align issue；seed/opening/N 槽位
+        # 不应进入 LLM repair budget。
+        data = _stabilize_refine_candidate(
+            data,
+            structure_type=st,
+            beat_chain=beat_chain,
+            mom_lines_max=mom_max,
+            dialogue_seed=dialogue_seed,
+            mechanism=mech,
+        )
         if mech == "M5" and st == "H":
             data, _ = apply_m5_h_local_patches(
                 data,
@@ -347,6 +370,8 @@ def refine_gold_chat_align(
                     structure_type=st,
                     beat_chain=beat_chain,
                     mom_lines_max=mom_max,
+                    dialogue_seed=dialogue_seed,
+                    mechanism=mech,
                 )
                 continue
         if bail_on_structural and should_reexpand(blocking):
@@ -391,6 +416,8 @@ def refine_gold_chat_align(
             structure_type=st,
             beat_chain=beat_chain,
             mom_lines_max=mom_max,
+            dialogue_seed=dialogue_seed,
+            mechanism=mech,
         )
         align_now = collect_align_issues(
             candidate_base,
@@ -488,6 +515,8 @@ def refine_gold_chat_align(
                     structure_type=st,
                     beat_chain=beat_chain,
                     mom_lines_max=mom_max,
+                    dialogue_seed=dialogue_seed,
+                    mechanism=mech,
                 )
                 align_refreshed = collect_align_issues(
                     candidate_base,
@@ -550,6 +579,8 @@ def refine_gold_chat_align(
                     structure_type=st,
                     beat_chain=beat_chain,
                     mom_lines_max=mom_max,
+                    dialogue_seed=dialogue_seed,
+                    mechanism=mech,
                 )
                 continue
             raise AlignRepairFailure(

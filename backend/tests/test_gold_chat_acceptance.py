@@ -714,6 +714,35 @@ def test_n_type_patch_promotes_existing_answer_to_solemn_reason():
     assert not any("一本正经自洽" in error for error in after_errors)
 
 
+def test_n_type_patch_promotes_existing_question_to_challenge_without_new_plot():
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+    from app.services.daily_story.story_types.n.validate import append_n_body_errors
+
+    story = {
+        "story_type": "N",
+        "punchline_explain": "N类测试",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "屁股是橡皮吗？"},
+            {"speaker": "灿灿", "line": "不是，我就是认真问问。"},
+            {"speaker": "昭昭", "line": "为什么你会这么想？"},
+            {"speaker": "灿灿", "line": "因为它弹一下还会回来。"},
+            {"speaker": "昭昭", "line": "你这也能讲得这么认真。"},
+            {"speaker": "灿灿", "line": "行吧，我服了。"},
+        ],
+    }
+    before: list[str] = []
+    append_n_body_errors(story, before)
+    assert any("设问/考验" in error for error in before)
+
+    out, notes = apply_gold_chat_type_patch(story, structure_type="N")
+    after: list[str] = []
+    append_n_body_errors(out, after)
+
+    assert "N已有问句补设问框架第1句" in notes
+    assert out["dialogue"][0]["line"] == "你说，屁股是橡皮吗？"
+    assert not any("设问/考验" in error for error in after)
+
+
 def test_n_type_patch_does_not_turn_stun_close_into_reason():
     from app.services.daily_story.story_types import apply_gold_chat_type_patch
 

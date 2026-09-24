@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 
+from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
 from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.n.validate import (
+    RE_CHALLENGE,
     RE_SOLEMN_REASON,
     RE_STUN_CLOSE,
     RE_WHY,
@@ -26,6 +28,45 @@ def _dialogue_lines(story: dict) -> list[str]:
         for d in dialogue
         if isinstance(d, dict) and str(d.get("line") or "").strip()
     ]
+
+
+def patch_n_promote_existing_question_to_challenge(story: dict) -> list[str]:
+    """已有普通问句但缺设问槽时，仅加「你说」框架，不新增剧情事实。"""
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return []
+    body = "".join(_dialogue_lines(story))
+    if RE_CHALLENGE.search(body):
+        return []
+
+    # N 的 challenge 应早于「为什么」追问；只改现成疑问句，找不到就交给 LLM。
+    why_idx = next(
+        (
+            i
+            for i, item in enumerate(dialogue)
+            if isinstance(item, dict)
+            and RE_WHY.search(str(item.get("line") or ""))
+        ),
+        len(dialogue),
+    )
+    for idx, item in enumerate(dialogue[:why_idx]):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line or RE_WHY.search(line):
+            continue
+        is_question = line.endswith(("？", "?")) or bool(
+            re.search(r"吗[？?]?$|呢[？?]?$|是不是|要不要|能不能|该不该", line)
+        )
+        if not is_question:
+            continue
+        promoted = f"你说，{line}"
+        # 只做不触碰单句硬上限的安全原位改写。
+        if len(promoted) > DAILY_STORY_LINE_CHARS_MAX:
+            continue
+        item["line"] = promoted
+        return [f"N已有问句补设问框架第{idx + 1}句"]
+    return []
 
 
 def patch_n_ensure_solemn_reason(story: dict) -> list[str]:
@@ -104,6 +145,7 @@ def patch_n_body(story: dict) -> list[str]:
     )
     if code != "N":
         return notes
+    notes.extend(patch_n_promote_existing_question_to_challenge(story))
     notes.extend(patch_n_ensure_solemn_reason(story))
     notes.extend(patch_n_trim_after_stun(story))
     return notes
