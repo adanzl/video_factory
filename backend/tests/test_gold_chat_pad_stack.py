@@ -70,6 +70,27 @@ def test_buxing_le_ne_sanitized():
     assert classify_pad_line(line) == "clear_pad"
 
 
+def test_mixed_sentence_final_particles_are_normalized():
+    cases = {
+        "铅笔找不到了嘛真的吧。": "铅笔找不到了嘛。",
+        "不打我就收起来咯呢。": "不打我就收起来咯。",
+    }
+    for line, expected in cases.items():
+        assert classify_pad_line(line) == "clear_pad"
+        assert sanitize_pad_stack_line(line) == expected
+
+    story = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "铅笔找不到了嘛真的吧。"},
+            {"speaker": "昭昭", "line": "不打我就收起来咯呢。"},
+        ],
+    }
+    out, changed = apply_clear_pad_sanitize(story)
+    assert changed
+    assert [row["line"] for row in out["dialogue"]] == list(cases.values())
+    assert not collect_pad_stack_issues(out)
+
+
 def test_defer_haobu_question_kept():
     line = "明天再说好不好呀？"
     assert is_genuine_haobu_question(line)
