@@ -14,6 +14,10 @@ from app.services.daily_story.prompts import (
     DAILY_STORY_BODY_CHARS_MIN,
     dialogue_total_chars,
 )
+from app.services.gold_story.gold_chat.pad_stack import (
+    apply_clear_pad_sanitize,
+    sanitize_pad_stack_line,
+)
 from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
 
 
@@ -29,20 +33,6 @@ _LINE_TRIM_SUFFIXES = (
     "嘛",
     "呀",
     "哦",
-)
-
-_RE_PAD_SUFFIX_STACK = re.compile(
-    r"(?:不行吧|真的啊|你听着|你听着了呀|真的呀真的|真的嘛了呀|嘛了呀){2,}|"
-    r"(?:真的(?:呀|呢|吧|啊)?){2,}|"
-    r"(?:不行(?:真的|了?[啊吧呀呢嘛])?){2,}|"
-    r"(?:了[啊吧呀呢]){2,}|"
-    r"不行真的不行|真的了啊|真的呀不行|了吧不行|了啊不行|"
-    r"活该了呢|活该嘛呀|不行嘛呀|嘛不行嘛|真的呀不行|"
-    r"嘛呀[！。？…!?]|了呢呀|了呢了呀|"
-    r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|"
-    r"听听不懂|你真是呢|你真是的呢|"
-    r"了呀呢|好不好了呀|着呢了呀|"
-    r"真的了呢|真的了吧|不行了吧真的|了吧真的了|不行了吧|吧真的了呢",
 )
 
 # 已停用灌尾巴（毁可读性）；保留常量供机审/剥除识别。
@@ -151,127 +141,15 @@ def _apply_deterministic_shorten(
 
 
 def _sanitize_pad_suffix_line(line: str) -> str:
-    """机械去叠语气词（呢呢/啊呢/你呀呢等），不改剧情。"""
-    out = line
-    for old, new in (
-        ("呢呢", "呢"),
-        ("啊呢", "啊"),
-        ("吧呢", "吧"),
-        ("嘛呢", "嘛"),
-        ("呀呢", "呀"),
-        ("你呀呢", "你呀"),
-        ("行了吧呢", "行了吧"),
-        ("不懂你呢", "听不懂你"),
-        ("听听不懂", "听不懂"),
-        ("你真是呢", "你真是的"),
-        ("你真是的呢", "你真是的"),
-        ("着呢了呀", "着呢"),
-        ("你听着了呀", ""),
-        ("你听着呀", ""),
-        ("好呢了呀", "呢"),
-        ("好不好了呀", ""),
-        ("了呢了呀", ""),
-        ("了呢呀", ""),
-        ("了呀呢", ""),
-        ("嘛不行嘛呀", ""),
-        ("嘛不行嘛", ""),
-        ("真的呀不行嘛", "真的不行"),
-        ("不行嘛呀", "不行"),
-        ("活该嘛呀", "活该"),
-        ("活该了呢", "活该"),
-    ):
-        if old in out:
-            out = out.replace(old, new)
-    out = re.sub(r"(?:真的(?:呀|呢|吧|啊)?){2,}", "真的", out)
-    out = re.sub(r"(?:不行(?:真的|了?[啊吧呀呢嘛])?){2,}", "不行", out)
-    out = re.sub(r"(?:了[啊吧呀呢]){2,}", "", out)
-    for junk in (
-        "不行真的不行",
-        "真的了啊",
-        "真的呀不行",
-        "了吧不行",
-        "了啊不行",
-    ):
-        out = out.replace(junk, "")
-    out = re.sub(
-        r"(?:不行了吧|不行了呢|不行了啊|不行真的)+"
-        r"(?:真的了?[呢啊吧呀嘛]?)+[！。？…!]?$",
-        "",
-        out,
-    )
-    out = re.sub(
-        r"(?:真的了呢|了吧真的了呢|了吧真的|真的呀真的|真的了呢了呀)+"
-        r"[！。？…!]?$",
-        "",
-        out,
-    )
-    out = re.sub(
-        r"(?:真的(?:呀|呢|吧|了)?|不行(?:真的)?|了[呀呢吧啊嘛]){3,}",
-        "",
-        out,
-    )
-    out = re.sub(
-        r"(?:不行吧|真的啊|你听着|你听着了呀|真的呀|嘛了呀){2,}"
-        r"([！。！？…]?)$",
-        r"\1",
-        out,
-    )
-    out = re.sub(r"嘛呀([！。？…!?])$", r"\1", out)
-    out = re.sub(r"真的(?:呀|呢|吧)?([！。？…!?])$", r"\1", out)
-    out = re.sub(r"不行嘛([！。？…!?])$", r"不行\1", out)
-    out = re.sub(
-        r"(?<=[\u4e00-\u9fff])(?<![还就再真都也说])不行"
-        r"(?=[，,！!。？?…]|$)",
-        "",
-        out,
-    )
-    out = re.sub(r"[，,]{2,}", "，", out).strip("，, ")
-    if out and out[-1] not in "！。？…!?" and line[-1:] in "！。？…!?":
-        out += line[-1]
-    return out
+    """机械去叠语气词（与 pad_stack 共用）。"""
+    return sanitize_pad_stack_line(line)
 
 
 def patch_sanitize_pad_suffix(
     story: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
     """垫字后收口：去掉呢呢/啊呢/复合真的了呢等叠尾。"""
-    out = copy.deepcopy(story)
-    changed = False
-    compound_re = re.compile(r"(?:不行了吧|真的了呢|了吧真的)")
-    glued_bu_xing = re.compile(
-        r"(?<=[\u4e00-\u9fff])(?<![还就再真都也说])不行"
-        r"(?=[，,！!。？?…]|$)"
-    )
-    for item in out.get("dialogue") or []:
-        if not isinstance(item, dict):
-            continue
-        old = str(item.get("line") or "").strip()
-        if not old:
-            continue
-        if not (
-            _RE_PAD_SUFFIX_STACK.search(old)
-            or compound_re.search(old)
-            or glued_bu_xing.search(old)
-        ):
-            continue
-        new = _sanitize_pad_suffix_line(old)
-        if not str(new or "").strip():
-            speaker = str(item.get("speaker") or "").strip()
-            new = "我……" if speaker in {"昭昭", "灿灿"} else "行了。"
-        if new != old:
-            item["line"] = new
-            changed = True
-    dialogue = out.get("dialogue")
-    if isinstance(dialogue, list):
-        cleaned = [
-            item
-            for item in dialogue
-            if isinstance(item, dict) and str(item.get("line") or "").strip()
-        ]
-        if len(cleaned) != len(dialogue):
-            out["dialogue"] = cleaned
-            changed = True
-    return out, changed
+    return apply_clear_pad_sanitize(story)
 
 
 def _strip_extra_natural_expands(line: str) -> str:
