@@ -226,11 +226,13 @@ def _bypass_structure_gate(monkeypatch):
 
 def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
     """差 1 句：不本地硬插注水句；须 FIX 扩写或扩写重抽。"""
+    import copy
+
     calls: dict[str, int | bool] = {"n": 0}
     _bypass_structure_gate(monkeypatch)
 
     def fake_chat(system: str, _user: str, **_kwargs) -> dict:
-        if "编辑" in system:
+        if "编辑" in system or "定点" in system:
             calls["fix"] = True
             return _sample_chat()
         calls["n"] = int(calls["n"]) + 1
@@ -245,6 +247,27 @@ def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
     monkeypatch.setattr(gex, "EXPAND_CANDIDATE_COUNT", 1)
     monkeypatch.setattr(gc, "EXPAND_REGENERATE_MAX", 5)
     monkeypatch.setattr(gex, "EXPAND_REGENERATE_MAX", 5)
+
+    def spot_fix(chat, _fb, **_kw):
+        calls["fix"] = True
+        out = copy.deepcopy(chat)
+        for _ in range(64):
+            if gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN:
+                break
+            progressed = False
+            rows = out.get("dialogue") or []
+            for row in rows[1:-1]:
+                if len(str(row.get("line") or "")) >= 22:
+                    continue
+                row["line"] = str(row.get("line") or "") + "补"
+                progressed = True
+                if gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN:
+                    break
+            if not progressed:
+                break
+        return out
+
+    monkeypatch.setattr(gex, "_short_spot_fix_chat_with_llm", spot_fix)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 12
     blob = "".join(str(d.get("line") or "") for d in out["dialogue"])
@@ -1328,7 +1351,17 @@ def test_expand_repairs_latest_candidate_without_regenerating(monkeypatch, caplo
         repair_inputs.append((chat.get("revision", 0), prompt))
         result = copy.deepcopy(chat)
         if len(repair_inputs) == 2 and second_repair_passes:
-            result = _sample_chat()
+            guard = 0
+            while (
+                gc.dialogue_total_chars(result) < gc.DAILY_STORY_BODY_CHARS_MIN
+                and guard < 24
+            ):
+                idx = 2 + (guard % 3)
+                if idx < len(result["dialogue"]):
+                    result["dialogue"][idx]["line"] = (
+                        str(result["dialogue"][idx]["line"]) + "补"
+                    )
+                guard += 1
         else:
             # 模拟结构改好但正文仅 233 字；保留真实 hard 校验。
             for line in result["dialogue"]:
@@ -1337,6 +1370,11 @@ def test_expand_repairs_latest_candidate_without_regenerating(monkeypatch, caplo
         result["revision"] = len(repair_inputs)
         return result
 
+    monkeypatch.setattr(
+        gex,
+        "_short_spot_fix_chat_with_llm",
+        lambda chat, fb, **kw: fix(chat, fb),
+    )
     monkeypatch.setattr(gex, "_chat_json", generate)
     monkeypatch.setattr(gex, "EXPAND_CANDIDATE_COUNT", 1)
     monkeypatch.setattr(gex, "EXPAND_REGENERATE_MAX", 5)
@@ -1356,6 +1394,7 @@ def test_expand_repairs_latest_candidate_without_regenerating(monkeypatch, caplo
     assert [revision for revision, _ in repair_inputs] == [0, 1]
     assert "当前233" in repair_inputs[1][1]
     assert "structure_score:65" not in repair_inputs[1][1]
+    assert "仅补字" in repair_inputs[1][1] or "定点" in repair_inputs[1][1]
     assert budget.used == 2
     assert "score=80" in caplog.text
     assert "当前233" in caplog.text

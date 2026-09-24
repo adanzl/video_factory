@@ -31,7 +31,13 @@ RE_HAOBU_TAIL = re.compile(r"(?:好不好呀|好不好)(?=[。！？…!?]|$)")
 # 正常询问/邀请：保留句尾「好不好呀」
 RE_GENUINE_HAOBU_QUESTION = re.compile(
     r"(?:一起|要不要|能不能|可不可以|是不是|行不行|可以吗|愿不愿意|"
-    r"还来|去玩|来玩|试试|摸(?:摸)?|给你|跟我|陪(?:我|你)|咱们|我们去|你来)",
+    r"还来|去玩|来玩|试试|摸(?:摸)?|给你|跟我|陪(?:我|你)|咱们|我们去|你来|"
+    r"再(?:说|看|试|等|考虑|商量)|明[天日]|下[次回])",
+)
+
+RE_CLEAR_STATEMENT_HAOBU = re.compile(
+    r"(?:成功|完了|好了|到了|赢啦|搞定|结束|救场|搞定啦|成了)[^。！？…!?]{0,8}"
+    r"(?:好不好呀|好不好)[。！？…!?]?$",
 )
 
 RE_COMPOUND_PAD = re.compile(r"(?:不行了吧|真的了呢|了吧真的)")
@@ -71,7 +77,9 @@ def classify_pad_line(line: str) -> PadLineKind:
     if RE_HAOBU_TAIL.search(line):
         if is_genuine_haobu_question(line):
             return "keep_question"
-        return "clear_pad"
+        if RE_CLEAR_STATEMENT_HAOBU.search(line):
+            return "clear_pad"
+        return "uncertain"
     return "none"
 
 
@@ -94,6 +102,8 @@ def _strip_statement_haobu_tail(line: str) -> str:
 def sanitize_pad_stack_line(line: str) -> str:
     """机械去叠语气词；陈述句「…成功好不好呀。」去强接尾巴。"""
     out = _strip_statement_haobu_tail(line)
+    out = re.sub(r"不行了呢([！。？…!?]?)$", r"不行\1", out)
+    out = re.sub(r"([^不])了呢([！。？…!?])$", r"\1\2", out)
     for old, new in (
         ("呢呢", "呢"),
         ("啊呢", "啊"),
@@ -161,8 +171,8 @@ def sanitize_pad_stack_line(line: str) -> str:
     out = re.sub(r"真的(?:呀|呢|吧)?([！。？…!?])$", r"\1", out)
     out = re.sub(r"不行嘛([！。？…!?])$", r"不行\1", out)
     out = re.sub(
-        r"(?<=[\u4e00-\u9fff])(?<![还就再真都也说])不行"
-        r"(?=[，,！!。？?…]|$)",
+        r"(?<=[\u4e00-\u9fff])(?<![还就再真都也说行])不行"
+        r"(?![呢])(?=[，,！!。？?…]|$)",
         "",
         out,
     )
