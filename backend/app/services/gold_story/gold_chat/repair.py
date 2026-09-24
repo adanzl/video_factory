@@ -257,13 +257,17 @@ def is_expand_short_only_repair(
     return all(_is_body_chars_shortage_only_text(err) for err in candidate_errors)
 
 
-def list_short_spot_editable_line_nos(chat: dict[str, Any]) -> list[int]:
-    """仅补字：中段姐弟句可扩，首尾与妈妈句冻结。"""
+def list_short_spot_editable_line_nos(
+    chat: dict[str, Any],
+    *,
+    freeze_opening: bool = True,
+) -> list[int]:
+    """仅补字：中段姐弟句可扩；开场未达标时不冻结前段。"""
     dialogue = chat.get("dialogue") or []
     if not isinstance(dialogue, list):
         return []
     n = len(dialogue)
-    head_frozen = 2 if n > 4 else 1
+    head_frozen = (2 if n > 4 else 1) if freeze_opening else 0
     tail_frozen = 2 if n > 4 else 1
     editable: list[int] = []
     for index, row in enumerate(dialogue, 1):

@@ -52,6 +52,7 @@ _REPAIRABLE_VALIDATE_MARKERS = (
     "正文总字数须≤",
     "妈妈台词须≤",
     "爸爸台词须≤",
+    "opening_causality:",
 )
 
 
@@ -231,6 +232,48 @@ def run_gold_chat_final_acceptance(
     theme = str(
         row.get("title") or chat.get("scene_title") or chat.get("key") or sid
     ).strip()
+    payload_raw = row.get("payload")
+    payload: dict[str, Any] = (
+        payload_raw if isinstance(payload_raw, dict) else {}
+    )
+    scene_contract: dict[str, Any] = {}
+    sc_raw = payload.get("scene_contract")
+    if isinstance(sc_raw, dict):
+        scene_contract = sc_raw
+    beat_chain_raw = scene_contract.get("beat_chain")
+    beat_chain = beat_chain_raw if isinstance(beat_chain_raw, list) else None
+    mom_max = 1
+    mom_contract = scene_contract.get("mom_lines_max")
+    if mom_contract is not None:
+        try:
+            mom_max = max(0, int(mom_contract))
+        except (TypeError, ValueError):
+            mom_max = 1
+    else:
+        cached = chat.get("_gold_chat_mom_lines_max")
+        if cached is not None:
+            try:
+                mom_max = max(0, int(cached))
+            except (TypeError, ValueError):
+                pass
+
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        format_opening_causality_hard_error,
+    )
+
+    opening_block = collect_opening_causality_issues(
+        chat,
+        beat_chain,
+        mom_lines_max=mom_max,
+    )
+    if opening_block:
+        parts = [
+            format_opening_causality_hard_error(item)
+            for item in opening_block[:3]
+        ]
+        raise GoldChatValidationRepairableError("; ".join(parts))
+
     local_block = collect_export_blocking_local_issues(chat)
     if local_block:
         parts = [
@@ -244,16 +287,6 @@ def run_gold_chat_final_acceptance(
         )
         raise error_type("终检本地硬伤：" + "；".join(parts))
 
-    payload_raw = row.get("payload")
-    payload: dict[str, Any] = (
-        payload_raw if isinstance(payload_raw, dict) else {}
-    )
-    scene_contract: dict[str, Any] = {}
-    sc_raw = payload.get("scene_contract")
-    if isinstance(sc_raw, dict):
-        scene_contract = sc_raw
-    beat_chain_raw = scene_contract.get("beat_chain")
-    beat_chain = beat_chain_raw if isinstance(beat_chain_raw, list) else None
     review = run_export_semantic_review(theme, chat, beat_chain=beat_chain)
     if not review.completed:
         raise GoldChatAcceptanceIncomplete(
