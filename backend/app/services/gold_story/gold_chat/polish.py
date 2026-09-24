@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from app.config import Config
@@ -17,6 +18,15 @@ from app.services.gold_story.scene import sanitize_banned_literals
 from app.services.llm.llm_mgr import llm_mgr
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PolishResult:
+    """润色定点改结果；失败时 candidate 为被校验的稿，不可直接导出。"""
+
+    candidate: dict[str, Any]
+    accepted: set[int] = field(default_factory=set)
+    errors: list[str] = field(default_factory=list)
 
 
 # 润色：暴力语义软化提示（具体改法交给 LLM，不在代码里写死替换句）
@@ -122,6 +132,22 @@ def collect_gold_chat_polish_issues(story: dict[str, Any]) -> list[dict[str, Any
     return issues
 
 
+def _raw_polish_fixes_well_formed(raw_fixes: Any) -> bool:
+    if not isinstance(raw_fixes, dict):
+        return False
+    fixes = raw_fixes.get("fixes")
+    if fixes is None:
+        return True
+    if not isinstance(fixes, list):
+        return False
+    for item in fixes:
+        if not isinstance(item, dict):
+            return False
+        if "no" not in item and "line" not in item and "lines" not in item:
+            return False
+    return True
+
+
 def _apply_gold_chat_polish_fixes(
     chat: dict[str, Any],
     raw_fixes: Any,
@@ -130,7 +156,7 @@ def _apply_gold_chat_polish_fixes(
     source_type: str = "field",
     mom_lines_max: int = 0,
     rejection_reasons: list[str] | None = None,
-) -> tuple[dict[str, Any], set[int]]:
+) -> PolishResult:
     from app.services.gold_story.gold_chat.convert import (
         _ensure_gold_chat_min_chars,
         patch_sanitize_pad_suffix,
@@ -142,53 +168,22 @@ def _apply_gold_chat_polish_fixes(
         if rejection_reasons is not None:
             rejection_reasons.append(reason)
 
-    accepted: set[int] = set()
-    for no in fix_line_numbers(raw_fixes):
-        trial = accepted | {no}
-        fixed, notes = apply_spot_fixes(chat, raw_fixes, only=trial)
-        if not notes:
-            continue
-        try:
-            validate_gold_chat(
-                fixed,
-                banned_literals=banned_literals,
-                source_type=source_type,
-                mom_lines_max=mom_lines_max,
-            )
-        except ValueError as exc:
-            err = str(exc)
-            if "正文总字数须≥" in err:
-                padded, changed = _ensure_gold_chat_min_chars(fixed)
-                if changed:
-                    try:
-                        validate_gold_chat(
-                            padded,
-                            banned_literals=banned_literals,
-                            source_type=source_type,
-                            mom_lines_max=mom_lines_max,
-                        )
-                        fixed = padded
-                    except ValueError as exc2:
-                        reason = str(exc2)
-                        logger.info(
-                            "gold_chat polish line %d dropped: %s",
-                            no,
-                            reason,
-                        )
-                        _record_rejection(reason)
-                        continue
-                else:
-                    logger.info("gold_chat polish line %d dropped: %s", no, err)
-                    _record_rejection(err)
-                    continue
-            else:
-                logger.info("gold_chat polish line %d dropped: %s", no, err)
-                _record_rejection(err)
-                continue
-        accepted = trial
-    if not accepted:
-        return chat, accepted
-    fixed, _ = apply_spot_fixes(chat, raw_fixes, only=accepted)
+    if not _raw_polish_fixes_well_formed(raw_fixes):
+        err = "polish_fixes 格式无效"
+        _record_rejection(err)
+        return PolishResult(candidate=dict(chat), accepted=set(), errors=[err])
+
+    all_nos = set(fix_line_numbers(raw_fixes))
+    if not all_nos:
+        return PolishResult(candidate=dict(chat), accepted=set(), errors=[])
+
+    fixed, notes = apply_spot_fixes(chat, raw_fixes, only=all_nos)
+    if not notes:
+        err = "polish_fixes 未落地"
+        _record_rejection(err)
+        return PolishResult(candidate=dict(chat), accepted=set(), errors=[err])
+
+    accepted = set(all_nos)
     fixed, _ = _ensure_gold_chat_min_chars(fixed)
     fixed, _ = patch_sanitize_pad_suffix(fixed)
     fixed, _ = _ensure_gold_chat_min_chars(fixed)
@@ -201,12 +196,15 @@ def _apply_gold_chat_polish_fixes(
             mom_lines_max=mom_lines_max,
         )
     except ValueError as exc:
-        # 垫字/去叠语气后仍不过 hard：丢弃本轮定点改，交上层重试或报 align
         reason = str(exc)
         logger.info("gold_chat polish batch dropped: %s", reason)
         _record_rejection(reason)
-        return chat, set()
-    return fixed, accepted
+        return PolishResult(
+            candidate=fixed,
+            accepted=set(),
+            errors=[reason],
+        )
+    return PolishResult(candidate=fixed, accepted=accepted, errors=[])
 
 
 def _repair_gold_chat_after_polish(chat: dict[str, Any]) -> dict[str, Any]:
@@ -258,14 +256,16 @@ def polish_gold_chat_wording(
         validate_gold_chat,
     )
 
-    fixed, accepted = _apply_gold_chat_polish_fixes(
+    polish_result = _apply_gold_chat_polish_fixes(
         chat,
         raw,
         banned_literals=banned_literals,
         source_type=source_type,
         mom_lines_max=mom_lines_max,
     )
-    fixed = _repair_gold_chat_after_polish(fixed)
+    if polish_result.errors:
+        return chat, 0
+    fixed = _repair_gold_chat_after_polish(polish_result.candidate)
     try:
         validate_gold_chat(
             fixed,
@@ -275,7 +275,7 @@ def polish_gold_chat_wording(
         )
     except ValueError:
         return chat, 0
-    return fixed, len(accepted)
+    return fixed, len(polish_result.accepted)
 
 
 def polish_gold_chat_export(

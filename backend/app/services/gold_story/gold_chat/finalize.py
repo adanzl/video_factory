@@ -315,14 +315,24 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     validate_chat,
     dialogue_seed: list[Any] | None = None,
     max_repairs: int = _GOLD_CHAT_EXPORT_REPAIR_MAX,
+    repair_budget: Any | None = None,
 ) -> tuple[dict[str, Any], int]:
     """导出前统一修稿：validate → 计分 → 门控 → 终检，共享修稿预算。"""
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+
     del source_type  # 校验由 validate_chat 闭包注入
+
+    budget: GoldChatRepairBudget | None = (
+        repair_budget
+        if isinstance(repair_budget, GoldChatRepairBudget)
+        else None
+    )
+    local_max = max(0, int(max_repairs))
 
     current = dict(chat)
     last_err: str | None = None
-    repair_budget = max(0, int(max_repairs))
-    for attempt in range(repair_budget + 1):
+    attempt = 0
+    while True:
         try:
             _validate_chat_or_repairable(validate_chat, current)
             scored = attach_score(current, row)
@@ -335,8 +345,13 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
         except BaseException as exc:
             if not _is_export_repairable(exc):
                 raise
-            if attempt >= repair_budget:
+            if budget is not None:
+                if not budget.consume():
+                    budget.note_failure(str(exc))
+                    raise
+            elif attempt >= local_max:
                 raise
+            attempt += 1
             last_err = str(exc).strip()
             prompt = _build_export_repair_feedback(
                 exc,
@@ -359,6 +374,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                 normalize_chat=normalize_chat,
                 dialogue_seed=dialogue_seed,
             )
+            continue
     raise GoldChatAcceptanceBlocked(last_err or "终检修稿未通过")
 
 
@@ -778,6 +794,7 @@ def run_gold_chat_finalize(
     payload0: dict[str, Any],
     st0: str,
     mech0: str,
+    repair_budget: Any | None = None,
 ) -> tuple[dict[str, Any], int]:
     """归一化之后的终稿链路；返回 (chat, structure_score)。"""
     from app.services.gold_story.gold_chat.convert import (
@@ -1161,6 +1178,8 @@ def run_gold_chat_finalize(
         fix_llm=_fix_chat_with_llm,
         validate_chat=_validate_for_acceptance,
         dialogue_seed=seed_for_consecutive,
+        repair_budget=repair_budget,
+        max_repairs=_GOLD_CHAT_EXPORT_REPAIR_MAX,
     )
     logger.info(
         "[GOLD_CHAT] convert %s structure_score=%s lines=%s chars=%s",

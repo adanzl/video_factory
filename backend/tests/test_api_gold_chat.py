@@ -82,7 +82,7 @@ def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path):
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
 
-    def fake_chat(_row):
+    def fake_chat(_row, **kwargs):
         return _sample_chat()
 
     monkeypatch.setattr(gc, "gold_story_to_gold_chat", fake_chat)
@@ -424,7 +424,11 @@ def test_api_batch(app_ctx, monkeypatch, tmp_path):
     gid = int(inserted["id"])
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
-    monkeypatch.setattr(gc, "gold_story_to_gold_chat", lambda _row: _sample_chat())
+    monkeypatch.setattr(
+        gc,
+        "gold_story_to_gold_chat",
+        lambda _row, **kwargs: _sample_chat(),
+    )
     monkeypatch.setattr(gc, "_rebuild_h3a_h3b_on_convert", lambda row: row)
     monkeypatch.setattr(
         gc,
