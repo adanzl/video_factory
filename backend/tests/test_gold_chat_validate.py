@@ -860,6 +860,36 @@ _MOM_ZHAO_MOM_OPENING_BEAT = [
 ]
 
 
+def test_opening_causality_rejects_q96_export_style_late_mom_react():
+    """#96 已导出稿：灿灿辩解起跳、妈妈「你说什么」不能算首句责备。"""
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        opening_causality_passes,
+    )
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "责备：批评灿灿作业没做，气氛紧张"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：凑近认真提出打自己Q弹屁股"},
+        {"beat": 3, "speaker": "妈妈", "intent": "愣住：被离谱请求打断批评"},
+    ]
+    story = {
+        "gold_beat_chain": beat,
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我……我本来要写的，就是忘啊。"},
+            {"speaker": "昭昭", "line": "妈妈，我屁股Q弹，你打我嘛！"},
+            {"speaker": "灿灿", "line": "昭昭你疯啦？"},
+            {"speaker": "昭昭", "line": "你打一下试试手感，比打姐姐划算吧。"},
+            {"speaker": "妈妈", "line": "你说什么？手停在半空。"},
+            {"speaker": "灿灿", "line": "噗嗤——昭昭你屁股有什么好打的呀，说一不二！"},
+        ],
+    }
+    assert not opening_causality_passes(story, beat, mom_lines_max=2)
+    issues = collect_opening_causality_issues(story, beat, mom_lines_max=2)
+    assert issues
+    kinds = " ".join(str(i.get("desc") or "") for i in issues)
+    assert "未见" in kinds or "缺少" in kinds or "起跳" in kinds
+
+
 def test_opening_causality_mom_blame_zhao_interrupt_mom_stun_ok():
     """妈妈→昭昭→妈妈 开场（#96 类），首句责备不得误判为愣住。"""
     from app.services.gold_story.gold_chat.validate import (

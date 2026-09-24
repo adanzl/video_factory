@@ -206,6 +206,10 @@ def build_candidate_repair_feedback(
     previous_errors = [error for error in dict.fromkeys(validation_errors) if error not in errors]
     notes = collect_candidate_consecutive_notes(candidate)
     val_txt = "；".join(errors) if errors else "（无）"
+    opening_txt = "；".join(
+        e for e in dict.fromkeys(previous_errors + errors)
+        if "opening_causality:" in str(e)
+    )
     parts = [
         "【精修候选·整体修订】",
         metrics,
@@ -218,6 +222,15 @@ def build_candidate_repair_feedback(
         "保留开场触发与角色归属；压缩重复收场或重复含义；"
         "禁止换 speaker 凑额度、禁止语气词凑字。",
     ]
+    if opening_txt:
+        parts.append(
+            "【开场因果·必改】"
+            f"{opening_txt}；"
+            "在可见对白最前按 beat_chain 顺序落地："
+            "先家长触发/责备，再姐弟反应；"
+            "「你说什么/愣住」是打断后的反应，不能代替首句责备；"
+            "可删后段重复妈妈句或重复收场，为前段腾出妈妈额度。"
+        )
     if total < DAILY_STORY_BODY_CHARS_MIN:
         deficit = int(DAILY_STORY_BODY_CHARS_MIN) - int(total)
         parts.append(
