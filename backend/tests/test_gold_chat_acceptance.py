@@ -1138,6 +1138,61 @@ def test_local_duplicate_repair_rechecks_all_gates(monkeypatch, recover):
         assert "semantic" not in events
 
 
+def test_local_duplicate_gets_one_rescue_after_shared_budget_exhausted(monkeypatch):
+    from app.services.daily_story import review
+    from app.services.gold_story.gold_chat import finalize
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+
+    events: list[str] = []
+    issue = {
+        "lines": [5, 11],
+        "kind": "重复",
+        "desc": "第5句与第11句说的是同一件事，换词重复",
+        "fix": "改第11句推进新信息",
+    }
+
+    def local(story):
+        events.append("local")
+        return [] if story.get("revised") else [issue]
+
+    def fix(story, feedback, **kwargs):
+        events.append("fix")
+        assert "第5句与第11句" in feedback
+        return dict(story, revised=True)
+
+    def semantic(*args, **kwargs):
+        events.append("semantic")
+        return ExportSemanticReviewResult(completed=True)
+
+    monkeypatch.setattr(review, "collect_export_blocking_local_issues", local)
+    monkeypatch.setattr(review, "run_export_semantic_review", semantic)
+    budget = GoldChatRepairBudget(max_repairs=2)
+    assert budget.consume(stage="expand_structure", reason="structure_score:65")
+    assert budget.consume(stage="align", reason="align_refine_failed")
+    assert budget.exhausted
+
+    result, score = finalize.run_gold_chat_final_acceptance_with_semantic_repair(
+        _story([{"speaker": "昭昭", "line": "姐姐好。"}]),
+        {},
+        sid="TEST",
+        st_final="N",
+        banned=[],
+        mom_max=1,
+        source_type="field",
+        attach_score=lambda c, r: c,
+        gate_score=lambda c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fix,
+        validate_chat=lambda c: None,
+        repair_budget=budget,
+    )
+
+    assert result["revised"]
+    assert score == 80
+    assert budget.used == 2
+    assert events == ["local", "fix", "local", "semantic"]
+
+
 @patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
 def test_export_repair_chars_239_then_passes(mock_acceptance):
     mock_acceptance.return_value = _story([{"speaker": "昭昭", "line": "姐姐好。"}])

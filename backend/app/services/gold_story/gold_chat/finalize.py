@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 _GOLD_CHAT_STRUCTURE_LIFT_MAX = 2
 _GOLD_CHAT_EXPORT_REPAIR_MAX = 2
+_GOLD_CHAT_DUPLICATE_RESCUE_MAX = 1
 
 _REPAIRABLE_VALIDATE_MARKERS = (
     "正文总字数须≥",
@@ -364,7 +365,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     max_repairs: int = _GOLD_CHAT_EXPORT_REPAIR_MAX,
     repair_budget: Any | None = None,
 ) -> tuple[dict[str, Any], int]:
-    """导出前统一修稿：validate → 计分 → 门控 → 终检，共享修稿预算。"""
+    """导出前统一修稿；共享预算耗尽后，纯重复终检仅额外救援一次。"""
     from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
 
     del source_type  # 校验由 validate_chat 闭包注入
@@ -379,6 +380,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     current = dict(chat)
     last_err: str | None = None
     attempt = 0
+    duplicate_rescue_used = 0
     while True:
         try:
             _validate_chat_or_repairable(validate_chat, current)
@@ -393,9 +395,22 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
             if not _is_export_repairable(exc):
                 raise
             if budget is not None:
-                if not budget.consume(stage="final_acceptance", reason=str(exc)):
-                    budget.note_failure(str(exc))
-                    raise
+                consumed = budget.consume(stage="final_acceptance", reason=str(exc))
+                if not consumed:
+                    if (
+                        isinstance(exc, GoldChatLocalDuplicateBlocked)
+                        and duplicate_rescue_used < _GOLD_CHAT_DUPLICATE_RESCUE_MAX
+                    ):
+                        duplicate_rescue_used += 1
+                        logger.info(
+                            "gold_chat final duplicate rescue used=%s/%s reason=%s",
+                            duplicate_rescue_used,
+                            _GOLD_CHAT_DUPLICATE_RESCUE_MAX,
+                            str(exc),
+                        )
+                    else:
+                        budget.note_failure(str(exc))
+                        raise
             elif attempt >= local_max:
                 raise
             attempt += 1
