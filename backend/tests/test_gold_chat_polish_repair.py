@@ -299,7 +299,7 @@ def test_refine_align_validate_repair_restores_rule_opening_without_second_budge
     assert out["dialogue"][0]["speaker"] == "妈妈"
 
 
-def test_refine_n_contract_is_local_but_clean_shortage_uses_budget(monkeypatch):
+def test_refine_n_contract_and_clean_shortage_are_local_before_budget(monkeypatch):
     from app.services.daily_story.prompts import dialogue_total_chars
     from app.services.gold_story.gold_chat import refine as grf
     from app.services.daily_story.story_types.n.validate import RE_SOLEMN_REASON
@@ -338,15 +338,8 @@ def test_refine_n_contract_is_local_but_clean_shortage_uses_budget(monkeypatch):
             raise ValueError(f"正文总字数须≥240，当前{chars}")
         return dict(chat)
 
-    def fake_fix(chat, *args, **kwargs):
-        fixed = copy.deepcopy(chat)
-        fixed["dialogue"].extend([
-            {"speaker": "灿灿", "line": "你还真是一本正经讲这个理由。"},
-            {"speaker": "昭昭", "line": "因为我就是照这个想法认真回答的。"},
-            {"speaker": "灿灿", "line": "行吧，你这么认真我一下接不上了。"},
-            {"speaker": "昭昭", "line": "我可没有随口乱说，我真这么想。"},
-        ])
-        return fixed
+    def fake_fix(*args, **kwargs):
+        raise AssertionError("N 合同齐全后的纯字数缺口不应再消耗 LLM repair")
 
     from app.services.gold_story.gold_chat import convert as gc_convert
 
@@ -370,7 +363,7 @@ def test_refine_n_contract_is_local_but_clean_shortage_uses_budget(monkeypatch):
         repair_budget=budget,
     )
 
-    assert budget.used == 1
+    assert budget.used == 0
     assert dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN
     assert RE_SOLEMN_REASON.search(
         "".join(str(x.get("line") or "") for x in out.get("dialogue") or [])

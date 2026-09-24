@@ -182,6 +182,57 @@ def test_generic_n_near_miss_does_not_inject_attitude_tails():
     assert already_particle == "铅笔找不到了嘛。"
 
 
+def test_n_local_semantic_mid_pair_recovers_clean_q96_shape():
+    from app.services.daily_story.story_types.n.validate import append_n_body_errors
+    from app.services.gold_story.gold_chat.length import (
+        _stabilize_local_length_candidate,
+    )
+
+    story = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我……我本来要写的，就是铅笔找不到了嘛。"},
+            {"speaker": "昭昭", "line": "妈，我屁股很Q弹，你打我吧，别打姐姐。"},
+            {"speaker": "妈妈", "line": "昭昭，你手都停半空了，为什么突然说这个？"},
+            {"speaker": "昭昭", "line": "因为没人教，我自己想的，Q弹的打了不疼，还响呢！"},
+            {"speaker": "灿灿", "line": "噗……昭昭你别说了，我肩膀都抖了。"},
+            {"speaker": "妈妈", "line": "你还笑？作业没写你倒笑得出来？"},
+            {"speaker": "昭昭", "line": "姐姐笑，是喜欢我屁股Q弹，还是不信？"},
+            {"speaker": "灿灿", "line": "妈，我这就写，你别听昭昭胡说，快挪开。"},
+            {"speaker": "昭昭", "line": "我没胡说，你看我扭一下，弹回来还带晃的。"},
+            {"speaker": "妈妈", "line": "行吧行吧，你们俩一个比一个会捣乱。"},
+            {"speaker": "灿灿", "line": "我回房间补作业，十分钟就写完吧。"},
+            {"speaker": "昭昭", "line": "那妈，我屁股还打不打了？不打我收起来咯。"},
+        ],
+    }
+    before = gc.dialogue_total_chars(story)
+    assert before < gc.DAILY_STORY_BODY_CHARS_MIN
+
+    out, changed = _stabilize_local_length_candidate(
+        story,
+        structure_type="N",
+        mechanism="M6",
+    )
+    body = "".join(str(row.get("line") or "") for row in out["dialogue"])
+    errors: list[str] = []
+    append_n_body_errors(out, errors)
+
+    assert changed
+    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert len(out["dialogue"]) > len(story["dialogue"])
+    assert sum(1 for row in out["dialogue"] if row.get("speaker") == "妈妈") == 3
+    # N 的明显长度缺口先走实义对，原有干净句不要再被单粒子污染。
+    assert any("照这个道理认真想" in row["line"] for row in out["dialogue"])
+    assert "噗……昭昭你别说了，我肩膀都抖了。" in [row["line"] for row in out["dialogue"]]
+    assert "姐姐笑，是喜欢我屁股Q弹，还是不信？" in [row["line"] for row in out["dialogue"]]
+    assert "妈，我这就写，你别听昭昭胡说，快挪开。" in [row["line"] for row in out["dialogue"]]
+    assert not errors
+    assert not any(
+        phrase in body
+        for phrase in ("我偏就不信", "说一不二", "马上给我挪开", "嘛真的吧", "咯呢")
+    )
+
+
 def test_shared_local_length_close_leaves_clean_shortage_for_repair():
     from app.services.gold_story.gold_chat.length import (
         _stabilize_local_length_candidate,
@@ -219,7 +270,7 @@ def test_shared_local_length_close_leaves_clean_shortage_for_repair():
     assert "说一不二" not in body
 
 
-def test_n_post_sanitize_close_preserves_contract_without_dirty_fill():
+def test_n_post_sanitize_close_recovers_contract_without_dirty_fill():
     from app.services.daily_story.story_types.n.validate import RE_SOLEMN_REASON
     from app.services.gold_story.gold_chat import refine as grf
     from app.services.gold_story.gold_chat.repair import (
@@ -258,13 +309,12 @@ def test_n_post_sanitize_close_preserves_contract_without_dirty_fill():
     )
     body = "".join(str(x.get("line") or "") for x in prepared.get("dialogue") or [])
 
-    assert gc.dialogue_total_chars(prepared) < gc.DAILY_STORY_BODY_CHARS_MIN
+    assert gc.dialogue_total_chars(prepared) >= gc.DAILY_STORY_BODY_CHARS_MIN
     assert RE_SOLEMN_REASON.search(body)
-    assert any("正文总字数须≥" in error for error in errors)
     assert not [
         error
         for error in errors
-        if "单句过长" in error or "垫字" in error
+        if "正文总字数须≥" in error or "单句过长" in error or "垫字" in error
     ]
     assert "我偏就不信" not in body
     assert "说一不二" not in body

@@ -361,6 +361,12 @@ _C_SAFE_PAD_PHRASES = (
 )
 # 普通类型禁止用无上下文的抬杠反应句补字；类型化中段句只走下方专用池。
 _GOLD_CHAT_REACT_LINES: tuple[tuple[str, str], ...] = ()
+# N：只在已有「追问→因果回答」后补抽象复述，不新增剧情事实；说话人运行时按理由方映射。
+_N_NATURAL_MID_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("你还真是照这个道理认真想的？", "当然，我刚才就是这么认真回答的。"),
+    ("所以你刚才不是随口乱说的？", "不是，我就是按自己的想法认真说的。"),
+    ("你怎么还能一本正经继续解释？", "因为我觉得前面那个理由就是能说通。"),
+)
 # O：字数不够只插「死磕过程 / 资源溜走」实义对，禁止复用抬杠反应库
 _O_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
     (
@@ -518,6 +524,71 @@ def _j_expand_bare_allowed(bare: str, speaker: str) -> bool:
     if sp == "灿灿" and any(x in b or b in x for x in _J_CAN_FORBIDDEN_EXPAND):
         return False
     return True
+
+
+def _n_natural_mid_pairs(
+    dialogue: list[Any],
+) -> tuple[
+    tuple[tuple[tuple[str, str], tuple[str, str]], ...],
+    int | None,
+]:
+    """N 类按现有因果回答定位安全补位：另一位手足追认，理由方只复述态度。"""
+    from app.services.daily_story.story_types.n.validate import (
+        RE_SOLEMN_REASON,
+        RE_STUN_CLOSE,
+        RE_WHY,
+    )
+
+    siblings = {"昭昭", "灿灿"}
+    reason_idx = -1
+    reasoner = ""
+    for why_idx, why_item in enumerate(dialogue):
+        if not isinstance(why_item, dict):
+            continue
+        why_line = str(why_item.get("line") or "").strip()
+        if not RE_WHY.search(why_line):
+            continue
+        why_speaker = str(why_item.get("speaker") or "").strip()
+        # 与 N 类型补槽规则保持同一局部窗：只认追问后 3 句内的因果回答，
+        # 遇到愣住收束或新的追问即停止，避免抓到后段无关的「因为」。
+        for idx in range(why_idx + 1, min(len(dialogue), why_idx + 4)):
+            item = dialogue[idx]
+            if not isinstance(item, dict):
+                continue
+            line = str(item.get("line") or "").strip()
+            if RE_STUN_CLOSE.search(line) or RE_WHY.search(line):
+                break
+            speaker = str(item.get("speaker") or "").strip()
+            if speaker not in siblings or (why_speaker and speaker == why_speaker):
+                continue
+            if RE_SOLEMN_REASON.search(line):
+                reason_idx = idx
+                reasoner = speaker
+                break
+        if reason_idx >= 0:
+            break
+    if reason_idx < 0 or not reasoner:
+        return (), None
+
+    listener = "灿灿" if reasoner == "昭昭" else "昭昭"
+    pairs = tuple(
+        ((listener, ask), (reasoner, answer))
+        for ask, answer in _N_NATURAL_MID_TEMPLATES
+    )
+    known_lines = {
+        line
+        for ask, answer in _N_NATURAL_MID_TEMPLATES
+        for line in (ask, answer)
+    }
+    insert_at = reason_idx + 1
+    while insert_at < len(dialogue):
+        item = dialogue[insert_at]
+        if not isinstance(item, dict):
+            break
+        if str(item.get("line") or "").strip() not in known_lines:
+            break
+        insert_at += 1
+    return pairs, insert_at
 
 
 def _pad_gold_chat_single_particle(
@@ -934,13 +1005,20 @@ def _boost_short_with_mid_lines(
         return story, False
 
     st = str(structure_type or story.get("story_type") or "").strip().upper()
+    n_pair_pool, n_insert_at = (
+        _n_natural_mid_pairs(dialogue) if st == "N" else ((), None)
+    )
     # K：顶满 24 句时仍可能差字，允许至 26 以便插实义中段对
     line_cap = CHAT_LINE_COUNT_MAX + (2 if st == "K" else 0)
     m8_j = is_m8_j_domination(mechanism=mechanism, structure_type=st)
     large_gap = need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
     if total < 100 and not large_gap:
         return story, False
-    if len(dialogue) < CHAT_LINE_COUNT_MIN and not large_gap:
+    if (
+        len(dialogue) < CHAT_LINE_COUNT_MIN
+        and not large_gap
+        and not (st == "N" and n_pair_pool)
+    ):
         return story, False
 
     existing = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
@@ -955,6 +1033,9 @@ def _boost_short_with_mid_lines(
         return story, False
     # K：僵持词已在不挡大缺口补句；小缺口且已有僵持点则不再插
     insert_at = max(2, len(dialogue) - 2)
+    if st == "N" and n_insert_at is not None:
+        # 紧跟已有因果回答插入，必须落在后续愣住/收束之前。
+        insert_at = n_insert_at
     if st == "K":
         from app.services.daily_story.story_types.k.close_mode import (
             K_A_PARENT_FAIL_STALEMATE,
@@ -1000,7 +1081,7 @@ def _boost_short_with_mid_lines(
             insert_at = min(insert_at, ko_idx)
     prev = dialogue[insert_at - 1] if insert_at > 0 else None
     if (
-        st != "O"
+        st not in {"N", "O"}
         and isinstance(prev, dict)
         and str(prev.get("speaker") or "").strip() == "昭昭"
     ):
@@ -1009,6 +1090,8 @@ def _boost_short_with_mid_lines(
         pair_pool = _M8_J_NATURAL_MID_PAIRS
     elif st == "J":
         pair_pool = _GOLD_CHAT_NATURAL_MID_PAIRS
+    elif st == "N":
+        pair_pool = n_pair_pool
     elif st == "K":
         pair_pool = _K_NATURAL_MID_PAIRS
     elif st == "O":
@@ -1059,6 +1142,9 @@ def _boost_short_with_mid_lines(
         else:
             max_pairs = 3 if need >= 40 else (2 if need >= 20 else 1)
     if st == "O":
+        max_pairs = 1
+    if st == "N":
+        # 一次只插一对；仍不足时由稳定器下一轮选择另一对，避免一次性灌满。
         max_pairs = 1
 
     def _norm_pad_line(text: str) -> str:
@@ -1325,7 +1411,12 @@ def _ensure_gold_chat_min_chars(
     changed_mid = False
     st = str(structure_type or story.get("story_type") or "").strip().upper()
     mech = str(mechanism or "").strip()
-    if need_now > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX:
+    if (
+        need_now > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
+        or (st == "N" and need_now >= 12)
+    ):
+        # N 的明显缺口优先补「追问→复述理由」实义对，再考虑单粒子；
+        # 避免先把原句改成「抖啊/不信吧/挪开呢」后才发现仍不够长。
         data, changed_mid = _boost_short_with_mid_lines(
             data,
             mechanism=mech,

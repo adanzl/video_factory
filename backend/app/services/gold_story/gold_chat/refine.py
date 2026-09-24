@@ -115,19 +115,21 @@ def _stabilize_n_contract_candidate(
 
     before = dialogue_total_chars(candidate)
     data, notes = apply_gold_chat_type_patch(candidate, structure_type="N")
-    if not notes:
-        return data
+    # 即使类型槽本来就齐，也先做 N 的安全实义长度收口；否则清掉历史灌尾后
+    # 会把纯字数缺口推给共享 LLM repair budget，导致结构修稿还没开始预算就耗尽。
     data = _stabilize_align_length_candidate(
         data,
         structure_type="N",
         mechanism=mechanism,
     )
-    logger.info(
-        "gold_chat N local contract patch chars=%s->%s notes=%s",
-        before,
-        dialogue_total_chars(data),
-        "；".join(str(note) for note in notes[:4]),
-    )
+    after = dialogue_total_chars(data)
+    if notes or after != before:
+        logger.info(
+            "gold_chat N local contract/length patch chars=%s->%s notes=%s",
+            before,
+            after,
+            "；".join(str(note) for note in notes[:4]) or "length_close",
+        )
     return data
 
 
