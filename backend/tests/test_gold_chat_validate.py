@@ -960,6 +960,37 @@ def test_opening_causality_local_patch_inserts_missing_mom_blame():
     assert "作业" in fixed["dialogue"][0]["line"]
 
 
+def test_opening_causality_local_patch_repairs_rule_homework_when_beat2_starts():
+    """#96 形状：对白直接从 beat=2 昭昭起跳，beat=1 作业立规应本地补回。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：灿灿作业没写，先把作业补上"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：认真提出打自己Q弹屁股解围"},
+        {"beat": 3, "speaker": "妈妈", "intent": "愣住：被离谱请求打断"},
+    ]
+    story = {
+        "conflict_core": "灿灿作业没写",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，我屁股很Q弹，你打我吧，别打姐姐。"},
+            {"speaker": "灿灿", "line": "为什么你会突然说这个？"},
+            {"speaker": "昭昭", "line": "因为Q弹的打了不疼，还会弹回来。"},
+        ],
+    }
+
+    assert not opening_causality_passes(story, beat, mom_lines_max=3)
+    fixed, ok = apply_opening_causality_local_patch(
+        story, beat_chain=beat, mom_lines_max=3,
+    )
+
+    assert ok
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert "说好" in fixed["dialogue"][0]["line"] or "规矩" in fixed["dialogue"][0]["line"]
+    assert "作业" in fixed["dialogue"][0]["line"]
+    assert opening_causality_passes(fixed, beat, mom_lines_max=3)
+
+
 def test_opening_causality_rejects_q96_export_style_late_mom_react():
     """#96 已导出稿：灿灿辩解起跳、妈妈「你说什么」不能算首句责备。"""
     from app.services.gold_story.gold_chat.validate import (
