@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -118,7 +119,13 @@ from app.services.gold_story.gold_chat.polish import (
     _apply_gold_chat_polish_fixes,
     collect_gold_chat_polish_issues,
 )
-from app.services.gold_story.gold_chat.repair import AlignRepairFailure
+from app.services.gold_story.gold_chat.repair import (
+    AlignRepairFailure,
+    build_short_only_spot_fix_feedback,
+    evaluate_repair_candidate_acceptance,
+    is_expand_short_only_repair,
+    list_short_spot_editable_line_nos,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -482,6 +489,61 @@ def _fix_chat_with_llm(
         **_prompt_budget_kwargs(),
     )
     return _chat_json(_FIX_SYSTEM, user, temperature=0.55)
+
+
+_SHORT_SPOT_FIX_SYSTEM = (
+    "你是 gold_chat 定点补字编辑。只输出 JSON："
+    '{"fixes":[{"no":行号,"line":"改好后的一句台词"}]}。\n'
+    "只允许改指定行号；行数、speaker 不变；首尾句冻结。\n"
+    "line 必须是角色当场说出口的对白，禁止旁白/动作说明/括号。"
+)
+
+_SHORT_SPOT_FIX_USER = """{feedback}
+
+当前 dialogue（节选）：
+{story_json}
+
+只输出 fixes JSON。"""
+
+
+def _short_spot_fix_chat_with_llm(
+    story: dict[str, Any],
+    feedback: str,
+    *,
+    editable_line_nos: list[int],
+    banned_literals: list[str],
+    mom_lines_max: int,
+) -> dict[str, Any]:
+    if not editable_line_nos:
+        raise ValueError("short_spot_fix: 无可扩写的中段姐弟句")
+    user = _SHORT_SPOT_FIX_USER.format(
+        feedback=feedback,
+        story_json=json.dumps(story, ensure_ascii=False)[:8000],
+    )
+    raw = _chat_json(_SHORT_SPOT_FIX_SYSTEM, user, temperature=0.45)
+    polish_result = _apply_gold_chat_polish_fixes(
+        story,
+        raw,
+        banned_literals=banned_literals,
+        mom_lines_max=mom_lines_max,
+    )
+    merged = polish_result.candidate
+    base_rows = story.get("dialogue") or []
+    new_rows = merged.get("dialogue") or []
+    if len(new_rows) != len(base_rows):
+        raise ValueError("short_spot_fix: 改变了句数")
+    allowed = set(editable_line_nos)
+    for index, (old, new) in enumerate(zip(base_rows, new_rows, strict=False), 1):
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            continue
+        if str(old.get("speaker") or "").strip() != str(new.get("speaker") or "").strip():
+            raise ValueError("short_spot_fix: 改变了 speaker")
+        if index not in allowed and str(old.get("line") or "") != str(new.get("line") or ""):
+            raise ValueError(f"short_spot_fix: 冻结行 {index} 被改动")
+    out = dict(story)
+    out["dialogue"] = new_rows
+    return out
+
 
 def _split_m8_j_head_mid_tail(
     dialogue: list[Any],
@@ -1774,15 +1836,19 @@ def gold_story_to_gold_chat(
                     chat, mom_lines_max=mom_int, banned_literals=banned_list,
                 )
                 chat = _attach_gold_chat_structure_score(chat, row)
+                structure_gate_ok = True
                 try:
                     _gate_gold_chat_structure_score(chat)
                 except ValueError as gate_exc:
+                    structure_gate_ok = False
                     candidate_errors.append(str(gate_exc))
                 if not candidate_errors:
                     return chat
+                mode_errors = list(candidate_errors)
+                feedback_errors = list(candidate_errors)
                 if repair_error:
-                    candidate_errors.append(repair_error)
-                last_err = "；".join(candidate_errors)
+                    feedback_errors.append(repair_error)
+                last_err = "；".join(feedback_errors)
                 quality = chat.get("quality") or {}
                 logger.info(
                     "gold_chat candidate rejected stage=expand_structure "
@@ -1793,43 +1859,75 @@ def gold_story_to_gold_chat(
                     raise GoldChatRepairExhausted(
                         stage="expand_structure", reason=last_err, candidate=chat,
                     )
-                fb = build_candidate_repair_feedback(
-                    chat, validation_errors=candidate_errors, align_issues=[],
-                    mom_lines_max=mom_int,
-                ) + "\n" + format_structure_score_feedback(last_err, chat)
-                if gaps:
-                    fb += "\n" + "\n".join(
-                        f"- {g}：请在对白中补全，勿另起无关剧情" for g in gaps[:3]
-                    )
+                baseline = copy.deepcopy(chat)
+                short_only = is_expand_short_only_repair(
+                    mode_errors, structure_gate_ok=structure_gate_ok,
+                )
                 try:
-                    draft = _fix_chat_with_llm(
-                        chat, fb, banned_literals=banned_list, mom_lines_max=mom_int,
-                    )
+                    if short_only:
+                        editable = list_short_spot_editable_line_nos(chat)
+                        spot_fb = build_short_only_spot_fix_feedback(
+                            chat,
+                            validation_errors=feedback_errors,
+                            mom_lines_max=mom_int,
+                            editable_line_nos=editable,
+                        )
+                        draft = _short_spot_fix_chat_with_llm(
+                            chat,
+                            spot_fb,
+                            editable_line_nos=editable,
+                            banned_literals=banned_list,
+                            mom_lines_max=mom_int,
+                        )
+                    else:
+                        fb = build_candidate_repair_feedback(
+                            chat, validation_errors=feedback_errors, align_issues=[],
+                            mom_lines_max=mom_int,
+                        ) + "\n" + format_structure_score_feedback(last_err, chat)
+                        if gaps:
+                            fb += "\n" + "\n".join(
+                                f"- {g}：请在对白中补全，勿另起无关剧情" for g in gaps[:3]
+                            )
+                        draft = _fix_chat_with_llm(
+                            chat, fb, banned_literals=banned_list, mom_lines_max=mom_int,
+                        )
+                        draft = _normalize_chat_speakers(draft)
+                        if structure_type:
+                            draft["story_type"] = structure_type
+                        draft, _ = patch_c_force_sibling_alternate(draft)
+                        draft, _ = patch_c_possession_criterion(draft)
+                        draft, _ = patch_sanitize_c_tone_stack(draft)
+                        draft, _ = patch_sanitize_pad_suffix(draft)
+                        draft, _ = patch_m2_c_structure(
+                            draft,
+                            structure_type=structure_type,
+                            mechanism=mechanism,
+                            theme=str(row.get("title") or draft.get("scene_title") or ""),
+                            payload=payload,
+                        )
+                        draft, _ = _post_align_j_closing_touchup(
+                            draft, structure_type=structure_type
+                        )
+                        if conflict_core:
+                            draft["conflict_core"] = conflict_core
                 except ValueError as exc:
-                    # 模型未返回可用稿时，保留当前候选并计入有界修稿预算。
                     repair_error = str(exc)
+                    chat = baseline
+                    continue
+                accepted, reject_reason = evaluate_repair_candidate_acceptance(
+                    baseline,
+                    draft,
+                    row=row,
+                    mom_lines_max=mom_int,
+                    banned_literals=banned_list,
+                    strict_dialogue_shape=short_only,
+                )
+                if accepted is None:
+                    repair_error = reject_reason or "修稿验收未通过"
+                    chat = baseline
                     continue
                 repair_error = ""
-                draft = _normalize_chat_speakers(draft)
-                if structure_type:
-                    draft["story_type"] = structure_type
-                draft, _ = patch_c_force_sibling_alternate(draft)
-                draft, _ = patch_c_possession_criterion(draft)
-                draft, _ = patch_sanitize_c_tone_stack(draft)
-                draft, _ = patch_sanitize_pad_suffix(draft)
-                draft, _ = patch_m2_c_structure(
-                    draft,
-                    structure_type=structure_type,
-                    mechanism=mechanism,
-                    theme=str(row.get("title") or draft.get("scene_title") or ""),
-                    payload=payload,
-                )
-                draft, _ = _post_align_j_closing_touchup(
-                    draft, structure_type=structure_type
-                )
-                if conflict_core:
-                    draft["conflict_core"] = conflict_core
-                chat = draft
+                chat = accepted
         except GoldChatRepairExhausted:
             raise
         except AlignRepairFailure as exc:
