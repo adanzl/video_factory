@@ -284,6 +284,19 @@ def refine_gold_chat_align(
 
         if polish_result.errors or (not polish_result.accepted and rejected):
             val_errors = list(polish_result.errors) or list(dict.fromkeys(rejected))
+            if any("opening_causality:" in str(e) for e in val_errors):
+                from app.services.gold_story.gold_chat.patch import (
+                    apply_opening_causality_local_patch,
+                )
+
+                patched, ok = apply_opening_causality_local_patch(
+                    candidate_base,
+                    beat_chain=beat_chain,
+                    mom_lines_max=mom_max,
+                )
+                if ok:
+                    candidate_base = _normalize_chat_speakers(patched)
+                    continue
             if budget is not None and budget.consume(stage="align", reason="；".join(val_errors)):
                 from app.services.gold_story.gold_chat.convert import (
                     _fix_chat_with_llm,

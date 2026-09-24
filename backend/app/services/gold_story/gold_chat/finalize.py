@@ -257,10 +257,21 @@ def run_gold_chat_final_acceptance(
             except (TypeError, ValueError):
                 pass
 
+    from app.services.gold_story.gold_chat.patch import (
+        apply_opening_causality_local_patch,
+    )
     from app.services.gold_story.gold_chat.validate import (
         collect_opening_causality_issues,
         format_opening_causality_hard_error,
     )
+
+    chat, opening_patched = apply_opening_causality_local_patch(
+        chat,
+        beat_chain=beat_chain,
+        mom_lines_max=mom_max,
+    )
+    if opening_patched:
+        logger.info("[GOLD_CHAT] final acceptance opening causality local patch")
 
     opening_block = collect_opening_causality_issues(
         chat,

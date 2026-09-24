@@ -141,6 +141,14 @@ def prepare_candidate_for_acceptance(
     from app.services.gold_story.gold_chat.pad_stack import apply_clear_pad_sanitize
 
     cleaned, _ = apply_clear_pad_sanitize(dict(candidate))
+    from app.services.gold_story.gold_chat.patch import (
+        apply_opening_causality_local_patch,
+    )
+
+    cleaned, _ = apply_opening_causality_local_patch(
+        cleaned,
+        mom_lines_max=mom_lines_max,
+    )
     errors = collect_candidate_repair_errors(
         cleaned,
         mom_lines_max=mom_lines_max,
