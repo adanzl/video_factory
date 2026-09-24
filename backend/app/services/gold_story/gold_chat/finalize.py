@@ -124,6 +124,28 @@ def _validate_chat_or_repairable(
         raise
 
 
+def _try_final_hard_floor_one_char_close(
+    chat: dict[str, Any],
+    exc: GoldChatValidationRepairableError,
+) -> tuple[dict[str, Any], bool]:
+    """终检仅差 1 字且无其它硬错时，本地补一个安全单粒子后再验。"""
+    total = dialogue_total_chars(chat)
+    if total != DAILY_STORY_BODY_CHARS_MIN - 1:
+        return chat, False
+    parts = [p.strip() for p in str(exc).split(";") if p.strip()]
+    if not parts or not all("正文总字数须≥" in part for part in parts):
+        return chat, False
+
+    from app.services.gold_story.gold_chat.length import (
+        _patch_gold_chat_near_miss_chars,
+    )
+
+    closed, changed = _patch_gold_chat_near_miss_chars(chat)
+    if not changed or dialogue_total_chars(closed) < DAILY_STORY_BODY_CHARS_MIN:
+        return chat, False
+    return closed, True
+
+
 def _is_export_repairable(exc: BaseException) -> bool:
     if isinstance(exc, GoldChatAcceptanceIncomplete):
         return False
@@ -447,7 +469,21 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     duplicate_rescue_used = 0
     while True:
         try:
-            _validate_chat_or_repairable(validate_chat, current)
+            try:
+                _validate_chat_or_repairable(validate_chat, current)
+            except GoldChatValidationRepairableError as validation_exc:
+                current2, local_closed = _try_final_hard_floor_one_char_close(
+                    current,
+                    validation_exc,
+                )
+                if not local_closed:
+                    raise
+                current = current2
+                logger.info(
+                    "gold_chat final hard-floor local close chars=%s",
+                    dialogue_total_chars(current),
+                )
+                _validate_chat_or_repairable(validate_chat, current)
             scored = attach_score(current, row)
             struct = _gate_structure_or_raise(gate_score, scored)
             current = scored
