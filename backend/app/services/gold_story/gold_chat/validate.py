@@ -1638,13 +1638,19 @@ def _line_lens(dialogue: list[Any]) -> list[int]:
 _RE_INTENT_TRIGGER = re.compile(
     r"责备|批评|指责|质问|训斥|催促|责骂|立规|约好|紧张|冲突",
 )
+_RE_INTENT_BLAME = re.compile(r"责备|批评|指责|训斥|责骂")
 _RE_INTENT_INTERRUPT = re.compile(r"插嘴|打断|岔|救场|转移|离谱|请求|打岔")
 _RE_INTENT_DEFEND = re.compile(r"辩解|推托|忘|本来|没做|没写|推脱|借口")
 _RE_INTENT_STUN = re.compile(r"愣|停|放下|叹气|接不住|傻眼")
 _RE_PARENT_TRIGGER_LINE = re.compile(
     r"(?:怎么|为什么|又|还不|还没有|别(?:闹|皮|吵|糊弄)|"
-    r"你说什么|气死|烦死|像什么话|不像话)",
+    r"气死|烦死|像什么话|不像话)",
 )
+_RE_BLAME_LINE = re.compile(
+    r"(?:作业|没写|没做|磨蹭|别拖|写完了吗|赶快写|还不写|"
+    r"像什么样子|批评|责备)",
+)
+_RE_STUN_REACT_LINE = re.compile(r"你说什么|手停|停在半空|愣")
 _RE_DEFEND_LINE = re.compile(
     r"本来|忘了|就是没|还没|得写|要写|马上去|这就去|打算写",
 )
@@ -1653,7 +1659,7 @@ _RE_INTERRUPT_OFFER_LINE = re.compile(
     r"我(?:来|给)|要不)",
 )
 _RE_STUN_LINE = re.compile(
-    r"(?:愣(?:住|了|神)?|傻眼|接不住|说不出|语塞|一时|"
+    r"(?:愣(?:住|了|神)?|傻眼|接不住|说不出|语塞|一时|手停|停在半空|"
     r"(?:叹|沉)|(?:放|搁)下(?:筷|碗|笔|手))",
 )
 _OPENING_INTENT_STOP = frozenset(
@@ -1736,6 +1742,15 @@ def _line_fulfills_beat(
         return True
     acts = _intent_speech_acts(intent)
     if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
+        if _RE_INTENT_BLAME.search(intent):
+            if _RE_STUN_REACT_LINE.search(line) and not _RE_BLAME_LINE.search(line):
+                return False
+            if anchors and any(token in line for token in anchors):
+                return True
+            return bool(
+                _RE_BLAME_LINE.search(line)
+                or _RE_PARENT_TRIGGER_LINE.search(line)
+            )
         return bool(_RE_PARENT_TRIGGER_LINE.search(line))
     if "defend" in acts and speaker in {"昭昭", "灿灿"}:
         return bool(_RE_DEFEND_LINE.search(line))
@@ -1748,6 +1763,20 @@ def _line_fulfills_beat(
     if "defend" in acts and speaker in {"妈妈", "爸爸"}:
         return False
     return False
+
+
+def _first_line_matching_beat(
+    rows: list[dict[str, Any]],
+    entry: dict[str, Any],
+) -> int | None:
+    for line_no, row in enumerate(rows, 1):
+        speaker = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if not line:
+            continue
+        if _line_fulfills_beat(speaker, line, entry):
+            return line_no
+    return None
 
 
 def _fulfill_beats_in_dialogue_order(
@@ -1858,9 +1887,11 @@ def collect_opening_causality_issues(
         beat_i_no, beat_i = opening[idx]
         beat_j_no, beat_j = opening[idx + 1]
         line_i = fulfilled.get(beat_i_no)
-        line_j = fulfilled.get(beat_j_no)
+        line_j = fulfilled.get(beat_j_no) or _first_line_matching_beat(rows, beat_j)
         if line_j is None:
             continue
+        if line_i is None:
+            line_i = _first_line_matching_beat(rows, beat_i)
         if line_i is None:
             issues.append(
                 {
