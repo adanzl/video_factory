@@ -27,6 +27,7 @@ from app.services.gold_story.gold_chat.convert import (
     patch_break_consecutive_keep_seed,
     patch_gold_chat_consecutive_siblings,
 )
+from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
 from app.services.gold_story.gold_chat.finalize import (
     GoldChatAcceptanceBlocked,
     GoldChatAcceptanceIncomplete,
@@ -702,7 +703,7 @@ def test_semantic_repair_passes_after_one_revision(mock_acceptance):
         max_repairs=2,
     )
     assert out is chat or isinstance(out, dict)
-    assert struct == 76
+    assert struct == 80
     assert calls["n"] == 2
     assert len(prompts) == 1
     assert "错位" in prompts[0]
@@ -1043,13 +1044,228 @@ def test_local_duplicate_repair_rechecks_all_gates(monkeypatch, recover):
     if recover:
         result, score = finalize.run_gold_chat_final_acceptance_with_semantic_repair(story, {}, **kwargs)
         assert result["revised"]
-        assert events == ["local", "fix", "validate", "score", "gate", "local", "semantic"]
+        assert events == [
+            "validate",
+            "score",
+            "gate",
+            "local",
+            "fix",
+            "validate",
+            "score",
+            "gate",
+            "local",
+            "semantic",
+        ]
     else:
         with pytest.raises(finalize.GoldChatLocalDuplicateBlocked):
             finalize.run_gold_chat_final_acceptance_with_semantic_repair(story, {}, **kwargs)
         assert events.count("fix") == 2
         assert events.count("local") == 3
         assert "semantic" not in events
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_export_repair_chars_239_then_passes(mock_acceptance):
+    mock_acceptance.return_value = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    validate_calls = {"n": 0}
+    prompts: list[str] = []
+
+    def validate(_chat):
+        validate_calls["n"] += 1
+        if validate_calls["n"] == 1:
+            raise ValueError(
+                f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前239",
+            )
+
+    def fake_fix(_chat, fb, **_kw):
+        prompts.append(fb)
+        return dict(_chat)
+
+    run_gold_chat_final_acceptance_with_semantic_repair(
+        _story([{"speaker": "昭昭", "line": "姐姐好。"}]),
+        {"title": "测试"},
+        sid="BV_TEST",
+        st_final="N",
+        banned=[],
+        mom_max=3,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fake_fix,
+        validate_chat=validate,
+        max_repairs=2,
+    )
+    assert validate_calls["n"] == 2
+    assert len(prompts) == 1
+    assert "239" in prompts[0]
+    assert "240" in prompts[0] or str(DAILY_STORY_BODY_CHARS_MIN) in prompts[0]
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_export_repair_mom_four_to_three(mock_acceptance):
+    mock_acceptance.return_value = _story([{"speaker": "妈妈", "line": "行。"}])
+    state = {"mom_ok": False}
+    prompts: list[str] = []
+
+    def validate(chat):
+        mom = sum(
+            1
+            for x in chat.get("dialogue") or []
+            if isinstance(x, dict) and x.get("speaker") == "妈妈"
+        )
+        if mom > 3:
+            raise ValueError(f"妈妈台词须≤3句，当前{mom}")
+        state["mom_ok"] = True
+
+    def fake_fix(chat, fb, **_kw):
+        prompts.append(fb)
+        dlg = [dict(x) for x in chat.get("dialogue") or []]
+        dlg = [x for x in dlg if x.get("speaker") != "妈妈"] + [
+            {"speaker": "妈妈", "line": "行。"},
+        ] * 3
+        return {**chat, "dialogue": dlg[:14]}
+
+    run_gold_chat_final_acceptance_with_semantic_repair(
+        _story([{"speaker": "妈妈", "line": f"句{i}"} for i in range(4)]),
+        {"title": "测试"},
+        sid="BV_TEST",
+        st_final="N",
+        banned=[],
+        mom_max=3,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fake_fix,
+        validate_chat=validate,
+        max_repairs=2,
+    )
+    assert state["mom_ok"]
+    assert any("妈妈" in p and "3" in p for p in prompts)
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_export_repair_semantic_then_chars_short_second_round(mock_acceptance):
+    acc_calls = {"n": 0}
+    validate_calls = {"n": 0}
+    fix_calls = {"n": 0}
+
+    def acceptance_side(chat, _row, *, sid):
+        acc_calls["n"] += 1
+        if acc_calls["n"] == 1:
+            raise GoldChatAcceptanceBlocked("终检语义硬伤：第[2]句·错位：测试")
+        return chat
+
+    mock_acceptance.side_effect = acceptance_side
+
+    def validate(_chat):
+        validate_calls["n"] += 1
+        if validate_calls["n"] == 2:
+            raise ValueError(
+                f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前200",
+            )
+
+    def fake_fix(chat, _fb, **_kw):
+        fix_calls["n"] += 1
+        return dict(chat)
+
+    run_gold_chat_final_acceptance_with_semantic_repair(
+        _story([{"speaker": "昭昭", "line": "姐姐好。"}]),
+        {"title": "测试"},
+        sid="BV_TEST",
+        st_final="N",
+        banned=[],
+        mom_max=3,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fake_fix,
+        validate_chat=validate,
+        max_repairs=2,
+    )
+    assert acc_calls["n"] == 2
+    assert fix_calls["n"] == 2
+    assert validate_calls["n"] == 3
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_export_repair_exhausted_does_not_export(mock_acceptance):
+    mock_acceptance.side_effect = GoldChatAcceptanceBlocked(
+        "终检语义硬伤：第[2]句·语病：读不通",
+    )
+    fix_calls: list[int] = []
+
+    def fake_fix(chat, _fb, **_kw):
+        fix_calls.append(1)
+        return dict(chat)
+
+    with pytest.raises(GoldChatAcceptanceBlocked):
+        run_gold_chat_final_acceptance_with_semantic_repair(
+            _story([{"speaker": "昭昭", "line": "姐姐好。"}]),
+            {"title": "测试"},
+            sid="BV_TEST",
+            st_final="N",
+            banned=[],
+            mom_max=3,
+            source_type="field",
+            attach_score=lambda c, _r: c,
+            gate_score=lambda _c: 80,
+            normalize_chat=lambda c: c,
+            fix_llm=fake_fix,
+            validate_chat=lambda _c: None,
+            max_repairs=2,
+        )
+    assert len(fix_calls) == 2
+    assert mock_acceptance.call_count == 3
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_export_repair_structure_score_in_loop(mock_acceptance):
+    mock_acceptance.return_value = _story([])
+    gate_calls = {"n": 0}
+
+    def gate(_chat):
+        gate_calls["n"] += 1
+        if gate_calls["n"] == 1:
+            raise ValueError("structure_score:70")
+        return 80
+
+    with pytest.raises(ValueError, match="structure_score:70"):
+        run_gold_chat_final_acceptance_with_semantic_repair(
+            _story([]),
+            {"title": "测试", "structure_type": "N"},
+            sid="BV_TEST",
+            st_final="N",
+            banned=[],
+            mom_max=3,
+            source_type="field",
+            attach_score=lambda c, _r: c,
+            gate_score=gate,
+            normalize_chat=lambda c: c,
+            fix_llm=lambda c, _fb, **_kw: dict(c),
+            validate_chat=lambda _c: None,
+            max_repairs=0,
+        )
+
+    out, struct = run_gold_chat_final_acceptance_with_semantic_repair(
+        _story([]),
+        {"title": "测试"},
+        sid="BV2",
+        st_final="N",
+        banned=[],
+        mom_max=3,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=gate,
+        normalize_chat=lambda c: c,
+        fix_llm=lambda c, _fb, **_kw: dict(c),
+        validate_chat=lambda _c: None,
+        max_repairs=1,
+    )
+    assert struct == 80
+    assert gate_calls["n"] >= 2
 
 
 def test_mixed_local_hard_errors_do_not_enter_duplicate_repair(monkeypatch):
