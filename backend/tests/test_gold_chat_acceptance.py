@@ -27,7 +27,10 @@ from app.services.gold_story.gold_chat.convert import (
     patch_break_consecutive_keep_seed,
     patch_gold_chat_consecutive_siblings,
 )
-from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+from app.services.daily_story.prompts import (
+    DAILY_STORY_BODY_CHARS_MIN,
+    dialogue_total_chars,
+)
 from app.services.gold_story.gold_chat.finalize import (
     GoldChatAcceptanceBlocked,
     GoldChatAcceptanceIncomplete,
@@ -1478,6 +1481,100 @@ def test_export_repair_chars_239_then_passes(mock_acceptance):
     assert len(prompts) == 1
     assert "239" in prompts[0]
     assert "240" in prompts[0] or str(DAILY_STORY_BODY_CHARS_MIN) in prompts[0]
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_export_actual_239_uses_local_one_char_close_without_llm(mock_acceptance):
+    dialogue = [
+        {
+            "speaker": "昭昭" if i % 2 == 0 else "灿灿",
+            "line": "甲" * (19 if i == 11 else 20),
+        }
+        for i in range(12)
+    ]
+    chat = _story(dialogue)
+    assert dialogue_total_chars(chat) == DAILY_STORY_BODY_CHARS_MIN - 1
+
+    validate_totals: list[int] = []
+    fix_calls: list[str] = []
+
+    def validate(candidate):
+        total = dialogue_total_chars(candidate)
+        validate_totals.append(total)
+        if total < DAILY_STORY_BODY_CHARS_MIN:
+            raise ValueError(
+                f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前{total}",
+            )
+
+    def fake_fix(candidate, feedback, **_kw):
+        fix_calls.append(feedback)
+        return dict(candidate)
+
+    mock_acceptance.side_effect = lambda candidate, _row, *, sid: candidate
+    result, score = run_gold_chat_final_acceptance_with_semantic_repair(
+        chat,
+        {"title": "测试"},
+        sid="BV_TEST",
+        st_final="N",
+        banned=[],
+        mom_max=3,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fake_fix,
+        validate_chat=validate,
+        max_repairs=2,
+    )
+
+    assert score == 80
+    assert validate_totals == [239, 240]
+    assert not fix_calls
+    assert dialogue_total_chars(result) == DAILY_STORY_BODY_CHARS_MIN
+
+
+def test_export_actual_239_with_other_hard_error_still_uses_llm_repair():
+    dialogue = [
+        {
+            "speaker": "昭昭" if i % 2 == 0 else "灿灿",
+            "line": "甲" * (19 if i == 11 else 20),
+        }
+        for i in range(12)
+    ]
+    chat = _story(dialogue)
+    assert dialogue_total_chars(chat) == DAILY_STORY_BODY_CHARS_MIN - 1
+    fix_calls: list[str] = []
+
+    def validate(candidate):
+        total = dialogue_total_chars(candidate)
+        raise ValueError(
+            f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前{total};"
+            "妈妈台词须≤3句，当前4",
+        )
+
+    def fake_fix(candidate, feedback, **_kw):
+        fix_calls.append(feedback)
+        return dict(candidate)
+
+    with pytest.raises(GoldChatValidationRepairableError):
+        run_gold_chat_final_acceptance_with_semantic_repair(
+            chat,
+            {"title": "测试"},
+            sid="BV_TEST",
+            st_final="N",
+            banned=[],
+            mom_max=3,
+            source_type="field",
+            attach_score=lambda c, _r: c,
+            gate_score=lambda _c: 80,
+            normalize_chat=lambda c: c,
+            fix_llm=fake_fix,
+            validate_chat=validate,
+            max_repairs=1,
+        )
+
+    assert len(fix_calls) == 1
+    assert dialogue_total_chars(chat) == DAILY_STORY_BODY_CHARS_MIN - 1
 
 
 @patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
