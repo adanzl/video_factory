@@ -1151,14 +1151,25 @@ def test_local_duplicate_gets_one_rescue_after_shared_budget_exhausted(monkeypat
         "fix": "改第11句推进新信息",
     }
 
+    dialogue = [
+        {"speaker": "昭昭" if no % 2 else "灿灿", "line": f"第{no}句原稿。"}
+        for no in range(1, 12)
+    ]
+
     def local(story):
         events.append("local")
-        return [] if story.get("revised") else [issue]
+        rows = story.get("dialogue") or []
+        return [] if rows[10]["line"] == "写完这页我们就去拼积木。" else [issue]
 
     def fix(story, feedback, **kwargs):
         events.append("fix")
         assert "第5句与第11句" in feedback
-        return dict(story, revised=True)
+        assert "只允许改第11句" in feedback
+        out = dict(story)
+        rows = [dict(item) for item in story.get("dialogue") or []]
+        rows[10]["line"] = "写完这页我们就去拼积木。"
+        out["dialogue"] = rows
+        return out
 
     def semantic(*args, **kwargs):
         events.append("semantic")
@@ -1172,7 +1183,7 @@ def test_local_duplicate_gets_one_rescue_after_shared_budget_exhausted(monkeypat
     assert budget.exhausted
 
     result, score = finalize.run_gold_chat_final_acceptance_with_semantic_repair(
-        _story([{"speaker": "昭昭", "line": "姐姐好。"}]),
+        _story(dialogue),
         {},
         sid="TEST",
         st_final="N",
@@ -1187,10 +1198,71 @@ def test_local_duplicate_gets_one_rescue_after_shared_budget_exhausted(monkeypat
         repair_budget=budget,
     )
 
-    assert result["revised"]
+    assert result["dialogue"][10]["line"] == "写完这页我们就去拼积木。"
     assert score == 80
     assert budget.used == 2
     assert events == ["local", "fix", "local", "semantic"]
+
+
+def test_local_duplicate_repair_freezes_other_lines_and_all_speakers(monkeypatch):
+    from app.services.daily_story import review
+    from app.services.gold_story.gold_chat import finalize
+
+    issue = {
+        "lines": [1, 3],
+        "kind": "重复",
+        "desc": "第1句与第3句说的是同一件事，换词重复",
+        "fix": "改第3句推进新信息",
+    }
+    original_dialogue = [
+        {"speaker": "昭昭", "line": "你先把作业写完再说。"},
+        {"speaker": "灿灿", "line": "我马上就写。"},
+        {"speaker": "昭昭", "line": "作业先写完再玩。"},
+    ]
+
+    def local(story):
+        rows = story.get("dialogue") or []
+        return [] if rows[2]["line"] == "那你写完我们就去拼积木。" else [issue]
+
+    def fix(story, feedback, **kwargs):
+        assert "第1句与第3句" in feedback
+        assert "只允许改第3句" in feedback
+        out = dict(story)
+        out["dialogue"] = [
+            {"speaker": "妈妈", "line": "第一句也被模型顺手改了。"},
+            {"speaker": "妈妈", "line": "第二句也被模型顺手改了。"},
+            {"speaker": "灿灿", "line": "那你写完我们就去拼积木。"},
+        ]
+        return out
+
+    monkeypatch.setattr(review, "collect_export_blocking_local_issues", local)
+    monkeypatch.setattr(
+        review,
+        "run_export_semantic_review",
+        lambda *args, **kwargs: ExportSemanticReviewResult(completed=True),
+    )
+
+    result, score = finalize.run_gold_chat_final_acceptance_with_semantic_repair(
+        _story(original_dialogue),
+        {},
+        sid="TEST",
+        st_final="N",
+        banned=[],
+        mom_max=1,
+        source_type="field",
+        attach_score=lambda c, r: c,
+        gate_score=lambda c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fix,
+        validate_chat=lambda c: None,
+    )
+
+    assert score == 80
+    assert result["dialogue"] == [
+        original_dialogue[0],
+        original_dialogue[1],
+        {"speaker": "昭昭", "line": "那你写完我们就去拼积木。"},
+    ]
 
 
 @patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
