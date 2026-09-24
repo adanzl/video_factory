@@ -316,8 +316,35 @@ def test_refine_post_align_local_length_close_hits_margin_and_line_cap():
         mechanism="",
     )
 
-    assert dialogue_total_chars(out) == grf.ALIGN_POST_LOCAL_BODY_TARGET
+    assert DAILY_STORY_BODY_CHARS_MIN <= dialogue_total_chars(out) <= grf.ALIGN_POST_LOCAL_BODY_TARGET
     assert max(len(x["line"]) for x in out["dialogue"]) <= CHAT_MAX_LINE_CHARS
+
+
+def test_shared_local_length_close_is_used_by_refine_wrapper(monkeypatch):
+    from app.services.gold_story.gold_chat import refine as grf
+
+    story = _story([{"speaker": "昭昭", "line": "先说清楚。"}] * 12)
+    sentinel = _story([{"speaker": "灿灿", "line": "已经收口。"}] * 12)
+    seen = {}
+
+    def fake_close(candidate, **kwargs):
+        seen.update(kwargs)
+        assert candidate is story
+        return sentinel, True
+
+    monkeypatch.setattr(grf, "_stabilize_local_length_candidate", fake_close)
+    out = grf._stabilize_align_length_candidate(
+        story,
+        structure_type="N",
+        mechanism="M6",
+    )
+
+    assert out is sentinel
+    assert seen == {
+        "structure_type": "N",
+        "mechanism": "M6",
+        "target_chars": grf.ALIGN_POST_LOCAL_BODY_TARGET,
+    }
 
 
 def test_refine_polish_length_errors_use_local_close_without_budget(monkeypatch):
@@ -362,7 +389,7 @@ def test_refine_polish_length_errors_use_local_close_without_budget(monkeypatch)
     monkeypatch.setattr(grf, "collect_align_issues", collect)
 
     def prepare(chat, **kwargs):
-        assert dialogue_total_chars(chat) >= grf.ALIGN_POST_LOCAL_BODY_TARGET
+        assert DAILY_STORY_BODY_CHARS_MIN <= dialogue_total_chars(chat) <= grf.ALIGN_POST_LOCAL_BODY_TARGET
         assert max(len(str(x.get("line") or "")) for x in chat.get("dialogue") or []) <= CHAT_MAX_LINE_CHARS
         return dict(chat)
 
@@ -380,7 +407,7 @@ def test_refine_polish_length_errors_use_local_close_without_budget(monkeypatch)
         repair_budget=budget,
     )
 
-    assert dialogue_total_chars(out) >= grf.ALIGN_POST_LOCAL_BODY_TARGET
+    assert DAILY_STORY_BODY_CHARS_MIN <= dialogue_total_chars(out) <= grf.ALIGN_POST_LOCAL_BODY_TARGET
     assert budget.used == 0
 
 

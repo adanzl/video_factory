@@ -16,9 +16,12 @@ from app.services.daily_story.prompts import (
 )
 from app.services.gold_story.gold_chat.pad_stack import (
     apply_clear_pad_sanitize,
+    pad_stack_issue_for_line,
     sanitize_pad_stack_line,
 )
 from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+
+GOLD_CHAT_LOCAL_LENGTH_TARGET = DAILY_STORY_BODY_CHARS_MIN + 10
 
 
 _LINE_TRIM_SUFFIXES = (
@@ -1384,6 +1387,101 @@ def _ensure_gold_chat_min_chars(
             if dialogue_total_chars(data) < DAILY_STORY_BODY_CHARS_MIN:
                 data, pad2 = _pad_gold_chat_to_min_chars(data, max_rounds=24)
                 changed = changed or pad2
+    return data, changed
+
+
+def _stabilize_local_length_candidate(
+    candidate: dict[str, Any],
+    *,
+    structure_type: str,
+    mechanism: str,
+    target_chars: int = GOLD_CHAT_LOCAL_LENGTH_TARGET,
+) -> tuple[dict[str, Any], bool]:
+    """统一机械收口：句长压缩 + near-miss 补字；最终不得靠垫字痕迹过线。"""
+    data, shortened = _apply_deterministic_shorten(candidate)
+    changed = shortened
+
+    total = dialogue_total_chars(data)
+    hard_deficit = DAILY_STORY_BODY_CHARS_MIN - total
+    if not (0 < hard_deficit <= GOLD_CHAT_NEAR_MISS_DEFICIT_MAX):
+        return data, changed
+
+    data, expanded = _ensure_gold_chat_min_chars(
+        data,
+        mechanism=mechanism,
+        structure_type=structure_type,
+    )
+    changed = changed or expanded
+    total = dialogue_total_chars(data)
+    target = min(
+        max(DAILY_STORY_BODY_CHARS_MIN, int(target_chars)),
+        total + max(0, GOLD_CHAT_NEAR_MISS_DEFICIT_MAX - hard_deficit),
+    )
+    if total < target:
+        data, padded = _pad_gold_chat_to_min_chars(
+            data,
+            min_chars=target,
+            max_rounds=48,
+        )
+        changed = changed or padded
+
+    # `_pad_gold_chat_to_min_chars` 是兜底工具，可能留下「好不好」等机审痕迹。
+    # 对所有机审命中的姐弟句直接调用安全 sanitizer（真实问句会被保留），
+    # 再用实义句内扩写/中段补句恢复 hard min；最终不再用粒子 pad 回填。
+    rows = data.get("dialogue")
+    if isinstance(rows, list):
+        for line_no, item in enumerate(rows, 1):
+            if not isinstance(item, dict):
+                continue
+            speaker = str(item.get("speaker") or "").strip()
+            line = str(item.get("line") or "").strip()
+            if speaker not in {"昭昭", "灿灿"} or not line:
+                continue
+            if pad_stack_issue_for_line(line, line_no) is None:
+                continue
+            cleaned = sanitize_pad_stack_line(line)
+            if cleaned and cleaned != line:
+                item["line"] = cleaned
+                changed = True
+
+    for _ in range(3):
+        if dialogue_total_chars(data) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        before = dialogue_total_chars(data)
+        data, natural = _expand_short_gold_chat_lines(
+            data,
+            ignore_deficit_cap=True,
+        )
+        changed = changed or natural
+        if dialogue_total_chars(data) < DAILY_STORY_BODY_CHARS_MIN:
+            data, mid = _boost_short_with_mid_lines(
+                data,
+                mechanism=mechanism,
+                structure_type=structure_type,
+            )
+            changed = changed or mid
+        if dialogue_total_chars(data) <= before:
+            break
+
+    # 实义扩写后再做一次句长与垫字清理；清理后若仍 >= hard min 即接受，
+    # 不为追求 250 的软余量重新塞语气尾巴。
+    data, shortened2 = _apply_deterministic_shorten(data)
+    changed = changed or shortened2
+    rows = data.get("dialogue")
+    if isinstance(rows, list):
+        for line_no, item in enumerate(rows, 1):
+            if not isinstance(item, dict):
+                continue
+            speaker = str(item.get("speaker") or "").strip()
+            line = str(item.get("line") or "").strip()
+            if speaker not in {"昭昭", "灿灿"} or not line:
+                continue
+            if pad_stack_issue_for_line(line, line_no) is None:
+                continue
+            cleaned = sanitize_pad_stack_line(line)
+            if cleaned and cleaned != line:
+                item["line"] = cleaned
+                changed = True
     return data, changed
 
 

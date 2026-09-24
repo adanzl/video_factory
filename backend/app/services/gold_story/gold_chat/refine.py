@@ -26,10 +26,8 @@ from app.services.gold_story.gold_chat.expand import (
     _prepare_chat_for_validate,
 )
 from app.services.gold_story.gold_chat.length import (
-    GOLD_CHAT_NEAR_MISS_DEFICIT_MAX,
-    _apply_deterministic_shorten,
-    _ensure_gold_chat_min_chars,
-    _pad_gold_chat_to_min_chars,
+    GOLD_CHAT_LOCAL_LENGTH_TARGET,
+    _stabilize_local_length_candidate,
     patch_sanitize_c_tone_stack,
     patch_sanitize_pad_suffix,
 )
@@ -62,7 +60,7 @@ from app.services.gold_story.gold_chat.validate import (
 logger = logging.getLogger(__name__)
 
 REFINE_MAX_ROUNDS = 2
-ALIGN_POST_LOCAL_BODY_TARGET = DAILY_STORY_BODY_CHARS_MIN + 10
+ALIGN_POST_LOCAL_BODY_TARGET = GOLD_CHAT_LOCAL_LENGTH_TARGET
 
 
 def _only_local_length_errors(errors: list[str]) -> bool:
@@ -85,39 +83,20 @@ def _stabilize_align_length_candidate(
     structure_type: str,
     mechanism: str,
 ) -> dict[str, Any]:
-    """align 已语义对齐后，本地处理句长与 near-miss 字数，避免机械门槛烧 repair budget。"""
-    data, shortened = _apply_deterministic_shorten(candidate)
-    if shortened:
-        logger.info("gold_chat refine post-align deterministic shorten")
-
-    total = dialogue_total_chars(data)
-    hard_deficit = DAILY_STORY_BODY_CHARS_MIN - total
-    if not (0 < hard_deficit <= GOLD_CHAT_NEAR_MISS_DEFICIT_MAX):
-        return data
-
-    data, expanded = _ensure_gold_chat_min_chars(
-        data,
-        mechanism=mechanism,
+    """兼容旧入口；机械字数/句长收口统一由 length 模块实现。"""
+    before = dialogue_total_chars(candidate)
+    data, changed = _stabilize_local_length_candidate(
+        candidate,
         structure_type=structure_type,
+        mechanism=mechanism,
+        target_chars=ALIGN_POST_LOCAL_BODY_TARGET,
     )
-    total = dialogue_total_chars(data)
-    # hard min 达标后再留 10 字余量；单次本地新增仍不超过 near-miss 60 字。
-    target = min(
-        ALIGN_POST_LOCAL_BODY_TARGET,
-        total + max(0, GOLD_CHAT_NEAR_MISS_DEFICIT_MAX - hard_deficit),
-    )
-    if total < target:
-        data, padded = _pad_gold_chat_to_min_chars(
-            data,
-            min_chars=target,
-            max_rounds=48,
-        )
-        expanded = expanded or padded
-    if expanded:
+    if changed:
         logger.info(
-            "gold_chat refine post-align local length close chars=%s target=%s",
+            "gold_chat refine post-align local length close chars=%s->%s target=%s",
+            before,
             dialogue_total_chars(data),
-            target,
+            ALIGN_POST_LOCAL_BODY_TARGET,
         )
     return data
 

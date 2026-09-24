@@ -116,6 +116,43 @@ def test_ensure_gold_chat_min_chars_pads_short_story():
     assert gc.dialogue_total_chars(out_short) < gc.DAILY_STORY_BODY_CHARS_MIN
 
 
+def test_shared_local_length_close_survives_real_candidate_prepare():
+    from app.services.gold_story.gold_chat.length import (
+        _stabilize_local_length_candidate,
+    )
+    from app.services.gold_story.gold_chat.repair import (
+        prepare_candidate_for_acceptance,
+    )
+
+    story = _sample_chat()
+    story["dialogue"][0]["line"] = "你。"
+    story["dialogue"][1]["line"] = "我。"
+    assert gc.dialogue_total_chars(story) < gc.DAILY_STORY_BODY_CHARS_MIN
+
+    closed, changed = _stabilize_local_length_candidate(
+        story,
+        structure_type="A",
+        mechanism="M6",
+    )
+    assert changed
+    prepared, errors = prepare_candidate_for_acceptance(
+        closed,
+        mom_lines_max=3,
+        banned_literals=[],
+    )
+
+    assert gc.dialogue_total_chars(prepared) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert not [
+        error
+        for error in errors
+        if (
+            "正文总字数须≥" in error
+            or "单句过长" in error
+            or "垫字" in error
+        )
+    ]
+
+
 def test_validate_gold_chat_rejects_banned():
     story = _sample_chat()
     story["dialogue"][0]["line"] = "小姨又欺负我"
@@ -1326,8 +1363,7 @@ def test_refine_short_repair_exhaustion_preserves_candidate(monkeypatch):
     assert gc.dialogue_total_chars(caught.value.candidate) < gc.DAILY_STORY_BODY_CHARS_MIN
 
 
-@pytest.mark.parametrize("second_repair_passes", [True, False])
-def test_expand_repairs_latest_candidate_without_regenerating(monkeypatch, caplog, second_repair_passes):
+def test_expand_local_length_close_avoids_second_llm_repair(monkeypatch, caplog):
     import copy
     import logging
     from app.services.gold_story.gold_chat import repair
@@ -1350,23 +1386,10 @@ def test_expand_repairs_latest_candidate_without_regenerating(monkeypatch, caplo
     def fix(chat, prompt, **kwargs):
         repair_inputs.append((chat.get("revision", 0), prompt))
         result = copy.deepcopy(chat)
-        if len(repair_inputs) == 2 and second_repair_passes:
-            guard = 0
-            while (
-                gc.dialogue_total_chars(result) < gc.DAILY_STORY_BODY_CHARS_MIN
-                and guard < 24
-            ):
-                idx = 2 + (guard % 3)
-                if idx < len(result["dialogue"]):
-                    result["dialogue"][idx]["line"] = (
-                        str(result["dialogue"][idx]["line"]) + "补"
-                    )
-                guard += 1
-        else:
-            # 模拟结构改好但正文仅 233 字；保留真实 hard 校验。
-            for line in result["dialogue"]:
-                while len(line["line"]) > 1 and gc.dialogue_total_chars(result) > 233:
-                    line["line"] = line["line"][:-1]
+        # 模拟第 1 次结构修稿已把结构分修到 80，但正文被压到 233 字。
+        for line in result["dialogue"]:
+            while len(line["line"]) > 1 and gc.dialogue_total_chars(result) > 233:
+                line["line"] = line["line"][:-1]
         result["revision"] = len(repair_inputs)
         return result
 
@@ -1381,24 +1404,20 @@ def test_expand_repairs_latest_candidate_without_regenerating(monkeypatch, caplo
     monkeypatch.setattr(gc, "_attach_gold_chat_structure_score", score)
     monkeypatch.setattr(gex, "_fix_chat_with_llm", fix)
     budget = repair.GoldChatRepairBudget(max_repairs=2)
+
     with caplog.at_level(logging.INFO):
-        if second_repair_passes:
-            result = gex.gold_story_to_gold_chat(_sample_row(), repair_budget=budget)
-            assert result["revision"] == 2
-            assert result["quality"]["structure_score"] == 80
-        else:
-            with pytest.raises(repair.GoldChatRepairExhausted, match="当前233") as caught:
-                gex.gold_story_to_gold_chat(_sample_row(), repair_budget=budget)
-            assert caught.value.candidate["revision"] == 2
+        result = gex.gold_story_to_gold_chat(_sample_row(), repair_budget=budget)
+
+    assert result["revision"] == 1
+    assert result["quality"]["structure_score"] == 80
+    assert gc.dialogue_total_chars(result) >= gc.DAILY_STORY_BODY_CHARS_MIN
     assert len(generations) == 1
-    assert [revision for revision, _ in repair_inputs] == [0, 1]
-    assert "当前233" in repair_inputs[1][1]
-    assert "structure_score:65" not in repair_inputs[1][1]
-    assert "仅补字" in repair_inputs[1][1] or "定点" in repair_inputs[1][1]
-    assert budget.used == 2
-    assert "score=80" in caplog.text
-    assert "当前233" in caplog.text
-    assert "structure_score fail" not in caplog.text
+    assert [revision for revision, _ in repair_inputs] == [0]
+    assert budget.used == 1
+    assert budget.remaining == 1
+    assert "candidate rejected stage=expand_structure score=65" in caplog.text
+    assert "local length close chars=233->" in caplog.text
+    assert "score=80 remaining_errors=none" in caplog.text
 
 
 def test_expand_stops_when_alignment_budget_exhausted(monkeypatch):
