@@ -39,7 +39,8 @@ def patch_n_promote_existing_question_to_challenge(story: dict) -> list[str]:
     if RE_CHALLENGE.search(body):
         return []
 
-    # N 的 challenge 应早于「为什么」追问；只改现成疑问句，找不到就交给 LLM。
+    # 优先用追问前问句；若 LLM 把原 challenge 漂到后段，仍只显式化现成问句，
+    # 不搬句、不新增剧情。gold_chat 类型硬卡只要求槽位存在，避免机械重排引出连说/seed 副作用。
     why_idx = next(
         (
             i
@@ -49,7 +50,9 @@ def patch_n_promote_existing_question_to_challenge(story: dict) -> list[str]:
         ),
         len(dialogue),
     )
-    for idx, item in enumerate(dialogue[:why_idx]):
+    candidate_idxs = list(range(why_idx)) + list(range(why_idx + 1, len(dialogue)))
+    for idx in candidate_idxs:
+        item = dialogue[idx]
         if not isinstance(item, dict):
             continue
         line = str(item.get("line") or "").strip()
@@ -106,6 +109,52 @@ def patch_n_ensure_solemn_reason(story: dict) -> list[str]:
     return []
 
 
+def patch_n_promote_existing_reaction_to_stun(story: dict) -> list[str]:
+    """荒诞自洽后已有对方反应但缺愣住槽时，只显式化反应，不新增剧情。"""
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return []
+    body = "".join(_dialogue_lines(story))
+    if RE_STUN_CLOSE.search(body):
+        return []
+
+    reason_idxs = [
+        i
+        for i, item in enumerate(dialogue)
+        if isinstance(item, dict)
+        and RE_SOLEMN_REASON.search(str(item.get("line") or ""))
+    ]
+    # 从最后一个已成立的自洽理由向后找局部反应，并优先取窗口内最后一个安全反应，
+    # 让「行吧」尽量靠近收束，避免把中段普通接话过早标成愣住。
+    for reason_idx in reversed(reason_idxs):
+        reason_item = dialogue[reason_idx]
+        reason_speaker = str(reason_item.get("speaker") or "").strip()
+        candidates: list[tuple[int, str]] = []
+        for idx in range(reason_idx + 1, min(len(dialogue), reason_idx + 5)):
+            item = dialogue[idx]
+            if not isinstance(item, dict):
+                continue
+            line = str(item.get("line") or "").strip()
+            speaker = str(item.get("speaker") or "").strip()
+            if not line or (reason_speaker and speaker == reason_speaker):
+                continue
+            if RE_WHY.search(line) or RE_SOLEMN_REASON.search(line):
+                continue
+            if line.endswith(("？", "?")) or _RE_SECOND_ROUND.search(line):
+                continue
+            if line.startswith("好吧"):
+                promoted = f"行吧{line[2:]}"
+            else:
+                promoted = f"行吧，{line}"
+            if len(promoted) <= DAILY_STORY_LINE_CHARS_MAX:
+                candidates.append((idx, promoted))
+        if candidates:
+            idx, promoted = candidates[-1]
+            dialogue[idx]["line"] = promoted
+            return [f"N自洽后显式化愣住反应第{idx + 1}句"]
+    return []
+
+
 def patch_n_trim_after_stun(story: dict) -> list[str]:
     """荒诞自洽/愣住落位后删第二轮抬杠拖尾。"""
     notes: list[str] = []
@@ -147,5 +196,6 @@ def patch_n_body(story: dict) -> list[str]:
         return notes
     notes.extend(patch_n_promote_existing_question_to_challenge(story))
     notes.extend(patch_n_ensure_solemn_reason(story))
+    notes.extend(patch_n_promote_existing_reaction_to_stun(story))
     notes.extend(patch_n_trim_after_stun(story))
     return notes
