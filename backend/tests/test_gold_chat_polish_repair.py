@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 from unittest.mock import patch
 
 import pytest
@@ -297,7 +299,7 @@ def test_refine_align_validate_repair_restores_rule_opening_without_second_budge
     assert out["dialogue"][0]["speaker"] == "妈妈"
 
 
-def test_refine_n_contract_and_short_body_are_local_before_budget(monkeypatch):
+def test_refine_n_contract_is_local_but_clean_shortage_uses_budget(monkeypatch):
     from app.services.daily_story.prompts import dialogue_total_chars
     from app.services.gold_story.gold_chat import refine as grf
     from app.services.daily_story.story_types.n.validate import RE_SOLEMN_REASON
@@ -329,10 +331,24 @@ def test_refine_n_contract_and_short_body_are_local_before_budget(monkeypatch):
         return []
 
     def prepare(chat, **kwargs):
-        assert dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN
         body = "".join(str(x.get("line") or "") for x in chat.get("dialogue") or [])
         assert RE_SOLEMN_REASON.search(body)
+        chars = dialogue_total_chars(chat)
+        if chars < DAILY_STORY_BODY_CHARS_MIN:
+            raise ValueError(f"正文总字数须≥240，当前{chars}")
         return dict(chat)
+
+    def fake_fix(chat, *args, **kwargs):
+        fixed = copy.deepcopy(chat)
+        fixed["dialogue"].extend([
+            {"speaker": "灿灿", "line": "你还真是一本正经讲这个理由。"},
+            {"speaker": "昭昭", "line": "因为我就是照这个想法认真回答的。"},
+            {"speaker": "灿灿", "line": "行吧，你这么认真我一下接不上了。"},
+            {"speaker": "昭昭", "line": "我可没有随口乱说，我真这么想。"},
+        ])
+        return fixed
+
+    from app.services.gold_story.gold_chat import convert as gc_convert
 
     monkeypatch.setattr(grf, "collect_align_issues", collect)
     monkeypatch.setattr(
@@ -340,11 +356,7 @@ def test_refine_n_contract_and_short_body_are_local_before_budget(monkeypatch):
         "_prepare_chat_for_validate_after_local_length_close",
         prepare,
     )
-    monkeypatch.setattr(
-        grf,
-        "_align_refine_with_llm",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("N本地补槽后不应调用LLM")),
-    )
+    monkeypatch.setattr(gc_convert, "_fix_chat_with_llm", fake_fix)
     budget = GoldChatRepairBudget(max_repairs=2)
 
     out = grf.refine_gold_chat_align(
@@ -358,14 +370,14 @@ def test_refine_n_contract_and_short_body_are_local_before_budget(monkeypatch):
         repair_budget=budget,
     )
 
-    assert budget.used == 0
+    assert budget.used == 1
     assert dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN
     assert RE_SOLEMN_REASON.search(
         "".join(str(x.get("line") or "") for x in out.get("dialogue") or [])
     )
 
 
-def test_refine_post_align_local_length_close_hits_margin_and_line_cap():
+def test_refine_post_align_local_length_close_does_not_force_dirty_margin():
     from app.services.daily_story.prompts import dialogue_total_chars
     from app.services.gold_story.gold_chat import refine as grf
     from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
@@ -388,8 +400,11 @@ def test_refine_post_align_local_length_close_hits_margin_and_line_cap():
         mechanism="",
     )
 
-    assert DAILY_STORY_BODY_CHARS_MIN <= dialogue_total_chars(out) <= grf.ALIGN_POST_LOCAL_BODY_TARGET
+    assert dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN
     assert max(len(x["line"]) for x in out["dialogue"]) <= CHAT_MAX_LINE_CHARS
+    body = "".join(str(x.get("line") or "") for x in out["dialogue"])
+    assert "我偏就不信" not in body
+    assert "说一不二" not in body
 
 
 def test_shared_local_length_close_is_used_by_refine_wrapper(monkeypatch):
@@ -419,7 +434,7 @@ def test_shared_local_length_close_is_used_by_refine_wrapper(monkeypatch):
     }
 
 
-def test_refine_polish_length_errors_use_local_close_without_budget(monkeypatch):
+def test_refine_polish_length_errors_use_budget_when_clean_close_is_short(monkeypatch):
     from app.services.daily_story.prompts import dialogue_total_chars
     from app.services.gold_story.gold_chat import refine as grf
     from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
@@ -461,15 +476,29 @@ def test_refine_polish_length_errors_use_local_close_without_budget(monkeypatch)
     monkeypatch.setattr(grf, "collect_align_issues", collect)
 
     def prepare(chat, **kwargs):
-        assert DAILY_STORY_BODY_CHARS_MIN <= dialogue_total_chars(chat) <= grf.ALIGN_POST_LOCAL_BODY_TARGET
+        chars = dialogue_total_chars(chat)
+        if chars < DAILY_STORY_BODY_CHARS_MIN:
+            raise ValueError(f"正文总字数须≥240，当前{chars}")
         assert max(len(str(x.get("line") or "")) for x in chat.get("dialogue") or []) <= CHAT_MAX_LINE_CHARS
         return dict(chat)
+
+    def fake_fix(chat, *args, **kwargs):
+        fixed = copy.deepcopy(chat)
+        fixed["dialogue"].extend([
+            {"speaker": "昭昭", "line": "我把刚才的话认真说完整一点。"},
+            {"speaker": "灿灿", "line": "你说完整了，我这回听明白了。"},
+            {"speaker": "昭昭", "line": "那我再把前因后果说清楚一点。"},
+        ])
+        return fixed
+
+    from app.services.gold_story.gold_chat import convert as gc_convert
 
     monkeypatch.setattr(
         grf,
         "_prepare_chat_for_validate_after_local_length_close",
         prepare,
     )
+    monkeypatch.setattr(gc_convert, "_fix_chat_with_llm", fake_fix)
     budget = GoldChatRepairBudget(max_repairs=2)
 
     out = grf.refine_gold_chat_align(
@@ -483,8 +512,8 @@ def test_refine_polish_length_errors_use_local_close_without_budget(monkeypatch)
         repair_budget=budget,
     )
 
-    assert DAILY_STORY_BODY_CHARS_MIN <= dialogue_total_chars(out) <= grf.ALIGN_POST_LOCAL_BODY_TARGET
-    assert budget.used == 0
+    assert dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN
+    assert budget.used == 1
 
 
 def test_align_repair_failure_message_not_only_short_header():

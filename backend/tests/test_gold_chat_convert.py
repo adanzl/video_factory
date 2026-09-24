@@ -77,8 +77,8 @@ def test_validate_gold_chat_ok():
     gc.validate_gold_chat(story, banned_literals=["小姨"])
 
 
-def test_ensure_gold_chat_min_chars_pads_short_story():
-    """near-miss（差 ≤40）可本地垫满；大缺口不硬凑。"""
+def test_ensure_gold_chat_min_chars_does_not_force_dirty_fill():
+    """机械清理后宁可保留字数不足，也不靠固定态度尾巴硬凑 240。"""
     story = {
         "story_type": "J",
         "dialogue": [
@@ -101,9 +101,19 @@ def test_ensure_gold_chat_min_chars_pads_short_story():
     assert gc.DAILY_STORY_BODY_CHARS_MIN - chars <= gc.GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
     out, changed = gc._ensure_gold_chat_min_chars(story)
     assert changed
-    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert gc.dialogue_total_chars(out) < gc.DAILY_STORY_BODY_CHARS_MIN
+    blob = "".join(str(row.get("line") or "") for row in out["dialogue"])
+    assert not any(
+        phrase in blob
+        for phrase in (
+            "我偏就不信",
+            "说一不二",
+            "马上给我挪开",
+            "少废话听我的",
+        )
+    )
 
-    # 大缺口：剥灌尾后不靠粒子硬凑到 240（仍可中段加句，但空短稿不够）
+    # 大缺口：剥灌尾后不靠粒子硬凑到 240
     short = {
         "story_type": "J",
         "dialogue": [
@@ -116,7 +126,63 @@ def test_ensure_gold_chat_min_chars_pads_short_story():
     assert gc.dialogue_total_chars(out_short) < gc.DAILY_STORY_BODY_CHARS_MIN
 
 
-def test_shared_local_length_close_survives_real_candidate_prepare():
+def test_generic_n_near_miss_does_not_inject_attitude_tails():
+    from app.services.gold_story.gold_chat.length import (
+        _expand_short_gold_chat_lines,
+        _pad_gold_chat_line,
+    )
+
+    story = {
+        "story_type": "N",
+        "dialogue": [
+            {
+                "speaker": "昭昭" if i % 2 == 0 else "灿灿",
+                "line": "我就是这么想的，你先听我说。",
+            }
+            for i in range(12)
+        ],
+    }
+    out, changed = _expand_short_gold_chat_lines(
+        story,
+        ignore_deficit_cap=True,
+    )
+    assert not changed
+    blob = "".join(row["line"] for row in out["dialogue"])
+    assert not any(
+        phrase in blob
+        for phrase in (
+            "我偏就不信",
+            "说一不二",
+            "马上给我挪开",
+            "我可记住啦",
+        )
+    )
+
+    padded, added = _pad_gold_chat_line(
+        "我回房间补作业。",
+        1,
+        story_type="N",
+        speaker="灿灿",
+    )
+    assert added == 1
+    assert padded in {
+        "我回房间补作业啊。",
+        "我回房间补作业呢。",
+        "我回房间补作业吧。",
+        "我回房间补作业呀。",
+    }
+
+    already_particle, added = _pad_gold_chat_line(
+        "铅笔找不到了嘛。",
+        3,
+        story_type="N",
+        speaker="灿灿",
+    )
+    assert added == 0
+    assert already_particle == "铅笔找不到了嘛。"
+
+
+def test_shared_local_length_close_leaves_clean_shortage_for_repair():
     from app.services.gold_story.gold_chat.length import (
         _stabilize_local_length_candidate,
     )
@@ -141,19 +207,19 @@ def test_shared_local_length_close_survives_real_candidate_prepare():
         banned_literals=[],
     )
 
-    assert gc.dialogue_total_chars(prepared) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert gc.dialogue_total_chars(prepared) < gc.DAILY_STORY_BODY_CHARS_MIN
+    assert any("正文总字数须≥" in error for error in errors)
     assert not [
         error
         for error in errors
-        if (
-            "正文总字数须≥" in error
-            or "单句过长" in error
-            or "垫字" in error
-        )
+        if "单句过长" in error or "垫字" in error
     ]
+    body = "".join(str(row.get("line") or "") for row in prepared["dialogue"])
+    assert "我偏就不信" not in body
+    assert "说一不二" not in body
 
 
-def test_n_post_sanitize_local_close_survives_acceptance_prepare():
+def test_n_post_sanitize_close_preserves_contract_without_dirty_fill():
     from app.services.daily_story.story_types.n.validate import RE_SOLEMN_REASON
     from app.services.gold_story.gold_chat import refine as grf
     from app.services.gold_story.gold_chat.repair import (
@@ -192,17 +258,16 @@ def test_n_post_sanitize_local_close_survives_acceptance_prepare():
     )
     body = "".join(str(x.get("line") or "") for x in prepared.get("dialogue") or [])
 
-    assert gc.dialogue_total_chars(prepared) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert gc.dialogue_total_chars(prepared) < gc.DAILY_STORY_BODY_CHARS_MIN
     assert RE_SOLEMN_REASON.search(body)
+    assert any("正文总字数须≥" in error for error in errors)
     assert not [
         error
         for error in errors
-        if (
-            "正文总字数须≥" in error
-            or "单句过长" in error
-            or "垫字" in error
-        )
+        if "单句过长" in error or "垫字" in error
     ]
+    assert "我偏就不信" not in body
+    assert "说一不二" not in body
 
 
 def test_validate_gold_chat_rejects_banned():

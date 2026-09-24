@@ -21,7 +21,8 @@ from app.services.gold_story.gold_chat.pad_stack import (
 )
 from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
 
-GOLD_CHAT_LOCAL_LENGTH_TARGET = DAILY_STORY_BODY_CHARS_MIN + 10
+# 240 是硬线；本地机械收口不再为追求 250 软余量额外灌字。
+GOLD_CHAT_LOCAL_LENGTH_TARGET = DAILY_STORY_BODY_CHARS_MIN
 
 
 _LINE_TRIM_SUFFIXES = (
@@ -58,8 +59,9 @@ _GOLD_CHAT_EXPAND_CLUTTER: tuple[str, ...] = tuple(
     "我说怎样就怎样",
 )
 
-# 可读句内扩写：禁「这回听清楚/听见没有」——审稿视同灌尾。
-_GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = (
+# 历史通用 near-miss 尾巴：保留仅用于清理/兼容旧候选，禁止再作为补字源。
+# 这些短语会无视上下文强化人物态度，曾制造「我偏就不信/说一不二」等机械拼接。
+_GOLD_CHAT_LEGACY_ATTITUDE_EXPAND: tuple[str, ...] = (
     "，我偏就不信",
     "，你试试看啊",
     "，我才不怕呢",
@@ -74,6 +76,8 @@ _GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = (
     "，轮不到你",
     "，我先说定",
 )
+# 普通类型不做固定态度句内扩写；O/K 等必须走各自类型专用实义扩写。
+_GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = ()
 _GOLD_CHAT_EXPAND_SOFT_CLUTTER: tuple[str, ...] = (
     "听见没有呀",
     "这回听清楚",
@@ -164,7 +168,9 @@ def _strip_extra_natural_expands(line: str) -> str:
     body = text[:-1] if tail_mark else text
     for soft in _GOLD_CHAT_EXPAND_SOFT_CLUTTER:
         body = body.replace(f"，{soft}", "").replace(soft, "")
-    bare_all = [clause.lstrip("，,") for clause in _GOLD_CHAT_NATURAL_EXPAND]
+    bare_all = [
+        clause.lstrip("，,") for clause in _GOLD_CHAT_LEGACY_ATTITUDE_EXPAND
+    ]
     for bare in bare_all:
         while body.count(bare) > 1:
             body = body.replace(bare, "", 1)
@@ -261,7 +267,10 @@ def patch_strip_all_natural_expands(
         tail_mark = old[-1] if old[-1] in "！。？…!" else ""
         body = old[:-1] if tail_mark else old
         for bare in sorted(
-            [clause.lstrip("，,") for clause in _GOLD_CHAT_NATURAL_EXPAND],
+            [
+                clause.lstrip("，,")
+                for clause in _GOLD_CHAT_LEGACY_ATTITUDE_EXPAND
+            ],
             key=len,
             reverse=True,
         ):
@@ -338,7 +347,7 @@ def patch_sanitize_expand_clutter(
 
 # 差 ≤60 字本地可读扩写/粒子收口（FIX 常停在 190–220）
 GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 60
-_B_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧", "真的呀")
+_B_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧")
 _F_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧")
 # K：禁「真的呀/好不好/嘛」多轮升级成嘛呀/真的呀真的
 _K_GOLD_CHAT_PAD_TAILS = ("啊", "吧", "呀")
@@ -350,15 +359,8 @@ _C_SAFE_PAD_PHRASES = (
     "真的",
     "不行",
 )
-# 句数不足时中段插抽象反应（不写死主题物件，保 speaker 交替）
-_GOLD_CHAT_REACT_LINES: tuple[tuple[str, str], ...] = (
-    ("昭昭", "你少来这套！"),
-    ("灿灿", "少废话听我的！"),
-    ("昭昭", "我就不服！"),
-    ("灿灿", "你再闹试试！"),
-    ("昭昭", "凭什么听你的！"),
-    ("灿灿", "我说怎样就怎样！"),
-)
+# 普通类型禁止用无上下文的抬杠反应句补字；类型化中段句只走下方专用池。
+_GOLD_CHAT_REACT_LINES: tuple[tuple[str, str], ...] = ()
 # O：字数不够只插「死磕过程 / 资源溜走」实义对，禁止复用抬杠反应库
 _O_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
     (
@@ -518,6 +520,38 @@ def _j_expand_bare_allowed(bare: str, speaker: str) -> bool:
     return True
 
 
+def _pad_gold_chat_single_particle(
+    line: str,
+    need: int,
+    *,
+    used: set[str] | None = None,
+    tails: tuple[str, ...] = ("啊", "呢", "吧", "呀"),
+) -> tuple[str, int]:
+    """gold_chat 安全 near-miss：最多补一个单粒子，已有语气词绝不升级。"""
+    text = str(line or "").strip()
+    if need <= 0 or not text:
+        return text, 0
+    trail = ""
+    core = text
+    if core[-1] in "。！？…!?":
+        trail = core[-1]
+        core = core[:-1]
+    if not core or core[-1] in "啦嘛呀啊呢吧哦喔咯呗":
+        return text, 0
+    room = max(0, CHAT_MAX_LINE_CHARS - len(text))
+    if room <= 0:
+        return text, 0
+    for tail in tails:
+        if len(tail) != 1 or len(tail) > need or len(tail) > room:
+            continue
+        if used is not None and tail in used:
+            continue
+        if used is not None:
+            used.add(tail)
+        return f"{core}{tail}{trail}", 1
+    return text, 0
+
+
 def _pad_gold_chat_line(
     line: str,
     need: int,
@@ -526,9 +560,7 @@ def _pad_gold_chat_line(
     story_type: str = "",
     speaker: str = "",
 ) -> tuple[str, int]:
-    """near-miss 本地垫字：走日常故事同一套句尾垫字。"""
-    from app.services.daily_story.prompts import _pad_dialogue_line
-
+    """near-miss 本地垫字：类型专用规则优先；普通类型只补单粒子。"""
     st = str(story_type or "").strip().upper()
     if st == "C":
         s = str(line or "").strip()
@@ -562,12 +594,12 @@ def _pad_gold_chat_line(
             return core + phr + tail_mark, len(phr)
         return s, 0
     if st == "J":
-        line_out, added = _pad_dialogue_line(
-            line, need, used, tails=("啊", "吧")
+        return _pad_gold_chat_single_particle(
+            line,
+            need,
+            used=used,
+            tails=("啊", "吧"),
         )
-        if added > 0:
-            return line_out, added
-        return line, 0
     if st == "O":
         # O：优先单语气词；已有语气词则改补安全实义尾巴（禁 particle_upgrade）
         from app.services.daily_story.dialogue_text import (
@@ -615,10 +647,20 @@ def _pad_gold_chat_line(
                 return f"{core}{phr}{trail}", len(phr)
         return line, 0
     if st == "B":
-        tails = _B_GOLD_CHAT_PAD_TAILS
-    elif st == "F":
-        tails = _F_GOLD_CHAT_PAD_TAILS
-    elif st == "K":
+        return _pad_gold_chat_single_particle(
+            line,
+            need,
+            used=used,
+            tails=_B_GOLD_CHAT_PAD_TAILS,
+        )
+    if st == "F":
+        return _pad_gold_chat_single_particle(
+            line,
+            need,
+            used=used,
+            tails=_F_GOLD_CHAT_PAD_TAILS,
+        )
+    if st == "K":
         # K：只在句尾无语气词时补一个呀/啊/吧；禁止 particle_upgrade 叠成了呀
         from app.services.daily_story.dialogue_text import (
             DAILY_STORY_LINE_CHARS_MAX,
@@ -645,38 +687,11 @@ def _pad_gold_chat_line(
                 used.add(tail)
             return f"{core}{tail}{trail}", len(tail)
         return line, 0
-    else:
-        tails = None
-    line_out, added = _pad_dialogue_line(line, need, used, tails=tails)
-    if added > 0:
-        return line_out, added
-    if need <= 0:
-        return line, 0
-    from app.services.daily_story.dialogue_text import (
-        DAILY_STORY_LINE_CHARS_MAX,
-        dialogue_char_count,
+    return _pad_gold_chat_single_particle(
+        line,
+        need,
+        used=used,
     )
-
-    text = str(line or "").strip()
-    if not text:
-        return line, 0
-    trail = ""
-    core = text
-    if core[-1] in "。！？…":
-        trail = core[-1]
-        core = core[:-1]
-    room = max(0, DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(text))
-    for phr in _C_SAFE_PAD_PHRASES:
-        if used is not None and phr in used:
-            continue
-        if core.endswith(phr):
-            continue
-        if len(phr) > room or len(phr) > need:
-            continue
-        if used is not None:
-            used.add(phr)
-        return f"{core}{phr}{trail}", len(phr)
-    return line, 0
 
 
 def _o_goal_punch_index(dialogue: list[Any]) -> int:

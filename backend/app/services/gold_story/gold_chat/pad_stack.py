@@ -23,6 +23,8 @@ RE_PARTICLE_STACK = re.compile(
     r"嘛呀[！。？…!?]|了呢呀|了呢了呀|"
     r"不懂你呢|你真是的呢|"
     r"了呀呢|好不好了呀|着呢了呀|"
+    r"嘛真的(?:吧|呢|呀)(?=[！。？…!?]|$)|"
+    r"咯(?:呢|吧|呀|啊)(?=[！。？…!?]|$)|"
     r"真的了呢|真的了吧|不行了吧真的|了吧真的了|不行了吧|吧真的了呢",
 )
 
@@ -102,6 +104,17 @@ def _strip_statement_haobu_tail(line: str) -> str:
 def sanitize_pad_stack_line(line: str) -> str:
     """机械去叠语气词；陈述句「…成功好不好呀。」去强接尾巴。"""
     out = _strip_statement_haobu_tail(line)
+    # 句尾混合粒子统一降成一个原始语气词，避免「嘛真的吧 / 咯呢」类机械补字。
+    out = re.sub(
+        r"嘛真的(?:吧|呢|呀)([！。？…!?]?)$",
+        r"嘛\1",
+        out,
+    )
+    out = re.sub(
+        r"咯(?:呢|吧|呀|啊)([！。？…!?]?)$",
+        r"咯\1",
+        out,
+    )
     out = re.sub(r"不行了呢([！。？…!?]?)$", r"不行\1", out)
     out = re.sub(r"([^不])了呢([！。？…!?])$", r"\1\2", out)
     for old, new in (

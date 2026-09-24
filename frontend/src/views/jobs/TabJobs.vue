@@ -55,12 +55,12 @@
           {{ formatJobDuration(row) }}
         </template>
       </el-table-column>
-      <el-table-column label="更新时间" width="180">
+      <el-table-column label="更新时间" width="160">
         <template #default="{ row }">
           {{ formatDateTime(row.updated_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="发布时间" width="180">
+      <el-table-column label="发布时间" width="160">
         <template #default="{ row }">
           {{ formatDateTime(row.published_at) }}
         </template>
