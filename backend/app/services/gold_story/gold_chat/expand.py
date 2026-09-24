@@ -126,6 +126,7 @@ from app.services.gold_story.gold_chat.repair import (
     is_expand_short_only_repair,
     list_short_spot_editable_line_nos,
 )
+from app.services.gold_story.gold_chat.validate import opening_causality_passes
 
 logger = logging.getLogger(__name__)
 
@@ -1863,9 +1864,22 @@ def gold_story_to_gold_chat(
                 short_only = is_expand_short_only_repair(
                     mode_errors, structure_gate_ok=structure_gate_ok,
                 )
+                beat_chain_raw = scene_contract.get("beat_chain")
+                beat_chain_for_open = (
+                    beat_chain_raw if isinstance(beat_chain_raw, list) else None
+                )
+                opening_ok = opening_causality_passes(
+                    chat,
+                    beat_chain_for_open,
+                    mom_lines_max=mom_int,
+                )
+                if short_only and not opening_ok:
+                    short_only = False
                 try:
                     if short_only:
-                        editable = list_short_spot_editable_line_nos(chat)
+                        editable = list_short_spot_editable_line_nos(
+                            chat, freeze_opening=opening_ok,
+                        )
                         spot_fb = build_short_only_spot_fix_feedback(
                             chat,
                             validation_errors=feedback_errors,

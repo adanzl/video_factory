@@ -776,3 +776,124 @@ def test_gold_chat_polish_flags_intra_line_oral_repeat():
     }
     kinds = [it["kind"] for it in collect_gold_chat_polish_issues(story)]
     assert "句内重复" in kinds
+
+
+_HOMEWORK_OPENING_BEAT = [
+    {"beat": 1, "speaker": "妈妈", "intent": "责备：作业还没写"},
+    {"beat": 2, "speaker": "灿灿", "intent": "辩解：忘了本来就要写"},
+    {"beat": 3, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
+]
+
+
+def _opening_causality_story(
+    dialogue: list[dict[str, str]],
+    *,
+    setting: str = "晚饭后姐弟在客厅写功课。",
+) -> dict:
+    return {
+        "gold_beat_chain": _HOMEWORK_OPENING_BEAT,
+        "setting": setting,
+        "dialogue": dialogue,
+    }
+
+
+def test_opening_causality_blocks_defend_without_parent_trigger():
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_hard_errors,
+        collect_opening_causality_issues,
+    )
+
+    story = _opening_causality_story(
+        [
+            {"speaker": "灿灿", "line": "我本来就要写，就是忘了带本子嘛！"},
+            {"speaker": "昭昭", "line": "要不你先打我一下，划算不？"},
+            {"speaker": "灿灿", "line": "别闹了，我还得找作业本。"},
+        ],
+    )
+    issues = collect_opening_causality_issues(story)
+    assert issues
+    errs = collect_opening_causality_hard_errors(story)
+    assert errs and all(e.startswith("opening_causality:") for e in errs)
+    assert any("妈妈" in str(i.get("desc") or "") for i in issues)
+
+
+def test_opening_causality_parent_blame_in_setting_not_dialogue():
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+    )
+
+    story = _opening_causality_story(
+        [
+            {"speaker": "灿灿", "line": "马上去写，你别催我嘛！"},
+            {"speaker": "昭昭", "line": "姐姐你先别哭，我帮你找本子。"},
+            {"speaker": "灿灿", "line": "找到了，我这就写。"},
+        ],
+        setting="妈妈刚才责备灿灿作业还没写，气氛很紧张。",
+    )
+    issues = collect_opening_causality_issues(story)
+    assert issues
+    assert any("setting" in str(i.get("desc") or "") for i in issues)
+
+
+def test_opening_causality_passes_trigger_before_defend():
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        opening_causality_passes,
+    )
+
+    story = _opening_causality_story(
+        [
+            {"speaker": "妈妈", "line": "怎么作业还没写？别磨蹭了！"},
+            {"speaker": "灿灿", "line": "我本来就要写，就是忘带本子嘛！"},
+            {"speaker": "昭昭", "line": "要不你先摸我一下，划算不？"},
+            {"speaker": "灿灿", "line": "别闹，我还得赶紧写。"},
+        ],
+    )
+    assert opening_causality_passes(story)
+    assert not collect_opening_causality_issues(story)
+
+
+_MOM_ZHAO_MOM_OPENING_BEAT = [
+    {"beat": 1, "speaker": "妈妈", "intent": "责备：作业还没写"},
+    {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
+    {"beat": 3, "speaker": "妈妈", "intent": "愣住：接不住离谱话"},
+]
+
+
+def test_opening_causality_mom_blame_zhao_interrupt_mom_stun_ok():
+    """妈妈→昭昭→妈妈 开场（#96 类），首句责备不得误判为愣住。"""
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        opening_causality_passes,
+    )
+
+    story = {
+        "gold_beat_chain": _MOM_ZHAO_MOM_OPENING_BEAT,
+        "setting": "晚饭后客厅，姐弟在写功课。",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "怎么作业还没写？别磨蹭了！"},
+            {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+            {"speaker": "妈妈", "line": "你……你这孩子，我一时接不住话。"},
+            {"speaker": "灿灿", "line": "姐你别闹，我还得找作业本呢。"},
+        ],
+    }
+    assert opening_causality_passes(story)
+    assert not collect_opening_causality_issues(story)
+
+
+def test_short_spot_unfreezes_head_when_opening_not_ok():
+    from app.services.gold_story.gold_chat.repair import list_short_spot_editable_line_nos
+
+    dialogue = [
+        {"speaker": "灿灿", "line": "我本来就要写嘛。"},
+        {"speaker": "昭昭", "line": "姐姐别急。"},
+        {"speaker": "灿灿", "line": "我还得找本子。"},
+        {"speaker": "昭昭", "line": "我帮你翻书包。"},
+        {"speaker": "灿灿", "line": "找到了。"},
+        {"speaker": "昭昭", "line": "快去写吧。"},
+    ]
+    chat = {"dialogue": dialogue}
+    frozen = list_short_spot_editable_line_nos(chat, freeze_opening=True)
+    unfrozen = list_short_spot_editable_line_nos(chat, freeze_opening=False)
+    assert 1 not in frozen
+    assert 1 in unfrozen

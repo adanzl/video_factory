@@ -31,6 +31,8 @@ from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
 from app.services.gold_story.gold_chat.finalize import (
     GoldChatAcceptanceBlocked,
     GoldChatAcceptanceIncomplete,
+    GoldChatValidationRepairableError,
+    _is_export_repairable,
     run_gold_chat_final_acceptance,
     run_gold_chat_final_acceptance_with_semantic_repair,
 )
@@ -38,6 +40,78 @@ from app.services.gold_story.gold_chat.finalize import (
 
 def _story(dialogue: list[dict[str, str]]) -> dict:
     return {"dialogue": dialogue, "quality": {"structure_score": 76, "score": 76}}
+
+
+_MOM_ZHAO_MOM_OPENING_BEAT = [
+    {"beat": 1, "speaker": "妈妈", "intent": "责备：作业还没写"},
+    {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
+    {"beat": 3, "speaker": "妈妈", "intent": "愣住：接不住离谱话"},
+]
+
+
+def test_export_repairable_includes_opening_causality_validation_error():
+    exc = GoldChatValidationRepairableError(
+        "opening_causality:缺 beat=1 责备：作业还没写；对白以 beat=2 起跳",
+    )
+    assert _is_export_repairable(exc)
+
+
+@patch("app.services.daily_story.review.run_export_semantic_review")
+def test_final_acceptance_opening_causality_enters_repair(mock_review):
+    mock_review.return_value = ExportSemanticReviewResult(
+        completed=True,
+        issues=[],
+        humor=None,
+        error=None,
+    )
+    beat = _MOM_ZHAO_MOM_OPENING_BEAT
+    row = {
+        "title": "测试",
+        "structure_type": "N",
+        "payload": {
+            "scene_contract": {"beat_chain": beat, "mom_lines_max": 2},
+        },
+    }
+    bad = _story(
+        [
+            {"speaker": "灿灿", "line": "我本来就要写，就是忘了嘛！"},
+            {"speaker": "昭昭", "line": "姐姐你别催我嘛。"},
+        ],
+    )
+    bad["gold_beat_chain"] = beat
+    good_dialogue = [
+        {"speaker": "妈妈", "line": "怎么作业还没写？别磨蹭！"},
+        {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+        {"speaker": "妈妈", "line": "你……我一时接不住话。"},
+        {"speaker": "灿灿", "line": "姐你别闹，我还得写作业。"},
+    ]
+    fix_calls: list[str] = []
+
+    def fix_llm(chat, fb, **_kw):
+        fix_calls.append(fb)
+        out = dict(chat)
+        out["dialogue"] = good_dialogue
+        return out
+
+    out, struct = run_gold_chat_final_acceptance_with_semantic_repair(
+        bad,
+        row,
+        sid="BV_TEST",
+        st_final="N",
+        banned=[],
+        mom_max=2,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fix_llm,
+        validate_chat=lambda _c: None,
+        max_repairs=2,
+    )
+    assert struct == 80
+    assert fix_calls
+    assert any("opening_causality:" in fb for fb in fix_calls)
+    assert mock_review.called
 
 
 def test_cancan_ge_direct_address_blocks():

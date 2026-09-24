@@ -1635,6 +1635,348 @@ def _line_lens(dialogue: list[Any]) -> list[int]:
     ]
 
 
+_RE_INTENT_TRIGGER = re.compile(
+    r"责备|批评|指责|质问|训斥|催促|责骂|立规|约好|紧张|冲突",
+)
+_RE_INTENT_INTERRUPT = re.compile(r"插嘴|打断|岔|救场|转移|离谱|请求|打岔")
+_RE_INTENT_DEFEND = re.compile(r"辩解|推托|忘|本来|没做|没写|推脱|借口")
+_RE_INTENT_STUN = re.compile(r"愣|停|放下|叹气|接不住|傻眼")
+_RE_PARENT_TRIGGER_LINE = re.compile(
+    r"(?:怎么|为什么|又|还不|还没有|别(?:闹|皮|吵|糊弄)|"
+    r"你说什么|气死|烦死|像什么话|不像话)",
+)
+_RE_DEFEND_LINE = re.compile(
+    r"本来|忘了|就是没|还没|得写|要写|马上去|这就去|打算写",
+)
+_RE_INTERRUPT_OFFER_LINE = re.compile(
+    r"(?:你(?:先|来)|试试|摸(?:摸)?|打(?:我|一下)|划算|Q弹|屁股|"
+    r"我(?:来|给)|要不)",
+)
+_RE_STUN_LINE = re.compile(
+    r"(?:愣(?:住|了|神)?|傻眼|接不住|说不出|语塞|一时|"
+    r"(?:叹|沉)|(?:放|搁)下(?:筷|碗|笔|手))",
+)
+_OPENING_INTENT_STOP = frozenset(
+    {
+        "气氛",
+        "认真",
+        "提出",
+        "自己",
+        "批评",
+        "责骂",
+        "紧张",
+        "已经",
+        "开始",
+        "场面",
+        "打断",
+        "请求",
+    },
+)
+
+
+def resolve_story_beat_chain(story: dict[str, Any]) -> list[Any]:
+    chain = story.get("gold_beat_chain")
+    if isinstance(chain, list) and chain:
+        return chain
+    sc = story.get("scene_contract")
+    if isinstance(sc, dict):
+        nested = sc.get("beat_chain")
+        if isinstance(nested, list) and nested:
+            return nested
+    return []
+
+
+def _beat_chain_entries(chain: list[Any]) -> list[tuple[int, dict[str, Any]]]:
+    out: list[tuple[int, dict[str, Any]]] = []
+    for index, item in enumerate(chain, 1):
+        if not isinstance(item, dict):
+            continue
+        beat_no = item.get("beat")
+        if isinstance(beat_no, int) and beat_no > 0:
+            out.append((beat_no, item))
+        else:
+            out.append((index, item))
+    return out
+
+
+def _intent_speech_acts(intent: str) -> set[str]:
+    text = str(intent or "")
+    acts: set[str] = set()
+    if _RE_INTENT_TRIGGER.search(text):
+        acts.add("trigger")
+    if _RE_INTENT_INTERRUPT.search(text):
+        acts.add("interrupt")
+    if _RE_INTENT_DEFEND.search(text):
+        acts.add("defend")
+    if _RE_INTENT_STUN.search(text):
+        acts.add("stun")
+    return acts
+
+
+def _intent_anchor_tokens(intent: str) -> list[str]:
+    body = str(intent or "").split("：", 1)[-1].strip()
+    parts = re.findall(r"[\u4e00-\u9fff]{2,}", body)
+    return [p for p in parts if p not in _OPENING_INTENT_STOP][:6]
+
+
+def _line_fulfills_beat(
+    speaker: str,
+    line: str,
+    entry: dict[str, Any],
+) -> bool:
+    expected = str(entry.get("speaker") or "").strip()
+    if not expected or speaker != expected:
+        return False
+    intent = str(entry.get("intent") or entry.get("beat") or "")
+    line = str(line or "").strip()
+    if not line:
+        return False
+    anchors = _intent_anchor_tokens(intent)
+    if anchors and any(token in line for token in anchors):
+        return True
+    acts = _intent_speech_acts(intent)
+    if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
+        return bool(_RE_PARENT_TRIGGER_LINE.search(line))
+    if "defend" in acts and speaker in {"昭昭", "灿灿"}:
+        return bool(_RE_DEFEND_LINE.search(line))
+    if "interrupt" in acts and speaker in {"昭昭", "灿灿"}:
+        return bool(_RE_INTERRUPT_OFFER_LINE.search(line))
+    if "stun" in acts:
+        if anchors and any(token in line for token in anchors):
+            return True
+        return bool(_RE_STUN_LINE.search(line))
+    if "defend" in acts and speaker in {"妈妈", "爸爸"}:
+        return False
+    return False
+
+
+def _fulfill_beats_in_dialogue_order(
+    rows: list[dict[str, Any]],
+    entries: list[tuple[int, dict[str, Any]]],
+) -> dict[int, int]:
+    """按 beat 顺序扫描对白：一句不能同时充当后序 beat（如责备兼愣住）。"""
+    found: dict[int, int] = {}
+    beat_idx = 0
+    for line_no, row in enumerate(rows, 1):
+        if beat_idx >= len(entries):
+            break
+        speaker = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if not line:
+            continue
+        beat_no, entry = entries[beat_idx]
+        if _line_fulfills_beat(speaker, line, entry):
+            found[beat_no] = line_no
+            beat_idx += 1
+    return found
+
+
+def _beat_summary(entry: dict[str, Any], beat_no: int) -> str:
+    speaker = str(entry.get("speaker") or "").strip() or "?"
+    intent = str(entry.get("intent") or entry.get("beat") or "").strip()
+    head = f"beat={beat_no}·{speaker}"
+    return f"{head}（{intent}）" if intent else head
+
+
+def collect_opening_causality_issues(
+    story: dict[str, Any],
+    beat_chain: list[Any] | None = None,
+    *,
+    mom_lines_max: int | None = None,
+) -> list[dict[str, Any]]:
+    """开场因果：beat_chain 前段须在可见对白中按序落地，setting 不算。"""
+    chain = beat_chain if isinstance(beat_chain, list) else resolve_story_beat_chain(story)
+    if len(chain) < 2:
+        return []
+    rows = _dialogue_rows(story)
+    if not rows:
+        return []
+
+    entries = _beat_chain_entries(chain)
+    opening = entries[: min(3, len(entries))]
+    if len(opening) < 2:
+        return []
+
+    fulfilled = _fulfill_beats_in_dialogue_order(rows, opening)
+    mom_max = 1 if mom_lines_max is None else max(0, int(mom_lines_max))
+    mom_count = sum(
+        1 for row in rows if str(row.get("speaker") or "").strip() == "妈妈"
+    )
+    mom_quota_full = mom_count >= mom_max and mom_max >= 0
+
+    issues: list[dict[str, Any]] = []
+
+    def _quota_fix(base: str) -> str:
+        if not mom_quota_full:
+            return base
+        return (
+            f"{base}；妈妈额度已满，压缩后段非必要妈妈句/重复收场，"
+            "在前段对白补触发事件（勿写进 setting）"
+        )
+
+    # 首句若是后序 beat 的辩解/插嘴，而触发 beat 尚未出现 → 硬拦
+    first_row = rows[0]
+    first_sp = str(first_row.get("speaker") or "").strip()
+    first_line = str(first_row.get("line") or "").strip()
+    beat1_no, beat1_entry = opening[0]
+    beat2_no, beat2_entry = opening[1]
+    beat1_acts = _intent_speech_acts(str(beat1_entry.get("intent") or ""))
+    if "trigger" in beat1_acts:
+        first_is_later_reaction = (
+            _line_fulfills_beat(first_sp, first_line, beat2_entry)
+            or (
+                first_sp in {"昭昭", "灿灿"}
+                and _RE_DEFEND_LINE.search(first_line)
+                and beat1_no not in fulfilled
+            )
+        )
+        if first_is_later_reaction:
+            issues.append(
+                {
+                    "lines": [1],
+                    "kind": "开场因果",
+                    "desc": (
+                        f"对白以{_beat_summary(beat2_entry, beat2_no)}起跳，"
+                        f"未见{_beat_summary(beat1_entry, beat1_no)}；"
+                        "setting 不算开场"
+                    ),
+                    "fix": _quota_fix(
+                        f"在第1句前插入或由{beat1_entry.get('speaker')}说出"
+                        f"触发事件（{beat1_entry.get('intent')}），"
+                        f"须早于{beat2_entry.get('speaker')}的后续反应",
+                    ),
+                    "missing_beat": {
+                        "beat": beat1_no,
+                        "intent": str(beat1_entry.get("intent") or "").strip(),
+                    },
+                    "before_reaction_beat": beat2_no,
+                    "before_line_no": 1,
+                },
+            )
+
+    for idx in range(len(opening) - 1):
+        beat_i_no, beat_i = opening[idx]
+        beat_j_no, beat_j = opening[idx + 1]
+        line_i = fulfilled.get(beat_i_no)
+        line_j = fulfilled.get(beat_j_no)
+        if line_j is None:
+            continue
+        if line_i is None:
+            issues.append(
+                {
+                    "lines": [line_j],
+                    "kind": "开场因果",
+                    "desc": (
+                        f"第{line_j}句已出现{_beat_summary(beat_j, beat_j_no)}，"
+                        f"但缺少{_beat_summary(beat_i, beat_i_no)}"
+                    ),
+                    "fix": _quota_fix(
+                        f"在第{line_j}句之前补{_beat_summary(beat_i, beat_i_no)}，"
+                        f"由{beat_i.get('speaker')}当场说出，勿写进 setting",
+                    ),
+                    "missing_beat": {
+                        "beat": beat_i_no,
+                        "intent": str(beat_i.get("intent") or "").strip(),
+                    },
+                    "before_reaction_beat": beat_j_no,
+                    "before_line_no": line_j,
+                },
+            )
+            continue
+        if not _line_fulfills_beat(
+            str(rows[line_i - 1].get("speaker") or "").strip(),
+            str(rows[line_i - 1].get("line") or "").strip(),
+            beat_i,
+        ):
+            issues.append(
+                {
+                    "lines": [line_i],
+                    "kind": "开场因果",
+                    "desc": (
+                        f"第{line_i}句 speaker 为{rows[line_i - 1].get('speaker')}，"
+                        f"但未体现{_beat_summary(beat_i, beat_i_no)}"
+                    ),
+                    "fix": _quota_fix(
+                        f"改写第{line_i}句或在其前插入，使{beat_i.get('speaker')}"
+                        f"说出触发（{beat_i.get('intent')}）",
+                    ),
+                    "missing_beat": {
+                        "beat": beat_i_no,
+                        "intent": str(beat_i.get("intent") or "").strip(),
+                    },
+                    "before_reaction_beat": beat_j_no,
+                    "before_line_no": line_j,
+                },
+            )
+            continue
+        if line_i >= line_j:
+            issues.append(
+                {
+                    "lines": [line_j],
+                    "kind": "开场因果",
+                    "desc": (
+                        f"{_beat_summary(beat_j, beat_j_no)}在第{line_j}句，"
+                        f"不晚于{_beat_summary(beat_i, beat_i_no)}（第{line_i}句）"
+                    ),
+                    "fix": _quota_fix(
+                        f"将{_beat_summary(beat_i, beat_i_no)}移到第{line_j}句之前，"
+                        f"再保留{_beat_summary(beat_j, beat_j_no)}",
+                    ),
+                    "missing_beat": {
+                        "beat": beat_i_no,
+                        "intent": str(beat_i.get("intent") or "").strip(),
+                    },
+                    "before_reaction_beat": beat_j_no,
+                    "before_line_no": line_j,
+                },
+            )
+    return issues
+
+
+def format_opening_causality_hard_error(issue: dict[str, Any]) -> str:
+    desc = str(issue.get("desc") or "").strip()
+    mb = issue.get("missing_beat")
+    if isinstance(mb, dict):
+        beat = mb.get("beat")
+        intent = str(mb.get("intent") or "").strip()
+        before = issue.get("before_reaction_beat")
+        before_line = issue.get("before_line_no")
+        extra = f"缺 beat={beat} {intent}".strip()
+        if before is not None:
+            extra += f"，须早于 beat={before}"
+        if before_line is not None:
+            extra += f"（第{before_line}句前）"
+        return f"opening_causality:{extra}；{desc}"
+    return f"opening_causality:{desc}"
+
+
+def collect_opening_causality_hard_errors(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    mom_lines_max: int | None = None,
+) -> list[str]:
+    return [
+        format_opening_causality_hard_error(item)
+        for item in collect_opening_causality_issues(
+            story,
+            beat_chain,
+            mom_lines_max=mom_lines_max,
+        )
+    ]
+
+
+def opening_causality_passes(
+    story: dict[str, Any],
+    beat_chain: list[Any] | None = None,
+    *,
+    mom_lines_max: int | None = None,
+) -> bool:
+    return not collect_opening_causality_issues(
+        story, beat_chain, mom_lines_max=mom_lines_max,
+    )
+
+
 def validate_chat_hard(
     story: dict[str, Any],
     *,
@@ -1740,4 +2082,10 @@ def validate_chat_hard(
     from app.services.gold_story.scene import collect_narration_dialogue_errors
 
     errors.extend(collect_narration_dialogue_errors(dialogue if isinstance(dialogue, list) else []))
+    errors.extend(
+        collect_opening_causality_hard_errors(
+            story,
+            mom_lines_max=mom_max,
+        ),
+    )
     return errors
