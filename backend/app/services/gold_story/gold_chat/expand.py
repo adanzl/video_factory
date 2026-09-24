@@ -1268,12 +1268,68 @@ def _ensure_gold_chat_punchline_explain(
     out["punchline_explain"] = normalize_punchline_explain(raw, st)
     return out
 
+def _restore_extra_parent_speakers_from_baseline(
+    draft: dict[str, Any],
+    baseline: dict[str, Any],
+    *,
+    parent_lines_max: int,
+) -> tuple[dict[str, Any], bool]:
+    """结构修稿只把原姐弟槽改成家长时，按 baseline 还原 speaker，避免删正文。"""
+    import copy
+
+    rows = draft.get("dialogue")
+    base_rows = baseline.get("dialogue")
+    if not isinstance(rows, list) or not isinstance(base_rows, list):
+        return draft, False
+    if len(rows) != len(base_rows):
+        return draft, False
+
+    parents = {"妈妈", "爸爸"}
+    siblings = {"昭昭", "灿灿"}
+    base_parent_n = sum(
+        1
+        for item in base_rows
+        if isinstance(item, dict)
+        and str(item.get("speaker") or "").strip() in parents
+    )
+    draft_parent_n = sum(
+        1
+        for item in rows
+        if isinstance(item, dict)
+        and str(item.get("speaker") or "").strip() in parents
+    )
+    target = min(max(0, int(parent_lines_max)), base_parent_n)
+    if draft_parent_n <= target:
+        return draft, False
+
+    out = copy.deepcopy(draft)
+    out_rows = out.get("dialogue")
+    if not isinstance(out_rows, list):
+        return draft, False
+    changed = False
+    current = draft_parent_n
+    for base_item, item in zip(base_rows, out_rows, strict=False):
+        if current <= target:
+            break
+        if not isinstance(base_item, dict) or not isinstance(item, dict):
+            continue
+        base_speaker = str(base_item.get("speaker") or "").strip()
+        draft_speaker = str(item.get("speaker") or "").strip()
+        if draft_speaker not in parents or base_speaker not in siblings:
+            continue
+        item["speaker"] = base_speaker
+        current -= 1
+        changed = True
+    return (out, True) if changed else (draft, False)
+
+
 def _trim_gold_chat_mom_lines(
     story: dict[str, Any],
     *,
     mom_lines_max: int = 1,
+    structure_type: str = "",
 ) -> tuple[dict[str, Any], bool]:
-    """妈妈句超限：先合并连续妈妈句，再保留末尾相关句至上限。"""
+    """妈妈句超限：先合并连续句；N 类保护关键追问，其余优先保留末段。"""
     import copy
 
     mom_max = max(0, int(mom_lines_max))
@@ -1335,8 +1391,29 @@ def _trim_gold_chat_mom_lines(
     if len(mom_idxs) <= mom_max:
         return (out, changed) if changed else (story, False)
 
-    # 超限：保留最后 mom_max 句妈妈台词（收束常在末段）
-    drop = set(mom_idxs[:-mom_max])
+    # 超限：默认保留最后 mom_max 句（收束常在末段）。
+    # N 类额外保护「为什么/为啥」追问妈妈句；否则机械裁最前一句会直接拆掉
+    # 「追问→因果回答」契约，后续本地实义补位也失去锚点。
+    protected: list[int] = []
+    if str(structure_type or "").strip().upper() == "N":
+        from app.services.daily_story.story_types.n.validate import RE_WHY
+
+        protected = [
+            idx
+            for idx in mom_idxs
+            if isinstance(dialogue[idx], dict)
+            and RE_WHY.search(str(dialogue[idx].get("line") or ""))
+        ][:1]
+
+    keep: list[int] = list(protected)
+    for idx in reversed(mom_idxs):
+        if idx in keep:
+            continue
+        if len(keep) >= mom_max:
+            break
+        keep.append(idx)
+    keep_set = set(keep[:mom_max])
+    drop = set(mom_idxs) - keep_set
     out["dialogue"] = [
         item for idx, item in enumerate(dialogue) if idx not in drop
     ]
@@ -1352,7 +1429,11 @@ def _apply_gold_chat_local_hard_repairs(
     data = _ensure_gold_chat_punchline_explain(
         story, structure_type=structure_type
     )
-    data, _ = _trim_gold_chat_mom_lines(data, mom_lines_max=mom_lines_max)
+    data, _ = _trim_gold_chat_mom_lines(
+        data,
+        mom_lines_max=mom_lines_max,
+        structure_type=structure_type,
+    )
     return data
 
 def _short_content_reject_message(detail: str, *, regen_count: int = 0) -> str:
@@ -2037,6 +2118,75 @@ def gold_story_to_gold_chat(
                         )
                         if conflict_core:
                             draft["conflict_core"] = conflict_core
+                        # 整稿结构修订同样必须先恢复本地硬约束再验收。
+                        # 否则 LLM 为补结构新增第 4 句妈妈时，会先被 acceptance 拒稿，
+                        # 回滚到原 65 分候选后再烧一次共享 repair budget。
+                        # 若整稿修订只是把原有姐弟槽误改成家长 speaker，优先按 baseline
+                        # 还原角色，不删台词；只有真实新增/重排的家长句才交给 hard trim。
+                        before_parent = sum(
+                            1
+                            for item in (draft.get("dialogue") or [])
+                            if isinstance(item, dict)
+                            and str(item.get("speaker") or "").strip() in {"妈妈", "爸爸"}
+                        )
+                        draft, parent_restored = _restore_extra_parent_speakers_from_baseline(
+                            draft,
+                            baseline,
+                            parent_lines_max=mom_int,
+                        )
+                        if parent_restored:
+                            after_parent = sum(
+                                1
+                                for item in (draft.get("dialogue") or [])
+                                if isinstance(item, dict)
+                                and str(item.get("speaker") or "").strip() in {"妈妈", "爸爸"}
+                            )
+                            logger.info(
+                                "gold_chat expand_structure repair restore parent speaker=%s->%s max=%s",
+                                before_parent,
+                                after_parent,
+                                mom_int,
+                            )
+
+                        before_mom = sum(
+                            1
+                            for item in (draft.get("dialogue") or [])
+                            if isinstance(item, dict)
+                            and str(item.get("speaker") or "").strip() == "妈妈"
+                        )
+                        draft = _apply_gold_chat_local_hard_repairs(
+                            draft,
+                            structure_type=structure_type,
+                            mom_lines_max=mom_int,
+                        )
+                        after_mom = sum(
+                            1
+                            for item in (draft.get("dialogue") or [])
+                            if isinstance(item, dict)
+                            and str(item.get("speaker") or "").strip() == "妈妈"
+                        )
+                        if after_mom != before_mom:
+                            logger.info(
+                                "gold_chat expand_structure repair local hard close mom=%s->%s max=%s",
+                                before_mom,
+                                after_mom,
+                                mom_int,
+                            )
+
+                        # hard repair（尤其妈妈 4→3）可能顺手删掉十几字；这个副作用属于
+                        # 同一次结构修稿，必须在 acceptance 前本地恢复，不能再占下一次预算。
+                        before_reclose_chars = dialogue_total_chars(draft)
+                        draft, reclosed = _stabilize_local_length_candidate(
+                            draft,
+                            structure_type=structure_type,
+                            mechanism=mechanism,
+                        )
+                        if reclosed:
+                            logger.info(
+                                "gold_chat expand_structure repair post-hard length close chars=%s->%s",
+                                before_reclose_chars,
+                                dialogue_total_chars(draft),
+                            )
                 except ValueError as exc:
                     repair_error = str(exc)
                     chat = baseline
