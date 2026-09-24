@@ -2082,8 +2082,14 @@ def _intent_to_blame_opening_line(intent: str, story: dict[str, Any]) -> str:
     from app.services.gold_story.gold_chat.validate import _RE_BLAME_LINE
 
     text = str(intent or "").strip()
+    intent_tag = text.split("：", 1)[0].strip()
     text = re.sub(r"^责备[：:]", "", text).strip()
     text = re.sub(r"^批评[：:]", "", text).strip()
+    text = re.sub(r"^立规[：:]", "", text).strip()
+    if re.search(r"立规|约好|规定|规矩", intent_tag) and not (
+        "作业" in text or "没写" in text or "没做" in text
+    ):
+        return _intent_to_rule_line(intent)
     text = re.sub(r"[，,]?气氛紧张", "", text).strip()
     core = str(story.get("conflict_core") or "")
     blob = f"{text}{core}"

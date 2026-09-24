@@ -1639,6 +1639,7 @@ _RE_INTENT_TRIGGER = re.compile(
     r"责备|批评|指责|质问|训斥|催促|责骂|立规|约好|紧张|冲突",
 )
 _RE_INTENT_BLAME = re.compile(r"责备|批评|指责|训斥|责骂")
+_RE_INTENT_RULE = re.compile(r"立规|约好|规定|规矩|定规|说好|约定")
 _RE_INTENT_INTERRUPT = re.compile(r"插嘴|打断|岔|救场|转移|离谱|请求|打岔")
 _RE_INTENT_DEFEND = re.compile(r"辩解|推托|忘|本来|没做|没写|推脱|借口")
 _RE_INTENT_STUN = re.compile(r"愣|停|放下|叹气|接不住|傻眼")
@@ -1762,8 +1763,8 @@ def _line_fulfills_beat(
         return True
     acts = _intent_speech_acts(intent)
     if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
-        blame_tag = str(intent or "").split("：", 1)[0]
-        if _RE_INTENT_BLAME.search(blame_tag):
+        intent_tag = str(intent or "").split("：", 1)[0]
+        if _RE_INTENT_BLAME.search(intent_tag):
             if _RE_STUN_REACT_LINE.search(line) and not _RE_BLAME_LINE.search(line):
                 return False
             if anchors and any(token in line for token in anchors):
@@ -1772,6 +1773,8 @@ def _line_fulfills_beat(
                 _RE_BLAME_LINE.search(line)
                 or _RE_PARENT_TRIGGER_LINE.search(line)
             )
+        if _RE_INTENT_RULE.search(intent_tag):
+            return bool(RE_AUTH_RULE_SLOT.search(line))
         return bool(_RE_PARENT_TRIGGER_LINE.search(line))
     if "defend" in acts and speaker in {"昭昭", "灿灿"}:
         return bool(_RE_DEFEND_LINE.search(line))
