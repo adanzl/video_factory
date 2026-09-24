@@ -29,6 +29,7 @@ from app.services.gold_story.gold_chat.length import (
     _j_lose_line_index,
     _overlong_line_indices,
     _pad_gold_chat_to_min_chars,
+    _stabilize_local_length_candidate,
     patch_sanitize_bridge_lines,
     patch_sanitize_c_tone_stack,
     patch_sanitize_expand_clutter,
@@ -1845,6 +1846,39 @@ def gold_story_to_gold_chat(
                     candidate_errors.append(str(gate_exc))
                 if not candidate_errors:
                     return chat
+
+                # post-align / type patch 可能把已达标正文重新压短；机械门槛先本地收口，
+                # 再完整复验。只有剩余真实结构问题才允许消耗共享 repair budget。
+                before_local_chars = dialogue_total_chars(chat)
+                local_closed, local_length_changed = _stabilize_local_length_candidate(
+                    chat,
+                    structure_type=structure_type,
+                    mechanism=mechanism,
+                )
+                if local_length_changed:
+                    chat, candidate_errors = prepare_candidate_for_acceptance(
+                        local_closed,
+                        mom_lines_max=mom_int,
+                        banned_literals=banned_list,
+                    )
+                    chat = _attach_gold_chat_structure_score(chat, row)
+                    structure_gate_ok = True
+                    try:
+                        _gate_gold_chat_structure_score(chat)
+                    except ValueError as gate_exc:
+                        structure_gate_ok = False
+                        candidate_errors.append(str(gate_exc))
+                    logger.info(
+                        "gold_chat expand_structure local length close chars=%s->%s "
+                        "score=%s remaining_errors=%s",
+                        before_local_chars,
+                        dialogue_total_chars(chat),
+                        (chat.get("quality") or {}).get("structure_score"),
+                        "；".join(candidate_errors[:4]) or "none",
+                    )
+                    if not candidate_errors:
+                        return chat
+
                 mode_errors = list(candidate_errors)
                 feedback_errors = list(candidate_errors)
                 if repair_error:
