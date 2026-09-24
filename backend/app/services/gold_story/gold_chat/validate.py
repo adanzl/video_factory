@@ -1706,16 +1706,36 @@ def _beat_chain_entries(chain: list[Any]) -> list[tuple[int, dict[str, Any]]]:
 
 
 def _intent_speech_acts(intent: str) -> set[str]:
+    """优先用 intent 冒号前标签，避免「愣住：…批评」整段误标 trigger。"""
     text = str(intent or "")
+    tag = text.split("：", 1)[0].strip()
+    body = text.split("：", 1)[1].strip() if "：" in text else ""
     acts: set[str] = set()
-    if _RE_INTENT_TRIGGER.search(text):
+    if _RE_INTENT_TRIGGER.search(tag) or _RE_INTENT_BLAME.search(tag):
         acts.add("trigger")
-    if _RE_INTENT_INTERRUPT.search(text):
+    elif body and _RE_INTENT_TRIGGER.search(body) and not _RE_INTENT_STUN.search(tag):
+        acts.add("trigger")
+    if _RE_INTENT_INTERRUPT.search(tag) or (
+        body and _RE_INTENT_INTERRUPT.search(body) and not acts
+    ):
         acts.add("interrupt")
-    if _RE_INTENT_DEFEND.search(text):
+    if _RE_INTENT_DEFEND.search(tag) or (
+        body and _RE_INTENT_DEFEND.search(body) and not acts
+    ):
         acts.add("defend")
-    if _RE_INTENT_STUN.search(text):
+    if _RE_INTENT_STUN.search(tag) or (
+        body and _RE_INTENT_STUN.search(body) and "愣" in tag
+    ):
         acts.add("stun")
+    if not acts:
+        if _RE_INTENT_TRIGGER.search(text):
+            acts.add("trigger")
+        if _RE_INTENT_INTERRUPT.search(text):
+            acts.add("interrupt")
+        if _RE_INTENT_DEFEND.search(text):
+            acts.add("defend")
+        if _RE_INTENT_STUN.search(text):
+            acts.add("stun")
     return acts
 
 
@@ -1742,7 +1762,8 @@ def _line_fulfills_beat(
         return True
     acts = _intent_speech_acts(intent)
     if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
-        if _RE_INTENT_BLAME.search(intent):
+        blame_tag = str(intent or "").split("：", 1)[0]
+        if _RE_INTENT_BLAME.search(blame_tag):
             if _RE_STUN_REACT_LINE.search(line) and not _RE_BLAME_LINE.search(line):
                 return False
             if anchors and any(token in line for token in anchors):

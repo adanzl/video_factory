@@ -860,6 +860,34 @@ _MOM_ZHAO_MOM_OPENING_BEAT = [
 ]
 
 
+def test_opening_causality_local_patch_inserts_missing_mom_blame():
+    from app.services.gold_story.gold_chat.patch import (
+        apply_opening_causality_local_patch,
+    )
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "责备：批评灿灿作业没做，气氛紧张"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：凑近认真提出打自己Q弹屁股"},
+        {"beat": 3, "speaker": "妈妈", "intent": "愣住：被离谱请求打断批评"},
+    ]
+    story = {
+        "conflict_core": "灿灿作业",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我……我本来要写的，就是忘啊。"},
+            {"speaker": "昭昭", "line": "妈妈，我屁股Q弹，你打我嘛！"},
+            {"speaker": "妈妈", "line": "你说什么？手停在半空。"},
+        ],
+    }
+    fixed, ok = apply_opening_causality_local_patch(
+        story, beat_chain=beat, mom_lines_max=2,
+    )
+    assert ok
+    assert opening_causality_passes(fixed, beat, mom_lines_max=2)
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert "作业" in fixed["dialogue"][0]["line"]
+
+
 def test_opening_causality_rejects_q96_export_style_late_mom_react():
     """#96 已导出稿：灿灿辩解起跳、妈妈「你说什么」不能算首句责备。"""
     from app.services.gold_story.gold_chat.validate import (

@@ -2077,6 +2077,130 @@ def patch_authority_trim_after_cede(
     return out, True
 
 
+def _intent_to_blame_opening_line(intent: str, story: dict[str, Any]) -> str:
+    """beat1 责备 intent → 妈妈可说出口的首句（命中 blame 机读）。"""
+    from app.services.gold_story.gold_chat.validate import _RE_BLAME_LINE
+
+    text = str(intent or "").strip()
+    text = re.sub(r"^责备[：:]", "", text).strip()
+    text = re.sub(r"^批评[：:]", "", text).strip()
+    text = re.sub(r"[，,]?气氛紧张", "", text).strip()
+    core = str(story.get("conflict_core") or "")
+    blob = f"{text}{core}"
+    if "作业" in blob or "没写" in blob or "没做" in blob:
+        who = "灿灿" if "灿灿" in text or "灿灿" in core else "你"
+        return f"{who}，怎么作业还没写？别磨蹭了！"
+    if text and _RE_BLAME_LINE.search(text):
+        line = text if text.endswith(("。", "！", "？")) else f"{text}？"
+        return line[:28] + ("。" if len(line) > 28 else "")
+    if text and len(text) >= 4:
+        line = text if text.endswith(("。", "！", "？")) else f"{text}？"
+        return line[:28]
+    return "别磨蹭了，先把该做的事做完！"
+
+
+def apply_opening_causality_local_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    mom_lines_max: int | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """缺 beat_chain 首句触发时：前移已有责备句或插入首句妈妈触发。"""
+    import copy
+
+    from app.services.gold_story.gold_chat.validate import (
+        _RE_BLAME_LINE,
+        _RE_STUN_REACT_LINE,
+        _beat_chain_entries,
+        _line_fulfills_beat,
+        collect_opening_causality_issues,
+        opening_causality_passes,
+        resolve_story_beat_chain,
+    )
+
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    if len(chain) < 2:
+        return story, False
+    mom_max = 1 if mom_lines_max is None else max(0, int(mom_lines_max))
+    if opening_causality_passes(story, chain, mom_lines_max=mom_max):
+        return story, False
+    issues = collect_opening_causality_issues(story, chain, mom_lines_max=mom_max)
+    if not issues:
+        return story, False
+
+    entries = _beat_chain_entries(chain)
+    beat1_entry = entries[0][1]
+    speaker = str(beat1_entry.get("speaker") or "").strip()
+    if not speaker:
+        return story, False
+
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if not dlg:
+        return story, False
+
+    move_idx = -1
+    for i, row in enumerate(dlg):
+        if _line_fulfills_beat(
+            str(row.get("speaker") or "").strip(),
+            str(row.get("line") or "").strip(),
+            beat1_entry,
+        ):
+            move_idx = i
+            break
+
+    changed = False
+    if move_idx > 0:
+        dlg.insert(0, dlg.pop(move_idx))
+        changed = True
+    elif move_idx < 0:
+        intent = str(beat1_entry.get("intent") or "")
+        new_row = {
+            "speaker": speaker,
+            "line": _intent_to_blame_opening_line(intent, story),
+        }
+        mom_n = sum(
+            1
+            for r in dlg
+            if str(r.get("speaker") or "").strip() == speaker
+        )
+        if mom_max >= 0 and mom_n >= mom_max:
+            for j in range(len(dlg) - 1, -1, -1):
+                row = dlg[j]
+                if str(row.get("speaker") or "").strip() != speaker:
+                    continue
+                line = str(row.get("line") or "")
+                if _RE_STUN_REACT_LINE.search(line) and not _RE_BLAME_LINE.search(line):
+                    dlg.pop(j)
+                    changed = True
+                    break
+            mom_n = sum(
+                1
+                for r in dlg
+                if str(r.get("speaker") or "").strip() == speaker
+            )
+            if mom_n >= mom_max and mom_max >= 0:
+                for j in range(len(dlg) - 1, -1, -1):
+                    if str(dlg[j].get("speaker") or "").strip() == speaker:
+                        dlg.pop(j)
+                        changed = True
+                        break
+        dlg.insert(0, new_row)
+        changed = True
+
+    if not changed:
+        return story, False
+
+    out = copy.deepcopy(story)
+    out["dialogue"] = dlg
+    if opening_causality_passes(out, chain, mom_lines_max=mom_max):
+        return out, True
+    return story, False
+
+
 def apply_authority_punchline_local_patches(
     story: dict[str, Any],
     *,
