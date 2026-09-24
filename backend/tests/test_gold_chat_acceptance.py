@@ -682,6 +682,59 @@ def test_body_pipeline_keeps_cancan_on_q弹_consecutive():
     )
 
 
+def test_n_type_patch_promotes_existing_answer_to_solemn_reason():
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+    from app.services.daily_story.story_types.n.validate import append_n_body_errors
+
+    story = {
+        "story_type": "N",
+        # 故意给冲突的旧标签：显式 structure_type="N" 必须覆盖 punchline 推断。
+        "punchline_explain": "C类：旧标签不应覆盖本次显式类型",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "如果只能选一个，你选姐姐还是我？"},
+            {"speaker": "昭昭", "line": "我先选姐姐。"},
+            {"speaker": "灿灿", "line": "为什么？"},
+            {"speaker": "昭昭", "line": "她笑起来像小太阳。"},
+            {"speaker": "灿灿", "line": "你这理由也太奇怪了。"},
+            {"speaker": "昭昭", "line": "我说得可认真了。"},
+            {"speaker": "灿灿", "line": "行吧，我服了。"},
+            {"speaker": "昭昭", "line": "那就这么定。"},
+        ],
+    }
+    before_errors: list[str] = []
+    append_n_body_errors(story, before_errors)
+    assert any("一本正经自洽" in error for error in before_errors)
+
+    out, notes = apply_gold_chat_type_patch(story, structure_type="N")
+    after_errors: list[str] = []
+    append_n_body_errors(out, after_errors)
+
+    assert notes == ["N追问后补自洽连接词第4句"]
+    assert out["dialogue"][3]["line"] == "因为她笑起来像小太阳。"
+    assert not any("一本正经自洽" in error for error in after_errors)
+
+
+def test_n_type_patch_does_not_turn_stun_close_into_reason():
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+
+    story = {
+        "story_type": "N",
+        "punchline_explain": "N类测试",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "如果只能选一个，你选谁？"},
+            {"speaker": "昭昭", "line": "我选姐姐。"},
+            {"speaker": "灿灿", "line": "为什么？"},
+            {"speaker": "昭昭", "line": "行吧，我服了。"},
+            {"speaker": "灿灿", "line": "那……"},
+            {"speaker": "昭昭", "line": "算了。"},
+        ],
+    }
+    out, notes = apply_gold_chat_type_patch(story, structure_type="N")
+
+    assert not any("补自洽连接词" in note for note in notes)
+    assert out["dialogue"][3]["line"] == "行吧，我服了。"
+
+
 def test_cd_protected_tail_unchanged_by_consecutive_patch():
     from app.services.gold_story.gold_chat.convert import (
         patch_gold_chat_consecutive_siblings,

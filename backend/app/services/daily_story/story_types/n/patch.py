@@ -8,6 +8,7 @@ from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.n.validate import (
     RE_SOLEMN_REASON,
     RE_STUN_CLOSE,
+    RE_WHY,
 )
 
 _N_CLOSING_TAIL_ALLOW = 2
@@ -25,6 +26,43 @@ def _dialogue_lines(story: dict) -> list[str]:
         for d in dialogue
         if isinstance(d, dict) and str(d.get("line") or "").strip()
     ]
+
+
+def patch_n_ensure_solemn_reason(story: dict) -> list[str]:
+    """追问后已有回答但缺因果连接词时，只显式化原回答，不编新理由。"""
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return []
+    body = "".join(_dialogue_lines(story))
+    if RE_SOLEMN_REASON.search(body):
+        return []
+
+    for why_idx, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        why_line = str(item.get("line") or "").strip()
+        if not RE_WHY.search(why_line):
+            continue
+        why_speaker = str(item.get("speaker") or "").strip()
+        # 只看紧随追问的局部回答窗；遇到愣住收束即停止，避免改成「因为行吧」。
+        for answer_idx in range(why_idx + 1, min(len(dialogue), why_idx + 4)):
+            answer = dialogue[answer_idx]
+            if not isinstance(answer, dict):
+                continue
+            line = str(answer.get("line") or "").strip()
+            if not line:
+                continue
+            if RE_STUN_CLOSE.search(line):
+                break
+            speaker = str(answer.get("speaker") or "").strip()
+            if why_speaker and speaker == why_speaker:
+                continue
+            if RE_WHY.search(line) or line.endswith(("？", "?")):
+                continue
+            answer["line"] = f"因为{line}"
+            return [f"N追问后补自洽连接词第{answer_idx + 1}句"]
+        break
+    return []
 
 
 def patch_n_trim_after_stun(story: dict) -> list[str]:
@@ -66,5 +104,6 @@ def patch_n_body(story: dict) -> list[str]:
     )
     if code != "N":
         return notes
+    notes.extend(patch_n_ensure_solemn_reason(story))
     notes.extend(patch_n_trim_after_stun(story))
     return notes

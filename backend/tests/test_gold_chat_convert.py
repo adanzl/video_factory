@@ -153,6 +153,58 @@ def test_shared_local_length_close_survives_real_candidate_prepare():
     ]
 
 
+def test_n_post_sanitize_local_close_survives_acceptance_prepare():
+    from app.services.daily_story.story_types.n.validate import RE_SOLEMN_REASON
+    from app.services.gold_story.gold_chat import refine as grf
+    from app.services.gold_story.gold_chat.repair import (
+        prepare_candidate_for_acceptance_after_local_length_close,
+    )
+
+    story = _sample_chat()
+    story["story_type"] = "N"
+    story["dialogue"] = [
+        {"speaker": "灿灿", "line": "如果只能选一个，你认真说选姐姐还是选我？"},
+        {"speaker": "昭昭", "line": "我当然先选姐姐，这个答案不用想太久。"},
+        {"speaker": "灿灿", "line": "为什么，你总得给我一个能听懂的理由吧？"},
+        {"speaker": "昭昭", "line": "她笑起来像小太阳，我看见就觉得特别亮。"},
+        {"speaker": "灿灿", "line": "你这个说法听着怎么越来越奇怪了？"},
+        {"speaker": "昭昭", "line": "我是在认真回答你，没有故意逗你玩。"},
+        {"speaker": "灿灿", "line": "那你继续说，我倒要看看还能怎么讲。"},
+        {"speaker": "昭昭", "line": "我说完就是这个答案，不准备临时改口。"},
+        {"speaker": "灿灿", "line": "行吧，我服了，你还真能一本正经讲下去。"},
+        {"speaker": "昭昭", "line": "那就这么定，别再让我重新选一次。"},
+        {"speaker": "灿灿", "line": "我听懂了。"},
+        {"speaker": "昭昭", "line": "这回说清楚了。"},
+    ]
+    assert gc.dialogue_total_chars(story) < gc.DAILY_STORY_BODY_CHARS_MIN
+
+    closed = grf._stabilize_n_contract_candidate(
+        gex._normalize_chat_speakers(story),
+        structure_type="N",
+        mechanism="M6",
+    )
+    prepared, errors = prepare_candidate_for_acceptance_after_local_length_close(
+        closed,
+        mom_lines_max=3,
+        banned_literals=[],
+        structure_type="N",
+        mechanism="M6",
+    )
+    body = "".join(str(x.get("line") or "") for x in prepared.get("dialogue") or [])
+
+    assert gc.dialogue_total_chars(prepared) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert RE_SOLEMN_REASON.search(body)
+    assert not [
+        error
+        for error in errors
+        if (
+            "正文总字数须≥" in error
+            or "单句过长" in error
+            or "垫字" in error
+        )
+    ]
+
+
 def test_validate_gold_chat_rejects_banned():
     story = _sample_chat()
     story["dialogue"][0]["line"] = "小姨又欺负我"
