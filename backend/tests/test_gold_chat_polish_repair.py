@@ -238,6 +238,60 @@ def test_refine_whole_chat_repair_after_polish_batch_fail(
     assert "223" in fix_calls[0] or str(DAILY_STORY_BODY_CHARS_MIN) in fix_calls[0]
 
 
+
+def test_refine_align_validate_repair_restores_opening_without_second_budget(monkeypatch):
+    from app.services.gold_story.gold_chat import convert as gc
+    from app.services.gold_story.gold_chat import refine as grf
+
+    beat_chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "责备：作业还没写"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
+    ]
+    story = _story([
+        {"speaker": "妈妈", "line": "作业怎么还没写？"},
+        {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+        {"speaker": "灿灿", "line": "我这就写。"},
+    ])
+    llm_bad = _story([
+        {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+        {"speaker": "妈妈", "line": "你先别打岔。"},
+        {"speaker": "妈妈", "line": "赶紧去写。"},
+        {"speaker": "妈妈", "line": "别磨蹭。"},
+        {"speaker": "妈妈", "line": "听见没有？"},
+        {"speaker": "妈妈", "line": "快点。"},
+    ])
+    prepare_calls = {"n": 0}
+
+    def prepare(chat, **kwargs):
+        prepare_calls["n"] += 1
+        if prepare_calls["n"] == 1:
+            raise ValueError("opening_causality:对白以 beat=2 起跳")
+        moms = [x for x in chat.get("dialogue") or [] if x.get("speaker") == "妈妈"]
+        assert len(moms) <= 3
+        assert (chat.get("dialogue") or [])[0].get("speaker") == "妈妈"
+        return dict(chat)
+
+    monkeypatch.setattr(grf, "collect_align_issues", lambda *args, **kwargs: [])
+    monkeypatch.setattr(grf, "_prepare_chat_for_validate", prepare)
+    monkeypatch.setattr(gc, "_fix_chat_with_llm", lambda *args, **kwargs: llm_bad)
+    budget = GoldChatRepairBudget(max_repairs=2)
+
+    out = grf.refine_gold_chat_align(
+        story,
+        structure_type="N",
+        mechanism="",
+        align_block="",
+        mom_lines_max=3,
+        beat_chain=beat_chain,
+        repair_budget=budget,
+        max_rounds=2,
+    )
+
+    assert prepare_calls["n"] == 2
+    assert budget.used == 1
+    assert out["dialogue"][0]["speaker"] == "妈妈"
+
+
 def test_align_repair_failure_message_not_only_short_header():
     exc = AlignRepairFailure(
         stage="align_repair",
