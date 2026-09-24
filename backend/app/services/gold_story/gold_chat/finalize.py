@@ -35,10 +35,7 @@ from app.services.gold_story.gold_chat.patch import (
     apply_m5_h_local_patches,
     patch_m5_break_sibling_consecutive,
 )
-from app.services.gold_story.gold_chat.prompts import (
-    format_semantic_acceptance_feedback,
-    format_structure_score_feedback,
-)
+from app.services.gold_story.gold_chat.prompts import format_structure_score_feedback
 from app.services.gold_story.gold_chat.validate import (
     collect_align_issues,
     split_align_issues,
@@ -48,7 +45,14 @@ from app.services.gold_story.scene import sanitize_banned_literals
 logger = logging.getLogger(__name__)
 
 _GOLD_CHAT_STRUCTURE_LIFT_MAX = 2
-_GOLD_CHAT_SEMANTIC_REPAIR_MAX = 2
+_GOLD_CHAT_EXPORT_REPAIR_MAX = 2
+
+_REPAIRABLE_VALIDATE_MARKERS = (
+    "正文总字数须≥",
+    "正文总字数须≤",
+    "妈妈台词须≤",
+    "爸爸台词须≤",
+)
 
 
 class GoldChatAcceptanceBlocked(ValueError):
@@ -59,8 +63,150 @@ class GoldChatLocalDuplicateBlocked(GoldChatAcceptanceBlocked):
     """仅本地重复硬伤，可进入有限次定点修稿。"""
 
 
+class GoldChatRepairableError(ValueError):
+    """终检硬卡失败且可进入统一点定修稿。"""
+
+
+class GoldChatStructureScoreError(GoldChatRepairableError):
+    """结构分未过发布线。"""
+
+    def __init__(self, score: int) -> None:
+        self.score = int(score)
+        super().__init__(f"structure_score:{self.score}")
+
+
+class GoldChatValidationRepairableError(GoldChatRepairableError):
+    """字数/家长句数等可由 LLM 定点修订的 hard 校验失败。"""
+
+
 class GoldChatAcceptanceIncomplete(Exception):
     """语义审核未完成（超时/解析失败），非稿子过错。"""
+
+
+def _gate_structure_or_raise(
+    gate_score: Any,
+    chat: dict[str, Any],
+) -> int:
+    try:
+        return int(gate_score(chat))
+    except ValueError as exc:
+        msg = str(exc).strip()
+        if msg.startswith("structure_score:"):
+            tail = msg.split(":", 1)[-1].strip()
+            try:
+                score = int(tail)
+            except ValueError:
+                score = 0
+            raise GoldChatStructureScoreError(score) from exc
+        raise
+
+
+def _validate_chat_or_repairable(
+    validate_chat: Any,
+    chat: dict[str, Any],
+) -> None:
+    try:
+        validate_chat(chat)
+    except ValueError as exc:
+        msg = str(exc).strip()
+        parts = [p.strip() for p in msg.split(";") if p.strip()]
+        if parts and all(
+            any(marker in part for marker in _REPAIRABLE_VALIDATE_MARKERS)
+            for part in parts
+        ):
+            raise GoldChatValidationRepairableError(msg) from exc
+        raise
+
+
+def _is_export_repairable(exc: BaseException) -> bool:
+    if isinstance(exc, GoldChatAcceptanceIncomplete):
+        return False
+    if isinstance(exc, (GoldChatRepairableError, GoldChatLocalDuplicateBlocked)):
+        return True
+    if isinstance(exc, GoldChatAcceptanceBlocked):
+        return str(exc).strip().startswith("终检语义硬伤")
+    return False
+
+
+def _export_repair_budget_hint() -> str:
+    return (
+        "补足冲突触发，再保留辩解与解围；允许压缩后面重复收场，"
+        "为必要角色台词腾出额度。禁止换角色凑额度或加语气词凑字。"
+    )
+
+
+def _build_export_repair_feedback(
+    exc: BaseException,
+    chat: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    st_final: str,
+    mom_max: int,
+) -> str:
+    from app.services.gold_story.gold_chat.prompts import (
+        format_semantic_acceptance_feedback,
+        format_structure_score_feedback,
+    )
+
+    dialogue = chat.get("dialogue") or []
+    mom_count = sum(
+        1
+        for item in dialogue
+        if isinstance(item, dict) and str(item.get("speaker") or "").strip() == "妈妈"
+    )
+    total = dialogue_total_chars(chat)
+    metrics = (
+        f"当前正文 {total} 字（至少 {DAILY_STORY_BODY_CHARS_MIN}）；"
+        f"妈妈 {mom_count} 句（上限 {int(mom_max)}）。"
+    )
+    hint = _export_repair_budget_hint()
+
+    if isinstance(exc, GoldChatStructureScoreError):
+        body = format_structure_score_feedback(str(exc), chat)
+        return f"{body}\n{metrics}\n{hint}"
+
+    if isinstance(exc, GoldChatValidationRepairableError):
+        return "\n".join([
+            "【终检硬卡·定点修稿】",
+            metrics,
+            f"机审：{exc}",
+            hint,
+        ])
+
+    if isinstance(exc, GoldChatLocalDuplicateBlocked):
+        return (
+            f"{format_semantic_acceptance_feedback(str(exc))}\n{metrics}\n{hint}"
+        )
+
+    msg = str(exc).strip()
+    if msg.startswith("终检语义硬伤"):
+        return f"{format_semantic_acceptance_feedback(msg)}\n{metrics}\n{hint}"
+
+    del row, st_final
+    return f"【终检修稿】\n{metrics}\n机审：{msg}\n{hint}"
+
+
+def _sanitize_repaired_chat(
+    lifted: dict[str, Any],
+    *,
+    st_final: str,
+    normalize_chat: Any,
+    dialogue_seed: list[Any] | None,
+) -> dict[str, Any]:
+    from app.services.gold_story.gold_chat.convert import (
+        patch_gold_chat_consecutive_siblings,
+    )
+
+    out = normalize_chat(lifted)
+    if st_final:
+        out["story_type"] = st_final
+    out, _ = patch_sanitize_pad_suffix(out)
+    out, _ = patch_sanitize_pad_particles(out)
+    out, _ = patch_gold_chat_consecutive_siblings(
+        out,
+        dialogue_seed=dialogue_seed,
+    )
+    return out
 
 
 def run_gold_chat_final_acceptance(
@@ -168,60 +314,52 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     fix_llm,
     validate_chat,
     dialogue_seed: list[Any] | None = None,
-    max_repairs: int = _GOLD_CHAT_SEMANTIC_REPAIR_MAX,
+    max_repairs: int = _GOLD_CHAT_EXPORT_REPAIR_MAX,
 ) -> tuple[dict[str, Any], int]:
-    """语义硬伤或本地重复最多修两次；审核未完成不改稿。"""
-    from app.services.daily_story.quality import structure_score_of
-    from app.services.gold_story.gold_chat.convert import (
-        patch_gold_chat_consecutive_siblings,
-    )
+    """导出前统一修稿：validate → 计分 → 门控 → 终检，共享修稿预算。"""
+    del source_type  # 校验由 validate_chat 闭包注入
 
     current = dict(chat)
-    last_struct = 0
-    q0 = current.get("quality")
-    if isinstance(q0, dict):
-        last_struct = structure_score_of(q0)
-    last_semantic_err: str | None = None
-    attempts = max(0, int(max_repairs)) + 1
-    for attempt in range(attempts):
+    last_err: str | None = None
+    repair_budget = max(0, int(max_repairs))
+    for attempt in range(repair_budget + 1):
         try:
+            _validate_chat_or_repairable(validate_chat, current)
+            scored = attach_score(current, row)
+            struct = _gate_structure_or_raise(gate_score, scored)
+            current = scored
             accepted = run_gold_chat_final_acceptance(current, row, sid=sid)
-            q = accepted.get("quality")
-            if isinstance(q, dict):
-                last_struct = structure_score_of(q) or last_struct
-            return accepted, int(last_struct)
+            return accepted, int(struct)
         except GoldChatAcceptanceIncomplete:
             raise
-        except GoldChatAcceptanceBlocked as exc:
-            msg = str(exc).strip()
-            is_semantic = msg.startswith("终检语义硬伤")
-            repairable = is_semantic or isinstance(exc, GoldChatLocalDuplicateBlocked)
-            if not repairable or attempt >= attempts - 1:
+        except BaseException as exc:
+            if not _is_export_repairable(exc):
                 raise
-            last_semantic_err = msg
-            prompt = format_semantic_acceptance_feedback(msg)
-            if last_semantic_err and attempt > 0:
-                prompt = f"{prompt}\n【上一轮未过】{last_semantic_err}"
+            if attempt >= repair_budget:
+                raise
+            last_err = str(exc).strip()
+            prompt = _build_export_repair_feedback(
+                exc,
+                current,
+                row,
+                st_final=st_final,
+                mom_max=int(mom_max),
+            )
+            if attempt > 0 and last_err:
+                prompt = f"{prompt}\n【上一轮未过】{last_err}"
             lifted = fix_llm(
                 current,
                 prompt,
                 banned_literals=[str(x) for x in banned],
                 mom_lines_max=int(mom_max),
             )
-            lifted = normalize_chat(lifted)
-            if st_final:
-                lifted["story_type"] = st_final
-            lifted, _ = patch_sanitize_pad_suffix(lifted)
-            lifted, _ = patch_sanitize_pad_particles(lifted)
-            lifted, _ = patch_gold_chat_consecutive_siblings(
+            current = _sanitize_repaired_chat(
                 lifted,
+                st_final=st_final,
+                normalize_chat=normalize_chat,
                 dialogue_seed=dialogue_seed,
             )
-            validate_chat(lifted)
-            lifted = attach_score(lifted, row)
-            last_struct = int(gate_score(lifted))
-            current = lifted
-    raise GoldChatAcceptanceBlocked(last_semantic_err or "终检语义硬伤")
+    raise GoldChatAcceptanceBlocked(last_err or "终检修稿未通过")
 
 
 def _k_fix_scene_title(chat: dict[str, Any], row: dict[str, Any]) -> None:
@@ -964,7 +1102,7 @@ def run_gold_chat_finalize(
     try:
         struct = _gate_gold_chat_structure_score(chat)
     except ValueError:
-        # 终检分不够：K 先本地修；其余类型定点 LLM 修稿（最多 2 次）
+        # 终检分不够：K 仍先本地抬结构；其余类型交给统一修稿环
         if st_final == "K":
             try:
                 chat, struct = _finalize_k_lift_structure(
@@ -984,26 +1122,13 @@ def run_gold_chat_finalize(
                 )
                 raise
         else:
-            def _validate_lifted(c: dict[str, Any]) -> None:
-                validate_gold_chat(
-                    c,
-                    banned_literals=[str(x) for x in banned],
-                    source_type=source_type,
-                    mom_lines_max=int(mom_max),
-                )
+            from app.services.daily_story.quality import structure_score_of
 
-            chat, struct = _lift_gold_chat_structure_with_llm(
-                chat,
-                row,
-                st_final=st_final,
-                mech=mech,
-                banned=[str(x) for x in banned],
-                mom_max=int(mom_max),
-                attach_score=_attach_gold_chat_structure_score,
-                gate_score=_gate_gold_chat_structure_score,
-                normalize_chat=_normalize_chat_speakers,
-                fix_llm=_fix_chat_with_llm,
-                validate_chat=_validate_lifted,
+            q_pre = chat.get("quality")
+            struct = (
+                structure_score_of(q_pre)
+                if isinstance(q_pre, dict)
+                else 0
             )
     if st_final == "K":
         chat, struct = _finalize_k_pre_export(
@@ -1013,13 +1138,7 @@ def run_gold_chat_finalize(
             attach_score=_attach_gold_chat_structure_score,
             gate_score=_gate_gold_chat_structure_score,
         )
-    # 任何归一化、补字、类型修稿和 LLM 修订之后，最终稿必须重新过完整硬卡。
-    validate_gold_chat(
-        chat,
-        banned_literals=[str(x) for x in banned],
-        source_type=source_type,
-        mom_lines_max=int(mom_max),
-    )
+
     def _validate_for_acceptance(c: dict[str, Any]) -> None:
         validate_gold_chat(
             c,
