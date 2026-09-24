@@ -624,7 +624,7 @@ def _prepare_chat_for_validate(
     scene_contract_location: str = "",
     activity_context: str = "",
 ) -> dict[str, Any]:
-    """M5+H 本地补丁 → setting 归类 → 补字数 → hard 校验。"""
+    """M5+H 本地补丁 → setting 归类 → 按真实正文 hard 校验。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     if mech == "M5" and st == "H":
@@ -654,18 +654,6 @@ def _prepare_chat_for_validate(
         structure_type=st,
         mom_lines_max=mom_lines_max,
     )
-    data, _ = _ensure_gold_chat_min_chars(
-        data,
-        mechanism=mech,
-        structure_type=st,
-    )
-    if st == "K" and dialogue_total_chars(data) < DAILY_STORY_BODY_CHARS_MIN:
-        data, _ = _gold_chat_force_min_chars(data)
-        data, _ = _ensure_gold_chat_min_chars(
-            data,
-            mechanism=mech,
-            structure_type=st,
-        )
     from app.services.gold_story.gold_chat.convert import validate_gold_chat
 
     validate_gold_chat(
@@ -1305,7 +1293,11 @@ def gold_story_to_gold_chat(
     repair_budget: Any | None = None,
 ) -> dict[str, Any]:
     """单条 gold_story 行 → daily_story 形 JSON。"""
-    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+    from app.services.gold_story.gold_chat.repair import (
+        GoldChatRepairBudget,
+        build_candidate_repair_feedback,
+        collect_candidate_repair_errors,
+    )
 
     budget: GoldChatRepairBudget = (
         repair_budget
@@ -1728,7 +1720,6 @@ def gold_story_to_gold_chat(
             chat, _ = patch_c_possession_criterion(chat)
             chat, _ = patch_sanitize_c_tone_stack(chat)
             chat, _ = patch_sanitize_pad_suffix(chat)
-            chat, _ = _ensure_gold_chat_min_chars(chat)
             chat, _ = patch_seed_speaker_align(chat, dialogue_seed=seed)
             if str(structure_type or "").upper() == "J":
                 chat, _ = patch_j_plea_veto_speakers(chat)
@@ -1777,16 +1768,27 @@ def gold_story_to_gold_chat(
                 )
             chat = _attach_gold_chat_structure_score(chat, row)
             try:
-                _gate_gold_chat_structure_score(chat)
+                candidate_errors = collect_candidate_repair_errors(
+                    chat, mom_lines_max=mom_int, banned_literals=banned_list,
+                )
+                try:
+                    _gate_gold_chat_structure_score(chat)
+                except ValueError as gate_exc:
+                    candidate_errors.append(str(gate_exc))
+                if candidate_errors:
+                    raise ValueError("；".join(candidate_errors))
             except ValueError as score_exc:
                 last_err = str(score_exc)
                 # 已过 align 的稿：先定点抬结构，避免整开扩写空转
                 lifted: dict[str, Any] | None = None
                 feedback_story = chat
                 try:
-                    if not budget.consume():
+                    if not budget.consume(stage="expand_structure", reason=last_err):
                         raise ValueError(last_err) from score_exc
-                    fb = format_structure_score_feedback(last_err, chat)
+                    fb = build_candidate_repair_feedback(
+                        chat, validation_errors=[last_err], align_issues=[],
+                        mom_lines_max=mom_int,
+                    ) + "\n" + format_structure_score_feedback(last_err, chat)
                     if gaps:
                         fb = fb + "\n" + "\n".join(
                             f"- {g}：请在对白中补全，勿另起无关剧情" for g in gaps[:3]
@@ -1804,7 +1806,6 @@ def gold_story_to_gold_chat(
                     draft, _ = patch_c_possession_criterion(draft)
                     draft, _ = patch_sanitize_c_tone_stack(draft)
                     draft, _ = patch_sanitize_pad_suffix(draft)
-                    draft, _ = _ensure_gold_chat_min_chars(draft)
                     draft, _ = patch_m2_c_structure(
                         draft,
                         structure_type=structure_type,
@@ -1819,7 +1820,15 @@ def gold_story_to_gold_chat(
                         draft["conflict_core"] = conflict_core
                     lifted = _attach_gold_chat_structure_score(draft, row)
                     feedback_story = lifted
-                    _gate_gold_chat_structure_score(lifted)
+                    repaired_errors = collect_candidate_repair_errors(
+                        lifted, mom_lines_max=mom_int, banned_literals=banned_list,
+                    )
+                    try:
+                        _gate_gold_chat_structure_score(lifted)
+                    except ValueError as gate_exc:
+                        repaired_errors.append(str(gate_exc))
+                    if repaired_errors:
+                        raise ValueError("；".join(repaired_errors))
                     return lifted
                 except ValueError as lift_exc:
                     lift_err = str(lift_exc).strip()
@@ -1951,4 +1960,3 @@ def gold_story_to_gold_chat(
         if last_err and _is_short_content_error(last_err)
         else (last_err or "gold_chat generation failed")
     )
-

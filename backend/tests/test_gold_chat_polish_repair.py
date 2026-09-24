@@ -259,3 +259,54 @@ def test_align_repair_failure_message_not_only_short_header():
 
     assert _has_non_short_hard_errors(msg)
     assert "本地垫字仍不足" not in _short_content_reject_message(msg)
+
+
+def test_candidate_feedback_combines_short_consecutive_and_padding():
+    candidate = _story([
+        {"speaker": "昭昭", "line": "你先把积木放好。"},
+        {"speaker": "昭昭", "line": "我已经放好了好不好呀！"},
+    ])
+    candidate["quality"] = {"cons": ["存在同人连说"], "structure_score": 65}
+    feedback = build_candidate_repair_feedback(
+        candidate, validation_errors=[], align_issues=[], mom_lines_max=2,
+    )
+    assert "正文总字数" in feedback
+    assert "第1、2句同人连说" in feedback
+    assert "好不好呀" in feedback
+    assert "存在同人连说" in feedback
+
+
+def test_repair_budget_logs_stage_and_exhaustion(caplog, monkeypatch):
+    import logging
+
+    from app.services.gold_story.gold_chat import repair
+
+    monkeypatch.setattr(repair.logger, "handlers", [caplog.handler])
+    budget = GoldChatRepairBudget(max_repairs=2)
+    with caplog.at_level(logging.INFO):
+        assert budget.consume(stage="align", reason="字数不足")
+        assert budget.consume(stage="expand_structure", reason="structure_score:65")
+        assert not budget.consume(stage="final_acceptance", reason="仍有重复")
+    assert budget.used == 2
+    assert budget.remaining == 0
+    assert "stage=align used=1 remaining=1" in caplog.text
+    assert "stage=expand_structure used=2 remaining=0" in caplog.text
+    assert "exhausted stage=final_acceptance" in caplog.text
+    assert "仍有重复" in caplog.text
+
+
+def test_consecutive_notes_do_not_become_new_hard_gate(monkeypatch):
+    from app.services.gold_story.gold_chat import convert as gc
+    from app.services.gold_story.gold_chat.repair import collect_candidate_repair_errors
+
+    candidate = _story([
+        {"speaker": "昭昭", "line": "积木放这里。"},
+        {"speaker": "昭昭", "line": "我来收盒子。"},
+    ])
+    monkeypatch.setattr(gc, "validate_gold_chat", lambda *args, **kwargs: None)
+    assert collect_candidate_repair_errors(candidate, mom_lines_max=2) == []
+    feedback = build_candidate_repair_feedback(
+        candidate, validation_errors=[], align_issues=[], mom_lines_max=2,
+    )
+    assert "当前硬校验与垫字问题：（无）" in feedback
+    assert "连说提示（按结构分门控）：第1、2句同人连说" in feedback

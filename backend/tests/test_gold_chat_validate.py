@@ -47,13 +47,13 @@ def _m5h_dialogue_v2() -> list[dict[str, str]]:
         {"speaker": "灿灿", "line": "你看，都快画好了！"},
         {"speaker": "昭昭", "line": "哼，我偏要涂一下，弄坏你的画！"},
         {"speaker": "灿灿", "line": "你干嘛！别碰我的纸！"},
-        {"speaker": "昭昭", "line": "是你先推我的！"},
+        {"speaker": "昭昭", "line": "是你先推我的，我手里的彩笔都掉地上了！"},
         {"speaker": "灿灿", "line": "我也抢你画撕啦！你赔！"},
         {"speaker": "灿灿", "line": "你赔！我额头都蹭破了！"},
         {"speaker": "昭昭", "line": "呜……对不起嘛，我不是故意的。"},
         {"speaker": "灿灿", "line": "家规就是谁先动手谁道歉！"},
         {"speaker": "昭昭", "line": "姐姐，我真的错了，你别不理我。"},
-        {"speaker": "灿灿", "line": "哼，我不原谅！"},
+        {"speaker": "灿灿", "line": "哼，我不原谅，你把兔子的耳朵全涂黑了！"},
         {"speaker": "灿灿", "line": "道歉也没用！我画了好久呢！"},
         {"speaker": "妈妈", "line": "别打了！谁先动手的？"},
         {"speaker": "昭昭", "line": "我……我先弄花的，姐姐对不起！"},
@@ -63,7 +63,7 @@ def _m5h_dialogue_v2() -> list[dict[str, str]]:
         {"speaker": "昭昭", "line": "不打了！"},
         {"speaker": "灿灿", "line": "不打了！这还差不多。"},
         {"speaker": "妈妈", "line": "我去拿碘伏，你额头上还没涂呢。"},
-        {"speaker": "灿灿", "line": "嗯，谢谢妈妈。"},
+        {"speaker": "灿灿", "line": "嗯，谢谢妈妈，我先把画纸放到桌上去。"},
     ]
 
 

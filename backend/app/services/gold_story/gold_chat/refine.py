@@ -208,33 +208,28 @@ def refine_gold_chat_align(
                     mechanism_text=mechanism_text,
                 )
                 blocking, warn = split_align_issues(issues)
-        if not blocking and not warn:
-            return _prepare_chat_for_validate(
-                data,
-                structure_type=st,
-                mechanism=mech,
-                closing_intent=closing,
-                conflict_text=conflict_text,
-                banned_literals=banned,
-                mom_lines_max=mom_max,
-                row=row,
-            )
         if not blocking:
-            if warn:
-                logger.info(
-                    "gold_chat align warn only: %s",
-                    "、".join(str(x.get("kind") or "") for x in warn[:3]),
+            try:
+                return _prepare_chat_for_validate(
+                    data, structure_type=st, mechanism=mech,
+                    closing_intent=closing, conflict_text=conflict_text,
+                    banned_literals=banned, mom_lines_max=mom_max, row=row,
                 )
-            return _prepare_chat_for_validate(
-                data,
-                structure_type=st,
-                mechanism=mech,
-                closing_intent=closing,
-                conflict_text=conflict_text,
-                banned_literals=banned,
-                mom_lines_max=mom_max,
-                row=row,
-            )
+            except ValueError as exc:
+                if budget is None or not budget.consume(stage="align_validate", reason=str(exc)):
+                    raise AlignRepairFailure(
+                        stage="align_validate", validation_errors=[str(exc)],
+                        align_issues=[], candidate=data,
+                    ) from exc
+                from app.services.gold_story.gold_chat.convert import _fix_chat_with_llm
+
+                data = _normalize_chat_speakers(_fix_chat_with_llm(
+                    data, build_candidate_repair_feedback(
+                        data, validation_errors=[str(exc)], align_issues=warn,
+                        mom_lines_max=mom_max,
+                    ), banned_literals=banned, mom_lines_max=mom_max,
+                ))
+                continue
         if bail_on_structural and should_reexpand(blocking):
             struct_kinds = [
                 str(x.get("kind") or "")
@@ -289,7 +284,7 @@ def refine_gold_chat_align(
 
         if polish_result.errors or (not polish_result.accepted and rejected):
             val_errors = list(polish_result.errors) or list(dict.fromkeys(rejected))
-            if budget is not None and budget.consume():
+            if budget is not None and budget.consume(stage="align", reason="；".join(val_errors)):
                 from app.services.gold_story.gold_chat.convert import (
                     _fix_chat_with_llm,
                 )
@@ -349,7 +344,7 @@ def refine_gold_chat_align(
             )
         except ValueError as prep_exc:
             val_err = str(prep_exc)
-            if budget is not None and budget.consume():
+            if budget is not None and budget.consume(stage="align_validate", reason=val_err):
                 from app.services.gold_story.gold_chat.convert import (
                     _fix_chat_with_llm,
                 )
@@ -499,15 +494,21 @@ def refine_gold_chat_align(
             "gold_chat align warn remain: %s",
             "、".join(str(x.get("kind") or "") for x in warn_remain[:3]),
         )
-    data = _prepare_chat_for_validate(
-        data,
-        structure_type=st,
-        mechanism=mech,
-        closing_intent=closing,
-        conflict_text=conflict_text,
-        banned_literals=banned,
-        mom_lines_max=mom_max,
-        row=row,
-    )
+    try:
+        data = _prepare_chat_for_validate(
+            data,
+            structure_type=st,
+            mechanism=mech,
+            closing_intent=closing,
+            conflict_text=conflict_text,
+            banned_literals=banned,
+            mom_lines_max=mom_max,
+            row=row,
+        )
+    except ValueError as exc:
+        raise AlignRepairFailure(
+            stage="align_validate", validation_errors=[str(exc)],
+            align_issues=[], candidate=data,
+        ) from exc
     return data
 

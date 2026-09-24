@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -14,10 +17,20 @@ class GoldChatRepairBudget:
     used: int = 0
     last_failure: str = ""
 
-    def consume(self) -> bool:
+    def consume(self, *, stage: str = "repair", reason: str = "") -> bool:
+        if reason:
+            self.note_failure(reason)
         if self.used >= max(0, int(self.max_repairs)):
+            logger.info(
+                "gold_chat repair exhausted stage=%s used=%s remaining=%s reason=%s",
+                stage, self.used, self.remaining, self.last_failure,
+            )
             return False
         self.used += 1
+        logger.info(
+            "gold_chat repair consume stage=%s used=%s remaining=%s reason=%s",
+            stage, self.used, self.remaining, self.last_failure,
+        )
         return True
 
     @property
@@ -77,6 +90,53 @@ class AlignRepairFailure(ValueError):
         }
 
 
+def collect_candidate_repair_errors(
+    candidate: dict[str, Any],
+    *,
+    mom_lines_max: int,
+    banned_literals: list[str] | None = None,
+) -> list[str]:
+    """基于当前正文同时收集硬校验与垫字问题，不修改稿子。"""
+    from app.services.gold_story.gold_chat.convert import validate_gold_chat
+    from app.services.daily_story.review import (
+        collect_pad_stack_issues,
+        format_export_blocking_issue_summary,
+    )
+
+    errors: list[str] = []
+    try:
+        validate_gold_chat(
+            candidate, mom_lines_max=mom_lines_max, banned_literals=banned_literals,
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
+    errors.extend(
+        format_export_blocking_issue_summary(issue)
+        for issue in collect_pad_stack_issues(candidate)
+    )
+    return errors
+
+
+def collect_candidate_consecutive_notes(candidate: dict[str, Any]) -> list[str]:
+    """连说行号只供修稿参考，是否扣分仍由原有结构评分决定。"""
+    notes: list[str] = []
+    dialogue = candidate.get("dialogue") or []
+    for index in range(1, len(dialogue)):
+        previous, current = dialogue[index - 1], dialogue[index]
+        if not isinstance(previous, dict) or not isinstance(current, dict):
+            continue
+        speaker = str(current.get("speaker") or "").strip()
+        if (
+            speaker in {"灿灿", "昭昭"}
+            and speaker == str(previous.get("speaker") or "").strip()
+        ):
+            notes.append(
+                f"第{index}、{index + 1}句同人连说（{speaker}）；"
+                "按事件重写衔接，不要直接换说话人"
+            )
+    return notes
+
+
 def build_candidate_repair_feedback(
     candidate: dict[str, Any],
     *,
@@ -105,11 +165,17 @@ def build_candidate_repair_feedback(
         f"妈妈 {mom_count} 句（上限 {max(0, int(mom_lines_max))}）。"
     )
     align_block = format_align_issues_block(align_issues) if align_issues else "（无）"
-    val_txt = "；".join(validation_errors) if validation_errors else "（无）"
+    errors = collect_candidate_repair_errors(candidate, mom_lines_max=mom_lines_max)
+    previous_errors = [error for error in dict.fromkeys(validation_errors) if error not in errors]
+    notes = collect_candidate_consecutive_notes(candidate)
+    val_txt = "；".join(errors) if errors else "（无）"
     parts = [
         "【精修候选·整体修订】",
         metrics,
-        f"hard 校验：{val_txt}",
+        f"本轮失败：{'；'.join(previous_errors) or '见当前校验'}",
+        f"当前硬校验与垫字问题：{val_txt}",
+        f"连说提示（按结构分门控）：{'；'.join(notes) or '（无）'}",
+        f"结构扣分：{(candidate.get('quality') or {}).get('cons') or []}",
         "类型/事件要求：",
         align_block,
         "保留开场触发与角色归属；压缩重复收场或重复含义；"

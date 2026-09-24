@@ -147,6 +147,7 @@ def _build_export_repair_feedback(
         format_semantic_acceptance_feedback,
         format_structure_score_feedback,
     )
+    from app.services.gold_story.gold_chat.repair import build_candidate_repair_feedback
 
     dialogue = chat.get("dialogue") or []
     mom_count = sum(
@@ -159,7 +160,9 @@ def _build_export_repair_feedback(
         f"当前正文 {total} 字（至少 {DAILY_STORY_BODY_CHARS_MIN}）；"
         f"妈妈 {mom_count} 句（上限 {int(mom_max)}）。"
     )
-    hint = _export_repair_budget_hint()
+    hint = _export_repair_budget_hint() + "\n" + build_candidate_repair_feedback(
+        chat, validation_errors=[str(exc)], align_issues=[], mom_lines_max=mom_max,
+    )
 
     if isinstance(exc, GoldChatStructureScoreError):
         body = format_structure_score_feedback(str(exc), chat)
@@ -346,7 +349,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
             if not _is_export_repairable(exc):
                 raise
             if budget is not None:
-                if not budget.consume():
+                if not budget.consume(stage="final_acceptance", reason=str(exc)):
                     budget.note_failure(str(exc))
                     raise
             elif attempt >= local_max:
