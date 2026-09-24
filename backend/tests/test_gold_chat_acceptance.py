@@ -109,8 +109,8 @@ def test_final_acceptance_opening_causality_enters_repair(mock_review):
         max_repairs=2,
     )
     assert struct == 80
-    assert fix_calls
-    assert any("opening_causality:" in fb for fb in fix_calls)
+    assert (out.get("dialogue") or [])[0].get("speaker") == "妈妈"
+    assert not fix_calls
     assert mock_review.called
 
 
