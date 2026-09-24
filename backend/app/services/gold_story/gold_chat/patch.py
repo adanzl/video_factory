@@ -2127,6 +2127,7 @@ def apply_opening_causality_local_patch(
         _RE_STUN_REACT_LINE,
         _beat_chain_entries,
         _line_fulfills_beat,
+        _parent_trigger_starts_as_late_reaction,
         collect_opening_causality_issues,
         opening_causality_passes,
         resolve_story_beat_chain,
@@ -2155,6 +2156,14 @@ def apply_opening_causality_local_patch(
     dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
     if not dlg:
         return story, False
+
+    late_head_row = None
+    first_row = dlg[0]
+    if (
+        str(first_row.get("speaker") or "").strip() == speaker
+        and _parent_trigger_starts_as_late_reaction(str(first_row.get("line") or ""))
+    ):
+        late_head_row = first_row
 
     move_idx = -1
     for i, row in enumerate(dlg):
@@ -2224,6 +2233,35 @@ def apply_opening_causality_local_patch(
                             break
         dlg.insert(0, new_row)
         changed = True
+
+    # 原首句若其实是家长对后续台词的回应（如“你说啥？”），补/前移 beat1 后
+    # 必须把这条回应放回真正 beat2 之后；不能留下“beat1→回应→beat2”的倒序。
+    if late_head_row is not None and len(entries) >= 2:
+        reaction_idx = next(
+            (i for i, row in enumerate(dlg) if row is late_head_row),
+            -1,
+        )
+        if reaction_idx >= 0:
+            reaction_row = dlg.pop(reaction_idx)
+            beat2_entry = entries[1][1]
+            beat2_idx = next(
+                (
+                    i
+                    for i, row in enumerate(dlg)
+                    if i > 0
+                    and _line_fulfills_beat(
+                        str(row.get("speaker") or "").strip(),
+                        str(row.get("line") or "").strip(),
+                        beat2_entry,
+                    )
+                ),
+                -1,
+            )
+            if beat2_idx >= 0:
+                dlg.insert(beat2_idx + 1, reaction_row)
+                changed = True
+            else:
+                dlg.insert(min(reaction_idx, len(dlg)), reaction_row)
 
     if not changed:
         return story, False
