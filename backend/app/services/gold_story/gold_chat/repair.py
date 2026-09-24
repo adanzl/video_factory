@@ -158,6 +158,41 @@ def prepare_candidate_for_acceptance(
     return cleaned, errors
 
 
+def prepare_candidate_for_acceptance_after_local_length_close(
+    candidate: dict[str, Any],
+    *,
+    mom_lines_max: int,
+    banned_literals: list[str] | None = None,
+    structure_type: str = "",
+    mechanism: str = "",
+) -> tuple[dict[str, Any], list[str]]:
+    """已进入机械收口路径：先清理/开场补丁，再补 near-miss，最后一次性验收。"""
+    from app.services.gold_story.gold_chat.length import (
+        _stabilize_local_length_candidate,
+    )
+    from app.services.gold_story.gold_chat.pad_stack import apply_clear_pad_sanitize
+    from app.services.gold_story.gold_chat.patch import (
+        apply_opening_causality_local_patch,
+    )
+
+    cleaned, _ = apply_clear_pad_sanitize(dict(candidate))
+    cleaned, _ = apply_opening_causality_local_patch(
+        cleaned,
+        mom_lines_max=mom_lines_max,
+    )
+    cleaned, _ = _stabilize_local_length_candidate(
+        cleaned,
+        structure_type=structure_type,
+        mechanism=mechanism,
+    )
+    errors = collect_candidate_repair_errors(
+        cleaned,
+        mom_lines_max=mom_lines_max,
+        banned_literals=banned_literals,
+        skip_pad_sanitize=True,
+    )
+    return cleaned, errors
+
 def collect_candidate_consecutive_notes(candidate: dict[str, Any]) -> list[str]:
     """连说行号只供修稿参考，是否扣分仍由原有结构评分决定。"""
     notes: list[str] = []

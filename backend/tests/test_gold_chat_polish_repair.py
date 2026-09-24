@@ -155,7 +155,7 @@ def test_refine_repair_short_only_after_closing_fixed_on_candidate(
         side_effect=fake_fix,
     ), patch.object(grf, "collect_align_issues", side_effect=fake_collect), patch.object(
         grf,
-        "_prepare_chat_for_validate",
+        "_prepare_chat_for_validate_after_local_length_close",
         side_effect=lambda chat, **kwargs: dict(chat),
     ):
         out = grf.refine_gold_chat_align(
@@ -219,7 +219,7 @@ def test_refine_whole_chat_repair_after_polish_batch_fail(
         ],
     ), patch.object(
         grf,
-        "_prepare_chat_for_validate",
+        "_prepare_chat_for_validate_after_local_length_close",
         side_effect=ValueError("still bad"),
     ):
         with pytest.raises(AlignRepairFailure):
@@ -273,7 +273,11 @@ def test_refine_align_validate_repair_restores_rule_opening_without_second_budge
         return dict(chat)
 
     monkeypatch.setattr(grf, "collect_align_issues", lambda *args, **kwargs: [])
-    monkeypatch.setattr(grf, "_prepare_chat_for_validate", prepare)
+    monkeypatch.setattr(
+        grf,
+        "_prepare_chat_for_validate_after_local_length_close",
+        prepare,
+    )
     monkeypatch.setattr(gc, "_fix_chat_with_llm", lambda *args, **kwargs: llm_bad)
     budget = GoldChatRepairBudget(max_repairs=2)
 
@@ -291,6 +295,74 @@ def test_refine_align_validate_repair_restores_rule_opening_without_second_budge
     assert prepare_calls["n"] == 2
     assert budget.used == 1
     assert out["dialogue"][0]["speaker"] == "妈妈"
+
+
+def test_refine_n_contract_and_short_body_are_local_before_budget(monkeypatch):
+    from app.services.daily_story.prompts import dialogue_total_chars
+    from app.services.gold_story.gold_chat import refine as grf
+    from app.services.daily_story.story_types.n.validate import RE_SOLEMN_REASON
+
+    rows = [
+        {"speaker": "灿灿", "line": "如果只能选一个，你认真说选姐姐还是选我？"},
+        {"speaker": "昭昭", "line": "我当然先选姐姐，这个答案不用想太久。"},
+        {"speaker": "灿灿", "line": "为什么，你总得给我一个能听懂的理由吧？"},
+        {"speaker": "昭昭", "line": "她笑起来像小太阳，我看见就觉得特别亮。"},
+        {"speaker": "灿灿", "line": "你这个说法听着怎么越来越奇怪了？"},
+        {"speaker": "昭昭", "line": "我是在认真回答你，没有故意逗你玩。"},
+        {"speaker": "灿灿", "line": "那你继续说，我倒要看看还能怎么讲。"},
+        {"speaker": "昭昭", "line": "我说完就是这个答案，不准备临时改口。"},
+        {"speaker": "灿灿", "line": "行吧，我服了，你还真能一本正经讲下去。"},
+        {"speaker": "昭昭", "line": "那就这么定，别再让我重新选一次。"},
+    ]
+    story = _story(rows)
+    assert dialogue_total_chars(story) < DAILY_STORY_BODY_CHARS_MIN
+    assert not RE_SOLEMN_REASON.search("".join(row["line"] for row in rows))
+
+    def collect(chat, **kwargs):
+        body = "".join(str(x.get("line") or "") for x in chat.get("dialogue") or [])
+        if not RE_SOLEMN_REASON.search(body):
+            return [{
+                "kind": "对齐-类型契约",
+                "desc": "N类：须有一本正经自洽（因为/所以/就能等）",
+                "fix": "补齐缺槽",
+            }]
+        return []
+
+    def prepare(chat, **kwargs):
+        assert dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN
+        body = "".join(str(x.get("line") or "") for x in chat.get("dialogue") or [])
+        assert RE_SOLEMN_REASON.search(body)
+        return dict(chat)
+
+    monkeypatch.setattr(grf, "collect_align_issues", collect)
+    monkeypatch.setattr(
+        grf,
+        "_prepare_chat_for_validate_after_local_length_close",
+        prepare,
+    )
+    monkeypatch.setattr(
+        grf,
+        "_align_refine_with_llm",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("N本地补槽后不应调用LLM")),
+    )
+    budget = GoldChatRepairBudget(max_repairs=2)
+
+    out = grf.refine_gold_chat_align(
+        story,
+        structure_type="N",
+        mechanism="M6",
+        align_block="",
+        mom_lines_max=3,
+        max_rounds=2,
+        bail_on_structural=False,
+        repair_budget=budget,
+    )
+
+    assert budget.used == 0
+    assert dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN
+    assert RE_SOLEMN_REASON.search(
+        "".join(str(x.get("line") or "") for x in out.get("dialogue") or [])
+    )
 
 
 def test_refine_post_align_local_length_close_hits_margin_and_line_cap():
@@ -393,7 +465,11 @@ def test_refine_polish_length_errors_use_local_close_without_budget(monkeypatch)
         assert max(len(str(x.get("line") or "")) for x in chat.get("dialogue") or []) <= CHAT_MAX_LINE_CHARS
         return dict(chat)
 
-    monkeypatch.setattr(grf, "_prepare_chat_for_validate", prepare)
+    monkeypatch.setattr(
+        grf,
+        "_prepare_chat_for_validate_after_local_length_close",
+        prepare,
+    )
     budget = GoldChatRepairBudget(max_repairs=2)
 
     out = grf.refine_gold_chat_align(

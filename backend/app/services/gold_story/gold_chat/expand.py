@@ -675,20 +675,19 @@ def _apply_expand_setting_normalize(
     out["setting"] = new_setting
     return out
 
-def _prepare_chat_for_validate(
+def _prepare_chat_local_repairs(
     data: dict[str, Any],
     *,
     structure_type: str,
     mechanism: str,
     closing_intent: str = "",
     conflict_text: str = "",
-    banned_literals: list[str] | None = None,
     mom_lines_max: int = 1,
     row: dict[str, Any] | None = None,
     scene_contract_location: str = "",
     activity_context: str = "",
 ) -> dict[str, Any]:
-    """M5+H 本地补丁 → setting 归类 → 按真实正文 hard 校验。"""
+    """校验前只做会改变正文的本地修复；不补字、不 validate。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     if mech == "M5" and st == "H":
@@ -713,11 +712,19 @@ def _prepare_chat_for_validate(
         from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
         data, _ = apply_gold_chat_type_patch(data, structure_type="K")
-    data = _apply_gold_chat_local_hard_repairs(
+    return _apply_gold_chat_local_hard_repairs(
         data,
         structure_type=st,
         mom_lines_max=mom_lines_max,
     )
+
+
+def _validate_prepared_chat(
+    data: dict[str, Any],
+    *,
+    banned_literals: list[str] | None,
+    mom_lines_max: int,
+) -> dict[str, Any]:
     from app.services.gold_story.gold_chat.convert import validate_gold_chat
 
     validate_gold_chat(
@@ -726,6 +733,75 @@ def _prepare_chat_for_validate(
         mom_lines_max=mom_lines_max,
     )
     return data
+
+
+def _prepare_chat_for_validate(
+    data: dict[str, Any],
+    *,
+    structure_type: str,
+    mechanism: str,
+    closing_intent: str = "",
+    conflict_text: str = "",
+    banned_literals: list[str] | None = None,
+    mom_lines_max: int = 1,
+    row: dict[str, Any] | None = None,
+    scene_contract_location: str = "",
+    activity_context: str = "",
+) -> dict[str, Any]:
+    """普通校验入口：本地修复后按真实正文 hard 校验，不机械补字。"""
+    data = _prepare_chat_local_repairs(
+        data,
+        structure_type=structure_type,
+        mechanism=mechanism,
+        closing_intent=closing_intent,
+        conflict_text=conflict_text,
+        mom_lines_max=mom_lines_max,
+        row=row,
+        scene_contract_location=scene_contract_location,
+        activity_context=activity_context,
+    )
+    return _validate_prepared_chat(
+        data,
+        banned_literals=banned_literals,
+        mom_lines_max=mom_lines_max,
+    )
+
+
+def _prepare_chat_for_validate_after_local_length_close(
+    data: dict[str, Any],
+    *,
+    structure_type: str,
+    mechanism: str,
+    closing_intent: str = "",
+    conflict_text: str = "",
+    banned_literals: list[str] | None = None,
+    mom_lines_max: int = 1,
+    row: dict[str, Any] | None = None,
+    scene_contract_location: str = "",
+    activity_context: str = "",
+) -> dict[str, Any]:
+    """已授权机械收口：先完成会削字的本地修复，再补 near-miss，最后 validate。"""
+    data = _prepare_chat_local_repairs(
+        data,
+        structure_type=structure_type,
+        mechanism=mechanism,
+        closing_intent=closing_intent,
+        conflict_text=conflict_text,
+        mom_lines_max=mom_lines_max,
+        row=row,
+        scene_contract_location=scene_contract_location,
+        activity_context=activity_context,
+    )
+    data, _ = _stabilize_local_length_candidate(
+        data,
+        structure_type=structure_type,
+        mechanism=mechanism,
+    )
+    return _validate_prepared_chat(
+        data,
+        banned_literals=banned_literals,
+        mom_lines_max=mom_lines_max,
+    )
 
 def _validate_expand_chat(
     story: dict[str, Any],
@@ -1362,6 +1438,7 @@ def gold_story_to_gold_chat(
         GoldChatRepairExhausted,
         build_candidate_repair_feedback,
         prepare_candidate_for_acceptance,
+        prepare_candidate_for_acceptance_after_local_length_close,
     )
 
     budget: GoldChatRepairBudget = (
@@ -1856,10 +1933,12 @@ def gold_story_to_gold_chat(
                     mechanism=mechanism,
                 )
                 if local_length_changed:
-                    chat, candidate_errors = prepare_candidate_for_acceptance(
+                    chat, candidate_errors = prepare_candidate_for_acceptance_after_local_length_close(
                         local_closed,
                         mom_lines_max=mom_int,
                         banned_literals=banned_list,
+                        structure_type=structure_type,
+                        mechanism=mechanism,
                     )
                     chat = _attach_gold_chat_structure_score(chat, row)
                     structure_gate_ok = True

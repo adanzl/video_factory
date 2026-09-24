@@ -474,7 +474,18 @@ def apply_gold_chat_type_patch(
         return chat, []
     out = dict(chat)
     out["story_type"] = st
-    notes = list(patch_type_body(out) or [])
+    # gold_chat 已明确给出 structure_type；分发期间用内部锁覆盖旧 punchline/文本推断，
+    # 否则 normalize/LLM 改写后可能误派到别的类型 patch。锁仅用于本次调用，不泄漏到输出。
+    had_locked_type = "_story_type" in out
+    previous_locked_type = out.get("_story_type")
+    out["_story_type"] = st
+    try:
+        notes = list(patch_type_body(out) or [])
+    finally:
+        if had_locked_type:
+            out["_story_type"] = previous_locked_type
+        else:
+            out.pop("_story_type", None)
     return out, notes
 
 
@@ -498,10 +509,24 @@ def apply_gold_chat_body_pipeline(
 
     out = dict(chat)
     out["story_type"] = st
-    patched, notes = try_local_patch_daily_story_body(
-        out,
-        skip_consecutive_speaker_flip=True,
-    )
+    had_locked_type = "_story_type" in out
+    previous_locked_type = out.get("_story_type")
+    out["_story_type"] = st
+    try:
+        patched, notes = try_local_patch_daily_story_body(
+            out,
+            skip_consecutive_speaker_flip=True,
+        )
+    finally:
+        if had_locked_type:
+            out["_story_type"] = previous_locked_type
+        else:
+            out.pop("_story_type", None)
+    if isinstance(patched, dict):
+        if had_locked_type:
+            patched["_story_type"] = previous_locked_type
+        else:
+            patched.pop("_story_type", None)
     patched, cn = patch_gold_chat_consecutive_siblings(
         patched,
         dialogue_seed=dialogue_seed,

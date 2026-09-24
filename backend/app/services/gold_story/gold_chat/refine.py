@@ -23,7 +23,7 @@ from app.services.gold_story.gold_chat.expand import (
     _apply_i_close_local_patches,
     _is_truncation_error,
     _normalize_chat_speakers,
-    _prepare_chat_for_validate,
+    _prepare_chat_for_validate_after_local_length_close,
 )
 from app.services.gold_story.gold_chat.length import (
     GOLD_CHAT_LOCAL_LENGTH_TARGET,
@@ -101,6 +101,36 @@ def _stabilize_align_length_candidate(
     return data
 
 
+def _stabilize_n_contract_candidate(
+    candidate: dict[str, Any],
+    *,
+    structure_type: str,
+    mechanism: str = "",
+) -> dict[str, Any]:
+    """N 类确定性补槽后立刻恢复句长/字数，避免类型契约与裁尾消耗 LLM 预算。"""
+    st = str(structure_type or "").strip().upper()
+    if st != "N":
+        return candidate
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+
+    before = dialogue_total_chars(candidate)
+    data, notes = apply_gold_chat_type_patch(candidate, structure_type="N")
+    if not notes:
+        return data
+    data = _stabilize_align_length_candidate(
+        data,
+        structure_type="N",
+        mechanism=mechanism,
+    )
+    logger.info(
+        "gold_chat N local contract patch chars=%s->%s notes=%s",
+        before,
+        dialogue_total_chars(data),
+        "；".join(str(note) for note in notes[:4]),
+    )
+    return data
+
+
 def _stabilize_refine_candidate(
     candidate: dict[str, Any],
     *,
@@ -122,6 +152,10 @@ def _stabilize_refine_candidate(
     )
     if opening_patched:
         logger.info("gold_chat refine post-llm opening causality local patch")
+    data = _stabilize_n_contract_candidate(
+        data,
+        structure_type=structure_type,
+    )
     return _normalize_chat_speakers(data)
 
 def _align_refine_with_llm(
@@ -197,6 +231,12 @@ def refine_gold_chat_align(
             data["closing_mode"] = mode
 
     for _round in range(max(1, int(max_rounds))):
+        if st == "N":
+            data = _stabilize_n_contract_candidate(
+                data,
+                structure_type=st,
+                mechanism=mech,
+            )
         if mech == "M5" and st == "H":
             data, _ = apply_m5_h_local_patches(
                 data,
@@ -282,7 +322,7 @@ def refine_gold_chat_align(
                 mechanism=mech,
             )
             try:
-                return _prepare_chat_for_validate(
+                return _prepare_chat_for_validate_after_local_length_close(
                     data, structure_type=st, mechanism=mech,
                     closing_intent=closing, conflict_text=conflict_text,
                     banned_literals=banned, mom_lines_max=mom_max, row=row,
@@ -384,7 +424,7 @@ def refine_gold_chat_align(
             )
             if local_length_ok:
                 try:
-                    local_prepared = _prepare_chat_for_validate(
+                    local_prepared = _prepare_chat_for_validate_after_local_length_close(
                         candidate_base,
                         structure_type=st,
                         mechanism=mech,
@@ -476,7 +516,7 @@ def refine_gold_chat_align(
         repair_feedback = []
         data = candidate_base
         try:
-            data = _prepare_chat_for_validate(
+            data = _prepare_chat_for_validate_after_local_length_close(
                 data,
                 structure_type=st,
                 mechanism=mech,
@@ -542,6 +582,20 @@ def refine_gold_chat_align(
         from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
         data, _ = apply_gold_chat_type_patch(data, structure_type="K")
+        remain = collect_align_issues(
+            data,
+            structure_type=st,
+            mechanism=mech,
+            closing_intent=closing,
+            beat_chain=beat_chain,
+            conflict_text=conflict_text,
+        )
+    if st == "N":
+        data = _stabilize_n_contract_candidate(
+            data,
+            structure_type=st,
+            mechanism=mech,
+        )
         remain = collect_align_issues(
             data,
             structure_type=st,
@@ -642,7 +696,7 @@ def refine_gold_chat_align(
             "、".join(str(x.get("kind") or "") for x in warn_remain[:3]),
         )
     try:
-        data = _prepare_chat_for_validate(
+        data = _prepare_chat_for_validate_after_local_length_close(
             data,
             structure_type=st,
             mechanism=mech,
