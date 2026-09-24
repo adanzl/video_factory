@@ -47,6 +47,15 @@ class GoldChatRepairBudget:
             self.last_failure = text
 
 
+class GoldChatRepairExhausted(ValueError):
+    """当前候选修稿预算耗尽，不得由扩写重试吞掉。"""
+
+    def __init__(self, *, stage: str, reason: str, candidate: dict[str, Any]) -> None:
+        self.stage = stage
+        self.candidate = candidate
+        super().__init__(f"gold_chat修稿预算耗尽 stage={stage}；{reason}")
+
+
 class AlignRepairFailure(ValueError):
     """精修阶段结构化失败（勿仅按篇幅归类）。"""
 
