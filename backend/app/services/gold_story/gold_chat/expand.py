@@ -1295,6 +1295,7 @@ def gold_story_to_gold_chat(
     """单条 gold_story 行 → daily_story 形 JSON。"""
     from app.services.gold_story.gold_chat.repair import (
         GoldChatRepairBudget,
+        GoldChatRepairExhausted,
         build_candidate_repair_feedback,
         collect_candidate_repair_errors,
     )
@@ -1766,8 +1767,10 @@ def gold_story_to_gold_chat(
                     dialogue_seed=seed,
                     mechanism=mechanism,
                 )
-            chat = _attach_gold_chat_structure_score(chat, row)
-            try:
+            # 留在当前候选上修复；预算耗尽才退出，不丢稿重抽。
+            repair_error = ""
+            while True:
+                chat = _attach_gold_chat_structure_score(chat, row)
                 candidate_errors = collect_candidate_repair_errors(
                     chat, mom_lines_max=mom_int, banned_literals=banned_list,
                 )
@@ -1775,94 +1778,67 @@ def gold_story_to_gold_chat(
                     _gate_gold_chat_structure_score(chat)
                 except ValueError as gate_exc:
                     candidate_errors.append(str(gate_exc))
-                if candidate_errors:
-                    raise ValueError("；".join(candidate_errors))
-            except ValueError as score_exc:
-                last_err = str(score_exc)
-                # 已过 align 的稿：先定点抬结构，避免整开扩写空转
-                lifted: dict[str, Any] | None = None
-                feedback_story = chat
+                if not candidate_errors:
+                    return chat
+                if repair_error:
+                    candidate_errors.append(repair_error)
+                last_err = "；".join(candidate_errors)
+                quality = chat.get("quality") or {}
+                logger.info(
+                    "gold_chat candidate rejected stage=expand_structure "
+                    "score=%s used=%s remaining=%s errors=%s",
+                    quality.get("structure_score"), budget.used, budget.remaining, last_err,
+                )
+                if not budget.consume(stage="expand_structure", reason=last_err):
+                    raise GoldChatRepairExhausted(
+                        stage="expand_structure", reason=last_err, candidate=chat,
+                    )
+                fb = build_candidate_repair_feedback(
+                    chat, validation_errors=candidate_errors, align_issues=[],
+                    mom_lines_max=mom_int,
+                ) + "\n" + format_structure_score_feedback(last_err, chat)
+                if gaps:
+                    fb += "\n" + "\n".join(
+                        f"- {g}：请在对白中补全，勿另起无关剧情" for g in gaps[:3]
+                    )
                 try:
-                    if not budget.consume(stage="expand_structure", reason=last_err):
-                        raise ValueError(last_err) from score_exc
-                    fb = build_candidate_repair_feedback(
-                        chat, validation_errors=[last_err], align_issues=[],
-                        mom_lines_max=mom_int,
-                    ) + "\n" + format_structure_score_feedback(last_err, chat)
-                    if gaps:
-                        fb = fb + "\n" + "\n".join(
-                            f"- {g}：请在对白中补全，勿另起无关剧情" for g in gaps[:3]
-                        )
                     draft = _fix_chat_with_llm(
-                        chat,
-                        fb or last_err,
-                        banned_literals=banned_list,
-                        mom_lines_max=mom_int,
+                        chat, fb, banned_literals=banned_list, mom_lines_max=mom_int,
                     )
-                    draft = _normalize_chat_speakers(draft)
-                    if structure_type:
-                        draft["story_type"] = structure_type
-                    draft, _ = patch_c_force_sibling_alternate(draft)
-                    draft, _ = patch_c_possession_criterion(draft)
-                    draft, _ = patch_sanitize_c_tone_stack(draft)
-                    draft, _ = patch_sanitize_pad_suffix(draft)
-                    draft, _ = patch_m2_c_structure(
-                        draft,
-                        structure_type=structure_type,
-                        mechanism=mechanism,
-                        theme=str(row.get("title") or draft.get("scene_title") or ""),
-                        payload=payload,
-                    )
-                    draft, _ = _post_align_j_closing_touchup(
-                        draft, structure_type=structure_type
-                    )
-                    if conflict_core:
-                        draft["conflict_core"] = conflict_core
-                    lifted = _attach_gold_chat_structure_score(draft, row)
-                    feedback_story = lifted
-                    repaired_errors = collect_candidate_repair_errors(
-                        lifted, mom_lines_max=mom_int, banned_literals=banned_list,
-                    )
-                    try:
-                        _gate_gold_chat_structure_score(lifted)
-                    except ValueError as gate_exc:
-                        repaired_errors.append(str(gate_exc))
-                    if repaired_errors:
-                        raise ValueError("；".join(repaired_errors))
-                    return lifted
-                except ValueError as lift_exc:
-                    lift_err = str(lift_exc).strip()
-                    last_err = lift_err or last_err
-                    feedback_story = lifted if isinstance(lifted, dict) else chat
-                from app.services.gold_story.gold_chat.convert import (
-                    log_gold_chat_structure_score_fail,
-                )
-
-                q_fb = (
-                    cast(dict[str, Any], feedback_story.get("quality"))
-                    if isinstance(feedback_story.get("quality"), dict)
-                    else {}
-                )
-                log_gold_chat_structure_score_fail(
-                    feedback_story,
-                    q_fb,
-                    structure_type=str(structure_type or ""),
-                )
-                expand_feedback_block = format_expand_regen_feedback(
-                    last_err,
-                    feedback_story,
+                except ValueError as exc:
+                    # 模型未返回可用稿时，保留当前候选并计入有界修稿预算。
+                    repair_error = str(exc)
+                    continue
+                repair_error = ""
+                draft = _normalize_chat_speakers(draft)
+                if structure_type:
+                    draft["story_type"] = structure_type
+                draft, _ = patch_c_force_sibling_alternate(draft)
+                draft, _ = patch_c_possession_criterion(draft)
+                draft, _ = patch_sanitize_c_tone_stack(draft)
+                draft, _ = patch_sanitize_pad_suffix(draft)
+                draft, _ = patch_m2_c_structure(
+                    draft,
                     structure_type=structure_type,
                     mechanism=mechanism,
-                    closing_intent=closing,
-                    beat_chain=beat_chain,
-                    conflict_text=conflict_text,
-                    short_regen_count=short_regen_count,
+                    theme=str(row.get("title") or draft.get("scene_title") or ""),
+                    payload=payload,
                 )
-                continue
-            return chat
+                draft, _ = _post_align_j_closing_touchup(
+                    draft, structure_type=structure_type
+                )
+                if conflict_core:
+                    draft["conflict_core"] = conflict_core
+                chat = draft
+        except GoldChatRepairExhausted:
+            raise
         except AlignRepairFailure as exc:
             last_err = exc.to_message()
             budget.note_failure(last_err)
+            if budget.exhausted:
+                raise GoldChatRepairExhausted(
+                    stage=exc.stage, reason=last_err, candidate=exc.candidate,
+                ) from exc
             expand_feedback_block = format_expand_regen_feedback(
                 last_err,
                 exc.candidate,
@@ -1876,6 +1852,10 @@ def gold_story_to_gold_chat(
             continue
         except ValueError as exc:
             last_err = str(exc)
+            if budget.exhausted:
+                raise GoldChatRepairExhausted(
+                    stage="expand", reason=last_err, candidate=chat,
+                ) from exc
             # 精修/校验路径截断也回灌 扩写，勿直接打死整次 convert
             if _is_truncation_error(last_err):
                 last_err = f"align_refine_failed:LLM截断:{last_err}"

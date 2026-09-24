@@ -1301,3 +1301,97 @@ def test_refine_short_repair_exhaustion_preserves_candidate(monkeypatch):
         )
     assert len(calls) == budget.used == 2
     assert gc.dialogue_total_chars(caught.value.candidate) < gc.DAILY_STORY_BODY_CHARS_MIN
+
+
+@pytest.mark.parametrize("second_repair_passes", [True, False])
+def test_expand_repairs_latest_candidate_without_regenerating(monkeypatch, caplog, second_repair_passes):
+    import copy
+    import logging
+    from app.services.gold_story.gold_chat import repair
+
+    real_gate = gc._gate_gold_chat_structure_score
+    _bypass_structure_gate(monkeypatch)
+    monkeypatch.setattr(gc, "_gate_gold_chat_structure_score", real_gate)
+    monkeypatch.setattr(gex.logger, "handlers", [caplog.handler])
+    generations = []
+    repair_inputs = []
+
+    def generate(*args, **kwargs):
+        generations.append(1)
+        return _sample_chat()
+
+    def score(chat, row):
+        current_score = 80 if chat.get("revision") else 65
+        return {**chat, "quality": {"structure_score": current_score, "score": current_score}}
+
+    def fix(chat, prompt, **kwargs):
+        repair_inputs.append((chat.get("revision", 0), prompt))
+        result = copy.deepcopy(chat)
+        if len(repair_inputs) == 2 and second_repair_passes:
+            result = _sample_chat()
+        else:
+            # 模拟结构改好但正文仅 233 字；保留真实 hard 校验。
+            for line in result["dialogue"]:
+                while len(line["line"]) > 1 and gc.dialogue_total_chars(result) > 233:
+                    line["line"] = line["line"][:-1]
+        result["revision"] = len(repair_inputs)
+        return result
+
+    monkeypatch.setattr(gex, "_chat_json", generate)
+    monkeypatch.setattr(gex, "EXPAND_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gex, "EXPAND_REGENERATE_MAX", 5)
+    monkeypatch.setattr(gc, "_attach_gold_chat_structure_score", score)
+    monkeypatch.setattr(gex, "_fix_chat_with_llm", fix)
+    budget = repair.GoldChatRepairBudget(max_repairs=2)
+    with caplog.at_level(logging.INFO):
+        if second_repair_passes:
+            result = gex.gold_story_to_gold_chat(_sample_row(), repair_budget=budget)
+            assert result["revision"] == 2
+            assert result["quality"]["structure_score"] == 80
+        else:
+            with pytest.raises(repair.GoldChatRepairExhausted, match="当前233") as caught:
+                gex.gold_story_to_gold_chat(_sample_row(), repair_budget=budget)
+            assert caught.value.candidate["revision"] == 2
+    assert len(generations) == 1
+    assert [revision for revision, _ in repair_inputs] == [0, 1]
+    assert "当前233" in repair_inputs[1][1]
+    assert "structure_score:65" not in repair_inputs[1][1]
+    assert budget.used == 2
+    assert "score=80" in caplog.text
+    assert "当前233" in caplog.text
+    assert "structure_score fail" not in caplog.text
+
+
+def test_expand_stops_when_alignment_budget_exhausted(monkeypatch):
+    from app.services.gold_story.gold_chat.repair import (
+        AlignRepairFailure, GoldChatRepairBudget, GoldChatRepairExhausted,
+    )
+
+    _bypass_structure_gate(monkeypatch)
+    generations = []
+
+    def generate(*args, **kwargs):
+        generations.append(1)
+        return _sample_chat()
+
+    def fail_alignment(chat, **kwargs):
+        budget = kwargs["repair_budget"]
+        assert budget.consume(stage="align")
+        assert budget.consume(stage="align")
+        candidate = {**chat, "revision": "latest_align"}
+        raise AlignRepairFailure(
+            stage="align_validate", validation_errors=["正文总字数须≥240，当前222"],
+            align_issues=[], candidate=candidate,
+        )
+
+    monkeypatch.setattr(gex, "_chat_json", generate)
+    monkeypatch.setattr(gex, "EXPAND_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gex, "EXPAND_REGENERATE_MAX", 5)
+    monkeypatch.setattr(grf, "refine_gold_chat_align", fail_alignment)
+    budget = GoldChatRepairBudget(max_repairs=2)
+    with pytest.raises(GoldChatRepairExhausted, match="当前222") as caught:
+        gex.gold_story_to_gold_chat(_sample_row(), repair_budget=budget)
+    assert caught.value.stage == "align_validate"
+    assert caught.value.candidate["revision"] == "latest_align"
+    assert len(generations) == 1
+    assert budget.used == 2
