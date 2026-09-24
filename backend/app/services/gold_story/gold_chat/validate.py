@@ -1773,6 +1773,18 @@ def _intent_anchor_tokens(intent: str) -> list[str]:
     return [p for p in parts if p not in _OPENING_INTENT_STOP][:6]
 
 
+_RE_PARENT_LATE_REACTION_PREFIX = re.compile(
+    r"^(?:你(?:刚才)?说(?:啥|什么)|你说的(?:啥|什么)|"
+    r"你在说(?:啥|什么)|你再说一遍|你说清楚)"
+)
+
+
+def _parent_trigger_starts_as_late_reaction(line: str) -> bool:
+    """家长首分句若明显是在回应前文，就不能再靠后半句补成 beat1 trigger。"""
+    first_clause = re.split(r"[，,。！？?!；;]", str(line or "").strip(), maxsplit=1)[0].strip()
+    return bool(first_clause and _RE_PARENT_LATE_REACTION_PREFIX.search(first_clause))
+
+
 def _line_fulfills_beat(
     speaker: str,
     line: str,
@@ -1786,6 +1798,12 @@ def _line_fulfills_beat(
     if not line:
         return False
     acts = _intent_speech_acts(intent)
+    if (
+        "trigger" in acts
+        and speaker in {"妈妈", "爸爸"}
+        and _parent_trigger_starts_as_late_reaction(line)
+    ):
+        return False
     if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
         # 权威触发明确点名某个孩子时，不能让“正在训另一个孩子”的家长句
         # 即使碰巧命中通用 anchor，也不能误充 beat1；不点名的自然口语仍可匹配。

@@ -1122,6 +1122,38 @@ def test_opening_causality_patch_server_shape_drops_late_duplicate_trigger_befor
     assert opening_causality_passes(fixed, beat, mom_lines_max=2)
 
 
+def test_opening_causality_rejects_parent_response_style_first_line_even_with_homework_trigger():
+    """妈妈先回应“打你屁股”再问作业，语义上已是 beat2 之后，不能冒充 beat1。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "定责：批评灿灿作业没做，气氛紧张"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：认真提出打自己Q弹屁股的离谱请求"},
+    ]
+    story = {
+        "conflict_core": "妈妈批评灿灿作业没做，昭昭插嘴求打自己Q弹屁股",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "你说啥？打你屁股？你作业写完了吗？"},
+            {"speaker": "昭昭", "line": "妈妈，你打我的Q弹屁股吧，别骂姐姐了"},
+            {"speaker": "灿灿", "line": "我马上写，你别生气"},
+        ],
+    }
+
+    assert not opening_causality_passes(story, beat, mom_lines_max=2)
+    fixed, ok = apply_opening_causality_local_patch(
+        story, beat_chain=beat, mom_lines_max=2,
+    )
+    assert ok
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert not fixed["dialogue"][0]["line"].startswith("你说啥")
+    assert "作业" in fixed["dialogue"][0]["line"]
+    assert fixed["dialogue"][1]["speaker"] == "昭昭"
+    assert fixed["dialogue"][2]["speaker"] == "妈妈"
+    assert fixed["dialogue"][2]["line"].startswith("你说啥")
+    assert opening_causality_passes(fixed, beat, mom_lines_max=2)
+
+
 def test_opening_causality_mom_blame_zhao_interrupt_mom_stun_ok():
     """妈妈→昭昭→妈妈 开场（#96 类），首句责备不得误判为愣住。"""
     from app.services.gold_story.gold_chat.validate import (
