@@ -293,6 +293,97 @@ def test_refine_align_validate_repair_restores_rule_opening_without_second_budge
     assert out["dialogue"][0]["speaker"] == "妈妈"
 
 
+def test_refine_post_align_local_length_close_hits_margin_and_line_cap():
+    from app.services.daily_story.prompts import dialogue_total_chars
+    from app.services.gold_story.gold_chat import refine as grf
+    from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+
+    rows = [
+        {
+            "speaker": "昭昭" if i % 2 == 0 else "灿灿",
+            "line": "我把这件事情说清楚再继续争到底。",
+        }
+        for i in range(11)
+    ]
+    rows.append({"speaker": "灿灿", "line": "你" * 24 + "呀"})
+    story = _story(rows)
+    assert 180 <= dialogue_total_chars(story) < DAILY_STORY_BODY_CHARS_MIN
+    assert max(len(x["line"]) for x in story["dialogue"]) == 25
+
+    out = grf._stabilize_align_length_candidate(
+        story,
+        structure_type="N",
+        mechanism="",
+    )
+
+    assert dialogue_total_chars(out) == grf.ALIGN_POST_LOCAL_BODY_TARGET
+    assert max(len(x["line"]) for x in out["dialogue"]) <= CHAT_MAX_LINE_CHARS
+
+
+def test_refine_polish_length_errors_use_local_close_without_budget(monkeypatch):
+    from app.services.daily_story.prompts import dialogue_total_chars
+    from app.services.gold_story.gold_chat import refine as grf
+    from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+
+    old = _story([
+        {"speaker": "昭昭", "line": "OLD_ALIGN_BAD"},
+        {"speaker": "灿灿", "line": "先别急。"},
+    ])
+    rows = [
+        {
+            "speaker": "昭昭" if i % 2 == 0 else "灿灿",
+            "line": "我把这件事情说清楚再继续争到底。",
+        }
+        for i in range(11)
+    ]
+    rows.append({"speaker": "灿灿", "line": "你" * 24 + "呀"})
+    candidate = _story(rows)
+
+    monkeypatch.setattr(grf, "_align_refine_with_llm", lambda *args, **kwargs: {"fixes": []})
+    monkeypatch.setattr(
+        grf,
+        "_apply_gold_chat_polish_fixes",
+        lambda *args, **kwargs: PolishResult(
+            candidate=candidate,
+            accepted={1},
+            errors=[
+                "正文总字数须≥240，当前200",
+                f"单句过长(max=25>{CHAT_MAX_LINE_CHARS})",
+            ],
+        ),
+    )
+
+    def collect(chat, **kwargs):
+        first = str((chat.get("dialogue") or [{}])[0].get("line") or "")
+        if first == "OLD_ALIGN_BAD":
+            return [{"kind": "类型-N收束", "desc": "待对齐", "fix": "改"}]
+        return []
+
+    monkeypatch.setattr(grf, "collect_align_issues", collect)
+
+    def prepare(chat, **kwargs):
+        assert dialogue_total_chars(chat) >= grf.ALIGN_POST_LOCAL_BODY_TARGET
+        assert max(len(str(x.get("line") or "")) for x in chat.get("dialogue") or []) <= CHAT_MAX_LINE_CHARS
+        return dict(chat)
+
+    monkeypatch.setattr(grf, "_prepare_chat_for_validate", prepare)
+    budget = GoldChatRepairBudget(max_repairs=2)
+
+    out = grf.refine_gold_chat_align(
+        old,
+        structure_type="N",
+        mechanism="",
+        align_block="",
+        mom_lines_max=3,
+        max_rounds=1,
+        bail_on_structural=False,
+        repair_budget=budget,
+    )
+
+    assert dialogue_total_chars(out) >= grf.ALIGN_POST_LOCAL_BODY_TARGET
+    assert budget.used == 0
+
+
 def test_align_repair_failure_message_not_only_short_header():
     exc = AlignRepairFailure(
         stage="align_repair",
