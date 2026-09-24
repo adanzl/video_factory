@@ -158,7 +158,6 @@ def _apply_gold_chat_polish_fixes(
     rejection_reasons: list[str] | None = None,
 ) -> PolishResult:
     from app.services.gold_story.gold_chat.convert import (
-        _ensure_gold_chat_min_chars,
         patch_sanitize_pad_suffix,
         validate_gold_chat,
     )
@@ -184,9 +183,6 @@ def _apply_gold_chat_polish_fixes(
         return PolishResult(candidate=dict(chat), accepted=set(), errors=[err])
 
     accepted = set(all_nos)
-    fixed, _ = _ensure_gold_chat_min_chars(fixed)
-    fixed, _ = patch_sanitize_pad_suffix(fixed)
-    fixed, _ = _ensure_gold_chat_min_chars(fixed)
     fixed, _ = patch_sanitize_pad_suffix(fixed)
     try:
         validate_gold_chat(

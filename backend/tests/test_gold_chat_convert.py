@@ -1225,3 +1225,79 @@ def test_structure_cons_excludes_humor_regex_diagnostics():
 
     empty_key = {"structure_cons": [], "reasons": ["好笑诊断：xxx"]}
     assert structure_cons_for_log(empty_key) == []
+
+
+def test_refine_short_candidate_uses_real_validation_without_padding(monkeypatch):
+    """只 mock 模型与语义对齐；真实字数、单句长度等硬校验必须通过。"""
+    import copy
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+
+    repaired = _sample_chat()
+    for index, line in enumerate(repaired["dialogue"]):
+        line["speaker"] = "昭昭" if index % 2 == 0 else "灿灿"
+    gc.validate_gold_chat(repaired, mom_lines_max=2)
+    short = copy.deepcopy(repaired)
+    for line in short["dialogue"]:
+        line["line"] = line["line"][:10]
+    assert gc.dialogue_total_chars(short) < gc.DAILY_STORY_BODY_CHARS_MIN
+    prompts = []
+
+    def fix(candidate, prompt, **kwargs):
+        prompts.append(prompt)
+        assert gc.dialogue_total_chars(candidate) < gc.DAILY_STORY_BODY_CHARS_MIN
+        return copy.deepcopy(repaired)
+
+    def no_padding(*args, **kwargs):
+        raise AssertionError("精修校验不得机械补字")
+
+    monkeypatch.setattr(grf, "collect_align_issues", lambda *args, **kwargs: [])
+    monkeypatch.setattr(gc, "_fix_chat_with_llm", fix)
+    monkeypatch.setattr(gex, "_ensure_gold_chat_min_chars", no_padding)
+    budget = GoldChatRepairBudget(max_repairs=2)
+    result = grf.refine_gold_chat_align(
+        short, structure_type="", mechanism="", align_block="",
+        mom_lines_max=2, repair_budget=budget,
+    )
+    gc.validate_gold_chat(result, mom_lines_max=2)
+    assert gc.dialogue_total_chars(result) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert len(prompts) == budget.used == 1
+    assert "正文总字数" in prompts[0]
+
+
+def test_prepare_short_candidate_does_not_pad_to_pass():
+    import copy
+
+    short = copy.deepcopy(_sample_chat())
+    for line in short["dialogue"]:
+        line["line"] = line["line"][:10]
+    before = copy.deepcopy(short["dialogue"])
+    with pytest.raises(ValueError, match="正文总字数"):
+        gex._prepare_chat_for_validate(
+            short, structure_type="", mechanism="", mom_lines_max=2,
+        )
+    assert short["dialogue"] == before
+
+
+def test_refine_short_repair_exhaustion_preserves_candidate(monkeypatch):
+    import copy
+    from app.services.gold_story.gold_chat.repair import AlignRepairFailure, GoldChatRepairBudget
+
+    short = _sample_chat()
+    for line in short["dialogue"]:
+        line["line"] = line["line"][:10]
+    calls = []
+
+    def unsuccessful_fix(candidate, prompt, **kwargs):
+        calls.append(prompt)
+        return copy.deepcopy(candidate)
+
+    monkeypatch.setattr(grf, "collect_align_issues", lambda *args, **kwargs: [])
+    monkeypatch.setattr(gc, "_fix_chat_with_llm", unsuccessful_fix)
+    budget = GoldChatRepairBudget(max_repairs=2)
+    with pytest.raises(AlignRepairFailure, match="正文总字数") as caught:
+        grf.refine_gold_chat_align(
+            short, structure_type="", mechanism="", align_block="",
+            mom_lines_max=2, repair_budget=budget, max_rounds=2,
+        )
+    assert len(calls) == budget.used == 2
+    assert gc.dialogue_total_chars(caught.value.candidate) < gc.DAILY_STORY_BODY_CHARS_MIN
