@@ -26,6 +26,10 @@ from app.services.gold_story.gold_chat.expand import (
     _prepare_chat_for_validate,
 )
 from app.services.gold_story.gold_chat.length import (
+    GOLD_CHAT_NEAR_MISS_DEFICIT_MAX,
+    _apply_deterministic_shorten,
+    _ensure_gold_chat_min_chars,
+    _pad_gold_chat_to_min_chars,
     patch_sanitize_c_tone_stack,
     patch_sanitize_pad_suffix,
 )
@@ -58,6 +62,64 @@ from app.services.gold_story.gold_chat.validate import (
 logger = logging.getLogger(__name__)
 
 REFINE_MAX_ROUNDS = 2
+ALIGN_POST_LOCAL_BODY_TARGET = DAILY_STORY_BODY_CHARS_MIN + 10
+
+
+def _only_local_length_errors(errors: list[str]) -> bool:
+    """只含正文不足/单句过长时，可先走确定性本地收口，勿消耗 LLM 修稿预算。"""
+    parts = [
+        part.strip()
+        for error in errors
+        for part in str(error or "").replace("；", ";").split(";")
+        if part.strip()
+    ]
+    return bool(parts) and all(
+        ("正文总字数须≥" in part) or ("单句过长" in part)
+        for part in parts
+    )
+
+
+def _stabilize_align_length_candidate(
+    candidate: dict[str, Any],
+    *,
+    structure_type: str,
+    mechanism: str,
+) -> dict[str, Any]:
+    """align 已语义对齐后，本地处理句长与 near-miss 字数，避免机械门槛烧 repair budget。"""
+    data, shortened = _apply_deterministic_shorten(candidate)
+    if shortened:
+        logger.info("gold_chat refine post-align deterministic shorten")
+
+    total = dialogue_total_chars(data)
+    hard_deficit = DAILY_STORY_BODY_CHARS_MIN - total
+    if not (0 < hard_deficit <= GOLD_CHAT_NEAR_MISS_DEFICIT_MAX):
+        return data
+
+    data, expanded = _ensure_gold_chat_min_chars(
+        data,
+        mechanism=mechanism,
+        structure_type=structure_type,
+    )
+    total = dialogue_total_chars(data)
+    # hard min 达标后再留 10 字余量；单次本地新增仍不超过 near-miss 60 字。
+    target = min(
+        ALIGN_POST_LOCAL_BODY_TARGET,
+        total + max(0, GOLD_CHAT_NEAR_MISS_DEFICIT_MAX - hard_deficit),
+    )
+    if total < target:
+        data, padded = _pad_gold_chat_to_min_chars(
+            data,
+            min_chars=target,
+            max_rounds=48,
+        )
+        expanded = expanded or padded
+    if expanded:
+        logger.info(
+            "gold_chat refine post-align local length close chars=%s target=%s",
+            dialogue_total_chars(data),
+            target,
+        )
+    return data
 
 
 def _stabilize_refine_candidate(
@@ -235,6 +297,11 @@ def refine_gold_chat_align(
                 )
                 blocking, warn = split_align_issues(issues)
         if not blocking:
+            data = _stabilize_align_length_candidate(
+                data,
+                structure_type=st,
+                mechanism=mech,
+            )
             try:
                 return _prepare_chat_for_validate(
                     data, structure_type=st, mechanism=mech,
@@ -317,6 +384,52 @@ def refine_gold_chat_align(
             mechanism_text=mechanism_text,
         )
         blocking_now, _warn_now = split_align_issues(align_now)
+
+        if polish_result.errors and _only_local_length_errors(polish_result.errors):
+            candidate_base = _stabilize_align_length_candidate(
+                candidate_base,
+                structure_type=st,
+                mechanism=mech,
+            )
+            rows_now = [
+                item
+                for item in (candidate_base.get("dialogue") or [])
+                if isinstance(item, dict)
+            ]
+            local_length_ok = (
+                dialogue_total_chars(candidate_base) >= DAILY_STORY_BODY_CHARS_MIN
+                and all(
+                    len(str(item.get("line") or "").strip()) <= CHAT_MAX_LINE_CHARS
+                    for item in rows_now
+                )
+            )
+            if local_length_ok:
+                try:
+                    local_prepared = _prepare_chat_for_validate(
+                        candidate_base,
+                        structure_type=st,
+                        mechanism=mech,
+                        closing_intent=closing,
+                        conflict_text=conflict_text,
+                        banned_literals=banned,
+                        mom_lines_max=mom_max,
+                        row=row,
+                    )
+                except ValueError as local_exc:
+                    polish_result = PolishResult(
+                        candidate=candidate_base,
+                        accepted=set(polish_result.accepted),
+                        errors=[str(local_exc)],
+                    )
+                else:
+                    candidate_base = local_prepared
+                    if not blocking_now:
+                        return candidate_base
+                    polish_result = PolishResult(
+                        candidate=candidate_base,
+                        accepted=set(polish_result.accepted),
+                        errors=[],
+                    )
 
         if polish_result.errors or (not polish_result.accepted and rejected):
             val_errors = list(polish_result.errors) or list(dict.fromkeys(rejected))
