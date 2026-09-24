@@ -958,3 +958,118 @@ def test_contract_gap_not_downgraded_by_name_or_prop_substring():
         )
         assert len(bad) == 0, prior_line
         assert len(valid) == 1, prior_line
+
+
+@pytest.mark.parametrize("recovered", [True, False])
+def test_export_review_corrects_invalid_evidence_once(monkeypatch, recovered):
+    from app.services.llm import llm_mgr
+
+    invalid = {"issues": [{"kind": "语病", "lines": [1], "desc": "语句不通",
+                           "evidence": [{"line": 1.9, "quote": "姐姐"}]}]}
+    corrected = {"issues": [{"kind": "语病", "lines": [1], "desc": "语句不通",
+                             "evidence": [{"line": 1, "quote": "姐姐"}]}]}
+    calls = []
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            calls.append(user)
+            return (corrected if recovered and len(calls) == 2 else invalid), None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    result = run_export_semantic_review("测试", story)
+    assert len(calls) == 2
+    assert "issues[0].evidence" in calls[1]
+    assert "姐姐好。" in calls[0] and "姐姐好。" in calls[1]
+    assert result.completed is recovered
+    if recovered:
+        assert len(filter_llm_export_blocking_issues(result.issues, story)) == 1
+    else:
+        assert "evidence" in result.error
+
+
+def test_export_review_timeout_does_not_retry(monkeypatch):
+    from app.services.llm import llm_mgr
+    calls = []
+
+    class Client:
+        def _chat_json(self, *args, **kwargs):
+            calls.append(1)
+            raise TimeoutError("timeout")
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    result = run_export_semantic_review("测试", _story([]))
+    assert not result.completed
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("recover", [True, False])
+def test_local_duplicate_repair_rechecks_all_gates(monkeypatch, recover):
+    from app.services.daily_story import review
+    from app.services.gold_story.gold_chat import finalize
+    events = []
+    issue = {"lines": [1, 2], "kind": "重复", "desc": "同义重复", "fix": "合并"}
+
+    def local(story):
+        events.append("local")
+        return [] if recover and story.get("revised") else [issue]
+
+    def semantic(*args, **kwargs):
+        events.append("semantic")
+        return ExportSemanticReviewResult(completed=True)
+
+    def fix(story, feedback, **kwargs):
+        events.append("fix")
+        assert "同义重复" in feedback
+        return dict(story, revised=True)
+
+    def validate(story):
+        events.append("validate")
+
+    def attach(story, row):
+        events.append("score")
+        return story
+
+    def gate(story):
+        events.append("gate")
+        return 80
+
+    monkeypatch.setattr(review, "collect_export_blocking_local_issues", local)
+    monkeypatch.setattr(review, "run_export_semantic_review", semantic)
+    kwargs = dict(sid="TEST", st_final="N", banned=[], mom_max=1,
+                  source_type="field", attach_score=attach, gate_score=gate,
+                  normalize_chat=lambda c: c, fix_llm=fix, validate_chat=validate)
+    story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    if recover:
+        result, score = finalize.run_gold_chat_final_acceptance_with_semantic_repair(story, {}, **kwargs)
+        assert result["revised"]
+        assert events == ["local", "fix", "validate", "score", "gate", "local", "semantic"]
+    else:
+        with pytest.raises(finalize.GoldChatLocalDuplicateBlocked):
+            finalize.run_gold_chat_final_acceptance_with_semantic_repair(story, {}, **kwargs)
+        assert events.count("fix") == 2
+        assert events.count("local") == 3
+        assert "semantic" not in events
+
+
+def test_mixed_local_hard_errors_do_not_enter_duplicate_repair(monkeypatch):
+    from app.services.daily_story import review
+    from app.services.gold_story.gold_chat import finalize
+    from unittest.mock import Mock
+
+    issues = [
+        {"lines": [1, 2], "kind": "重复", "desc": "重复对白"},
+        {"lines": [1], "kind": "称谓", "desc": "称谓错误"},
+    ]
+    monkeypatch.setattr(review, "collect_export_blocking_local_issues", lambda c: issues)
+    fix = Mock()
+    semantic = Mock()
+    monkeypatch.setattr(review, "run_export_semantic_review", semantic)
+    with pytest.raises(GoldChatAcceptanceBlocked):
+        finalize.run_gold_chat_final_acceptance_with_semantic_repair(
+            _story([]), {}, sid="TEST", st_final="N", banned=[], mom_max=1,
+            source_type="field", attach_score=lambda c, r: c, gate_score=lambda c: 80,
+            normalize_chat=lambda c: c, fix_llm=fix, validate_chat=lambda c: None,
+        )
+    fix.assert_not_called()
+    semantic.assert_not_called()

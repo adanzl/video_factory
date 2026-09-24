@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Callable, cast
@@ -922,7 +923,7 @@ def run_export_semantic_review(
     *,
     beat_chain: list[Any] | None = None,
 ) -> ExportSemanticReviewResult:
-    """单次 LLM 审读；completed=False 表示超时/解析失败（非稿子过错）。"""
+    """审读格式无效时纠正一次；调用异常直接返回未完成。"""
     from app.services.llm import llm_mgr
 
     client = llm_mgr._get_client()
@@ -941,41 +942,51 @@ def run_export_semantic_review(
         story,
         beat_chain=beat_chain,
     )
-    try:
-        llm_payload = cast(
-            tuple[dict[str, Any], str | None],
-            chat_json(
+    n_lines = len(story.get("dialogue") or [])
+    review_user = user
+    for attempt in range(2):
+        try:
+            raw, _ = chat_json(
                 system,
-                user,
+                review_user,
                 thinking_enabled=False,
                 temperature=0.0,
-            ),
+            )
+        except Exception as exc:
+            logger.warning("[GOLD_CHAT] export semantic review call failed: %s", exc)
+            return ExportSemanticReviewResult(
+                completed=False,
+                error=str(exc) or "LLM 调用失败",
+            )
+        if not isinstance(raw, dict) or "issues" not in raw:
+            shape_err = "审读 JSON 缺 issues 字段"
+        else:
+            shape_err = _validate_export_review_raw(raw, line_count=n_lines)
+        if not shape_err:
+            return ExportSemanticReviewResult(
+                completed=True,
+                issues=parse_review_issues(raw, line_count=n_lines, for_export=True),
+                humor=parse_humor(raw),
+            )
+        if attempt == 1:
+            return ExportSemanticReviewResult(
+                completed=False,
+                error=f"审读 JSON 格式无效：{shape_err}",
+            )
+        logger.warning(
+            "[GOLD_CHAT] review format correction 1/1: %s", shape_err,
         )
-        raw, _ = llm_payload
-    except Exception as exc:
-        logger.warning("[GOLD_CHAT] export semantic review call failed: %s", exc)
-        return ExportSemanticReviewResult(
-            completed=False,
-            error=str(exc) or "LLM 调用失败",
+        review_user = (
+            user
+            + "\n【审核格式纠正，仅一次】\n"
+            + f"上一份审核未通过格式校验：{shape_err}\n"
+            + "稿件未改变。请纠正审核 JSON，保持审核标准，勿为通过校验删除问题。"
+            + "evidence 的 line 必须为 issues.lines 内的整数，quote 必须从该行原样摘录至少两个字。"
+            + "输出完整审核 JSON，不要改写稿件。\n上一份审核：\n"
+            + json.dumps(raw, ensure_ascii=False)
         )
-    if not isinstance(raw, dict) or "issues" not in raw:
-        return ExportSemanticReviewResult(
-            completed=False,
-            error="审读 JSON 缺 issues 字段",
-        )
-    n_lines = len(story.get("dialogue") or [])
-    shape_err = _validate_export_review_raw(raw, line_count=n_lines)
-    if shape_err:
-        return ExportSemanticReviewResult(
-            completed=False,
-            error=f"审读 JSON 格式无效：{shape_err}",
-        )
-    parsed = parse_review_issues(raw, line_count=n_lines, for_export=True)
-    return ExportSemanticReviewResult(
-        completed=True,
-        issues=parsed,
-        humor=parse_humor(raw),
-    )
+    return ExportSemanticReviewResult(completed=False, error="审核格式纠正未完成")
+
 
 
 def collect_wording_issues(
