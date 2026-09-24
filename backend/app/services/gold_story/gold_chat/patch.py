@@ -2087,9 +2087,9 @@ def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str
     authority_kind = _opening_authority_intent_kind(raw)
     parts = re.split(r"[：:]", raw, maxsplit=1)
     text = parts[1].strip() if len(parts) == 2 else raw
-    if authority_kind == "rule" and not (
-        "作业" in text or "没写" in text or "没做" in text
-    ):
+    if authority_kind == "rule":
+        # 立规必须保留 rule anchor；即使规则内容涉及作业，也不能降级成普通责备句，
+        # 否则本地补出的首句会被 opening validator 自己判定为“不满足 beat=1 立规”。
         return _intent_to_rule_line(raw)
     text = re.sub(r"[，,]?气氛紧张", "", text).strip()
     core = str(story.get("conflict_core") or "")
