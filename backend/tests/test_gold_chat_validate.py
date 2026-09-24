@@ -853,6 +853,28 @@ def test_opening_causality_passes_trigger_before_defend():
     assert not collect_opening_causality_issues(story)
 
 
+def test_opening_causality_accepts_parent_rule_trigger():
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        opening_causality_passes,
+    )
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：谁先动手谁先道歉"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
+    ]
+    story = {
+        "gold_beat_chain": beat,
+        "dialogue": [
+            {"speaker": "妈妈", "line": "规矩说好，谁先动手谁先道歉。"},
+            {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+        ],
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=1)
+    assert not collect_opening_causality_issues(story, beat, mom_lines_max=1)
+
+
 _MOM_ZHAO_MOM_OPENING_BEAT = [
     {"beat": 1, "speaker": "妈妈", "intent": "责备：作业还没写"},
     {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},

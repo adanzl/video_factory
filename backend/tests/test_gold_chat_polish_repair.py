@@ -239,36 +239,37 @@ def test_refine_whole_chat_repair_after_polish_batch_fail(
 
 
 
-def test_refine_align_validate_repair_restores_opening_without_second_budget(monkeypatch):
+def test_refine_align_validate_repair_restores_rule_opening_without_second_budget(monkeypatch):
     from app.services.gold_story.gold_chat import convert as gc
     from app.services.gold_story.gold_chat import refine as grf
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
 
     beat_chain = [
-        {"beat": 1, "speaker": "妈妈", "intent": "责备：作业还没写"},
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：谁先动手谁先道歉"},
         {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
     ]
     story = _story([
-        {"speaker": "妈妈", "line": "作业怎么还没写？"},
+        {"speaker": "妈妈", "line": "规矩说好，谁先动手谁先道歉。"},
         {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
-        {"speaker": "灿灿", "line": "我这就写。"},
+        {"speaker": "灿灿", "line": "我知道了。"},
     ])
     llm_bad = _story([
         {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
         {"speaker": "妈妈", "line": "你先别打岔。"},
-        {"speaker": "妈妈", "line": "赶紧去写。"},
-        {"speaker": "妈妈", "line": "别磨蹭。"},
-        {"speaker": "妈妈", "line": "听见没有？"},
-        {"speaker": "妈妈", "line": "快点。"},
+        {"speaker": "妈妈", "line": "都听清楚。"},
+        {"speaker": "妈妈", "line": "规矩说好，谁先动手谁先道歉。"},
     ])
     prepare_calls = {"n": 0}
 
     def prepare(chat, **kwargs):
         prepare_calls["n"] += 1
         if prepare_calls["n"] == 1:
-            raise ValueError("opening_causality:对白以 beat=2 起跳")
+            raise ValueError("正文总字数须≥240，当前234")
         moms = [x for x in chat.get("dialogue") or [] if x.get("speaker") == "妈妈"]
         assert len(moms) <= 3
+        assert opening_causality_passes(chat, beat_chain, mom_lines_max=3)
         assert (chat.get("dialogue") or [])[0].get("speaker") == "妈妈"
+        assert "谁先动手谁先道歉" in str((chat.get("dialogue") or [])[0].get("line") or "")
         return dict(chat)
 
     monkeypatch.setattr(grf, "collect_align_issues", lambda *args, **kwargs: [])
