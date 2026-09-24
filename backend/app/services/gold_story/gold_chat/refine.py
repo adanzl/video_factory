@@ -19,6 +19,7 @@ from app.services.daily_story.story_types import (
     patch_c_possession_criterion,
 )
 from app.services.gold_story.gold_chat.expand import (
+    _apply_gold_chat_local_hard_repairs,
     _apply_i_close_local_patches,
     _is_truncation_error,
     _normalize_chat_speakers,
@@ -30,6 +31,7 @@ from app.services.gold_story.gold_chat.length import (
 )
 from app.services.gold_story.gold_chat.patch import (
     apply_m5_h_local_patches,
+    apply_opening_causality_local_patch,
 )
 from app.services.gold_story.gold_chat.polish import (
     PolishResult,
@@ -56,6 +58,30 @@ from app.services.gold_story.gold_chat.validate import (
 logger = logging.getLogger(__name__)
 
 REFINE_MAX_ROUNDS = 2
+
+
+def _stabilize_refine_candidate(
+    candidate: dict[str, Any],
+    *,
+    structure_type: str,
+    beat_chain: list[Any] | None,
+    mom_lines_max: int,
+) -> dict[str, Any]:
+    """LLM 改稿后先恢复本地硬约束，避免 opening/妈妈句数继续消耗修稿预算。"""
+    data = _normalize_chat_speakers(dict(candidate))
+    data = _apply_gold_chat_local_hard_repairs(
+        data,
+        structure_type=structure_type,
+        mom_lines_max=mom_lines_max,
+    )
+    data, opening_patched = apply_opening_causality_local_patch(
+        data,
+        beat_chain=beat_chain,
+        mom_lines_max=mom_lines_max,
+    )
+    if opening_patched:
+        logger.info("gold_chat refine post-llm opening causality local patch")
+    return _normalize_chat_speakers(data)
 
 def _align_refine_with_llm(
     story: dict[str, Any],
@@ -223,12 +249,17 @@ def refine_gold_chat_align(
                     ) from exc
                 from app.services.gold_story.gold_chat.convert import _fix_chat_with_llm
 
-                data = _normalize_chat_speakers(_fix_chat_with_llm(
-                    data, build_candidate_repair_feedback(
-                        data, validation_errors=[str(exc)], align_issues=warn,
-                        mom_lines_max=mom_max,
-                    ), banned_literals=banned, mom_lines_max=mom_max,
-                ))
+                data = _stabilize_refine_candidate(
+                    _fix_chat_with_llm(
+                        data, build_candidate_repair_feedback(
+                            data, validation_errors=[str(exc)], align_issues=warn,
+                            mom_lines_max=mom_max,
+                        ), banned_literals=banned, mom_lines_max=mom_max,
+                    ),
+                    structure_type=st,
+                    beat_chain=beat_chain,
+                    mom_lines_max=mom_max,
+                )
                 continue
         if bail_on_structural and should_reexpand(blocking):
             struct_kinds = [
@@ -267,7 +298,12 @@ def refine_gold_chat_align(
             mom_lines_max=mom_max,
             rejection_reasons=rejected,
         )
-        candidate_base = _normalize_chat_speakers(polish_result.candidate)
+        candidate_base = _stabilize_refine_candidate(
+            polish_result.candidate,
+            structure_type=st,
+            beat_chain=beat_chain,
+            mom_lines_max=mom_max,
+        )
         align_now = collect_align_issues(
             candidate_base,
             structure_type=st,
@@ -308,13 +344,16 @@ def refine_gold_chat_align(
                     align_issues=blocking_now,
                     mom_lines_max=mom_max,
                 )
-                candidate_base = _normalize_chat_speakers(
+                candidate_base = _stabilize_refine_candidate(
                     _fix_chat_with_llm(
                         candidate_base,
                         prompt,
                         banned_literals=banned,
                         mom_lines_max=mom_max,
                     ),
+                    structure_type=st,
+                    beat_chain=beat_chain,
+                    mom_lines_max=mom_max,
                 )
                 align_refreshed = collect_align_issues(
                     candidate_base,
@@ -362,7 +401,7 @@ def refine_gold_chat_align(
                     _fix_chat_with_llm,
                 )
 
-                data = _normalize_chat_speakers(
+                data = _stabilize_refine_candidate(
                     _fix_chat_with_llm(
                         candidate_base,
                         build_candidate_repair_feedback(
@@ -374,6 +413,9 @@ def refine_gold_chat_align(
                         banned_literals=banned,
                         mom_lines_max=mom_max,
                     ),
+                    structure_type=st,
+                    beat_chain=beat_chain,
+                    mom_lines_max=mom_max,
                 )
                 continue
             raise AlignRepairFailure(
