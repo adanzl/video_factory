@@ -1583,8 +1583,117 @@ def test_expand_local_length_close_avoids_second_llm_repair(monkeypatch, caplog)
     assert budget.used == 1
     assert budget.remaining == 1
     assert "candidate rejected stage=expand_structure score=65" in caplog.text
-    assert "local length close chars=233->" in caplog.text
-    assert "score=80 remaining_errors=none" in caplog.text
+    assert "repair post-hard length close chars=233->" in caplog.text
+
+
+def test_expand_structure_restores_accidental_parent_speaker_without_deleting_body():
+    import copy
+
+    baseline = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "先把规矩说清楚。"},
+            {"speaker": "昭昭", "line": "我有话要认真解释。"},
+            {"speaker": "灿灿", "line": "那你先说，我听着。"},
+            {"speaker": "妈妈", "line": "你们继续说。"},
+            {"speaker": "昭昭", "line": "我继续把理由讲完。"},
+            {"speaker": "妈妈", "line": "行吧，我听明白了。"},
+        ]
+    }
+    draft = copy.deepcopy(baseline)
+    draft["dialogue"][1]["speaker"] = "妈妈"
+    before_chars = gc.dialogue_total_chars(draft)
+
+    out, changed = gex._restore_extra_parent_speakers_from_baseline(
+        draft,
+        baseline,
+        parent_lines_max=3,
+    )
+
+    assert changed
+    assert out["dialogue"][1]["speaker"] == "昭昭"
+    assert len(out["dialogue"]) == len(draft["dialogue"])
+    assert gc.dialogue_total_chars(out) == before_chars
+    assert sum(
+        row.get("speaker") in {"妈妈", "爸爸"}
+        for row in out["dialogue"]
+    ) == 3
+
+
+def test_expand_structure_repair_caps_mom_before_acceptance(monkeypatch, caplog):
+    """N 结构修稿新增第 4 句妈妈时，同轮裁回并补足字数，不再烧第二次预算。"""
+    import copy
+    import logging
+    from app.services.gold_story.gold_chat import repair
+
+    real_gate = gc._gate_gold_chat_structure_score
+    _bypass_structure_gate(monkeypatch)
+    monkeypatch.setattr(gc, "_gate_gold_chat_structure_score", real_gate)
+    monkeypatch.setattr(gex.logger, "handlers", [caplog.handler])
+
+    row = _sample_row()
+    row["structure_type"] = "N"
+    row["mechanism"] = "M6"
+    row["payload"]["scene_contract"] = {"mom_lines_max": 3}
+    repair_calls = []
+
+    def generate(*args, **kwargs):
+        chat = _sample_chat()
+        chat["story_type"] = "N"
+        chat["punchline_explain"] = "N类：追问后一本正经自洽，最后让对方接不住"
+        chat["dialogue"] = [
+            {"speaker": "灿灿", "line": "我……我本来要写的，就是铅笔找不到了嘛。"},
+            {"speaker": "昭昭", "line": "妈，我屁股很Q弹，你打我吧，别打姐姐。"},
+            {"speaker": "妈妈", "line": "昭昭，你手都停半空了，为什么突然说这个？"},
+            {"speaker": "昭昭", "line": "因为没人教，我自己想的，Q弹的打了不疼，还响呢！"},
+            {"speaker": "灿灿", "line": "你还真是照这个道理认真想的？"},
+            {"speaker": "昭昭", "line": "当然，我刚才就是这么认真回答的。"},
+            {"speaker": "灿灿", "line": "噗……昭昭你别说了，我肩膀都抖了。"},
+            {"speaker": "妈妈", "line": "你还笑？作业没写你倒笑得出来？"},
+            {"speaker": "昭昭", "line": "姐姐笑，是喜欢我屁股Q弹，还是不信？"},
+            {"speaker": "灿灿", "line": "妈，我这就写，你别听昭昭胡说，快挪开。"},
+            {"speaker": "昭昭", "line": "我没胡说，你看我扭一下，弹回来还带晃的。"},
+            {"speaker": "妈妈", "line": "行吧行吧，你们俩一个比一个会捣乱。"},
+            {"speaker": "灿灿", "line": "我回房间补作业，十分钟就写完吧。"},
+            {"speaker": "昭昭", "line": "那妈，我屁股还打不打了？不打我收起来咯。"},
+        ]
+        assert gc.dialogue_total_chars(chat) >= gc.DAILY_STORY_BODY_CHARS_MIN
+        assert sum(x.get("speaker") == "妈妈" for x in chat["dialogue"]) == 3
+        return chat
+
+    def score(chat, _row):
+        current = 80 if chat.get("revision") else 65
+        return {**chat, "quality": {"structure_score": current, "score": current}}
+
+    def fix(chat, prompt, **kwargs):
+        repair_calls.append(prompt)
+        out = copy.deepcopy(chat)
+        # 模拟真实失败：结构修稿已把分数修好，但又新增一条妈妈句（句数也变化）。
+        # 这样不能靠 baseline speaker 还原，必须走 N-aware hard trim。
+        out["dialogue"].insert(10, {"speaker": "妈妈", "line": "先把这件事说清楚。"})
+        out["revision"] = 1
+        assert sum(x.get("speaker") == "妈妈" for x in out["dialogue"]) == 4
+        return out
+
+    monkeypatch.setattr(gex, "_chat_json", generate)
+    monkeypatch.setattr(gex, "EXPAND_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gex, "EXPAND_REGENERATE_MAX", 5)
+    monkeypatch.setattr(gc, "_attach_gold_chat_structure_score", score)
+    monkeypatch.setattr(gex, "_fix_chat_with_llm", fix)
+    budget = repair.GoldChatRepairBudget(max_repairs=2)
+
+    with caplog.at_level(logging.INFO):
+        result = gex.gold_story_to_gold_chat(row, repair_budget=budget)
+
+    mom_n = sum(x.get("speaker") == "妈妈" for x in result["dialogue"])
+    assert result["quality"]["structure_score"] == 80
+    assert gc.dialogue_total_chars(result) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert mom_n <= 3
+    assert len(repair_calls) == 1
+    assert budget.used == 1
+    assert budget.remaining == 1
+    assert "repair local hard close mom=4->3 max=3" in caplog.text
+    body = "".join(str(x.get("line") or "") for x in result["dialogue"])
+    assert "为什么突然说这个" in body
 
 
 def test_expand_stops_when_alignment_budget_exhausted(monkeypatch):
