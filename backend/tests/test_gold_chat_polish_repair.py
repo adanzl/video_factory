@@ -1,0 +1,261 @@
+"""polish 候选保留与精修整体修订。"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import pytest
+
+from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+from app.services.gold_story.gold_chat.polish import (
+    PolishResult,
+    _apply_gold_chat_polish_fixes,
+)
+from app.services.gold_story.gold_chat.repair import (
+    AlignRepairFailure,
+    GoldChatRepairBudget,
+    build_candidate_repair_feedback,
+)
+
+
+def _story(dialogue: list[dict[str, str]]) -> dict:
+    return {"story_type": "N", "dialogue": dialogue}
+
+
+def test_polish_joint_fail_keeps_applied_candidate_not_old_chat(monkeypatch):
+    from app.services.gold_story.gold_chat import convert as gc
+
+    chat = _story([{"speaker": "灿灿", "line": "行吧，我去补作业。"}])
+    fixes = {"fixes": [{"no": 1, "line": "行。"}]}
+    validate_calls = {"n": 0}
+
+    def fake_validate(_story, **kwargs):
+        validate_calls["n"] += 1
+        raise ValueError(
+            f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前223",
+        )
+
+    monkeypatch.setattr(gc, "validate_gold_chat", fake_validate)
+    monkeypatch.setattr(gc, "_ensure_gold_chat_min_chars", lambda s: (s, False))
+    monkeypatch.setattr(gc, "patch_sanitize_pad_suffix", lambda s: (s, False))
+
+    result = _apply_gold_chat_polish_fixes(chat, fixes, mom_lines_max=3)
+    assert result.errors
+    assert result.candidate.get("dialogue")[0]["line"] == "行。"
+    assert chat["dialogue"][0]["line"] == "行吧，我去补作业。"
+
+
+def test_polish_batch_fail_keeps_validated_candidate(monkeypatch):
+    from app.services.gold_story.gold_chat import convert as gc
+
+    chat = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    fixes = {
+        "fixes": [{"no": 1, "line": "姐姐好呀。"}],
+    }
+    def fake_validate(_story, **kwargs):
+        raise ValueError(
+            f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前223",
+        )
+
+    monkeypatch.setattr(gc, "validate_gold_chat", fake_validate)
+    monkeypatch.setattr(
+        gc,
+        "_ensure_gold_chat_min_chars",
+        lambda s: (s, False),
+    )
+    monkeypatch.setattr(gc, "patch_sanitize_pad_suffix", lambda s: (s, False))
+
+    result = _apply_gold_chat_polish_fixes(
+        chat,
+        fixes,
+        mom_lines_max=3,
+    )
+    assert result.candidate["dialogue"][0]["line"] == "姐姐好呀。"
+    assert isinstance(result, PolishResult)
+    assert result.errors
+    assert "223" in result.errors[0]
+    assert result.candidate is not chat
+    assert result.accepted == set()
+
+
+def test_build_candidate_repair_feedback_lists_metrics_and_align():
+    fb = build_candidate_repair_feedback(
+        _story(
+            [
+                {"speaker": "妈妈", "line": "a"},
+                {"speaker": "妈妈", "line": "b"},
+                {"speaker": "妈妈", "line": "c"},
+                {"speaker": "妈妈", "line": "d"},
+            ],
+        ),
+        validation_errors=[f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前223"],
+        align_issues=[
+            {"kind": "类型-N收束", "desc": "收束须愣住/接不住", "fix": "补"},
+        ],
+        mom_lines_max=3,
+    )
+    assert "223" in fb or str(DAILY_STORY_BODY_CHARS_MIN) in fb
+    assert "妈妈 4 句" in fb
+    assert "收束" in fb
+    assert "语气词" in fb
+
+
+@patch("app.services.gold_story.gold_chat.refine._align_refine_with_llm")
+@patch("app.services.gold_story.gold_chat.refine._apply_gold_chat_polish_fixes")
+def test_refine_repair_short_only_after_closing_fixed_on_candidate(
+    mock_apply,
+    mock_llm,
+):
+    """收束已在候选上修好、仅缺字时，反馈勿再带旧稿收束问题。"""
+    from app.services.gold_story.gold_chat import refine as grf
+
+    story = _story(
+        [
+            {"speaker": "灿灿", "line": "OLD_BAD"},
+            {"speaker": "昭昭", "line": "姐姐别走呀。"},
+        ],
+    )
+    mock_llm.return_value = {"fixes": [{"no": 1, "line": "GOOD_CLOSE"}]}
+    candidate = _story(
+        [
+            {"speaker": "灿灿", "line": "GOOD_CLOSE"},
+            {"speaker": "昭昭", "line": "姐姐别走呀。"},
+        ],
+    )
+    mock_apply.return_value = PolishResult(
+        candidate=candidate,
+        accepted=set(),
+        errors=[f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前223"],
+    )
+    closing_issue = [
+        {"kind": "类型-N收束", "desc": "收束须愣住/接不住", "fix": "补"},
+    ]
+
+    def fake_collect(chat, **kwargs):
+        first = str((chat.get("dialogue") or [{}])[0].get("line") or "")
+        if first == "OLD_BAD":
+            return list(closing_issue)
+        return []
+
+    fix_calls: list[str] = []
+    padded = _story(
+        [
+            {"speaker": "灿灿", "line": "GOOD_CLOSE" + "补" * 80},
+            {"speaker": "昭昭", "line": "姐姐别走呀。"},
+        ],
+    )
+
+    def fake_fix(_candidate, prompt, **kwargs):
+        fix_calls.append(prompt)
+        return dict(padded)
+
+    budget = GoldChatRepairBudget(max_repairs=2)
+    with patch(
+        "app.services.gold_story.gold_chat.convert._fix_chat_with_llm",
+        side_effect=fake_fix,
+    ), patch.object(grf, "collect_align_issues", side_effect=fake_collect), patch.object(
+        grf,
+        "_prepare_chat_for_validate",
+        side_effect=lambda chat, **kwargs: dict(chat),
+    ):
+        out = grf.refine_gold_chat_align(
+            story,
+            structure_type="N",
+            mechanism="",
+            align_block="",
+            mom_lines_max=3,
+            closing_intent="",
+            max_rounds=1,
+            bail_on_structural=False,
+            repair_budget=budget,
+        )
+    assert fix_calls
+    assert "223" in fix_calls[0] or str(DAILY_STORY_BODY_CHARS_MIN) in fix_calls[0]
+    assert "收束须愣住" not in fix_calls[0]
+    assert "类型-N收束" not in fix_calls[0]
+    assert out["dialogue"][0]["line"].startswith("GOOD_CLOSE")
+
+
+@patch("app.services.gold_story.gold_chat.refine._align_refine_with_llm")
+@patch("app.services.gold_story.gold_chat.refine._apply_gold_chat_polish_fixes")
+def test_refine_whole_chat_repair_after_polish_batch_fail(
+    mock_apply,
+    mock_llm,
+):
+    from app.services.gold_story.gold_chat import refine as grf
+
+    story = _story(
+        [
+            {"speaker": "灿灿", "line": "行吧，我补作业去了。"},
+            {"speaker": "昭昭", "line": "姐姐别走呀。"},
+        ],
+    )
+    mock_llm.return_value = {"fixes": []}
+    candidate = dict(story)
+    candidate["dialogue"] = [
+        {"speaker": "灿灿", "line": "行吧。"},
+        {"speaker": "昭昭", "line": "姐姐别走呀。"},
+    ]
+    mock_apply.return_value = PolishResult(
+        candidate=candidate,
+        accepted=set(),
+        errors=[f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前223"],
+    )
+    budget = GoldChatRepairBudget(max_repairs=2)
+    fix_calls: list[str] = []
+
+    def fake_fix(_candidate, prompt, **kwargs):
+        fix_calls.append(prompt)
+        return dict(story)
+
+    with patch(
+        "app.services.gold_story.gold_chat.convert._fix_chat_with_llm",
+        side_effect=fake_fix,
+    ), patch.object(
+        grf,
+        "collect_align_issues",
+        return_value=[
+            {"kind": "类型-N收束", "desc": "收束须愣住", "fix": "补"},
+        ],
+    ), patch.object(
+        grf,
+        "_prepare_chat_for_validate",
+        side_effect=ValueError("still bad"),
+    ):
+        with pytest.raises(AlignRepairFailure):
+            grf.refine_gold_chat_align(
+                story,
+                structure_type="N",
+                mechanism="",
+                align_block="",
+                mom_lines_max=3,
+                closing_intent="",
+                max_rounds=1,
+                bail_on_structural=False,
+                repair_budget=budget,
+            )
+    assert fix_calls
+    assert "223" in fix_calls[0] or str(DAILY_STORY_BODY_CHARS_MIN) in fix_calls[0]
+
+
+def test_align_repair_failure_message_not_only_short_header():
+    exc = AlignRepairFailure(
+        stage="align_repair",
+        validation_errors=[f"正文总字数须≥240，当前223"],
+        align_issues=[
+            {"kind": "类型-N收束", "desc": "收束须愣住", "fix": "x"},
+        ],
+        candidate=_story([]),
+    )
+    msg = str(exc)
+    assert "align_refine_failed:" in msg
+    assert "223" in msg
+    assert "收束" in msg
+
+    from app.services.gold_story.gold_chat.expand import (
+        _has_non_short_hard_errors,
+        _short_content_reject_message,
+    )
+
+    assert _has_non_short_hard_errors(msg)
+    assert "本地垫字仍不足" not in _short_content_reject_message(msg)

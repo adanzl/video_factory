@@ -32,7 +32,13 @@ from app.services.gold_story.gold_chat.patch import (
     apply_m5_h_local_patches,
 )
 from app.services.gold_story.gold_chat.polish import (
+    PolishResult,
     _apply_gold_chat_polish_fixes,
+)
+from app.services.gold_story.gold_chat.repair import (
+    AlignRepairFailure,
+    GoldChatRepairBudget,
+    build_candidate_repair_feedback,
 )
 from app.services.gold_story.gold_chat.prompts import (
     CHAT_MAX_LINE_CHARS,
@@ -106,6 +112,7 @@ def refine_gold_chat_align(
     max_rounds: int = REFINE_MAX_ROUNDS,
     bail_on_structural: bool = True,
     row: dict[str, Any] | None = None,
+    repair_budget: GoldChatRepairBudget | None = None,
 ) -> dict[str, Any]:
     """保真 checklist → LLM 定点精修 → 再 hard 校验。"""
     banned = [str(x) for x in (banned_literals or []) if str(x).strip()]
@@ -115,6 +122,7 @@ def refine_gold_chat_align(
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     repair_feedback: list[dict[str, Any]] = []
+    budget = repair_budget
     if row:
         payload = cast(dict[str, Any], row.get("payload") or {})
         mode = str(payload.get("closing_mode") or "").strip()
@@ -257,31 +265,77 @@ def refine_gold_chat_align(
                 ) from refine_exc
             raise
         rejected: list[str] = []
-        fixed, accepted = _apply_gold_chat_polish_fixes(
+        polish_result: PolishResult = _apply_gold_chat_polish_fixes(
             data,
             raw,
             banned_literals=banned,
             mom_lines_max=mom_max,
             rejection_reasons=rejected,
         )
-        if not accepted:
-            if not rejected:
-                break  # 模型没有提供有效修改，避免无反馈重复调用
+        candidate_base = _normalize_chat_speakers(polish_result.candidate)
+        align_now = collect_align_issues(
+            candidate_base,
+            structure_type=st,
+            mechanism=mech,
+            closing_intent=closing,
+            beat_chain=beat_chain,
+            conflict_text=conflict_text,
+            dialogue_seed=dialogue_seed,
+            beat=beat,
+            object_text=object_text,
+            mechanism_text=mechanism_text,
+        )
+        blocking_now, _warn_now = split_align_issues(align_now)
 
-            repair_feedback = [{
-                "lines": [],
-                "kind": "精修未应用",
-                "desc": "；".join(dict.fromkeys(rejected)),
-                "fix": (
-                    "上一轮修改未应用，请基于当前稿重新修改；"
-                    "同时满足正文最小字数、妈妈台词上限和类型契约，"
-                    "不要靠重复语气词补字。"
-                ),
-            }]
-            continue
+        if polish_result.errors or (not polish_result.accepted and rejected):
+            val_errors = list(polish_result.errors) or list(dict.fromkeys(rejected))
+            if budget is not None and budget.consume():
+                from app.services.gold_story.gold_chat.convert import (
+                    _fix_chat_with_llm,
+                )
+
+                prompt = build_candidate_repair_feedback(
+                    candidate_base,
+                    validation_errors=val_errors,
+                    align_issues=blocking_now,
+                    mom_lines_max=mom_max,
+                )
+                candidate_base = _normalize_chat_speakers(
+                    _fix_chat_with_llm(
+                        candidate_base,
+                        prompt,
+                        banned_literals=banned,
+                        mom_lines_max=mom_max,
+                    ),
+                )
+                align_refreshed = collect_align_issues(
+                    candidate_base,
+                    structure_type=st,
+                    mechanism=mech,
+                    closing_intent=closing,
+                    beat_chain=beat_chain,
+                    conflict_text=conflict_text,
+                    dialogue_seed=dialogue_seed,
+                    beat=beat,
+                    object_text=object_text,
+                    mechanism_text=mechanism_text,
+                )
+                blocking_now, _warn_now = split_align_issues(align_refreshed)
+            elif polish_result.errors:
+                raise AlignRepairFailure(
+                    stage="align_repair",
+                    validation_errors=val_errors,
+                    align_issues=blocking_now,
+                    candidate=candidate_base,
+                )
+            elif not rejected:
+                break
+
+        if not polish_result.accepted and not polish_result.errors and not rejected:
+            break
 
         repair_feedback = []
-        data = _normalize_chat_speakers(fixed)
+        data = candidate_base
         try:
             data = _prepare_chat_for_validate(
                 data,
@@ -293,8 +347,33 @@ def refine_gold_chat_align(
                 mom_lines_max=mom_max,
                 row=row,
             )
-        except ValueError:
-            continue
+        except ValueError as prep_exc:
+            val_err = str(prep_exc)
+            if budget is not None and budget.consume():
+                from app.services.gold_story.gold_chat.convert import (
+                    _fix_chat_with_llm,
+                )
+
+                data = _normalize_chat_speakers(
+                    _fix_chat_with_llm(
+                        candidate_base,
+                        build_candidate_repair_feedback(
+                            candidate_base,
+                            validation_errors=[val_err],
+                            align_issues=blocking_now,
+                            mom_lines_max=mom_max,
+                        ),
+                        banned_literals=banned,
+                        mom_lines_max=mom_max,
+                    ),
+                )
+                continue
+            raise AlignRepairFailure(
+                stage="align_repair",
+                validation_errors=[val_err],
+                align_issues=blocking_now,
+                candidate=candidate_base,
+            ) from prep_exc
 
     remain = collect_align_issues(
         data,
@@ -395,7 +474,26 @@ def refine_gold_chat_align(
             parts.append(
                 "精修未应用：" + str(repair_feedback[0].get("desc") or "")
             )
-        raise ValueError(f"align_refine_failed:{'；'.join(parts)}")
+        val_errors: list[str] = []
+        try:
+            from app.services.gold_story.gold_chat.convert import validate_gold_chat
+
+            validate_gold_chat(
+                data,
+                banned_literals=banned,
+                source_type=str(
+                    (row or {}).get("payload", {}).get("source_type") or "field"
+                ),
+                mom_lines_max=mom_max,
+            )
+        except ValueError as val_exc:
+            val_errors = [str(val_exc)]
+        raise AlignRepairFailure(
+            stage="align_repair",
+            validation_errors=val_errors,
+            align_issues=blocking_remain,
+            candidate=data,
+        ) from None
     if warn_remain:
         logger.info(
             "gold_chat align warn remain: %s",

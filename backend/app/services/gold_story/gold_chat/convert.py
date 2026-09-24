@@ -740,6 +740,8 @@ def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], 
 def _refine_after_normalize(
     chat: dict[str, Any],
     row: dict[str, Any],
+    *,
+    repair_budget: Any | None = None,
 ) -> dict[str, Any]:
     """normalize 垫字后若仍有非结构性对齐 issue，走一轮精修。"""
     payload = cast(dict[str, Any], row.get("payload") or {})
@@ -835,6 +837,7 @@ def _refine_after_normalize(
             max_rounds=1,
             bail_on_structural=False,
             row=row,
+            repair_budget=repair_budget,
         )
     except ValueError:
         logger.info("gold_chat post-normalize refine skipped: %s", blocking[:2])
@@ -1347,8 +1350,11 @@ def convert_gold_chat(
     row, structure_notes = _resolve_structure_row(row)
     row = _persist_structure_correction(row, structure_notes)
     row = _rebuild_h3a_h3b_on_convert(row)
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+
     sid = str(row.get("source_id") or "").strip()
-    chat = gold_story_to_gold_chat(row)
+    repair_budget = GoldChatRepairBudget(max_repairs=2)
+    chat = gold_story_to_gold_chat(row, repair_budget=repair_budget)
     chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)
     payload0 = cast(dict[str, Any], row.get("payload") or {})
     chat = _realign_j_role_speakers(
@@ -1358,7 +1364,7 @@ def convert_gold_chat(
         else None,
         structure_type=str(row.get("structure_type") or ""),
     )
-    chat = _refine_after_normalize(chat, row)
+    chat = _refine_after_normalize(chat, row, repair_budget=repair_budget)
     _st0 = str(row.get("structure_type") or chat.get("story_type") or "")
     _mech0 = str(row.get("mechanism") or "")
     chat, _ = _ensure_gold_chat_min_chars(
@@ -1381,6 +1387,7 @@ def convert_gold_chat(
         payload0=payload0,
         st0=_st0,
         mech0=_mech0,
+        repair_budget=repair_budget,
     )
     cfg = config or Config()
     paths = export_gold_chat_files(

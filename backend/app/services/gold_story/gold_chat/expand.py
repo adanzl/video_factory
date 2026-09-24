@@ -118,6 +118,7 @@ from app.services.gold_story.gold_chat.polish import (
     _apply_gold_chat_polish_fixes,
     collect_gold_chat_polish_issues,
 )
+from app.services.gold_story.gold_chat.repair import AlignRepairFailure
 
 logger = logging.getLogger(__name__)
 
@@ -1103,7 +1104,7 @@ def _is_regenerable_short_error(msg: str) -> bool:
     return char_def is not None and char_def > 0
 
 def _has_non_short_hard_errors(msg: str) -> bool:
-    """缺字段/妈句等硬错：勿只走短篇幅 FIX。"""
+    """缺字段/妈句/精修失败等硬错：勿只走短篇幅 FIX。"""
     text = str(msg or "")
     return (
         "缺少字段" in text
@@ -1111,6 +1112,7 @@ def _has_non_short_hard_errors(msg: str) -> bool:
         or "妈妈台词须" in text
         or "爸爸台词须" in text
         or "key 须" in text
+        or "align_refine_failed:" in text
     )
 
 def _ensure_gold_chat_punchline_explain(
@@ -1297,8 +1299,19 @@ def _gate_forced_m14_p_or_raise(row: dict[str, Any]) -> None:
             "缺道具互整认怂链（亲子成人反将不可硬套 P）"
         )
 
-def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
+def gold_story_to_gold_chat(
+    row: dict[str, Any],
+    *,
+    repair_budget: Any | None = None,
+) -> dict[str, Any]:
     """单条 gold_story 行 → daily_story 形 JSON。"""
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+
+    budget: GoldChatRepairBudget = (
+        repair_budget
+        if isinstance(repair_budget, GoldChatRepairBudget)
+        else GoldChatRepairBudget(max_repairs=2)
+    )
     row = _repair_i_row_contract(row)
     row = _repair_k_row_contract(row)
     row, _structure_notes = _resolve_structure_row(row)
@@ -1708,6 +1721,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 max_rounds=REFINE_MAX_ROUNDS,
                 bail_on_structural=True,
                 row=row,
+                repair_budget=budget,
             )
             # align 精修可能又写回弱判据/连说；收口再垫一次
             chat, _ = patch_c_force_sibling_alternate(chat)
@@ -1770,6 +1784,8 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 lifted: dict[str, Any] | None = None
                 feedback_story = chat
                 try:
+                    if not budget.consume():
+                        raise ValueError(last_err) from score_exc
                     fb = format_structure_score_feedback(last_err, chat)
                     if gaps:
                         fb = fb + "\n" + "\n".join(
@@ -1835,6 +1851,20 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 )
                 continue
             return chat
+        except AlignRepairFailure as exc:
+            last_err = exc.to_message()
+            budget.note_failure(last_err)
+            expand_feedback_block = format_expand_regen_feedback(
+                last_err,
+                exc.candidate,
+                structure_type=structure_type,
+                mechanism=mechanism,
+                closing_intent=closing,
+                beat_chain=beat_chain,
+                conflict_text=conflict_text,
+                short_regen_count=short_regen_count,
+            )
+            continue
         except ValueError as exc:
             last_err = str(exc)
             # 精修/校验路径截断也回灌 扩写，勿直接打死整次 convert

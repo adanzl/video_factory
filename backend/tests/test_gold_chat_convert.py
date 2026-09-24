@@ -463,13 +463,21 @@ def test_convert_failure_preserves_existing_export(tmp_path, monkeypatch):
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: export_dir)
     monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: export_dir)
     _bypass_structure_gate(monkeypatch)
-    monkeypatch.setattr(gc, "gold_story_to_gold_chat", lambda _r: _sample_chat())
+    monkeypatch.setattr(
+        gc,
+        "gold_story_to_gold_chat",
+        lambda _r, **kw: _sample_chat(),
+    )
     monkeypatch.setattr(
         gc,
         "apply_gold_chat_normalizations",
         lambda chat, **_kw: (chat, []),
     )
-    monkeypatch.setattr(gc, "_refine_after_normalize", lambda chat, _row: chat)
+    monkeypatch.setattr(
+        gc,
+        "_refine_after_normalize",
+        lambda chat, _row, **_kw: chat,
+    )
     monkeypatch.setattr(gc, "_rebuild_h3a_h3b_on_convert", lambda r: r)
     monkeypatch.setattr(gc, "_persist_structure_correction", lambda r, _n: r)
     monkeypatch.setattr(gc, "_resolve_structure_row", lambda r: (r, []))
