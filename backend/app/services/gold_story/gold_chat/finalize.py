@@ -69,6 +69,14 @@ class GoldChatLocalDuplicateBlocked(GoldChatAcceptanceBlocked):
         super().__init__(message)
 
 
+class GoldChatSemanticBlocked(GoldChatAcceptanceBlocked):
+    """终检 LLM 语义硬伤；保留结构化 issues 供定点修稿冻结范围。"""
+
+    def __init__(self, message: str, *, issues: list[dict[str, Any]] | None = None) -> None:
+        self.issues = [dict(item) for item in (issues or []) if isinstance(item, dict)]
+        super().__init__(message)
+
+
 class GoldChatRepairableError(ValueError):
     """终检硬卡失败且可进入统一点定修稿。"""
 
@@ -163,6 +171,127 @@ def _export_repair_budget_hint() -> str:
     )
 
 
+def _semantic_repair_target_lines(exc: GoldChatSemanticBlocked) -> set[int]:
+    """语义终检点名的全部可改行；邻句只读，不自动扩大修改范围。"""
+    targets: set[int] = set()
+    for item in exc.issues:
+        raw_lines = item.get("lines")
+        if not isinstance(raw_lines, list):
+            continue
+        for no in raw_lines:
+            if isinstance(no, int) and not isinstance(no, bool) and no > 0:
+                targets.add(int(no))
+    return targets
+
+
+def _semantic_repair_scope_block(
+    exc: GoldChatSemanticBlocked,
+    chat: dict[str, Any],
+) -> str:
+    """把结构化审核项、可改行与只读邻句明确写进修稿指令。"""
+    targets = sorted(_semantic_repair_target_lines(exc))
+    if not targets:
+        return ""
+    labels = "、".join(f"第{no}句" for no in targets)
+    parts = [
+        f"【语义定点范围】只允许改{labels}的 line 文本；",
+        "对白行数、行序、全部 speaker、其它行文本全部冻结。",
+        "未点名的相邻句仅用于判断问答对象和我/你视角，不得修改。",
+    ]
+    for item in exc.issues[:8]:
+        raw_lines = item.get("lines")
+        line_txt = raw_lines if isinstance(raw_lines, list) else []
+        kind = str(item.get("kind") or "").strip()
+        desc = str(item.get("desc") or "").strip()
+        fix = str(item.get("fix") or "").strip()
+        detail = f"- 第{line_txt}句 {kind}：{desc}".rstrip("：")
+        if fix:
+            detail += f"；审核建议：{fix}"
+        parts.append(detail)
+
+    dialogue = chat.get("dialogue")
+    if isinstance(dialogue, list):
+        target_set = set(targets)
+        context_nos: set[int] = set()
+        for no in targets:
+            for ctx_no in (no - 1, no + 1):
+                if 1 <= ctx_no <= len(dialogue) and ctx_no not in target_set:
+                    context_nos.add(ctx_no)
+        if context_nos:
+            parts.append("【只读邻句】")
+            for no in sorted(context_nos)[:12]:
+                item = dialogue[no - 1]
+                if not isinstance(item, dict):
+                    continue
+                speaker = str(item.get("speaker") or "").strip()
+                line = str(item.get("line") or "").strip()
+                parts.append(f"- 第{no}句 {speaker}：{line}")
+    return "\n".join(parts)
+
+
+def _sanitize_semantic_scoped_repair(
+    original: dict[str, Any],
+    lifted: dict[str, Any],
+    *,
+    target_lines: set[int],
+    st_final: str,
+    normalize_chat: Any,
+) -> tuple[dict[str, Any], bool]:
+    """语义定点修只落目标行文本；shape/speaker/非目标行严格冻结。"""
+    normalized = normalize_chat(lifted)
+    original_rows = original.get("dialogue")
+    repaired_rows = normalized.get("dialogue")
+    if (
+        not target_lines
+        or not isinstance(original_rows, list)
+        or not isinstance(repaired_rows, list)
+        or len(repaired_rows) != len(original_rows)
+    ):
+        return dict(original), False
+
+    scoped_rows: list[Any] = [dict(x) if isinstance(x, dict) else x for x in original_rows]
+    changed = False
+    for idx in sorted(target_lines):
+        if not (1 <= idx <= len(original_rows)):
+            continue
+        old_item = original_rows[idx - 1]
+        new_item = repaired_rows[idx - 1]
+        if not isinstance(old_item, dict) or not isinstance(new_item, dict):
+            continue
+        old_speaker = str(old_item.get("speaker") or "").strip()
+        new_speaker = str(new_item.get("speaker") or "").strip()
+        if old_speaker != new_speaker:
+            continue
+        new_line = str(new_item.get("line") or "").strip()
+        old_line = str(old_item.get("line") or "").strip()
+        if new_line and new_line != old_line:
+            scoped_rows[idx - 1]["line"] = new_line
+            changed = True
+
+    out = dict(original)
+    out["dialogue"] = scoped_rows
+    if st_final:
+        out["story_type"] = st_final
+    out, _ = patch_sanitize_pad_suffix(out)
+    out, _ = patch_sanitize_pad_particles(out)
+
+    # sanitizer 只能影响目标行；非目标行逐字回滚，speaker 永远沿用 original。
+    cleaned_rows = out.get("dialogue")
+    if isinstance(cleaned_rows, list) and len(cleaned_rows) == len(original_rows):
+        for idx, old_item in enumerate(original_rows, 1):
+            if idx in target_lines or not isinstance(old_item, dict):
+                continue
+            cleaned_rows[idx - 1] = dict(old_item)
+        for idx in target_lines:
+            if not (1 <= idx <= len(original_rows)):
+                continue
+            old_item = original_rows[idx - 1]
+            cur_item = cleaned_rows[idx - 1]
+            if isinstance(old_item, dict) and isinstance(cur_item, dict):
+                cur_item["speaker"] = old_item.get("speaker")
+    return out, changed
+
+
 def _build_export_repair_feedback(
     exc: BaseException,
     chat: dict[str, Any],
@@ -203,6 +332,20 @@ def _build_export_repair_feedback(
             f"机审：{exc}",
             hint,
         ])
+
+
+    if isinstance(exc, GoldChatSemanticBlocked):
+        scope = _semantic_repair_scope_block(exc, chat)
+        return "\n".join(
+            part
+            for part in (
+                format_semantic_acceptance_feedback(str(exc)),
+                scope,
+                metrics,
+                "只在目标行内完成修复并维持现有字数/结构硬约束；不得靠改其它行补长度。",
+            )
+            if part
+        )
 
     if isinstance(exc, GoldChatLocalDuplicateBlocked):
         targets = sorted(_duplicate_repair_target_lines(exc))
@@ -412,8 +555,9 @@ def run_gold_chat_final_acceptance(
             format_export_blocking_issue_summary(it)
             for it in llm_block[:5]
         ]
-        raise GoldChatAcceptanceBlocked(
+        raise GoldChatSemanticBlocked(
             "终检语义硬伤：" + "；".join(parts),
+            issues=llm_block,
         )
 
     signals = collect_escalation_chatter_signals(chat)
@@ -530,24 +674,39 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                 banned_literals=[str(x) for x in banned],
                 mom_lines_max=int(mom_max),
             )
-            repaired = _sanitize_repaired_chat(
-                lifted,
-                st_final=st_final,
-                normalize_chat=normalize_chat,
-                dialogue_seed=dialogue_seed,
-            )
-            if isinstance(exc, GoldChatLocalDuplicateBlocked):
-                targets = _duplicate_repair_target_lines(exc)
-                if targets:
-                    repaired = _freeze_duplicate_repair_scope(
-                        current,
-                        repaired,
-                        target_lines=targets,
-                    )
-                    logger.info(
-                        "gold_chat duplicate repair frozen scope target_lines=%s",
-                        sorted(targets),
-                    )
+            if isinstance(exc, GoldChatSemanticBlocked):
+                targets = _semantic_repair_target_lines(exc)
+                repaired, scoped_changed = _sanitize_semantic_scoped_repair(
+                    current,
+                    lifted,
+                    target_lines=targets,
+                    st_final=st_final,
+                    normalize_chat=normalize_chat,
+                )
+                logger.info(
+                    "gold_chat semantic repair frozen scope target_lines=%s changed=%s",
+                    sorted(targets),
+                    scoped_changed,
+                )
+            else:
+                repaired = _sanitize_repaired_chat(
+                    lifted,
+                    st_final=st_final,
+                    normalize_chat=normalize_chat,
+                    dialogue_seed=dialogue_seed,
+                )
+                if isinstance(exc, GoldChatLocalDuplicateBlocked):
+                    targets = _duplicate_repair_target_lines(exc)
+                    if targets:
+                        repaired = _freeze_duplicate_repair_scope(
+                            current,
+                            repaired,
+                            target_lines=targets,
+                        )
+                        logger.info(
+                            "gold_chat duplicate repair frozen scope target_lines=%s",
+                            sorted(targets),
+                        )
             current = repaired
             continue
     raise GoldChatAcceptanceBlocked(last_err or "终检修稿未通过")
