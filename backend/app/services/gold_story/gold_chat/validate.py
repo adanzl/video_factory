@@ -1775,7 +1775,8 @@ def _intent_anchor_tokens(intent: str) -> list[str]:
 
 _RE_PARENT_LATE_REACTION_PREFIX = re.compile(
     r"^(?:你(?:刚才)?说(?:啥|什么)|你说的(?:啥|什么)|"
-    r"你在说(?:啥|什么)|你再说一遍|你说清楚)"
+    r"你在说(?:啥|什么)|你再说一遍|你说清楚|"
+    r"(?:我|妈妈|爸爸)(?:为什么|为啥|干嘛|干吗|凭什么)(?:还)?(?:要|得|非得))"
 )
 
 
@@ -1821,10 +1822,9 @@ def _line_fulfills_beat(
                 return False
             if anchors and any(token in line for token in anchors):
                 return True
-            return bool(
-                _RE_BLAME_LINE.search(line)
-                or _RE_PARENT_TRIGGER_LINE.search(line)
-            )
+            # 责备型 beat1 必须真的说出责备/作业等内容；
+            # 裸“怎么/为什么”只能说明是疑问，不能证明它在落地本 beat。
+            return bool(_RE_BLAME_LINE.search(line))
         if authority_kind == "rule":
             return bool(RE_AUTH_RULE_SLOT.search(line))
         if authority_kind == "accountability":
@@ -1832,10 +1832,11 @@ def _line_fulfills_beat(
                 _RE_BLAME_LINE.search(line) or _RE_ACCOUNTABILITY_LINE.search(line)
             ):
                 return False
+            # 定责型 beat1 至少要有责任/责备实义；不能让无对象的
+            # “怎么/为什么”反问借通用 trigger regex 冒充定责。
             return bool(
                 _RE_ACCOUNTABILITY_LINE.search(line)
                 or _RE_BLAME_LINE.search(line)
-                or _RE_PARENT_TRIGGER_LINE.search(line)
             )
         return bool(_RE_PARENT_TRIGGER_LINE.search(line))
     if "defend" in acts and speaker in {"昭昭", "灿灿"}:

@@ -2197,7 +2197,7 @@ def apply_opening_causality_local_patch(
                 if str(row.get("speaker") or "").strip() != speaker:
                     continue
                 line = str(row.get("line") or "")
-                if _RE_STUN_REACT_LINE.search(line):
+                if row is late_head_row or _RE_STUN_REACT_LINE.search(line):
                     continue
                 if (
                     _RE_ACCOUNTABILITY_LINE.search(line)

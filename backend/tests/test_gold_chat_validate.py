@@ -1154,6 +1154,88 @@ def test_opening_causality_rejects_parent_response_style_first_line_even_with_ho
     assert opening_causality_passes(fixed, beat, mom_lines_max=2)
 
 
+def test_opening_causality_rejects_first_person_why_should_i_response_and_reorders_it():
+    """“我为什么要……”是对已提出动作的反问，不能靠裸“为什么”冒充 beat1。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "定责：批评灿灿作业没做，气氛紧张"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：认真提出打自己Q弹屁股的离谱请求"},
+        {"beat": 3, "speaker": "妈妈", "intent": "愣住：被昭昭的请求打断"},
+    ]
+    story = {
+        "conflict_core": "妈妈批评灿灿作业没做，昭昭插嘴求打自己Q弹屁股",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "我为什么要打你的屁股？"},
+            {"speaker": "灿灿", "line": "我……我这就写，真的，马上写呀。"},
+            {"speaker": "昭昭", "line": "妈妈，你打我的Q弹屁股吧，别骂姐姐了。"},
+            {"speaker": "妈妈", "line": "你们俩一个比一个会闹，我真拿你们没办法。"},
+        ],
+    }
+
+    assert not opening_causality_passes(story, beat, mom_lines_max=2)
+    fixed, ok = apply_opening_causality_local_patch(
+        story, beat_chain=beat, mom_lines_max=2,
+    )
+
+    assert ok
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert "作业" in fixed["dialogue"][0]["line"]
+    response_idx = next(
+        i for i, row in enumerate(fixed["dialogue"])
+        if row.get("line") == "我为什么要打你的屁股？"
+    )
+    interrupt_idx = next(
+        i for i, row in enumerate(fixed["dialogue"])
+        if row.get("speaker") == "昭昭" and "Q弹屁股" in str(row.get("line") or "")
+    )
+    assert response_idx > interrupt_idx
+    assert opening_causality_passes(fixed, beat, mom_lines_max=2)
+    mom_lines = [row for row in fixed["dialogue"] if row.get("speaker") == "妈妈"]
+    assert len(mom_lines) == 2
+    assert all("拿你们没办法" not in str(row.get("line") or "") for row in mom_lines)
+
+
+def test_opening_causality_keeps_direct_why_homework_trigger_valid():
+    """不能因为修“我为什么要…”而误伤真正直接定责的“为什么作业还没写”。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "定责：批评灿灿作业没做，气氛紧张"},
+        {"beat": 2, "speaker": "昭昭", "intent": "插嘴：认真提出离谱请求"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "为什么作业还没写？别磨蹭了！"},
+            {"speaker": "昭昭", "line": "妈妈，要不你先听我说个办法？"},
+        ],
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=2)
+
+
+def test_opening_causality_does_not_accept_bare_why_as_blame_or_accountability():
+    """责备/定责必须有实义，不能只凭通用“怎么/为什么”问句通过。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    for intent in (
+        "责备：灿灿作业没写",
+        "定责：批评灿灿作业没做，气氛紧张",
+    ):
+        beat = [
+            {"beat": 1, "speaker": "妈妈", "intent": intent},
+            {"beat": 2, "speaker": "昭昭", "intent": "插嘴：提出离谱请求"},
+        ]
+        story = {
+            "dialogue": [
+                {"speaker": "妈妈", "line": "为什么要这样？"},
+                {"speaker": "昭昭", "line": "妈妈，要不你听我说个办法？"},
+            ],
+        }
+        assert not opening_causality_passes(story, beat, mom_lines_max=2)
+
+
 def test_opening_causality_mom_blame_zhao_interrupt_mom_stun_ok():
     """妈妈→昭昭→妈妈 开场（#96 类），首句责备不得误判为愣住。"""
     from app.services.gold_story.gold_chat.validate import (
