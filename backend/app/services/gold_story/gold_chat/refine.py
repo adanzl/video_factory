@@ -24,9 +24,11 @@ from app.services.gold_story.gold_chat.expand import (
     _is_truncation_error,
     _normalize_chat_speakers,
     _prepare_chat_for_validate_after_local_length_close,
+    _shorten_overlong_lines_with_llm,
 )
 from app.services.gold_story.gold_chat.length import (
     GOLD_CHAT_LOCAL_LENGTH_TARGET,
+    _overlong_line_indices,
     _stabilize_local_length_candidate,
     patch_sanitize_c_tone_stack,
     patch_sanitize_pad_suffix,
@@ -346,6 +348,19 @@ def refine_gold_chat_align(
                 structure_type=st,
                 mechanism=mech,
             )
+            # deterministic trim 只能削标点/语气词；若实词句仍超 24，
+            # 用专用缩句 LLM 只改超长行，不占整稿 repair budget。
+            if _overlong_line_indices(data):
+                shortened = _shorten_overlong_lines_with_llm(data)
+                if shortened != data:
+                    data = _stabilize_refine_candidate(
+                        shortened,
+                        structure_type=st,
+                        beat_chain=beat_chain,
+                        mom_lines_max=mom_max,
+                        dialogue_seed=dialogue_seed,
+                        mechanism=mech,
+                    )
             try:
                 return _prepare_chat_for_validate_after_local_length_close(
                     data, structure_type=st, mechanism=mech,

@@ -16,9 +16,14 @@ from app.services.gold_story.scene import (
     age_remap_contract_errors,
     apply_parent_role_budget,
     force_age_score_remap,
+    normalize_dialogue_setting_for_contract,
+    normalize_retrospective_topic_contract,
+    normalize_retrospective_n_opening_parent_beats,
+    normalize_scene_dialogue_beats,
     remap_story_raw_scores_for_prompt,
     sanitize_banned_literals,
     seed_from_beat_chain,
+    trim_terminal_no_reply_rows,
     validate_scene,
 )
 from app.services.gold_story.gold_chat.setting import (
@@ -296,6 +301,8 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 规则：
 - object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
 - object：争的具体物品或话题；双方各持一物时两件都写入 object
+- **回忆/旧事/过去经历类 object 只是当前谈话主题**：禁止把历史物件搬进当前场景，
+  也禁止用“旧物/收纳筐/替代物”复刻过去事故；location 只写现在聊天发生的地点
 - location：须为允许地点表中的 place；站外场景选最接近的一项（如车内→卧室，午休垫→地板）
 - 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
 - **禁止**把妈妈/爸爸映成灿灿或昭昭来「制造姐弟戏」；家长是对手就留在 characters
@@ -319,7 +326,12 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
   禁止 A 末四拍反噬/破功；closing 须赢家一招制敌；
   若灵魂拷问/冰箱类反问由家长说出，speaker 写妈妈（或爸爸），勿并给姐弟
 - J类 beat_chain（**须 4–5 拍**）：闹/求放行/试探权威→一锤威慑或否决压住
-  →对方怂/不敢再顶→家长旁观或感叹（可无）；禁止 A 末四拍反噬/破功
+  →对方怂的**可说出台词**→家长旁观或感叹（可无）；若结果只是“沉默/不再接话/不再顶”，
+  不得单列 beat，直接作为 closing 效果；禁止 A 末四拍反噬/破功
+- N类 beat_chain（**须 4–6 拍**）：前提/怪回答→对方设问或追问→一本正经荒诞解释
+  →继续追问→荒诞自洽→对方接不住（可并拍）；每一拍都必须推动问答逻辑。
+  **禁止**在前提与荒诞反驳之间塞“某人附和/帮腔说他说得对”这种只重复前提的拍；
+  回忆型 N 可由家长首拍交代旧事，随后直接让孩子质疑/反驳/追问
 - K类 beat_chain（**须 4–6 拍**）：互打互骂升级→大人躲/叹/劝失败→僵持；
   禁止写成第三方和好（勿套 H 定责劝和+仪式性和好）
 - H类 beat_chain（**须 6–8 拍**，逐步写清，禁止合并跳步）：
@@ -338,7 +350,8 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 
 _H3B_SYSTEM = (
     "你是金故事对话化师。根据 scene_contract.beat_chain 展开 dialogue_seed。\n"
-    "intent 必须是第一人称现场动作/台词意图，禁止转述式 intent。\n"
+    "intent 必须能转成一句角色可说出口的现场对白；动作只能伴随对白，"
+    "纯沉默/低头/不再接话不能单独成为 seed。\n"
     "dialogue_seed 至少 4 条，建议 12–20 条短 intent；只输出 JSON。"
 )
 
@@ -365,8 +378,10 @@ story_raw（背景，勿照抄）：
 }}
 
 规则：
-- setting 须含地点与冲突物持有（谁面前/谁端着哪件），与 object 对齐；勿只写地点
+- setting 须含地点；当前场景确有实体冲突物时再写谁持有。若 object 是回忆/旧事/过去经历，
+  只写“在该地点聊起旧事”，禁止凭空端出历史物件或替代道具
 - 严格按 beat_chain 顺序展开；每拍 1–3 条 seed
+- punchline 后若契约效果是“沉默/不再接话/不再顶”，直接结束；这种纯无声结果不得生成 dialogue_seed
 - M5+H：seed 须含「双向互毁」「拒和/不原谅」「妈妈问谁先动手」分拍，勿合并
 - intent 须来自 scene_contract + story_raw
 - **正例只允许上方金稿原文**；本稿禁止照抄金稿 intent 到不同场景
@@ -587,6 +602,9 @@ def build_scene_contract(
             beat=h3.get("beat") if isinstance(h3.get("beat"), list) else [],
         )
         data = apply_parent_role_budget(data, h3=h3)
+        data, _dialogue_notes = normalize_scene_dialogue_beats(data)
+        data, _retro_notes = normalize_retrospective_topic_contract(data)
+        data, _retro_open_notes = normalize_retrospective_n_opening_parent_beats(data)
         errors = validate_scene(data)
         if errors:
             raise ValueError(
@@ -638,6 +656,7 @@ def build_dialogue_seed(
     seed = data.get("dialogue_seed") or []
     if not isinstance(seed, list):
         seed = []
+    seed, _silent_seed_notes = trim_terminal_no_reply_rows(seed)
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])
         data["dialogue_seed"] = seed
@@ -645,6 +664,7 @@ def build_dialogue_seed(
         raise ValueError("H3b dialogue_seed too short")
     mom_max = max(0, int(contract.get("mom_lines_max") or 0))
     seed = _trim_mom_dialogue_seed(seed, mom_max)
+    seed, _silent_seed_notes2 = trim_terminal_no_reply_rows(seed)
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])
     data["dialogue_seed"] = seed
@@ -655,6 +675,12 @@ def build_dialogue_seed(
         data["closing_intent"] = str(contract.get("closing_intent") or "")
     if not str(data.get("speaker_map_note") or "").strip():
         data["speaker_map_note"] = str(contract.get("remap_note") or "")
+    normalized_setting, _setting_changed = normalize_dialogue_setting_for_contract(
+        str(data.get("setting") or ""),
+        contract,
+    )
+    if normalized_setting:
+        data["setting"] = normalized_setting
     return data
 
 

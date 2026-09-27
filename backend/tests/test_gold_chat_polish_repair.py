@@ -241,6 +241,43 @@ def test_refine_whole_chat_repair_after_polish_batch_fail(
 
 
 
+def test_refine_align_shortens_overlong_line_before_repair_budget(monkeypatch):
+    from app.services.gold_story.gold_chat import refine as grf
+
+    story = _story([
+        {"speaker": "灿灿", "line": "这是一句完全没有语气词可以机械裁掉的超长对白内容测试甲乙丙丁"},
+        {"speaker": "昭昭", "line": "你说得也太长了吧。"},
+    ])
+    assert len(story["dialogue"][0]["line"]) > 24
+
+    monkeypatch.setattr(grf, "collect_align_issues", lambda *args, **kwargs: [])
+
+    def shorten(chat, **_kwargs):
+        out = {**chat, "dialogue": [dict(x) for x in chat["dialogue"]]}
+        out["dialogue"][0]["line"] = "这句已经缩到二十四字以内了。"
+        return out
+
+    monkeypatch.setattr(grf, "_shorten_overlong_lines_with_llm", shorten)
+
+    def prepare(chat, **_kwargs):
+        assert max(len(str(x.get("line") or "")) for x in chat["dialogue"]) <= 24
+        return dict(chat)
+
+    monkeypatch.setattr(grf, "_prepare_chat_for_validate_after_local_length_close", prepare)
+    budget = GoldChatRepairBudget(max_repairs=2)
+    out = grf.refine_gold_chat_align(
+        story,
+        structure_type="N",
+        mechanism="M6",
+        align_block="",
+        mom_lines_max=0,
+        max_rounds=1,
+        repair_budget=budget,
+    )
+    assert budget.used == 0
+    assert len(out["dialogue"][0]["line"]) <= 24
+
+
 def test_refine_align_validate_repair_restores_rule_opening_without_second_budget(monkeypatch):
     from app.services.gold_story.gold_chat import convert as gc
     from app.services.gold_story.gold_chat import refine as grf

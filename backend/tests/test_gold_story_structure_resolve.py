@@ -151,6 +151,71 @@ def test_resolve_h3_structure_story_39_to_m6_n():
     assert "solemn-nonsense" in notes[0]
 
 
+_STORY_100_RAW = (
+    "热评里有人讲自己五岁的事：老家拆迁，二楼没栏杆，他从上面掉下来，"
+    "正好砸进楼下菜篓子，一点没伤还睡着了。家人找到后把他扒出来，"
+    "他睁眼第一句问吃饭了吗。后来家庭聚会妈妈总说他天生命大，"
+    "他自己嘴硬说那是自己会挑地方落。"
+)
+_STORY_100_FUNNY = (
+    "坠楼这种惊险事故被菜篓子接住、还睡着、醒来问吃饭形成荒诞平安；"
+    "本人嘴硬说会挑地方落，把意外说成主动技能"
+)
+
+
+def test_story_100_verbal_m8_j_reclassifies_to_m6_n():
+    h3 = {
+        "mechanism": "M8",
+        "structure_type": "J",
+        "conflict_core": "妈妈又讲昭昭天生命大，昭昭嘴硬说那是自己会挑地方落",
+        "funny_why": _STORY_100_FUNNY,
+        "beat": [
+            "五岁孩子从二楼坠落掉进菜篓子",
+            "扒出来后睁眼先问吃饭了吗",
+            "妈妈反复定性为天生命大",
+            "孩子嘴硬说那是自己会挑地方落",
+        ],
+        "structure_mapping_note": "一锤嘴硬镇住话题",
+        "structure_confidence": 0.8,
+    }
+    fixed, notes = resolve_h3_structure(h3, story_raw=_STORY_100_RAW)
+    assert fixed["mechanism"] == "M6"
+    assert fixed["structure_type"] == "N"
+    assert any("solemn-nonsense" in n for n in notes)
+
+
+def test_story_100_row_reclassifies_before_gold_chat_expand():
+    row = {
+        "id": 100,
+        "mechanism": "M8",
+        "structure_type": "J",
+        "conflict_core": "妈妈又讲昭昭天生命大，昭昭嘴硬说那是自己会挑地方落",
+        "payload": {
+            "story_raw": _STORY_100_RAW,
+            "funny_why": _STORY_100_FUNNY,
+            "beat": [
+                "五岁孩子从二楼坠落掉进菜篓子",
+                "扒出来后睁眼先问吃饭了吗",
+                "妈妈反复定性为天生命大",
+                "孩子嘴硬说那是自己会挑地方落",
+            ],
+            "closing_intent": "昭昭说会挑地方落镇住全场",
+            "dialogue_seed": [
+                {"speaker": "妈妈", "intent": "重提坠楼旧事"},
+                {"speaker": "灿灿", "intent": "补刀醒来先问吃饭"},
+                {"speaker": "妈妈", "intent": "说这是天生命大"},
+                {"speaker": "昭昭", "intent": "那是我会挑地方落"},
+            ],
+            "scene_contract": {"story_type": "J"},
+        },
+    }
+    fixed, notes = resolve_gold_chat_structure_row(row)
+    assert fixed["mechanism"] == "M6"
+    assert fixed["structure_type"] == "N"
+    assert fixed["payload"]["scene_contract"]["story_type"] == "N"
+    assert any("M8→M6" in n for n in notes)
+
+
 _STORY_53_RAW = (
     "灿灿和昭昭玩抢吃蜡烛的游戏，规则是剪刀石头布，赢的人才能吃一口菜。"
     "昭昭一心只想赢，每次出拳都特别认真，结果真的赢了好几次。"

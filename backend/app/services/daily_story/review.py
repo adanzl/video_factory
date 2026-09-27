@@ -23,6 +23,7 @@ from app.services.gold_story.gold_chat.pad_stack import (
     collect_pad_stack_issues,
     pad_stack_issue_for_line,
 )
+from app.services.gold_story.scene import has_dialogue_meta_label
 
 logger = logging.getLogger(__name__)
 
@@ -498,15 +499,32 @@ def collect_sibling_address_issues(story: dict) -> list[dict[str, Any]]:
     return issues
 
 
+def collect_dialogue_meta_label_issues(story: dict) -> list[dict[str, Any]]:
+    """角色不得把结构/审稿标签当作台词念出来。"""
+    issues: list[dict[str, Any]] = []
+    for i, row in enumerate(_dialogue(story), 1):
+        line = str(row.get("line") or "").strip()
+        if not line or not has_dialogue_meta_label(line):
+            continue
+        issues.append({
+            "lines": [i],
+            "kind": "元标签",
+            "desc": f"结构/审稿标签泄漏进对白：{line}",
+            "fix": "改成角色当场会说的口语，删除一锤定音/镇住话题等结构标签",
+        })
+    return issues
+
+
 def collect_export_blocking_local_issues(story: dict) -> list[dict[str, Any]]:
-    """终验本地硬拦：明显重复 + 称谓错位。"""
+    """终验本地硬拦：明显重复 + 称谓错位 + 结构标签泄漏。"""
     repeats = [
         it
         for it in collect_local_issues(story)
         if it.get("kind") == "重复"
     ]
     address = collect_sibling_address_issues(story)
-    return merge_issues(repeats, address)
+    meta = collect_dialogue_meta_label_issues(story)
+    return merge_issues(repeats, address, meta)
 
 
 def collect_escalation_chatter_signals(story: dict) -> list[str]:

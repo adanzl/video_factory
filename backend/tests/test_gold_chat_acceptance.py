@@ -285,6 +285,16 @@ def test_near_duplicate_blocks_export():
     assert any(it["kind"] == "重复" for it in block)
 
 
+def test_dialogue_meta_label_blocks_export_if_sanitizer_did_not_remove_it():
+    dlg = [
+        {"speaker": "昭昭", "line": "我就是会挑地方落。"},
+        {"speaker": "灿灿", "line": "你还挺会给自己找理由。"},
+        {"speaker": "昭昭", "line": "一锤定音。"},
+    ]
+    block = collect_export_blocking_local_issues(_story(dlg))
+    assert any(it["kind"] == "元标签" and it["lines"] == [3] for it in block)
+
+
 def test_llm_blocking_needs_evidence():
     story = _story([{"speaker": "昭昭", "line": "冰箱里还有两根冰棍。"}])
     weak = [{"lines": [1], "kind": "矛盾", "desc": "前后矛盾", "fix": ""}]

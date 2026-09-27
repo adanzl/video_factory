@@ -20,6 +20,7 @@ from app.services.gold_story.gold_chat.pad_stack import (
     sanitize_pad_stack_line,
 )
 from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+from app.services.gold_story.scene import sanitize_dialogue_meta_label_suffix
 
 # 240 是硬线；本地机械收口不再为追求 250 软余量额外灌字。
 GOLD_CHAT_LOCAL_LENGTH_TARGET = DAILY_STORY_BODY_CHARS_MIN
@@ -157,6 +158,25 @@ def patch_sanitize_pad_suffix(
 ) -> tuple[dict[str, Any], bool]:
     """垫字后收口：去掉呢呢/啊呢/复合真的了呢等叠尾。"""
     return apply_clear_pad_sanitize(story)
+
+
+def patch_sanitize_dialogue_meta_labels(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """剥句尾“一锤定音/镇住话题”等结构标签，保留真正口语内容。"""
+    out = copy.deepcopy(story)
+    changed = False
+    for item in out.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        old = str(item.get("line") or "").strip()
+        if not old:
+            continue
+        new = sanitize_dialogue_meta_label_suffix(old)
+        if new != old:
+            item["line"] = new
+            changed = True
+    return out, changed
 
 
 def _strip_extra_natural_expands(line: str) -> str:
