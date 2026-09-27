@@ -269,6 +269,144 @@ def test_n_229_near_miss_closes_locally_without_llm_regen():
     assert any("照这个道理认真想" in row["line"] for row in out["dialogue"])
 
 
+def test_validate_expand_n_221_uses_contract_for_local_length_close(monkeypatch):
+    """N 残稿未写出 why/reason 关键词时，也应从 beat 契约识别理由方，本地补长而非烧重生成。"""
+
+    def full_line(text: str) -> str:
+        return (text + "真" * 24)[:24]
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "又说起你小时候那件旧事"},
+        {"speaker": "昭昭", "line": full_line("哪是命大我明明会挑地方落")},
+        {"speaker": "灿灿", "line": full_line("你每次都把这件事说得特别认真")},
+        {"speaker": "昭昭", "line": full_line("我本来就是照自己的想法说的")},
+        {"speaker": "灿灿", "line": full_line("那你继续把这个想法说清楚吧")},
+        {"speaker": "昭昭", "line": full_line("我前面讲的意思一直都没有变")},
+        {"speaker": "灿灿", "line": full_line("听起来你还真把它当成道理了")},
+        {"speaker": "昭昭", "line": full_line("我当然是认真想过才这么说的")},
+        {"speaker": "灿灿", "line": full_line("行我先听你把剩下的话讲完")},
+        {"speaker": "妈妈", "line": "你们先说完"},
+        {"speaker": "妈妈", "line": "我听着呢"},
+    ]
+    story = {
+        "story_type": "N",
+        "scene_title": "菜篓子旧事",
+        "setting": "客厅，一家人聊起以前的事",
+        "key": "菜篓子旧事",
+        "conflict_core": "家里人重提昭昭小时候的旧事，昭昭嘴硬解释",
+        "dialogue": dialogue,
+        "punchline_explain": "N类童真歪理：昭昭一本正经为旧事找理由",
+    }
+    current = gc.dialogue_total_chars(story)
+    assert current < 221
+    story["dialogue"][-1]["line"] += "嗯" * (221 - current)
+    assert gc.dialogue_total_chars(story) == 221
+
+    row = {
+        "payload": {
+            "scene_contract": {
+                "beat_chain": [
+                    {"speaker": "妈妈", "intent": "重提旧事：说起昭昭小时候的意外"},
+                    {"speaker": "昭昭", "intent": "质疑：那不是命大，是自己会挑地方落"},
+                    {"speaker": "妈妈", "intent": "追问：地方又不是你摆的，怎么挑"},
+                ]
+            },
+            "dialogue_seed": [
+                {"speaker": "昭昭", "line": "哪是命大，我会挑地方落。"}
+            ],
+        }
+    }
+
+    def fail_if_llm_called(*args, **kwargs):
+        raise AssertionError("221 字 N 稿不应进入 LLM 短稿 FIX")
+
+    monkeypatch.setattr(gex, "_fix_chat_with_llm", fail_if_llm_called)
+    out = gex._validate_expand_chat(
+        story,
+        banned_literals=[],
+        source_type="field",
+        mom_lines_max=3,
+        structure_type="N",
+        mechanism="M6",
+        row=row,
+    )
+
+    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    lines = [str(row.get("line") or "") for row in out["dialogue"]]
+    assert any("照这个道理认真想" in line for line in lines)
+    assert any("刚才就是这么认真回答" in line for line in lines)
+
+
+def test_n_post_align_221_stabilizer_uses_contract_context():
+    """post-align 清理压到 221 时也必须带契约收口，不能再次失忆后进入重生成。"""
+    from app.services.gold_story.gold_chat.length import _stabilize_local_length_candidate
+
+    def fit(text: str, size: int) -> str:
+        core = text.rstrip("。")
+        return (core + "真" * size)[: size - 1] + "。"
+
+    dialogue = [
+        {"speaker": "妈妈", "line": fit("又说起你小时候那件旧事", 15)},
+        {"speaker": "昭昭", "line": fit("那不叫命大我就是会挑地方落", 20)},
+        {"speaker": "妈妈", "line": fit("菜篓子不是你摆的你怎么挑", 15)},
+        {"speaker": "昭昭", "line": fit("我看准软地方才往那边落", 20)},
+        {"speaker": "灿灿", "line": fit("你说得还真像自己安排好的一样", 20)},
+        {"speaker": "昭昭", "line": fit("我当时就是一点都没有慌", 20)},
+        {"speaker": "灿灿", "line": fit("你醒来还先惦记着吃饭", 20)},
+        {"speaker": "昭昭", "line": fit("醒了先吃饭也很正常", 20)},
+        {"speaker": "妈妈", "line": fit("你这套道理还挺完整", 15)},
+        {"speaker": "灿灿", "line": fit("我都快听得接不上话了", 20)},
+        {"speaker": "昭昭", "line": fit("反正我觉得自己判断没错", 20)},
+        {"speaker": "妈妈", "line": fit("行吧这话我真接不住了", 16)},
+    ]
+    story = {"story_type": "N", "dialogue": dialogue}
+    assert gc.dialogue_total_chars(story) == 221
+    beat_chain = [
+        {"speaker": "妈妈", "intent": "重提旧事：说起昭昭小时候的意外"},
+        {"speaker": "昭昭", "intent": "质疑：那不是命大，是自己会挑地方落"},
+        {"speaker": "妈妈", "intent": "追问：地方又不是你摆的，怎么挑"},
+    ]
+
+    without_contract, _ = _stabilize_local_length_candidate(
+        story, structure_type="N", mechanism="M6",
+    )
+    assert gc.dialogue_total_chars(without_contract) < gc.DAILY_STORY_BODY_CHARS_MIN
+
+    closed, changed = _stabilize_local_length_candidate(
+        story,
+        structure_type="N",
+        mechanism="M6",
+        beat_chain=beat_chain,
+    )
+    assert changed
+    assert gc.dialogue_total_chars(closed) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert len(closed["dialogue"]) == len(story["dialogue"]) + 2
+    # 补位落在妈妈追问和昭昭已有回答之后，不能切断 beat2→beat3 的开口因果。
+    assert closed["dialogue"][2]["speaker"] == "妈妈"
+    assert closed["dialogue"][3]["speaker"] == "昭昭"
+    assert closed["dialogue"][4]["speaker"] == "灿灿"
+    assert "照这个道理认真想" in closed["dialogue"][4]["line"]
+
+
+def test_n_contract_length_fallback_rejects_ambiguous_reasoner():
+    """两个孩子都被契约标成解释方时禁止猜角色，宁可交上层修稿。"""
+    from app.services.gold_story.gold_chat.length import _n_natural_mid_pairs
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "又提起以前那件事。"},
+        {"speaker": "昭昭", "line": "我有我的说法。"},
+        {"speaker": "妈妈", "line": "你继续说。"},
+        {"speaker": "灿灿", "line": "我也有另一套说法。"},
+    ]
+    beat_chain = [
+        {"speaker": "昭昭", "intent": "解释：认真说明自己的理由"},
+        {"speaker": "灿灿", "intent": "解释：也给出自己的理由"},
+    ]
+    pairs, insert_at = _n_natural_mid_pairs(dialogue, beat_chain=beat_chain)
+    assert pairs == ()
+    assert insert_at is None
+
+
 def test_shared_local_length_close_leaves_clean_shortage_for_repair():
     from app.services.gold_story.gold_chat.length import (
         _stabilize_local_length_candidate,

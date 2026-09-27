@@ -822,10 +822,22 @@ def _prepare_chat_for_validate_after_local_length_close(
         scene_contract_location=scene_contract_location,
         activity_context=activity_context,
     )
+    payload = cast(dict[str, Any], (row or {}).get("payload") or {})
+    scene_contract = payload.get("scene_contract") or {}
+    if not isinstance(scene_contract, dict):
+        scene_contract = {}
+    beat_chain = scene_contract.get("beat_chain") or []
+    if not isinstance(beat_chain, list):
+        beat_chain = []
+    dialogue_seed = payload.get("dialogue_seed") or []
+    if not isinstance(dialogue_seed, list):
+        dialogue_seed = []
     data, _ = _stabilize_local_length_candidate(
         data,
         structure_type=structure_type,
         mechanism=mechanism,
+        beat_chain=beat_chain,
+        dialogue_seed=dialogue_seed,
     )
     return _validate_prepared_chat(
         data,
@@ -847,6 +859,16 @@ def _validate_expand_chat(
     data = _normalize_chat_speakers(dict(story))
     st = str(structure_type or data.get("story_type") or "").strip().upper()
     mech = str(mechanism or "").strip()
+    payload = cast(dict[str, Any], (row or {}).get("payload") or {})
+    scene_contract = payload.get("scene_contract") or {}
+    if not isinstance(scene_contract, dict):
+        scene_contract = {}
+    beat_chain = scene_contract.get("beat_chain") or []
+    if not isinstance(beat_chain, list):
+        beat_chain = []
+    dialogue_seed = payload.get("dialogue_seed") or []
+    if not isinstance(dialogue_seed, list):
+        dialogue_seed = []
     if st:
         data["story_type"] = st
     last_err = ""
@@ -877,6 +899,8 @@ def _validate_expand_chat(
             data,
             mechanism=mech,
             structure_type=st,
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
         )
         if st == "K" and dialogue_total_chars(data) < DAILY_STORY_BODY_CHARS_MIN:
             data, _ = _gold_chat_force_min_chars(data)
@@ -884,6 +908,8 @@ def _validate_expand_chat(
                 data,
                 mechanism=mech,
                 structure_type=st,
+                beat_chain=beat_chain,
+                dialogue_seed=dialogue_seed,
             )
         try:
             validate_gold_chat(
@@ -1877,6 +1903,8 @@ def gold_story_to_gold_chat(
             data,
             mechanism=mechanism,
             structure_type=structure_type,
+            beat_chain=beat_chain,
+            dialogue_seed=seed if isinstance(seed, list) else None,
         )
         # 连说/垫字后再：先宣传分工，再 seed 短语（seed 最后赢，避免结构卡死）
         data, prop_changed2 = patch_score_propaganda_speakers(
@@ -2042,6 +2070,8 @@ def gold_story_to_gold_chat(
                     chat,
                     structure_type=structure_type,
                     mechanism=mechanism,
+                    beat_chain=beat_chain,
+                    dialogue_seed=seed if isinstance(seed, list) else None,
                 )
                 if local_length_changed:
                     chat, candidate_errors = prepare_candidate_for_acceptance_after_local_length_close(
@@ -2210,6 +2240,8 @@ def gold_story_to_gold_chat(
                             draft,
                             structure_type=structure_type,
                             mechanism=mechanism,
+                            beat_chain=beat_chain,
+                            dialogue_seed=seed if isinstance(seed, list) else None,
                         )
                         if reclosed:
                             logger.info(
