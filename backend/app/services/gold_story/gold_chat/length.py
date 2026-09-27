@@ -548,6 +548,9 @@ def _j_expand_bare_allowed(bare: str, speaker: str) -> bool:
 
 def _n_natural_mid_pairs(
     dialogue: list[Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
 ) -> tuple[
     tuple[tuple[tuple[str, str], tuple[str, str]], ...],
     int | None,
@@ -588,7 +591,84 @@ def _n_natural_mid_pairs(
         if reason_idx >= 0:
             break
     if reason_idx < 0 or not reasoner:
-        return (), None
+        # 某些 N 候选在扩写早期尚未把「为什么→因为」写全，就先被篇幅校验拦住。
+        # 此时契约已经明确谁在嘴硬/解释，不应因为自然改写没命中关键词就放弃本地实义补位。
+        # 只用结构标签确认“理由方”；若两个孩子都像理由方则宁可不补，避免串角。
+        contract_rows = [
+            raw
+            for raw in ((beat_chain or []) or (dialogue_seed or []))
+            if isinstance(raw, dict)
+        ]
+        preferred: list[tuple[int, str]] = []
+        fallback: list[tuple[int, str]] = []
+        for pos, raw in enumerate(contract_rows):
+            speaker = str(raw.get("speaker") or "").strip()
+            intent = str(raw.get("intent") or raw.get("beat") or "").strip()
+            if speaker not in siblings:
+                continue
+            if re.search(r"回答|作答|解释|自洽|理由", intent):
+                preferred.append((pos, speaker))
+            elif re.search(r"质疑|反驳|嘴硬", intent):
+                fallback.append((pos, speaker))
+
+        role_rows = preferred or fallback
+        reasoners = {speaker for _pos, speaker in role_rows}
+        if len(reasoners) != 1:
+            return (), None
+        reasoner = next(iter(reasoners))
+        reason_pos = max(pos for pos, speaker in role_rows if speaker == reasoner)
+
+        # 按契约中该角色出现次序，先定位最接近对应 beat 的现有对白。
+        # 若契约随后还有家长追问，则补位必须落在追问（以及已有回答）之后，
+        # 不能插到 beat2 与 beat3 中间破坏开口因果。
+        reason_occurrence = sum(
+            1
+            for raw in contract_rows[: reason_pos + 1]
+            if str(raw.get("speaker") or "").strip() == reasoner
+        )
+        reason_indices = [
+            idx
+            for idx, item in enumerate(dialogue)
+            if isinstance(item, dict)
+            and str(item.get("speaker") or "").strip() == reasoner
+        ]
+        if not reason_indices:
+            return (), None
+        reason_idx = reason_indices[min(max(0, reason_occurrence - 1), len(reason_indices) - 1)]
+
+        parent_after = next(
+            (
+                str(raw.get("speaker") or "").strip()
+                for raw in contract_rows[reason_pos + 1 :]
+                if str(raw.get("speaker") or "").strip() in {"妈妈", "爸爸"}
+                and re.search(
+                    r"追问|质问|反问|发问|问",
+                    str(raw.get("intent") or raw.get("beat") or ""),
+                )
+            ),
+            "",
+        )
+        if parent_after:
+            parent_idx = next(
+                (
+                    idx
+                    for idx in range(reason_idx + 1, len(dialogue))
+                    if isinstance(dialogue[idx], dict)
+                    and str(dialogue[idx].get("speaker") or "").strip() == parent_after
+                ),
+                -1,
+            )
+            if parent_idx >= 0:
+                response_idx = next(
+                    (
+                        idx
+                        for idx in range(parent_idx + 1, len(dialogue))
+                        if isinstance(dialogue[idx], dict)
+                        and str(dialogue[idx].get("speaker") or "").strip() == reasoner
+                    ),
+                    -1,
+                )
+                reason_idx = response_idx if response_idx >= 0 else parent_idx
 
     listener = "灿灿" if reasoner == "昭昭" else "昭昭"
     pairs = tuple(
@@ -600,7 +680,7 @@ def _n_natural_mid_pairs(
         for ask, answer in _N_NATURAL_MID_TEMPLATES
         for line in (ask, answer)
     }
-    insert_at = reason_idx + 1
+    insert_at = min(reason_idx + 1, max(2, len(dialogue) - 2))
     while insert_at < len(dialogue):
         item = dialogue[insert_at]
         if not isinstance(item, dict):
@@ -997,6 +1077,8 @@ def _boost_short_with_mid_lines(
     *,
     mechanism: str = "",
     structure_type: str = "",
+    beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """FIX/扩写 写不满时：收束前插入成对句，保 J 权威方向。
 
@@ -1026,7 +1108,13 @@ def _boost_short_with_mid_lines(
 
     st = str(structure_type or story.get("story_type") or "").strip().upper()
     n_pair_pool, n_insert_at = (
-        _n_natural_mid_pairs(dialogue) if st == "N" else ((), None)
+        _n_natural_mid_pairs(
+            dialogue,
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
+        )
+        if st == "N"
+        else ((), None)
     )
     # K：顶满 24 句时仍可能差字，允许至 26 以便插实义中段对
     line_cap = CHAT_LINE_COUNT_MAX + (2 if st == "K" else 0)
@@ -1417,6 +1505,8 @@ def _ensure_gold_chat_min_chars(
     *,
     mechanism: str = "",
     structure_type: str = "",
+    beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """near-miss 垫到 hard min；大缺口先可读中段加句，再交 扩写/FIX。
 
@@ -1441,6 +1531,8 @@ def _ensure_gold_chat_min_chars(
             data,
             mechanism=mech,
             structure_type=st,
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
         )
     changed = changed or changed_mid
 
@@ -1481,6 +1573,8 @@ def _ensure_gold_chat_min_chars(
                     data,
                     mechanism=mech,
                     structure_type=st,
+                    beat_chain=beat_chain,
+                    dialogue_seed=dialogue_seed,
                 )
                 changed = changed or mid2
                 need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(data)
@@ -1524,6 +1618,8 @@ def _ensure_gold_chat_min_chars(
             data,
             mechanism=mech,
             structure_type="N",
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
         )
         if n_mid:
             data = data2
@@ -1536,6 +1632,8 @@ def _stabilize_local_length_candidate(
     *,
     structure_type: str,
     mechanism: str,
+    beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
     target_chars: int = GOLD_CHAT_LOCAL_LENGTH_TARGET,
 ) -> tuple[dict[str, Any], bool]:
     """统一机械收口：句长压缩 + near-miss 补字；最终不得靠垫字痕迹过线。"""
@@ -1551,6 +1649,8 @@ def _stabilize_local_length_candidate(
         data,
         mechanism=mechanism,
         structure_type=structure_type,
+        beat_chain=beat_chain,
+        dialogue_seed=dialogue_seed,
     )
     changed = changed or expanded
     total = dialogue_total_chars(data)
@@ -1599,6 +1699,8 @@ def _stabilize_local_length_candidate(
                 data,
                 mechanism=mechanism,
                 structure_type=structure_type,
+                beat_chain=beat_chain,
+                dialogue_seed=dialogue_seed,
             )
             changed = changed or mid
         if dialogue_total_chars(data) <= before:
