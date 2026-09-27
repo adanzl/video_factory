@@ -883,6 +883,87 @@ def _opening_causality_story(
     }
 
 
+_N_RETROSPECTIVE_PARENT_Q_BEATS = [
+    {"beat": 1, "speaker": "妈妈", "intent": "交代旧事：又讲昭昭小时候摔进软垫，一点没伤还睡着"},
+    {"beat": 2, "speaker": "昭昭", "intent": "质疑：嘴硬反驳，说那不是运气好，是自己会挑软地方落"},
+    {"beat": 3, "speaker": "妈妈", "intent": "追问：软垫又不是你摆的，你怎么挑"},
+]
+
+
+def test_opening_causality_accepts_rebuttal_semantic_paraphrase():
+    """N 回忆型开场：质疑/嘴硬 beat 允许自然人称和措辞变化，不能只认整块 intent 原文。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "又说你小时候摔进软垫，一点没伤还睡着了。"},
+            {"speaker": "昭昭", "line": "哪是运气好，我明明会挑软地方落。"},
+            {"speaker": "妈妈", "line": "软垫又不是你摆的，你怎么挑？"},
+        ],
+    }
+    assert opening_causality_passes(
+        story, _N_RETROSPECTIVE_PARENT_Q_BEATS, mom_lines_max=2,
+    )
+
+
+def test_opening_causality_patch_uses_seed_for_missing_middle_beat():
+    """beat1/beat3 已在场但 beat2 真缺失时，复用 H3b seed 落地，不烧 LLM 修稿预算。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    seed = [
+        {"speaker": "妈妈", "intent": "又讲昭昭小时候摔进软垫，一点没伤还睡着"},
+        {"speaker": "昭昭", "intent": "嘴硬反驳：那不是运气好，是我会挑软地方落"},
+        {"speaker": "妈妈", "intent": "追问：软垫又不是你摆的，你怎么挑"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "又说你小时候摔进软垫，一点没伤还睡着了。"},
+            {"speaker": "灿灿", "line": "你那时候胆子可真大。"},
+            {"speaker": "妈妈", "line": "软垫又不是你摆的，你怎么挑？"},
+        ],
+    }
+    fixed, changed = apply_opening_causality_local_patch(
+        story,
+        beat_chain=_N_RETROSPECTIVE_PARENT_Q_BEATS,
+        mom_lines_max=2,
+        dialogue_seed=seed,
+    )
+    assert changed
+    assert opening_causality_passes(
+        fixed, _N_RETROSPECTIVE_PARENT_Q_BEATS, mom_lines_max=2,
+    )
+    assert fixed["dialogue"][2] == {
+        "speaker": "昭昭",
+        "line": "那不是运气好，是我会挑软地方落。",
+    }
+    assert fixed["dialogue"][3]["speaker"] == "妈妈"
+
+
+def test_opening_causality_patch_never_synthesizes_non_authority_beat1():
+    """非权威旧事 beat1 匹配不到时不能调用 authority 生成器，更不能删后续妈妈追问来“验过”。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "交代旧事：昭昭小时候从高处掉进软垫没受伤"},
+        {"beat": 2, "speaker": "昭昭", "intent": "质疑：不是运气好，是自己会挑地方落"},
+        {"beat": 3, "speaker": "妈妈", "intent": "追问：软垫不是你摆的，你怎么挑"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "你小时候摔下来没受伤，还睡了一觉。"},
+            {"speaker": "昭昭", "line": "哪是运气好，我会挑地方。"},
+            {"speaker": "妈妈", "line": "软垫不是你摆的，你怎么挑？"},
+        ],
+    }
+    fixed, changed = apply_opening_causality_local_patch(
+        story, beat_chain=beat, mom_lines_max=2,
+    )
+    assert not changed
+    assert fixed == story
+    assert fixed["dialogue"][2]["line"] == "软垫不是你摆的，你怎么挑？"
+
+
 def test_opening_causality_blocks_defend_without_parent_trigger():
     from app.services.gold_story.gold_chat.validate import (
         collect_opening_causality_hard_errors,
