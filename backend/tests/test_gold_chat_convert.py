@@ -233,6 +233,42 @@ def test_n_local_semantic_mid_pair_recovers_clean_q96_shape():
     )
 
 
+def test_n_229_near_miss_closes_locally_without_llm_regen():
+    """N 已有理由链但可扩行顶格时，229→240 应走实义补位，不把 11 字缺口交给 LLM。"""
+    from app.services.gold_story.gold_chat.length import _ensure_gold_chat_min_chars
+
+    def full_line(text: str) -> str:
+        return (text + "真" * 24)[:24]
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "小时候这事又被提起来了"},
+        {"speaker": "昭昭", "line": full_line("你为什么老说我那次只是运气好")},
+        {"speaker": "灿灿", "line": full_line("因为我就是认真觉得那个理由说得通")},
+        {"speaker": "昭昭", "line": full_line("我还可以继续把这个想法说清楚")},
+        {"speaker": "灿灿", "line": full_line("那你就继续说我认真听着呢")},
+        {"speaker": "昭昭", "line": full_line("我前面说的就是这个意思没变")},
+        {"speaker": "灿灿", "line": full_line("我知道你是在认真解释这件事")},
+        {"speaker": "昭昭", "line": full_line("所以我才一直按这个道理往下说")},
+        {"speaker": "灿灿", "line": full_line("行那我再听听你还能怎么解释")},
+        {"speaker": "妈妈", "line": "先听你们说完"},
+        {"speaker": "妈妈", "line": "我还在听"},
+        {"speaker": "妈妈", "line": "嗯" * 16},
+    ]
+    story = {"story_type": "N", "dialogue": dialogue}
+    assert gc.dialogue_total_chars(story) == 229
+
+    out, changed = _ensure_gold_chat_min_chars(
+        story,
+        structure_type="N",
+        mechanism="M6",
+    )
+
+    assert changed
+    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert len(out["dialogue"]) == len(story["dialogue"]) + 2
+    assert any("照这个道理认真想" in row["line"] for row in out["dialogue"])
+
+
 def test_shared_local_length_close_leaves_clean_shortage_for_repair():
     from app.services.gold_story.gold_chat.length import (
         _stabilize_local_length_candidate,

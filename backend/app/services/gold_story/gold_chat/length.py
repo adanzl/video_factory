@@ -1513,6 +1513,21 @@ def _ensure_gold_chat_min_chars(
             if dialogue_total_chars(data) < DAILY_STORY_BODY_CHARS_MIN:
                 data, pad2 = _pad_gold_chat_to_min_chars(data, max_rounds=24)
                 changed = changed or pad2
+
+    # N 的 near-miss 可能卡在一个窄缝：已有句均接近句长上限时，粒子/句内扩写都
+    # 无法前进，但稿内其实已经有可定位的「追问→因果回答」链。此时最后复用 N
+    # 专用的抽象复述对补实义，不把 1~60 字的纯篇幅问题继续烧给 LLM repair/重抽。
+    # 放在所有轻量收口之后，只处理前面确实无法闭合的稿，避免正常 1~3 字 near-miss
+    # 被无谓插入整对台词。
+    if st == "N" and dialogue_total_chars(data) < DAILY_STORY_BODY_CHARS_MIN:
+        data2, n_mid = _boost_short_with_mid_lines(
+            data,
+            mechanism=mech,
+            structure_type="N",
+        )
+        if n_mid:
+            data = data2
+            changed = True
     return data, changed
 
 
