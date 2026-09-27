@@ -488,9 +488,24 @@ def run_gold_chat_final_acceptance(
         apply_opening_causality_local_patch,
     )
     from app.services.gold_story.gold_chat.validate import (
+        apply_n_beat_role_speaker_align,
         collect_opening_causality_issues,
         format_opening_causality_hard_error,
     )
+
+    contract_type = str(
+        scene_contract.get("story_type")
+        or row.get("structure_type")
+        or chat.get("story_type")
+        or ""
+    ).strip()
+    chat, n_role_patched = apply_n_beat_role_speaker_align(
+        chat,
+        beat_chain=beat_chain,
+        structure_type=contract_type,
+    )
+    if n_role_patched:
+        logger.info("[GOLD_CHAT] final acceptance N beat role speaker align")
 
     chat, opening_patched = apply_opening_causality_local_patch(
         chat,

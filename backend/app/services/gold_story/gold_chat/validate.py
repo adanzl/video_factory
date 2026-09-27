@@ -1306,6 +1306,106 @@ def apply_seed_phrase_speaker_align(
     return out, changed
 
 
+
+_N_BEAT_QUESTION_INTENT = re.compile(
+    r"追问|设问|发问|问：|为什么|为啥|怎么(?:会|知道|想)|哪有|凭什么"
+)
+_N_BEAT_ANSWER_INTENT = re.compile(
+    r"离谱|回答|作答|解释|自洽|反驳|嘴硬|讲圆|理由|原因"
+)
+_N_DIALOGUE_QUESTION = re.compile(
+    r"[？?]|为什么|为啥|怎么(?:会|知道|想|在)|哪有|凭什么|"
+    r"是不是|要不要|能不能|该不该|吗[？?]?$|呢[？?]?$"
+)
+_N_DIALOGUE_ANSWER_CUE = re.compile(
+    r"^(?:我|因为|所以|当然|就是|才|不是|哪有|有啊|没有|嗯|对|那是)"
+)
+
+
+def _n_beat_role_speakers(
+    beat_chain: list[Any] | None,
+) -> tuple[str, str]:
+    """N 契约唯一确定追问方/回答方时返回二者；含混则不猜。"""
+    questioners: set[str] = set()
+    answerers: set[str] = set()
+    for item in beat_chain or []:
+        if not isinstance(item, dict):
+            continue
+        speaker = str(item.get("speaker") or "").strip()
+        if speaker not in {"昭昭", "灿灿"}:
+            continue
+        intent = str(item.get("intent") or "").strip()
+        if _N_BEAT_QUESTION_INTENT.search(intent):
+            questioners.add(speaker)
+        if _N_BEAT_ANSWER_INTENT.search(intent):
+            answerers.add(speaker)
+    if len(questioners) != 1 or len(answerers) != 1:
+        return "", ""
+    questioner = next(iter(questioners))
+    answerer = next(iter(answerers))
+    if questioner == answerer:
+        return "", ""
+    return questioner, answerer
+
+
+def apply_n_beat_role_speaker_align(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    structure_type: str = "",
+) -> tuple[dict[str, Any], bool]:
+    """N 类按 beat 的唯一 Q/A 角色纠正 speaker 漂移，不改台词文本。"""
+    import copy
+
+    if str(structure_type or story.get("story_type") or "").strip().upper() != "N":
+        return story, False
+    questioner, answerer = _n_beat_role_speakers(beat_chain)
+    if not questioner or not answerer:
+        return story, False
+    rows = _dialogue_rows(story)
+    if not rows:
+        return story, False
+
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+
+    changed = False
+    previous_was_question = False
+    for item in dialogue:
+        if not isinstance(item, dict):
+            previous_was_question = False
+            continue
+        speaker = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if not line:
+            previous_was_question = False
+            continue
+
+        # beat 已唯一确定追问方时，回答方不能反过来用“你…”追问对方。
+        is_direct_question = "你" in line and bool(_N_DIALOGUE_QUESTION.search(line))
+        if is_direct_question:
+            if speaker == answerer:
+                item["speaker"] = questioner
+                speaker = questioner
+                changed = True
+            previous_was_question = speaker == questioner
+            continue
+
+        # 紧随追问的第一人称/因果回答若仍挂在追问方名下，一并归回答方。
+        if (
+            previous_was_question
+            and speaker == questioner
+            and bool(_N_DIALOGUE_ANSWER_CUE.search(line))
+        ):
+            item["speaker"] = answerer
+            changed = True
+        previous_was_question = False
+
+    return out, changed
+
+
 def _append_seed_speaker_issues(
     rows: list[dict[str, Any]],
     issues: list[dict[str, Any]],
