@@ -10,8 +10,15 @@ from app.services.gold_story.gold_chat.validate import (
 from app.services.gold_story.scene import (
     apply_parent_role_budget,
     format_scene_block,
+    has_dialogue_meta_label,
+    normalize_dialogue_setting_for_contract,
+    normalize_retrospective_topic_contract,
+    normalize_retrospective_n_opening_parent_beats,
+    normalize_scene_dialogue_beats,
     remap_story_raw_sibling_roles,
     seed_from_beat_chain,
+    sanitize_dialogue_meta_label_suffix,
+    trim_terminal_no_reply_rows,
     validate_scene,
 )
 
@@ -82,6 +89,202 @@ def test_seed_from_beat_chain():
     seed = seed_from_beat_chain(_sample_contract()["beat_chain"])
     assert len(seed) == 4
     assert seed[0]["speaker"] == "灿灿"
+
+
+def test_scene_trims_terminal_no_reply_beat_after_punchline():
+    contract = {
+        **_sample_contract(),
+        "story_type": "J",
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "重提旧事：五岁掉进菜篓子"},
+            {"beat": 2, "speaker": "灿灿", "intent": "补刀：扒出来还问吃饭了吗"},
+            {"beat": 3, "speaker": "妈妈", "intent": "定性：这就是天生命大"},
+            {"beat": 4, "speaker": "昭昭", "intent": "嘴硬：那是我会挑地方落"},
+            {"beat": 5, "speaker": "灿灿", "intent": "被一锤镇住，低头剥橘子不接话"},
+        ],
+        "closing_intent": "昭昭一句会挑地方落镇住全场，妈妈和灿灿都不再顶",
+    }
+    out, notes = normalize_scene_dialogue_beats(contract)
+    assert notes
+    assert len(out["beat_chain"]) == 4
+    assert out["beat_chain"][-1]["speaker"] == "昭昭"
+    assert out["beat_chain"][-1]["beat"] == 4
+    assert "会挑地方落" in out["beat_chain"][-1]["intent"]
+    assert validate_scene(out) == []
+
+
+def test_validate_scene_rejects_untrimmed_terminal_no_reply_beat():
+    bad = {
+        **_sample_contract(),
+        "beat_chain": [
+            *_sample_contract()["beat_chain"],
+            {"speaker": "灿灿", "intent": "低头不接话"},
+        ],
+    }
+    assert "beat_chain_terminal_no_reply_not_dialogue" in validate_scene(bad)
+
+
+def test_seed_from_beat_chain_does_not_turn_terminal_silence_into_dialogue():
+    chain = [
+        {"speaker": "妈妈", "intent": "重提旧事"},
+        {"speaker": "灿灿", "intent": "补刀追问"},
+        {"speaker": "妈妈", "intent": "定性命大"},
+        {"speaker": "昭昭", "intent": "那是我会挑地方落"},
+        {"speaker": "灿灿", "intent": "被镇住，低头剥橘子不接话"},
+    ]
+    seed = seed_from_beat_chain(chain)
+    assert len(seed) == 4
+    assert seed[-1]["speaker"] == "昭昭"
+    assert "会挑地方落" in seed[-1]["intent"]
+
+
+def test_trim_terminal_no_reply_keeps_mid_scene_silence_reaction():
+    seed = [
+        {"speaker": "灿灿", "intent": "灵魂拷问"},
+        {"speaker": "昭昭", "intent": "无言以对，委屈看窗外"},
+        {"speaker": "灿灿", "intent": "一招制敌"},
+        {"speaker": "昭昭", "intent": "低头不接话"},
+    ]
+    out, notes = trim_terminal_no_reply_rows(seed)
+    assert notes == ["低头不接话"]
+    assert len(out) == 3
+    assert "无言以对" in out[1]["intent"]
+
+
+def test_retrospective_n_merges_consecutive_parent_exposition_beats():
+    contract = {
+        **_sample_contract(),
+        "story_type": "N",
+        "object": "昭昭五岁坠楼被菜篓子接住的旧事",
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "重提旧事：五岁掉进菜篓子"},
+            {"beat": 2, "speaker": "妈妈", "intent": "定论：这就是天生命大"},
+            {"beat": 3, "speaker": "昭昭", "intent": "反驳：那是我会挑地方落"},
+            {"beat": 4, "speaker": "灿灿", "intent": "追问：怎么挑的"},
+            {"beat": 5, "speaker": "昭昭", "intent": "一本正经讲圆"},
+        ],
+    }
+    out, notes = normalize_retrospective_n_opening_parent_beats(contract)
+    assert notes
+    assert len(out["beat_chain"]) == 4
+    assert out["beat_chain"][0]["speaker"] == "妈妈"
+    assert "重提旧事" in out["beat_chain"][0]["intent"]
+    assert "天生命大" in out["beat_chain"][0]["intent"]
+    assert out["beat_chain"][1]["speaker"] == "昭昭"
+    assert [x["beat"] for x in out["beat_chain"]] == [1, 2, 3, 4]
+
+
+def test_retrospective_n_drops_redundant_support_before_rebuttal():
+    contract = {
+        **_sample_contract(),
+        "story_type": "N",
+        "object": "昭昭五岁坠楼被菜篓子接住的旧事",
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "重提旧事：五岁掉进菜篓子"},
+            {"beat": 2, "speaker": "灿灿", "intent": "接话帮腔，说妈妈讲得对，昭昭就是命大"},
+            {"beat": 3, "speaker": "昭昭", "intent": "嘴硬反驳：不是命大，是我会挑地方落"},
+            {"beat": 4, "speaker": "灿灿", "intent": "追问：怎么挑的"},
+            {"beat": 5, "speaker": "昭昭", "intent": "一本正经讲圆"},
+        ],
+    }
+    out, notes = normalize_retrospective_n_opening_parent_beats(contract)
+    assert notes == ["移除N回忆开场冗余附和拍:灿灿"]
+    assert len(out["beat_chain"]) == 4
+    assert out["beat_chain"][1]["speaker"] == "昭昭"
+    assert "会挑地方落" in out["beat_chain"][1]["intent"]
+    assert [x["beat"] for x in out["beat_chain"]] == [1, 2, 3, 4]
+
+
+def test_retrospective_topic_drops_materialized_remap_note_and_setting():
+    contract = {
+        **_sample_contract(),
+        "location": "客厅",
+        "object": "五岁坠楼被菜篓子接住还睡着的事",
+        "remap_note": (
+            "五岁孩子映射为昭昭；"
+            "坠楼旧事在客厅重演，菜篓子用收纳筐近似替代；"
+            "妈妈保留为讲述者"
+        ),
+    }
+    cleaned, notes = normalize_retrospective_topic_contract(contract)
+    assert notes
+    assert "收纳筐" not in cleaned["remap_note"]
+    assert "重演" not in cleaned["remap_note"]
+    assert "五岁孩子映射为昭昭" in cleaned["remap_note"]
+    assert "妈妈保留为讲述者" in cleaned["remap_note"]
+
+    setting, changed = normalize_dialogue_setting_for_contract(
+        "客厅，妈妈端着旧菜篓子站在沙发前",
+        cleaned,
+    )
+    assert changed
+    assert setting == "客厅，一家人聊起以前的事"
+    assert "菜篓子" not in setting
+
+
+def test_current_scene_object_keeps_concrete_setting():
+    contract = {**_sample_contract(), "object": "遥控器"}
+    setting, changed = normalize_dialogue_setting_for_contract(
+        "客厅，昭昭拿着遥控器坐在沙发上",
+        contract,
+    )
+    assert not changed
+    assert setting == "客厅，昭昭拿着遥控器坐在沙发上"
+
+
+def test_dialogue_meta_label_suffix_is_removed_but_plain_line_is_kept():
+    line = "所以不是命大，是我会挑地方落，一锤定音。"
+    assert has_dialogue_meta_label(line)
+    assert sanitize_dialogue_meta_label_suffix(line) == "所以不是命大，是我会挑地方落。"
+    assert sanitize_dialogue_meta_label_suffix("我就是会挑地方落。") == "我就是会挑地方落。"
+    # 整句只有元标签时不机械删成空句，交 hard gate/LLM 修稿。
+    assert sanitize_dialogue_meta_label_suffix("一锤定音。") == "一锤定音。"
+
+
+def test_build_dialogue_seed_filters_terminal_silence_and_history_prop(monkeypatch):
+    from app.services.gold_story.collect import llm as llm_steps
+
+    contract = {
+        **_sample_contract(),
+        "location": "客厅",
+        "object": "五岁坠楼被菜篓子接住还睡着的事",
+        "mom_lines_max": 2,
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "重提五岁掉进菜篓子的旧事"},
+            {"beat": 2, "speaker": "灿灿", "intent": "补刀问醒来是不是先问吃饭"},
+            {"beat": 3, "speaker": "妈妈", "intent": "定性这就是天生命大"},
+            {"beat": 4, "speaker": "昭昭", "intent": "嘴硬说那是我会挑地方落"},
+        ],
+        "closing_intent": "昭昭一句会挑地方落镇住全场",
+    }
+
+    monkeypatch.setattr(
+        llm_steps,
+        "_chat_json",
+        lambda *_a, **_k: {
+            "setting": "客厅，妈妈端着旧菜篓子站在沙发前",
+            "dialogue_seed": [
+                {"speaker": "妈妈", "intent": "重提五岁掉进菜篓子的旧事"},
+                {"speaker": "灿灿", "intent": "补刀问醒来是不是先问吃饭"},
+                {"speaker": "妈妈", "intent": "定性这就是天生命大"},
+                {"speaker": "昭昭", "intent": "嘴硬说那是我会挑地方落"},
+                {"speaker": "灿灿", "intent": "被镇住，低头剥橘子不接话"},
+            ],
+            "closing_intent": "昭昭一句会挑地方落镇住全场",
+            "speaker_map_note": "",
+            "dialogue_confidence": 0.9,
+        },
+    )
+    out = llm_steps.build_dialogue_seed(
+        story_raw="一家人聊天时又提起昭昭小时候掉进菜篓子的旧事。" * 3,
+        h3={"beat": ["a", "b", "c", "d"]},
+        scene_contract=contract,
+    )
+    assert len(out["dialogue_seed"]) == 4
+    assert out["dialogue_seed"][-1]["speaker"] == "昭昭"
+    assert "会挑地方落" in out["dialogue_seed"][-1]["intent"]
+    assert out["setting"] == "客厅，一家人聊起以前的事"
+    assert "菜篓子" not in out["setting"]
 
 
 def test_force_age_score_remap_rewrites_adult_totals():

@@ -619,6 +619,27 @@ def test_apply_deterministic_shorten_trims_one_char():
     assert len(out["dialogue"][0]["line"]) <= gc.CHAT_MAX_LINE_CHARS
 
 
+def test_shorten_overlong_llm_freezes_non_target_lines_and_speakers(monkeypatch):
+    story = _sample_chat()
+    story["dialogue"][0]["line"] = "这是一句完全没有语气词可以机械裁掉的超长对白内容测试甲乙丙丁"
+    original_second = dict(story["dialogue"][1])
+    assert len(story["dialogue"][0]["line"]) > gc.CHAT_MAX_LINE_CHARS
+
+    def fake_chat(*_a, **_k):
+        out = {**story, "dialogue": [dict(x) for x in story["dialogue"]]}
+        out["dialogue"][0]["line"] = "这句只保留必要语义"
+        out["dialogue"][0]["speaker"] = story["dialogue"][0]["speaker"]
+        out["dialogue"][1]["line"] = "模型顺手改坏了非目标行"
+        out["dialogue"][1]["speaker"] = "妈妈"
+        return out
+
+    monkeypatch.setattr(gex, "_chat_json", fake_chat)
+    out = gex._shorten_overlong_lines_with_llm(story)
+    assert out["dialogue"][0]["line"] == "这句只保留必要语义"
+    assert out["dialogue"][0]["speaker"] == story["dialogue"][0]["speaker"]
+    assert out["dialogue"][1] == original_second
+
+
 def test_validate_expand_shortens_before_full_fix(monkeypatch):
     calls: list[str] = []
 

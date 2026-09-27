@@ -48,6 +48,221 @@ SEED_MIN = 4
 BEAT_CHAIN_MIN = 4
 
 
+_TERMINAL_NO_REPLY_RE = re.compile(
+    r"(?:不再|没再|不敢再)(?:接话|搭话|回话|顶嘴|回嘴|反驳|说话)|"
+    r"(?:不|没)(?:接话|搭话|回话|说话)|"
+    r"低头[^，。！？]{0,16}(?:不接话|不说话|没再说)|"
+    r"沉默(?:收场|下来|不语)?$|无话可说$"
+)
+
+
+def is_terminal_no_reply_intent(intent: str) -> bool:
+    """是否是只能作为表演结果、不能再生成一条对白的末拍。"""
+    text = str(intent or "").strip()
+    return bool(text and _TERMINAL_NO_REPLY_RE.search(text))
+
+
+def trim_terminal_no_reply_rows(rows: list[Any] | None) -> tuple[list[Any], list[str]]:
+    """去掉末尾“沉默/不再接话”结果行；中段语塞/停顿仍可保留。"""
+    out = list(rows or [])
+    notes: list[str] = []
+    while out:
+        row = out[-1]
+        if not isinstance(row, dict):
+            break
+        intent = str(row.get("intent") or row.get("beat") or "").strip()
+        if not is_terminal_no_reply_intent(intent):
+            break
+        notes.append(intent)
+        out.pop()
+    return out, notes
+
+
+def normalize_scene_dialogue_beats(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """scene beat_chain 只保留可展开成对白的末拍，避免 punchline 后硬续“沉默”。"""
+    if not isinstance(contract, dict):
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return contract, []
+    trimmed, removed = trim_terminal_no_reply_rows(chain)
+    if not removed:
+        return contract, []
+    out = dict(contract)
+    normalized: list[Any] = []
+    for idx, row in enumerate(trimmed, 1):
+        if isinstance(row, dict):
+            item = dict(row)
+            if "beat" in item:
+                item["beat"] = idx
+            normalized.append(item)
+        else:
+            normalized.append(row)
+    out["beat_chain"] = normalized
+    return out, [f"移除末尾纯静默结果拍:{text}" for text in reversed(removed)]
+
+
+_RETROSPECTIVE_TOPIC_RE = re.compile(
+    r"(?:旧事|往事|回忆|经历|小时候|童年|当年|曾经|以前|那次|事故|的事)$|"
+    r"(?:旧事|往事|回忆|经历|小时候|童年|当年|曾经|以前|那次|事故)"
+)
+_RETROSPECTIVE_MATERIALIZE_NOTE_RE = re.compile(
+    r"(?:替代|近似|换成|改成|搬到|搬进|端出|拿出|重演)"
+)
+
+
+def is_retrospective_topic_object(value: str) -> bool:
+    """object 是过去事件/回忆话题，而不是当前场景要持有的实体物。"""
+    text = str(value or "").strip()
+    return bool(text and _RETROSPECTIVE_TOPIC_RE.search(text))
+
+
+def normalize_retrospective_topic_contract(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """回忆型 object 不应被 remap_note 强行物化成当前道具。"""
+    if not isinstance(contract, dict):
+        return contract, []
+    if not is_retrospective_topic_object(str(contract.get("object") or "")):
+        return contract, []
+    note = str(contract.get("remap_note") or "").strip()
+    if not note:
+        return contract, []
+    parts = [p.strip(" 。") for p in re.split(r"[；;]", note) if p.strip(" 。")]
+    kept = [p for p in parts if not _RETROSPECTIVE_MATERIALIZE_NOTE_RE.search(p)]
+    if kept == parts:
+        return contract, []
+    out = dict(contract)
+    out["remap_note"] = "；".join(kept)
+    return out, ["移除回忆话题物化 remap_note"]
+
+
+_RETROSPECTIVE_PARENT_EXPOSITION_RE = re.compile(
+    r"重提|讲|回忆|旧事|定论|定性|命大|补充|说.*(?:命|运气)"
+)
+_RETROSPECTIVE_N_SUPPORT_RE = re.compile(
+    r"帮腔|附和|赞同|同意|讲得对|说得对|就是命大|确实命大|命真大"
+)
+_RETROSPECTIVE_N_REBUTTAL_RE = re.compile(
+    r"反驳|嘴硬|不是.{0,8}命|会挑地方|自己会|主动"
+)
+
+
+def normalize_retrospective_n_opening_parent_beats(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """N 型回忆稿避免开场连续两拍家长讲解，合并成一个前提拍。"""
+    if not isinstance(contract, dict):
+        return contract, []
+    if str(contract.get("story_type") or "").strip().upper() != "N":
+        return contract, []
+    if not is_retrospective_topic_object(str(contract.get("object") or "")):
+        return contract, []
+    chain = contract.get("beat_chain")
+    # 至少 5 拍才合并，避免把合法 4 拍压到 scene_contract 最低拍数以下。
+    if not isinstance(chain, list) or len(chain) < 5:
+        return contract, []
+    first, second = chain[0], chain[1]
+    if not isinstance(first, dict) or not isinstance(second, dict):
+        return contract, []
+    speaker1 = str(first.get("speaker") or "").strip()
+    speaker2 = str(second.get("speaker") or "").strip()
+    if speaker1 not in {"妈妈", "爸爸"}:
+        return contract, []
+    intent1 = str(first.get("intent") or first.get("beat") or "").strip()
+    intent2 = str(second.get("intent") or second.get("beat") or "").strip()
+
+    third = chain[2] if len(chain) > 2 else None
+    if (
+        speaker2 != speaker1
+        and _RETROSPECTIVE_N_SUPPORT_RE.search(intent2)
+        and isinstance(third, dict)
+        and _RETROSPECTIVE_N_REBUTTAL_RE.search(
+            str(third.get("intent") or third.get("beat") or "")
+        )
+    ):
+        new_chain = [first, *chain[2:]]
+        normalized: list[Any] = []
+        for idx, row in enumerate(new_chain, 1):
+            if isinstance(row, dict):
+                item = dict(row)
+                if "beat" in item:
+                    item["beat"] = idx
+                normalized.append(item)
+            else:
+                normalized.append(row)
+        out = dict(contract)
+        out["beat_chain"] = normalized
+        return out, [f"移除N回忆开场冗余附和拍:{speaker2}"]
+
+    if speaker2 != speaker1:
+        return contract, []
+    if not _RETROSPECTIVE_PARENT_EXPOSITION_RE.search(intent2):
+        return contract, []
+
+    merged_first = dict(first)
+    merged_first["intent"] = f"{intent1}；{intent2}".strip("；")
+    new_chain: list[Any] = [merged_first, *chain[2:]]
+    normalized: list[Any] = []
+    for idx, row in enumerate(new_chain, 1):
+        if isinstance(row, dict):
+            item = dict(row)
+            if "beat" in item:
+                item["beat"] = idx
+            normalized.append(item)
+        else:
+            normalized.append(row)
+    out = dict(contract)
+    out["beat_chain"] = normalized
+    return out, [f"合并N回忆开场连续家长拍:{speaker1}"]
+
+
+def normalize_dialogue_setting_for_contract(
+    setting: str,
+    contract: dict[str, Any] | None,
+) -> tuple[str, bool]:
+    """回忆/旧事类 object 只作为当前谈话主题，不把历史物件搬进 setting。"""
+    sc = contract if isinstance(contract, dict) else {}
+    if not is_retrospective_topic_object(str(sc.get("object") or "")):
+        return str(setting or "").strip(), False
+    location = str(sc.get("location") or "").strip()
+    neutral = f"{location}，一家人聊起以前的事" if location else "一家人聊起以前的事"
+    current = str(setting or "").strip()
+    return neutral, neutral != current
+
+
+_DIALOGUE_META_LABEL_RE = re.compile(
+    r"一锤定音|镇住话题|嘴硬收场|旁观感叹|一招制敌|语塞收场|愣住收束"
+)
+_DIALOGUE_META_LABEL_SUFFIX_RE = re.compile(
+    r"(?:[，,；;。！？!?]?\s*)"
+    r"(?:一锤定音|镇住话题|嘴硬收场|旁观感叹|一招制敌|语塞收场|愣住收束)"
+    r"[。！？!?]*$"
+)
+
+
+def has_dialogue_meta_label(line: str) -> bool:
+    """结构/审稿标签不得由角色念出口。"""
+    return bool(_DIALOGUE_META_LABEL_RE.search(str(line or "")))
+
+
+def sanitize_dialogue_meta_label_suffix(line: str) -> str:
+    """只剥句尾结构标签；整句都是标签时保留给 hard gate/LLM 修稿。"""
+    text = str(line or "").strip()
+    if not text:
+        return text
+    match = _DIALOGUE_META_LABEL_SUFFIX_RE.search(text)
+    if not match:
+        return text
+    prefix = text[: match.start()].rstrip("，,；;。！？!? ")
+    if not prefix:
+        return text
+    tail = text[-1] if text[-1] in "。！？!?" else "。"
+    return f"{prefix}{tail}"
+
+
 def format_beat_chain(chain: list[Any]) -> str:
     lines: list[str] = []
     for i, item in enumerate(chain or [], start=1):
@@ -481,6 +696,11 @@ def validate_scene(contract: dict[str, Any] | None) -> list[str]:
             sp = str(row.get("speaker") or "").strip()
             if sp not in ALLOWED_SPEAKERS:
                 errors.append(f"beat_chain[{i}]_speaker_illegal:{sp!r}")
+        last = chain[-1] if chain else None
+        if isinstance(last, dict):
+            last_intent = str(last.get("intent") or last.get("beat") or "").strip()
+            if is_terminal_no_reply_intent(last_intent):
+                errors.append("beat_chain_terminal_no_reply_not_dialogue")
     source_type = str(contract.get("source_type") or "").strip().lower()
     if source_type == "tutorial":
         check_blob = (
@@ -883,9 +1103,10 @@ def sanitize_banned_literals(
 
 
 def seed_from_beat_chain(chain: list[Any]) -> list[dict[str, str]]:
-    """beat_chain → dialogue_seed 兜底。"""
+    """beat_chain → dialogue_seed 兜底；末尾纯静默结果不生成假对白。"""
+    rows, _ = trim_terminal_no_reply_rows(chain)
     out: list[dict[str, str]] = []
-    for row in chain or []:
+    for row in rows:
         if not isinstance(row, dict):
             continue
         sp = str(row.get("speaker") or "").strip()

@@ -34,8 +34,10 @@ _RE_SURRENDER = re.compile(r"我输了|认输|不敢再|怂|服软|败下阵来?
 _RE_WINNER_RULE = re.compile(r"谁赢了?谁说了算|谁赢谁|赢了说了算|胜者为王")
 _RE_DEFERRED_GRUDGE = re.compile(r"等我长大|以后再|再跟你算账|忍气吞声|来日再")
 _RE_SOLEMN_NONSENSE = re.compile(
-    r"一本正经|正经胡说|荒诞逻辑|无厘头|童趣逻辑|跳跃逻辑|"
-    r"哭笑不得|愣住.*放弃|被童言|胡说"
+    r"一本正经|正经胡说|荒诞逻辑|荒诞(?:解释|说法|自洽)|无厘头|"
+    r"童趣逻辑|跳跃逻辑|哭笑不得|愣住.*放弃|被童言|胡说|"
+    r"(?:意外|巧合|运气|事故).{0,24}(?:说成|当成|解释成|变成).{0,20}(?:主动|技能|本事)|"
+    r"(?:主动|技能|本事).{0,20}(?:解释|说成).{0,20}(?:意外|巧合|运气|事故)"
 )
 _RE_NO_BOOMERANG_NOTE = re.compile(r"未形成回旋镖|没有回旋镖|非回旋镖|无回旋镖")
 _RE_I_SOUL_QUESTION = re.compile(
@@ -486,7 +488,7 @@ def should_reclassify_to_m6_n(
     structure_type: str,
     blob: str,
 ) -> bool:
-    """误标 C/A/E 的正经胡说 → M6+N。"""
+    """误标 C/A/E，或误落 M8+J 的语言型正经胡说 → M6+N。"""
     mech = str(mechanism or "").strip().upper()
     st = str(structure_type or "").strip().upper()
     if mech == "M6" and st == "N":
@@ -496,6 +498,8 @@ def should_reclassify_to_m6_n(
     if mech == "M6" and st in {"A", "E", "C"}:
         return True
     if mech == "M2" and st == "C":
+        return True
+    if mech == "M8" and st == "J" and not suggests_m8_j_domination(blob):
         return True
     if st == "C" and _RE_NO_BOOMERANG_NOTE.search(blob):
         return True
@@ -578,6 +582,9 @@ def resolve_h3_structure(
         conflict_core=str(out.get("conflict_core") or ""),
         mapping_note=str(out.get("structure_mapping_note") or ""),
     )
+    funny_why = str(out.get("funny_why") or "").strip()
+    if funny_why:
+        blob = f"{blob}\n{funny_why}"
     # P 判定禁用 mapping_note，防「整蛊回敬」自证
     blob_p = p_structure_evidence_blob(
         story_raw=story_raw,
@@ -752,6 +759,9 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
         if isinstance(payload.get("dialogue_seed"), list)
         else None,
     )
+    funny_why = str(payload.get("funny_why") or "").strip()
+    if funny_why:
+        blob = f"{blob}\n{funny_why}"
     blob_p = p_structure_evidence_blob(
         story_raw=str(payload.get("story_raw") or ""),
         beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],

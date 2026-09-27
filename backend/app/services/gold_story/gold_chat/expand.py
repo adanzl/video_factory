@@ -604,10 +604,13 @@ def _shorten_overlong_lines_with_llm(
     *,
     max_chars: int = CHAT_MAX_LINE_CHARS,
 ) -> dict[str, Any]:
+    """只接受超长行的缩句结果；行数/speaker/其它对白全部冻结。"""
     indices = _overlong_line_indices(story, max_chars)
     if not indices:
         return story
     rows = story.get("dialogue") or []
+    if not isinstance(rows, list):
+        return story
     long_desc = []
     for no in indices:
         row = rows[no - 1]
@@ -619,7 +622,34 @@ def _shorten_overlong_lines_with_llm(
         long_lines="\n".join(long_desc),
         story_json=json.dumps(story, ensure_ascii=False)[:8000],
     )
-    return _normalize_chat_speakers(_chat_json(_SHORTEN_SYSTEM, user))
+    raw = _normalize_chat_speakers(_chat_json(_SHORTEN_SYSTEM, user))
+    new_rows = raw.get("dialogue") or []
+    if not isinstance(new_rows, list) or len(new_rows) != len(rows):
+        return story
+
+    out = copy.deepcopy(story)
+    out_rows = out.get("dialogue") or []
+    for no in indices:
+        idx = no - 1
+        if not (
+            0 <= idx < len(rows)
+            and idx < len(new_rows)
+            and idx < len(out_rows)
+            and isinstance(rows[idx], dict)
+            and isinstance(new_rows[idx], dict)
+            and isinstance(out_rows[idx], dict)
+        ):
+            continue
+        old_speaker = str(rows[idx].get("speaker") or "").strip()
+        new_speaker = str(new_rows[idx].get("speaker") or "").strip()
+        old_line = str(rows[idx].get("line") or "").strip()
+        new_line = str(new_rows[idx].get("line") or "").strip()
+        if new_speaker != old_speaker or not new_line:
+            continue
+        if len(new_line) > max_chars or len(new_line) >= len(old_line):
+            continue
+        out_rows[idx]["line"] = new_line
+    return out
 
 def _setting_normalize_kwargs_from_row(
     row: dict[str, Any] | None,

@@ -46,6 +46,7 @@ from app.services.gold_story.gold_chat.length import (
     _pad_gold_chat_to_min_chars,
     patch_sanitize_bridge_lines,
     patch_sanitize_c_tone_stack,
+    patch_sanitize_dialogue_meta_labels,
     patch_sanitize_expand_clutter,
     patch_sanitize_natural_expand_stack,
     patch_sanitize_pad_particles,
@@ -118,6 +119,7 @@ from app.services.gold_story.gold_chat.validate import (
 from app.services.gold_story.collect.llm import resolve_gold_chat_snippet
 from app.services.gold_story.scene import (
     format_scene_block,
+    normalize_dialogue_setting_for_contract,
     sanitize_banned_literals,
 )
 from app.services.gold_story.gold_chat.setting import (
@@ -915,6 +917,14 @@ def apply_gold_chat_normalizations(
     if after_setting != before_setting:
         chat["setting"] = after_setting
         notes.append("setting 补冲突物持有")
+    # 历史/回忆型 object 只能是当前谈话主题；prop enrich 不得二次把旧物搬进现场。
+    retrospective_setting, retrospective_changed = normalize_dialogue_setting_for_contract(
+        str(chat.get("setting") or ""),
+        sc,
+    )
+    if retrospective_changed:
+        chat["setting"] = retrospective_setting
+        notes.append("setting 回忆话题去物化")
     if st:
         # M2+C 已有专用 patch 链；勿再走 daily_story 的连说改 speaker / 整件肉 filler
         if not (st == "C" and mech.upper() == "M2"):
@@ -1003,6 +1013,11 @@ def apply_gold_chat_normalizations(
 
     chat, ne_notes = patch_trim_redundant_ne_suffix(chat)
     notes.extend(ne_notes)
+    chat, meta_changed = patch_sanitize_dialogue_meta_labels(chat)
+    if meta_changed:
+        notes.append("gold_chat去结构标签台词")
+        chat, _ = _ensure_gold_chat_min_chars(chat)
+        chat, _ = patch_sanitize_dialogue_meta_labels(chat)
     chat, trimmed = _apply_deterministic_shorten(chat)
     if trimmed:
         notes.append("gold_chat截长句")
