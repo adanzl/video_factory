@@ -469,6 +469,8 @@ def run_gold_chat_final_acceptance(
         scene_contract = sc_raw
     beat_chain_raw = scene_contract.get("beat_chain")
     beat_chain = beat_chain_raw if isinstance(beat_chain_raw, list) else None
+    dialogue_seed_raw = payload.get("dialogue_seed")
+    dialogue_seed = dialogue_seed_raw if isinstance(dialogue_seed_raw, list) else None
     mom_max = 1
     mom_contract = scene_contract.get("mom_lines_max")
     if mom_contract is not None:
@@ -511,6 +513,7 @@ def run_gold_chat_final_acceptance(
         chat,
         beat_chain=beat_chain,
         mom_lines_max=mom_max,
+        dialogue_seed=dialogue_seed,
     )
     if opening_patched:
         logger.info("[GOLD_CHAT] final acceptance opening causality local patch")

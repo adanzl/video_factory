@@ -1744,6 +1744,10 @@ _RE_INTENT_ACCOUNTABILITY = re.compile(r"定责|问责|归责|追责|判责|分�
 _RE_INTENT_INTERRUPT = re.compile(r"插嘴|打断|岔|救场|转移|离谱|请求|打岔")
 _RE_INTENT_DEFEND = re.compile(r"辩解|推托|忘|本来|没做|没写|推脱|借口")
 _RE_INTENT_STUN = re.compile(r"愣|停|放下|叹气|接不住|傻眼")
+_RE_INTENT_REBUTTAL = re.compile(r"质疑|反驳|嘴硬|否认|纠正")
+_RE_REBUTTAL_LINE = re.compile(
+    r"(?:不是|不叫|不算|才不|哪是|明明|我(?:才|明明|就是|那叫))"
+)
 _RE_PARENT_TRIGGER_LINE = re.compile(
     r"(?:怎么|为什么|又|还不|还没有|别(?:闹|皮|吵|糊弄)|"
     r"气死|烦死|像什么话|不像话)",
@@ -1851,6 +1855,10 @@ def _intent_speech_acts(intent: str) -> set[str]:
         body and _RE_INTENT_STUN.search(body) and "愣" in tag
     ):
         acts.add("stun")
+    if _RE_INTENT_REBUTTAL.search(tag) or (
+        body and _RE_INTENT_REBUTTAL.search(body) and not acts
+    ):
+        acts.add("rebuttal")
     if not acts:
         if (
             _RE_INTENT_TRIGGER.search(text)
@@ -1864,6 +1872,8 @@ def _intent_speech_acts(intent: str) -> set[str]:
             acts.add("defend")
         if _RE_INTENT_STUN.search(text):
             acts.add("stun")
+        if _RE_INTENT_REBUTTAL.search(text):
+            acts.add("rebuttal")
     return acts
 
 
@@ -1871,6 +1881,51 @@ def _intent_anchor_tokens(intent: str) -> list[str]:
     body = str(intent or "").split("：", 1)[-1].strip()
     parts = re.findall(r"[\u4e00-\u9fff]{2,}", body)
     return [p for p in parts if p not in _OPENING_INTENT_STOP][:6]
+
+
+_RE_OPENING_META_PREFIX = re.compile(
+    r"^(?:(?:一本正经|继续|嘴硬|荒诞)?"
+    r"(?:质疑|反驳|追问|设问|发问|回答|作答|解释|自洽|交代旧事|交代|讲述)"
+    r"|(?:说|表示|认为|问))+"
+)
+
+
+def _opening_semantic_clauses(intent: str) -> list[str]:
+    """从 beat intent 提取少量语义分句；仅用于抽象 speech-act 兜底，不绑定单篇词表。"""
+    body = str(intent or "").split("：", 1)[-1].strip()
+    out: list[str] = []
+    for raw in re.split(r"[，,。；;！？?!、]", body):
+        text = _RE_OPENING_META_PREFIX.sub("", raw.strip())
+        text = "".join(re.findall(r"[\u4e00-\u9fff]", text))
+        if len(text) >= 2:
+            out.append(text)
+    return out[:4]
+
+
+def _han_bigrams(text: str) -> set[str]:
+    return {text[i : i + 2] for i in range(max(0, len(text) - 1))}
+
+
+def _opening_clause_matches_line(clause: str, line_han: str) -> bool:
+    if clause in line_han:
+        return True
+    if len(clause) < 2 or len(line_han) < 2:
+        return False
+    common = _han_bigrams(clause) & _han_bigrams(line_han)
+    return len(common) >= (2 if len(clause) >= 4 else 1)
+
+
+def _opening_rebuttal_matches(intent: str, line: str) -> bool:
+    """“质疑/嘴硬反驳”允许自然改写，但须同时命中反驳口气与多段语义。"""
+    if not _RE_REBUTTAL_LINE.search(str(line or "")):
+        return False
+    clauses = _opening_semantic_clauses(intent)
+    if not clauses:
+        return False
+    line_han = "".join(re.findall(r"[\u4e00-\u9fff]", str(line or "")))
+    hits = sum(1 for clause in clauses if _opening_clause_matches_line(clause, line_han))
+    required = 2 if len(clauses) >= 2 else 1
+    return hits >= required
 
 
 _RE_PARENT_LATE_REACTION_PREFIX = re.compile(
@@ -1914,6 +1969,8 @@ def _line_fulfills_beat(
             return False
     anchors = _intent_anchor_tokens(intent)
     if anchors and any(token in line for token in anchors):
+        return True
+    if "rebuttal" in acts and _opening_rebuttal_matches(intent, line):
         return True
     if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
         authority_kind = _opening_authority_intent_kind(intent)

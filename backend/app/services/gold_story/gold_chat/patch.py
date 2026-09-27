@@ -2116,8 +2116,9 @@ def apply_opening_causality_local_patch(
     *,
     beat_chain: list[Any] | None = None,
     mom_lines_max: int | None = None,
+    dialogue_seed: list[Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """缺 beat_chain 首句触发时：前移已有责备句或插入首句妈妈触发。"""
+    """闭合 opening beat：优先复用 seed/已有句；只有权威 trigger 才允许本地生首句。"""
     import copy
 
     from app.services.gold_story.gold_chat.validate import (
@@ -2126,6 +2127,7 @@ def apply_opening_causality_local_patch(
         _RE_PARENT_TRIGGER_LINE,
         _RE_STUN_REACT_LINE,
         _beat_chain_entries,
+        _intent_speech_acts,
         _line_fulfills_beat,
         _parent_trigger_starts_as_late_reaction,
         collect_opening_causality_issues,
@@ -2149,12 +2151,107 @@ def apply_opening_causality_local_patch(
 
     entries = _beat_chain_entries(chain)
     beat1_entry = entries[0][1]
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if not dlg:
+        return story, False
+    changed = False
+    seed = dialogue_seed
+    if not isinstance(seed, list):
+        embedded_seed = story.get("dialogue_seed")
+        seed = embedded_seed if isinstance(embedded_seed, list) else []
+
+    def _seed_spoken_row(entry_index: int, entry: dict[str, Any]) -> dict[str, Any] | None:
+        expected = str(entry.get("speaker") or "").strip()
+        if not expected or not seed:
+            return None
+        candidates: list[Any] = []
+        if 0 <= entry_index < len(seed):
+            candidates.append(seed[entry_index])
+        candidates.extend(
+            item
+            for i, item in enumerate(seed[: len(entries)])
+            if i != entry_index
+        )
+        from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("speaker") or "").strip() != expected:
+                continue
+            raw_line = str(item.get("line") or "").strip()
+            raw_intent = str(item.get("intent") or "").strip()
+            spoken = raw_line
+            if not spoken and raw_intent:
+                parts = re.split(r"[：:]", raw_intent, maxsplit=1)
+                spoken = parts[1].strip() if len(parts) == 2 else raw_intent
+            if not spoken:
+                continue
+            if not spoken.endswith(("。", "！", "？", "!", "?", "~")):
+                spoken += "。"
+            if len(spoken) > CHAT_MAX_LINE_CHARS:
+                continue
+            if _line_fulfills_beat(expected, spoken, entry):
+                return {"speaker": expected, "line": spoken}
+        return None
+
+    # 对中间缺拍优先用 H3b seed 落地：seed 是已生成契约，不新增剧情事实，且不占 LLM 修稿预算。
+    # 每次只补一拍后重新收集 issue，避免旧行号在插入后继续使用。
+    for _ in range(min(3, len(entries))):
+        probe = copy.deepcopy(story)
+        probe["dialogue"] = [dict(row) for row in dlg]
+        current_issues = collect_opening_causality_issues(
+            probe, chain, mom_lines_max=mom_max,
+        )
+        if not current_issues:
+            return probe, bool(changed)
+        inserted = False
+        for issue in current_issues:
+            missing = issue.get("missing_beat")
+            if not isinstance(missing, dict):
+                continue
+            missing_no = missing.get("beat")
+            entry_index = next(
+                (i for i, (beat_no, _entry) in enumerate(entries) if beat_no == missing_no),
+                -1,
+            )
+            if entry_index < 0:
+                continue
+            entry = entries[entry_index][1]
+            row = _seed_spoken_row(entry_index, entry)
+            if row is None:
+                continue
+            expected = str(row.get("speaker") or "").strip()
+            if expected == "妈妈" and mom_max >= 0:
+                mom_n = sum(
+                    1 for item in dlg
+                    if str(item.get("speaker") or "").strip() == "妈妈"
+                )
+                if mom_n >= mom_max:
+                    continue
+            try:
+                before_line = int(issue.get("before_line_no") or 1)
+            except (TypeError, ValueError):
+                before_line = 1
+            insert_at = max(0, min(len(dlg), before_line - 1))
+            dlg.insert(insert_at, row)
+            changed = True
+            inserted = True
+            break
+        if not inserted:
+            break
+
+    probe = copy.deepcopy(story)
+    probe["dialogue"] = [dict(row) for row in dlg]
+    if opening_causality_passes(probe, chain, mom_lines_max=mom_max):
+        return probe, bool(changed)
+
     speaker = str(beat1_entry.get("speaker") or "").strip()
     if not speaker:
         return story, False
-
-    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
-    if not dlg:
+    beat1_acts = _intent_speech_acts(str(beat1_entry.get("intent") or ""))
+    # 非权威旧事/陈述开场不能拿 authority 生成器生造台词；seed 也补不了就交上层修稿。
+    if "trigger" not in beat1_acts or speaker not in {"妈妈", "爸爸"}:
         return story, False
 
     late_head_row = None
@@ -2175,7 +2272,14 @@ def apply_opening_causality_local_patch(
             move_idx = i
             break
 
-    changed = False
+    def _matches_later_opening(row: dict[str, Any]) -> bool:
+        row_speaker = str(row.get("speaker") or "").strip()
+        row_line = str(row.get("line") or "").strip()
+        return any(
+            _line_fulfills_beat(row_speaker, row_line, entry)
+            for _beat_no, entry in entries[1: min(3, len(entries))]
+        )
+
     if move_idx > 0:
         dlg.insert(0, dlg.pop(move_idx))
         changed = True
@@ -2197,7 +2301,11 @@ def apply_opening_causality_local_patch(
                 if str(row.get("speaker") or "").strip() != speaker:
                     continue
                 line = str(row.get("line") or "")
-                if row is late_head_row or _RE_STUN_REACT_LINE.search(line):
+                if (
+                    row is late_head_row
+                    or _RE_STUN_REACT_LINE.search(line)
+                    or _matches_later_opening(row)
+                ):
                     continue
                 if (
                     _RE_ACCOUNTABILITY_LINE.search(line)
@@ -2219,18 +2327,18 @@ def apply_opening_causality_local_patch(
                     row = dlg[j]
                     if str(row.get("speaker") or "").strip() != speaker:
                         continue
-                    if _RE_STUN_REACT_LINE.search(str(row.get("line") or "")):
+                    if (
+                        _RE_STUN_REACT_LINE.search(str(row.get("line") or ""))
+                        or _matches_later_opening(row)
+                    ):
                         continue
                     dlg.pop(j)
                     changed = True
                     removed = True
                     break
                 if not removed:
-                    for j in range(len(dlg) - 1, -1, -1):
-                        if str(dlg[j].get("speaker") or "").strip() == speaker:
-                            dlg.pop(j)
-                            changed = True
-                            break
+                    # 所有家长句都是 opening 必需拍/愣住拍时，宁可交上层修稿，不能删拍“验过”。
+                    return story, False
         dlg.insert(0, new_row)
         changed = True
 

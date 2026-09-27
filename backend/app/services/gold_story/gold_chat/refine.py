@@ -164,6 +164,7 @@ def _stabilize_refine_candidate(
         data,
         beat_chain=beat_chain,
         mom_lines_max=mom_lines_max,
+        dialogue_seed=dialogue_seed,
     )
     if opening_patched:
         logger.info("gold_chat refine local opening causality patch")
@@ -513,6 +514,7 @@ def refine_gold_chat_align(
                     candidate_base,
                     beat_chain=beat_chain,
                     mom_lines_max=mom_max,
+                    dialogue_seed=dialogue_seed,
                 )
                 if ok:
                     candidate_base = _normalize_chat_speakers(patched)
