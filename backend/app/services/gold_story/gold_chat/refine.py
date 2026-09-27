@@ -53,6 +53,7 @@ from app.services.gold_story.gold_chat.prompts import (
     format_align_refine_user,
 )
 from app.services.gold_story.gold_chat.validate import (
+    apply_n_beat_role_speaker_align,
     apply_seed_phrase_speaker_align,
     collect_align_issues,
     is_structural_align_kind,
@@ -171,6 +172,13 @@ def _stabilize_refine_candidate(
         structure_type=structure_type,
         mechanism=mechanism,
     )
+    data, n_role_patched = apply_n_beat_role_speaker_align(
+        data,
+        beat_chain=beat_chain,
+        structure_type=structure_type,
+    )
+    if n_role_patched:
+        logger.info("gold_chat refine N beat role speaker align")
     # opening/type patch 可能移动或改写台词；最后再归位一次 seed speaker。
     if dialogue_seed:
         data, seed_repatched = apply_seed_phrase_speaker_align(

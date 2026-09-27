@@ -8,12 +8,98 @@ from app.services.gold_story.gold_chat import convert as gc
 from app.services.gold_story.gold_chat import expand as gex
 from app.services.gold_story.gold_chat import refine as grf
 from app.services.gold_story.gold_chat.validate import (
+    apply_n_beat_role_speaker_align,
     collect_align_issues,
     should_reexpand,
 )
 
 _CLOSING = "灿灿问以后还打不打架，昭昭齐声不打了，妈妈拿碘伏"
 _CONFLICT_5 = "灿灿：你干嘛弄坏我的画！"
+
+_N_RETROSPECTIVE_BEATS = [
+    {"beat": 1, "speaker": "妈妈", "intent": "交代旧事：昭昭小时候掉进菜篓子"},
+    {"beat": 2, "speaker": "灿灿", "intent": "追问：那你怎么会在篓子里睡着？"},
+    {"beat": 3, "speaker": "昭昭", "intent": "荒诞解释：我挑的地方好"},
+    {"beat": 4, "speaker": "灿灿", "intent": "继续追问：那你怎么知道下面有菜篓子？"},
+    {"beat": 5, "speaker": "昭昭", "intent": "荒诞自洽：我早就看好了"},
+]
+
+
+def test_n_beat_role_align_repairs_swapped_question_answer_block():
+    story = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭小时候掉进菜篓子还睡着了。"},
+            {"speaker": "灿灿", "line": "你那时候胆子也太大了吧。"},
+            {"speaker": "昭昭", "line": "那叫会挑地方落。"},
+            {"speaker": "昭昭", "line": "你怎么在篓子里睡着了？"},
+            {"speaker": "灿灿", "line": "因为菜篓子软，我躺着舒服呀。"},
+            {"speaker": "昭昭", "line": "你醒来还问吃饭了吗？"},
+            {"speaker": "灿灿", "line": "我醒来当然先问吃饭呀。"},
+        ],
+    }
+    out, changed = apply_n_beat_role_speaker_align(
+        story,
+        beat_chain=_N_RETROSPECTIVE_BEATS,
+        structure_type="N",
+    )
+    assert changed
+    assert [row["speaker"] for row in out["dialogue"][3:7]] == [
+        "灿灿",
+        "昭昭",
+        "灿灿",
+        "昭昭",
+    ]
+    assert [row["line"] for row in out["dialogue"]] == [
+        row["line"] for row in story["dialogue"]
+    ]
+
+
+def test_n_beat_role_align_keeps_correct_roles_and_ambiguous_contract():
+    correct = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "你怎么会在篓子里睡着？"},
+            {"speaker": "昭昭", "line": "因为里面软乎乎的呀。"},
+        ],
+    }
+    out, changed = apply_n_beat_role_speaker_align(
+        correct,
+        beat_chain=_N_RETROSPECTIVE_BEATS,
+        structure_type="N",
+    )
+    assert not changed
+    assert out == correct
+
+    ambiguous = [
+        {"speaker": "灿灿", "intent": "追问：为什么"},
+        {"speaker": "昭昭", "intent": "继续追问：怎么会"},
+        {"speaker": "昭昭", "intent": "荒诞解释：因为好玩"},
+    ]
+    out2, changed2 = apply_n_beat_role_speaker_align(
+        correct,
+        beat_chain=ambiguous,
+        structure_type="N",
+    )
+    assert not changed2
+    assert out2 == correct
+
+
+def test_n_beat_role_align_does_not_touch_non_n_story():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你怎么在篓子里睡着了？"},
+            {"speaker": "灿灿", "line": "因为里面软乎乎的呀。"},
+        ],
+    }
+    out, changed = apply_n_beat_role_speaker_align(
+        story,
+        beat_chain=_N_RETROSPECTIVE_BEATS,
+        structure_type="J",
+    )
+    assert not changed
+    assert out == story
 
 
 def _m5h_dialogue_v1() -> list[dict[str, str]]:

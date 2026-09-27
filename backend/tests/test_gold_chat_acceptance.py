@@ -46,6 +46,58 @@ def _story(dialogue: list[dict[str, str]]) -> dict:
     return {"dialogue": dialogue, "quality": {"structure_score": 76, "score": 76}}
 
 
+def test_export_review_prompt_keeps_context_out_of_issue_lines():
+    from app.services.daily_story.review import build_review_prompts
+
+    system, _ = build_review_prompts("测试", _story([]))
+    assert "只列真正需要修改的故障行" in system
+    assert "lines:[11,13]" in system
+    assert "不要扩大成[11,12,13,14]" in system
+
+
+@patch("app.services.daily_story.review.run_export_semantic_review")
+def test_final_acceptance_repairs_n_beat_role_drift_before_semantic_review(mock_review):
+    mock_review.return_value = ExportSemanticReviewResult(
+        completed=True,
+        issues=[],
+        humor=None,
+        error=None,
+    )
+    beats = [
+        {"beat": 1, "speaker": "妈妈", "intent": "交代旧事：昭昭掉进菜篓子还睡着了"},
+        {"beat": 2, "speaker": "灿灿", "intent": "追问：你怎么会在篓子里睡着？"},
+        {"beat": 3, "speaker": "昭昭", "intent": "荒诞解释：因为菜篓子软"},
+        {"beat": 4, "speaker": "灿灿", "intent": "继续追问：你醒来还问吃饭了吗？"},
+        {"beat": 5, "speaker": "昭昭", "intent": "荒诞自洽：我醒来当然先问吃饭"},
+    ]
+    row = {
+        "title": "回忆旧事",
+        "structure_type": "N",
+        "payload": {
+            "scene_contract": {
+                "story_type": "N",
+                "beat_chain": beats,
+                "mom_lines_max": 1,
+            },
+        },
+    }
+    bad = _story(
+        [
+            {"speaker": "妈妈", "line": "昭昭掉进菜篓子还睡着了。"},
+            {"speaker": "昭昭", "line": "你怎么会在篓子里睡着？"},
+            {"speaker": "灿灿", "line": "因为菜篓子软，我睡得舒服。"},
+            {"speaker": "昭昭", "line": "你醒来还问吃饭了吗？"},
+            {"speaker": "灿灿", "line": "我醒来当然先问吃饭呀。"},
+        ]
+    )
+
+    out = run_gold_chat_final_acceptance(bad, row, sid="BV_TEST_N_ROLE")
+    expected = ["妈妈", "灿灿", "昭昭", "灿灿", "昭昭"]
+    assert [item["speaker"] for item in out["dialogue"]] == expected
+    reviewed_story = mock_review.call_args.args[1]
+    assert [item["speaker"] for item in reviewed_story["dialogue"]] == expected
+
+
 _MOM_ZHAO_MOM_OPENING_BEAT = [
     {"beat": 1, "speaker": "妈妈", "intent": "责备：作业还没写"},
     {"beat": 2, "speaker": "昭昭", "intent": "插嘴：离谱请求解围"},
