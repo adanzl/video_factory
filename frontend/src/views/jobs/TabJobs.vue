@@ -39,28 +39,28 @@
     >
       <el-table-column prop="id" label="ID" width="80" />
       <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-      <el-table-column label="类型" width="80" align="center">
+      <el-table-column label="类型" width="70" align="center">
         <template #default="{ row }">
           <el-tag size="small" :type="row.pipeline === PIPELINE_MATERIAL ? 'warning' : row.pipeline === PIPELINE_CHAT ? 'danger' : row.pipeline === PIPELINE_STANDARD ? 'primary' : 'info'">{{ pipelineLabel(row.pipeline) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="stage" label="阶段" width="120" align="center" />
-      <el-table-column label="状态" width="100" align="center">
+      <el-table-column prop="stage" label="阶段" width="90" align="center" />
+      <el-table-column label="状态" width="70" align="center">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="时长" width="90" align="center">
+      <el-table-column label="时长" width="60" align="center">
         <template #default="{ row }">
           {{ formatJobDuration(row) }}
         </template>
       </el-table-column>
-      <el-table-column label="更新时间" width="160">
+      <el-table-column label="更新时间" width="180">
         <template #default="{ row }">
           {{ formatDateTime(row.updated_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="发布时间" width="160">
+      <el-table-column label="发布时间" width="180">
         <template #default="{ row }">
           {{ formatDateTime(row.published_at) }}
         </template>
