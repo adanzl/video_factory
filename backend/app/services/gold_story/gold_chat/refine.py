@@ -105,6 +105,44 @@ def _stabilize_align_length_candidate(
     return data
 
 
+def _close_align_length_without_repair_budget(
+    candidate: dict[str, Any],
+    *,
+    structure_type: str,
+    mechanism: str,
+    beat_chain: list[Any] | None,
+    mom_lines_max: int,
+    dialogue_seed: list[Any] | None = None,
+    max_shorten_rounds: int = 2,
+) -> dict[str, Any]:
+    """纯句长收口走专用缩句链，不占共享 align repair budget。"""
+    data = _stabilize_align_length_candidate(
+        candidate,
+        structure_type=structure_type,
+        mechanism=mechanism,
+    )
+    for _ in range(max(0, int(max_shorten_rounds))):
+        if not _overlong_line_indices(data):
+            break
+        shortened = _shorten_overlong_lines_with_llm(data)
+        if shortened == data:
+            break
+        data = _stabilize_refine_candidate(
+            shortened,
+            structure_type=structure_type,
+            beat_chain=beat_chain,
+            mom_lines_max=mom_lines_max,
+            dialogue_seed=dialogue_seed,
+            mechanism=mechanism,
+        )
+        data = _stabilize_align_length_candidate(
+            data,
+            structure_type=structure_type,
+            mechanism=mechanism,
+        )
+    return data
+
+
 def _stabilize_n_contract_candidate(
     candidate: dict[str, Any],
     *,
@@ -352,24 +390,14 @@ def refine_gold_chat_align(
                 )
                 blocking, warn = split_align_issues(issues)
         if not blocking:
-            data = _stabilize_align_length_candidate(
+            data = _close_align_length_without_repair_budget(
                 data,
                 structure_type=st,
                 mechanism=mech,
+                beat_chain=beat_chain,
+                mom_lines_max=mom_max,
+                dialogue_seed=dialogue_seed,
             )
-            # deterministic trim 只能削标点/语气词；若实词句仍超 24，
-            # 用专用缩句 LLM 只改超长行，不占整稿 repair budget。
-            if _overlong_line_indices(data):
-                shortened = _shorten_overlong_lines_with_llm(data)
-                if shortened != data:
-                    data = _stabilize_refine_candidate(
-                        shortened,
-                        structure_type=st,
-                        beat_chain=beat_chain,
-                        mom_lines_max=mom_max,
-                        dialogue_seed=dialogue_seed,
-                        mechanism=mech,
-                    )
             try:
                 return _prepare_chat_for_validate_after_local_length_close(
                     data, structure_type=st, mechanism=mech,
@@ -458,10 +486,13 @@ def refine_gold_chat_align(
         blocking_now, _warn_now = split_align_issues(align_now)
 
         if polish_result.errors and _only_local_length_errors(polish_result.errors):
-            candidate_base = _stabilize_align_length_candidate(
+            candidate_base = _close_align_length_without_repair_budget(
                 candidate_base,
                 structure_type=st,
                 mechanism=mech,
+                beat_chain=beat_chain,
+                mom_lines_max=mom_max,
+                dialogue_seed=dialogue_seed,
             )
             rows_now = [
                 item
@@ -502,6 +533,20 @@ def refine_gold_chat_align(
                         accepted=set(polish_result.accepted),
                         errors=[],
                     )
+
+        if (
+            polish_result.errors
+            and _only_local_length_errors(polish_result.errors)
+            and _overlong_line_indices(candidate_base)
+        ):
+            # 专用缩句已重试仍超长时，保留最新候选并显式失败；
+            # 不能把纯句长问题继续烧给共享 align repair budget。
+            raise AlignRepairFailure(
+                stage="align_length",
+                validation_errors=list(polish_result.errors),
+                align_issues=blocking_now,
+                candidate=candidate_base,
+            )
 
         if polish_result.errors or (not polish_result.accepted and rejected):
             val_errors = list(polish_result.errors) or list(dict.fromkeys(rejected))
