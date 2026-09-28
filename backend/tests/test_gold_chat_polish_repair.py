@@ -613,6 +613,88 @@ def test_refine_polish_length_errors_use_budget_when_clean_close_is_short(monkey
     assert budget.used == 1
 
 
+def test_refine_polish_overlong_uses_dedicated_shorten_without_align_budget(monkeypatch):
+    from app.services.daily_story.prompts import dialogue_total_chars
+    from app.services.gold_story.gold_chat import refine as grf
+    from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+
+    old = _story([
+        {"speaker": "昭昭", "line": "OLD_ALIGN_BAD"},
+        {"speaker": "灿灿", "line": "先别急。"},
+    ])
+    rows = [
+        {
+            "speaker": "昭昭" if i % 2 == 0 else "灿灿",
+            "line": "甲" * 20,
+        }
+        for i in range(11)
+    ]
+    rows.append({"speaker": "灿灿", "line": "乙" * 30})
+    candidate = _story(rows)
+    assert dialogue_total_chars(candidate) >= DAILY_STORY_BODY_CHARS_MIN
+    assert max(len(str(x.get("line") or "")) for x in candidate["dialogue"]) == 30
+
+    monkeypatch.setattr(grf, "_align_refine_with_llm", lambda *args, **kwargs: {"fixes": []})
+    monkeypatch.setattr(
+        grf,
+        "_apply_gold_chat_polish_fixes",
+        lambda *args, **kwargs: PolishResult(
+            candidate=copy.deepcopy(candidate),
+            accepted={1},
+            errors=[f"单句过长(max=30>{CHAT_MAX_LINE_CHARS})"],
+        ),
+    )
+
+    def collect(chat, **kwargs):
+        first = str((chat.get("dialogue") or [{}])[0].get("line") or "")
+        if first == "OLD_ALIGN_BAD":
+            return [{"kind": "类型-N收束", "desc": "待对齐", "fix": "改"}]
+        return []
+
+    monkeypatch.setattr(grf, "collect_align_issues", collect)
+    shorten_calls = []
+
+    def shorten(chat, **_kwargs):
+        shorten_calls.append(1)
+        out = copy.deepcopy(chat)
+        for item in out.get("dialogue") or []:
+            if isinstance(item, dict) and len(str(item.get("line") or "")) > CHAT_MAX_LINE_CHARS:
+                item["line"] = "乙" * CHAT_MAX_LINE_CHARS
+        return out
+
+    monkeypatch.setattr(grf, "_shorten_overlong_lines_with_llm", shorten)
+
+    def prepare(chat, **_kwargs):
+        assert dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN
+        assert max(
+            len(str(x.get("line") or "")) for x in chat.get("dialogue") or []
+        ) <= CHAT_MAX_LINE_CHARS
+        return dict(chat)
+
+    monkeypatch.setattr(
+        grf,
+        "_prepare_chat_for_validate_after_local_length_close",
+        prepare,
+    )
+    budget = GoldChatRepairBudget(max_repairs=2)
+
+    out = grf.refine_gold_chat_align(
+        old,
+        structure_type="",
+        mechanism="",
+        align_block="",
+        mom_lines_max=3,
+        max_rounds=1,
+        bail_on_structural=False,
+        repair_budget=budget,
+    )
+
+    assert shorten_calls == [1]
+    assert budget.used == 0
+    assert dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN
+    assert max(len(str(x.get("line") or "")) for x in out["dialogue"]) <= CHAT_MAX_LINE_CHARS
+
+
 def test_align_repair_failure_message_not_only_short_header():
     exc = AlignRepairFailure(
         stage="align_repair",
