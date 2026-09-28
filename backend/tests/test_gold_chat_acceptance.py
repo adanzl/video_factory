@@ -1318,6 +1318,126 @@ def test_semantic_repair_freezes_non_targets_and_speakers(mock_acceptance):
 
 
 @patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_semantic_repair_contract_gap_can_edit_preceding_line(mock_acceptance):
+    issue = {
+        "lines": [3],
+        "kind": "缺前提",
+        "desc": "第3句依赖贴纸已经被扯开，但前文没有这一拍",
+        "fix": "先补贴纸被扯开的事实，再保留归属争论",
+        "missing_beat": {"beat": 8, "intent": "贴纸被两人扯成两半"},
+    }
+    calls = {"n": 0}
+
+    def acceptance_side_effect(candidate, _row, *, sid):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise GoldChatSemanticBlocked(
+                "终检语义硬伤：第[3]句·缺前提：测试",
+                issues=[issue],
+            )
+        return candidate
+
+    mock_acceptance.side_effect = acceptance_side_effect
+    original = [
+        {"speaker": "灿灿", "line": "这张贴纸明明是我先拿到的。"},
+        {"speaker": "昭昭", "line": "你别拽，我还没贴好呢。"},
+        {"speaker": "灿灿", "line": "大半张是我的。"},
+    ]
+    prompts: list[str] = []
+
+    def fake_fix(_chat, feedback, **_kw):
+        prompts.append(feedback)
+        dlg = [dict(x) for x in _chat["dialogue"]]
+        dlg[1]["line"] = "你都把贴纸扯成两半了，还拽呀！"
+        return {**_chat, "dialogue": dlg}
+
+    result, score = run_gold_chat_final_acceptance_with_semantic_repair(
+        _story(original),
+        {"title": "测试", "structure_type": "N"},
+        sid="BV_TEST",
+        st_final="N",
+        banned=[],
+        mom_max=1,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fake_fix,
+        validate_chat=lambda _c: None,
+        max_repairs=2,
+    )
+
+    assert score == 80
+    assert result["dialogue"][0] == original[0]
+    assert result["dialogue"][1]["line"] == "你都把贴纸扯成两半了，还拽呀！"
+    assert result["dialogue"][2] == original[2]
+    assert prompts
+    assert "只允许改第2句、第3句" in prompts[0]
+    assert "beat=8" in prompts[0]
+    assert "贴纸被两人扯成两半" in prompts[0]
+    assert "前一行来补前提" in prompts[0]
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_semantic_repair_pronoun_grammar_requests_concrete_noun(mock_acceptance):
+    issue = {
+        "lines": [2],
+        "kind": "语病",
+        "desc": "‘你贴到这个吗’里的‘这个’指代不清",
+        "fix": "把指代换成具体事物",
+    }
+    calls = {"n": 0}
+
+    def acceptance_side_effect(candidate, _row, *, sid):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise GoldChatSemanticBlocked(
+                "终检语义硬伤：第[2]句·语病：指代不清",
+                issues=[issue],
+            )
+        return candidate
+
+    mock_acceptance.side_effect = acceptance_side_effect
+    original = [
+        {"speaker": "昭昭", "line": "我要把星星贴纸贴在本子上。"},
+        {"speaker": "灿灿", "line": "姐姐你贴到这个吗？"},
+        {"speaker": "昭昭", "line": "对，就是这张星星贴纸。"},
+    ]
+    prompts: list[str] = []
+
+    def fake_fix(_chat, feedback, **_kw):
+        prompts.append(feedback)
+        dlg = [dict(x) for x in _chat["dialogue"]]
+        dlg[1]["line"] = "姐姐，你要贴这张星星贴纸吗？"
+        return {**_chat, "dialogue": dlg}
+
+    result, score = run_gold_chat_final_acceptance_with_semantic_repair(
+        _story(original),
+        {"title": "测试", "structure_type": "N"},
+        sid="BV_TEST",
+        st_final="N",
+        banned=[],
+        mom_max=1,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fake_fix,
+        validate_chat=lambda _c: None,
+        max_repairs=2,
+    )
+
+    assert score == 80
+    assert result["dialogue"][0] == original[0]
+    assert result["dialogue"][1]["line"] == "姐姐，你要贴这张星星贴纸吗？"
+    assert result["dialogue"][2] == original[2]
+    assert prompts
+    assert "指代不清" in prompts[0]
+    assert "具体事物名" in prompts[0]
+    assert "不要靠只读邻句新增解释" in prompts[0]
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
 def test_semantic_repair_rejects_shape_change_and_keeps_original(mock_acceptance):
     issue = {
         "lines": [2],

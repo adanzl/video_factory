@@ -172,15 +172,25 @@ def _export_repair_budget_hint() -> str:
 
 
 def _semantic_repair_target_lines(exc: GoldChatSemanticBlocked) -> set[int]:
-    """语义终检点名的全部可改行；邻句只读，不自动扩大修改范围。"""
+    """语义终检可改行；缺前提额外开放故障行前一行作为补拍位。"""
     targets: set[int] = set()
     for item in exc.issues:
         raw_lines = item.get("lines")
         if not isinstance(raw_lines, list):
             continue
+        issue_lines: list[int] = []
         for no in raw_lines:
             if isinstance(no, int) and not isinstance(no, bool) and no > 0:
-                targets.add(int(no))
+                normalized = int(no)
+                targets.add(normalized)
+                issue_lines.append(normalized)
+        # 「缺前提」的故障通常落在依赖该前提的后一句。若仍只允许改故障行，
+        # 修稿器无法把 missing_beat 放到它之前，只能硬改结果句绕过问题。
+        # 因此只额外开放最早故障行的前一行，仍冻结行数、speaker 和其它行。
+        if str(item.get("kind") or "").strip() == "缺前提" and issue_lines:
+            first = min(issue_lines)
+            if first > 1:
+                targets.add(first - 1)
     return targets
 
 
@@ -207,6 +217,19 @@ def _semantic_repair_scope_block(
         detail = f"- 第{line_txt}句 {kind}：{desc}".rstrip("：")
         if fix:
             detail += f"；审核建议：{fix}"
+        if kind == "缺前提":
+            missing_beat = item.get("missing_beat")
+            if isinstance(missing_beat, dict):
+                beat = missing_beat.get("beat")
+                intent = str(missing_beat.get("intent") or "").strip()
+                if beat is not None or intent:
+                    detail += f"；必须补回契约 beat={beat} {intent}".rstrip()
+            detail += "；允许改最早故障行的前一行来补前提，且前提必须出现在依赖它的台词之前"
+        if kind == "语病" and "指代" in desc:
+            detail += (
+                "；若是‘这个/那个/它/这’等指代不清，直接改成上下文已有的具体事物名，"
+                "不要靠只读邻句新增解释"
+            )
         parts.append(detail)
 
     dialogue = chat.get("dialogue")
@@ -742,7 +765,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                     normalize_chat=normalize_chat,
                 )
                 logger.info(
-                    "gold_chat semantic repair frozen scope target_lines=%s changed=%s",
+                    "gold_chat semantic repair bounded scope target_lines=%s changed=%s",
                     sorted(targets),
                     scoped_changed,
                 )
