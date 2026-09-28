@@ -56,6 +56,16 @@ def test_export_review_prompt_keeps_context_out_of_issue_lines():
     assert "不要扩大成[11,12,13,14]" in system
 
 
+def test_review_prompt_scores_multi_line_situational_humor_without_requiring_one_liner():
+    from app.services.daily_story.review import build_review_prompts
+
+    system, _ = build_review_prompts("贴纸争抢", _story([]))
+    assert "连续几句共同成立的情境反差" in system
+    assert "不要因为找不到独立金句就把整段压到 5-9 分" in system
+    assert "它只是整段笑点的代表锚点" in system
+    assert "评分看完整情境" in system
+
+
 @patch("app.services.daily_story.review.run_export_semantic_review")
 def test_final_acceptance_repairs_n_beat_role_drift_before_semantic_review(mock_review):
     mock_review.return_value = ExportSemanticReviewResult(
