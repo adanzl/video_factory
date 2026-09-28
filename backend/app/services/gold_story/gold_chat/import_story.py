@@ -81,6 +81,15 @@ def validate_gold_chat_story_for_row(
     )
 
 
+def _exported_quality_is_final(story: dict[str, Any]) -> bool:
+    """转换终检已写入结构分和好笑分时，导入沿用这一版，不再重算。"""
+    quality = story.get("quality")
+    if not isinstance(quality, dict) or quality.get("structure_score") is None:
+        return False
+    humor = quality.get("humor")
+    return isinstance(humor, dict) and humor.get("funny_score") is not None
+
+
 def import_gold_chat_daily_story(
     row: dict[str, Any],
     *,
@@ -88,7 +97,11 @@ def import_gold_chat_daily_story(
     force: bool = False,
     review: bool = True,
 ) -> dict[str, Any]:
-    """gold_chat 导出 → daily_story；force 时覆盖已有导入。"""
+    """gold_chat 导出 → daily_story；force 时覆盖已有导入。
+
+    导出稿已带结构分 + 好笑分时原样入库。没有终分的旧稿才归一化、
+    重算结构分并审读。
+    """
     from app.repositories import repo_daily_story
     from app.services.daily_story.prompts import sync_discovery_opening_from_dialogue
     from app.services.daily_story.quality import attach_daily_story_quality
@@ -108,11 +121,6 @@ def import_gold_chat_daily_story(
     if not (chat.get("dialogue") or []):
         raise ValueError("gold_chat 对白为空")
 
-    from app.services.gold_story.gold_chat.convert import (
-        apply_gold_chat_normalizations,
-    )
-
-    chat, _ = apply_gold_chat_normalizations(dict(chat), row=row)
     story = dict(chat)
     theme = str(
         story.get("scene_title")
@@ -124,17 +132,25 @@ def import_gold_chat_daily_story(
     mech = str(row.get("mechanism") or "").strip().upper()
     if story_type:
         story["story_type"] = story_type
-    if mech == "M5" and story_type == "H":
-        story, _ = patch_m5_break_sibling_consecutive(story)
-    # 与 convert._attach_gold_chat_structure_score 一致：先按正文一体计分，
-    # 再 sync discovery_opening，避免开场双句被二次扣分。
-    story.pop("discovery_opening", None)
-    attach_daily_story_quality(
-        story, theme=theme, finalize=True, skip_relevancy=True
-    )
-    sync_discovery_opening_from_dialogue(story)
-    if review:
-        story = _review_gold_chat_import_story(story, theme)
+    if _exported_quality_is_final(story):
+        sync_discovery_opening_from_dialogue(story)
+    else:
+        from app.services.gold_story.gold_chat.convert import (
+            apply_gold_chat_normalizations,
+        )
+
+        story, _ = apply_gold_chat_normalizations(story, row=row)
+        if mech == "M5" and story_type == "H":
+            story, _ = patch_m5_break_sibling_consecutive(story)
+        # 与 convert._attach_gold_chat_structure_score 一致：先按正文一体计分，
+        # 再 sync discovery_opening，避免开场双句被二次扣分。
+        story.pop("discovery_opening", None)
+        attach_daily_story_quality(
+            story, theme=theme, finalize=True, skip_relevancy=True
+        )
+        sync_discovery_opening_from_dialogue(story)
+        if review:
+            story = _review_gold_chat_import_story(story, theme)
     validate_gold_chat_story_for_row(story, row)
     story_key = str(story.get("key") or "").strip() or None
 

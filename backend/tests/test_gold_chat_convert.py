@@ -1267,6 +1267,73 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
         assert saved2["story"]["scene_title"] == "新标题"
 
 
+def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch):
+    from app.repositories import repo_daily_story, repo_gold_story
+    from app.services.gold_story.gold_chat import import_story as gis
+
+    with app_ctx.app_context():
+        inserted = repo_gold_story.insert_or_skip(
+            source="bilibili",
+            source_id="BV1TESTIMPORT02",
+            url="https://www.bilibili.com/video/BV1TESTIMPORT02",
+            mechanism="M6",
+            structure_type="A",
+            story_raw="终分导入测试" * 20,
+            payload={
+                "setting": "卧室门口",
+                "beat": ["被欺负", "关门幻想", "开门怂", "姐姐得意"],
+                "scene_contract": {"mom_lines_max": 1},
+            },
+            title="测试标题",
+            conflict_core="弟弟幻想报复姐姐，开门秒怂",
+            extract_confidence=0.8,
+            structure_confidence=0.8,
+            dialogue_confidence=0.8,
+            auto_score=0.9,
+            status="active",
+        )
+        row = repo_gold_story.get_story(int(inserted["id"]))
+
+    chat = _sample_chat()
+    dialogue = [dict(item) for item in chat["dialogue"]]
+    chat["quality"] = {
+        "score": 91,
+        "structure_score": 80,
+        "grade": "好",
+        "pass": True,
+        "humor": {
+            "funny_score": 11,
+            "best_moment": "开门就怂",
+            "humor_type": "natural",
+        },
+        "summary": "结构80，好笑11，总分91",
+        "reasons": ["总分91=结构80+LLM好笑11"],
+    }
+    monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    gc.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat)
+
+    def _forbid_renorm(*_args, **_kwargs):
+        raise AssertionError("终分稿不应再归一化")
+
+    def _forbid_review(*_args, **_kwargs):
+        raise AssertionError("终分稿不应再审读")
+
+    monkeypatch.setattr(gc, "apply_gold_chat_normalizations", _forbid_renorm)
+    monkeypatch.setattr(gis, "_review_gold_chat_import_story", _forbid_review)
+
+    with app_ctx.app_context():
+        out = gc.import_gold_chat_daily_story(row, review=True)
+        assert out["action"] == "insert"
+        saved = repo_daily_story.get_story(int(out["daily_story_id"]))
+
+    quality = saved["story"]["quality"]
+    assert quality["score"] == 91
+    assert quality["structure_score"] == 80
+    assert quality["humor"]["funny_score"] == 11
+    assert saved["story"]["dialogue"] == dialogue
+
+
 def test_resolve_gold_chat_snippet_same_source():
     from app.services.gold_story.collect.llm import (
         GOLD_CHAT_LINES_SNIPPET,
