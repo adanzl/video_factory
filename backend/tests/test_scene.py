@@ -12,6 +12,7 @@ from app.services.gold_story.scene import (
     format_scene_block,
     has_dialogue_meta_label,
     normalize_dialogue_setting_for_contract,
+    normalize_k_parent_intervention_budget,
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
     normalize_scene_dialogue_beats,
@@ -365,6 +366,54 @@ def test_sync_contract_exam_scores_follows_seed_mode():
     assert "83分" in out["conflict"]
     assert "58分" not in out["conflict"]
     assert "83分" in core
+
+
+def test_k_parent_budget_merges_same_round_intervention_and_keeps_fail_tail():
+    contract = {
+        **_sample_contract(),
+        "story_type": "K",
+        "mom_lines_max": 2,
+        "characters": ["昭昭", "灿灿", "妈妈"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "贴个标记止争，想让两人别再抢玩具"},
+            {"beat": 2, "speaker": "昭昭", "intent": "伸手去抢新标记"},
+            {"beat": 3, "speaker": "灿灿", "intent": "扑过去抢回来"},
+            {"beat": 4, "speaker": "妈妈", "intent": "劝架提议一人玩一个，别再抢"},
+            {"beat": 5, "speaker": "昭昭", "intent": "继续争抢"},
+            {"beat": 6, "speaker": "灿灿", "intent": "争抢升级，东西被扯坏"},
+            {"beat": 7, "speaker": "妈妈", "intent": "叹气劝不动，两人继续僵持"},
+        ],
+    }
+    out, notes = normalize_k_parent_intervention_budget(contract)
+    assert notes == ["K家长预算2合并同轮干预:妈妈"]
+    assert len(out["beat_chain"]) == 6
+    moms = [row for row in out["beat_chain"] if row["speaker"] == "妈妈"]
+    assert len(moms) == 2
+    assert "止争" in moms[0]["intent"]
+    assert "一人玩一个" in moms[0]["intent"]
+    assert "劝不动" in moms[-1]["intent"]
+    assert [row["beat"] for row in out["beat_chain"]] == [1, 2, 3, 4, 5, 6]
+
+
+def test_k_parent_budget_does_not_merge_distinct_parent_middle_beat():
+    contract = {
+        **_sample_contract(),
+        "story_type": "K",
+        "mom_lines_max": 2,
+        "characters": ["昭昭", "灿灿", "妈妈"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "贴个标记止争"},
+            {"beat": 2, "speaker": "昭昭", "intent": "开抢"},
+            {"beat": 3, "speaker": "灿灿", "intent": "回抢"},
+            {"beat": 4, "speaker": "妈妈", "intent": "解释这个玩具是谁买的"},
+            {"beat": 5, "speaker": "昭昭", "intent": "继续争抢"},
+            {"beat": 6, "speaker": "灿灿", "intent": "冲突升级"},
+            {"beat": 7, "speaker": "妈妈", "intent": "叹气管不了，两人僵持"},
+        ],
+    }
+    out, notes = normalize_k_parent_intervention_budget(contract)
+    assert notes == []
+    assert out["beat_chain"] == contract["beat_chain"]
 
 
 def test_apply_parent_role_budget_keeps_mom_when_h3_beat_has_parent():

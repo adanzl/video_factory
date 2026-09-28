@@ -17,6 +17,7 @@ from app.services.gold_story.scene import (
     apply_parent_role_budget,
     force_age_score_remap,
     normalize_dialogue_setting_for_contract,
+    normalize_k_parent_intervention_budget,
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
     normalize_scene_dialogue_beats,
@@ -602,6 +603,7 @@ def build_scene_contract(
             beat=h3.get("beat") if isinstance(h3.get("beat"), list) else [],
         )
         data = apply_parent_role_budget(data, h3=h3)
+        data, _k_parent_notes = normalize_k_parent_intervention_budget(data)
         data, _dialogue_notes = normalize_scene_dialogue_beats(data)
         data, _retro_notes = normalize_retrospective_topic_contract(data)
         data, _retro_open_notes = normalize_retrospective_n_opening_parent_beats(data)
@@ -663,7 +665,21 @@ def build_dialogue_seed(
     if len(seed) < SEED_MIN:
         raise ValueError("H3b dialogue_seed too short")
     mom_max = max(0, int(contract.get("mom_lines_max") or 0))
-    seed = _trim_mom_dialogue_seed(seed, mom_max)
+    preserve_k_fail_tail = (
+        str(contract.get("story_type") or "").strip().upper() == "K"
+        and (
+            str(contract.get("k_close_mode") or "") == "K_A_PARENT_FAIL_STALEMATE"
+            or any(
+                token in str(contract.get("closing_intent") or "")
+                for token in ("劝不动", "劝不了", "管不了", "僵持", "不和好")
+            )
+        )
+    )
+    seed = _trim_mom_dialogue_seed(
+        seed,
+        mom_max,
+        preserve_last=preserve_k_fail_tail,
+    )
     seed, _silent_seed_notes2 = trim_terminal_no_reply_rows(seed)
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])
@@ -684,9 +700,32 @@ def build_dialogue_seed(
     return data
 
 
-def _trim_mom_dialogue_seed(seed: list[Any], mom_max: int) -> list[Any]:
-    """妈妈 seed 超 mom_lines_max 时裁掉多余条，勿整段失败回退旧契约。"""
+def _trim_mom_dialogue_seed(
+    seed: list[Any],
+    mom_max: int,
+    *,
+    preserve_last: bool = False,
+) -> list[Any]:
+    """妈妈 seed 超预算时裁剪；K-A 可保留首干预+末劝失败。"""
     limit = max(0, int(mom_max))
+    mom_idxs = [
+        idx
+        for idx, row in enumerate(seed)
+        if isinstance(row, dict) and str(row.get("speaker") or "") == "妈妈"
+    ]
+    if len(mom_idxs) <= limit:
+        return list(seed)
+    if preserve_last and limit >= 2:
+        keep_mom = set(mom_idxs[: limit - 1] + [mom_idxs[-1]])
+        return [
+            row
+            for idx, row in enumerate(seed)
+            if not (
+                isinstance(row, dict)
+                and str(row.get("speaker") or "") == "妈妈"
+                and idx not in keep_mom
+            )
+        ]
     kept_mom = 0
     out: list[Any] = []
     for row in seed:

@@ -713,6 +713,33 @@ def test_k_b_structure_escalation_uses_four_kb_layers_not_advise_fail():
     assert not any("冲突推进不足" in r for r in q.get("reasons") or [])
 
 
+def test_k_a_object_damage_counts_as_real_escalation_layer():
+    from app.services.daily_story.quality import score_daily_story
+
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_A_PARENT_FAIL_STALEMATE",
+        "conflict_core": "姐弟争抢同一个东西，妈妈劝不动。",
+        "punchline_explain": "K类：大人想止争，结果争抢把东西扯坏，最后仍僵持。",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我的，你别抢！"},
+            {"speaker": "灿灿", "line": "明明我先抓到的，松手！"},
+            {"speaker": "昭昭", "line": "我就抓着，你拿不走！"},
+            {"speaker": "灿灿", "line": "你才该松手，给我！"},
+            {"speaker": "昭昭", "line": "哎呀，被你扯成两半了！"},
+            {"speaker": "灿灿", "line": "大的那半归我，你别碰！"},
+            {"speaker": "妈妈", "line": "你们别抢了，先分开。"},
+            {"speaker": "昭昭", "line": "我不让，大的明明是我的！"},
+            {"speaker": "灿灿", "line": "我也不让，你别想拿走！"},
+            {"speaker": "妈妈", "line": "唉，我管不了你们了。"},
+            {"speaker": "昭昭", "line": "哼，我就不理你！"},
+            {"speaker": "灿灿", "line": "不理就不理，谁怕谁！"},
+        ],
+    }
+    q = score_daily_story(story, skip_relevancy=True)
+    assert not any("冲突推进不足" in r for r in q.get("reasons") or [])
+
+
 def test_k_b_p1_fixes_incite_fragment_and_defiance():
     from app.services.daily_story.story_types.k.patch import patch_k_body
     from app.services.daily_story.story_types.k.validate import append_k_body_errors
