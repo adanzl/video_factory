@@ -440,25 +440,11 @@ def _freeze_duplicate_repair_scope(
     return out
 
 
-def run_gold_chat_final_acceptance(
+def _final_acceptance_row_context(
     chat: dict[str, Any],
     row: dict[str, Any],
-    *,
-    sid: str,
-) -> dict[str, Any]:
-    """补字/改 speaker 完成后统一终验；未过则抛错，不写导出文件。"""
-    from app.services.daily_story.quality import stamp_gold_chat_acceptance_quality
-    from app.services.daily_story.review import (
-        collect_escalation_chatter_signals,
-        collect_export_blocking_local_issues,
-        format_export_blocking_issue_summary,
-        partition_llm_export_blocking_issues,
-        run_export_semantic_review,
-    )
-
-    theme = str(
-        row.get("title") or chat.get("scene_title") or chat.get("key") or sid
-    ).strip()
+) -> tuple[list[Any] | None, list[Any] | None, int, str]:
+    """终检共用的契约上下文：beat_chain、seed、妈妈句上限、类型。"""
     payload_raw = row.get("payload")
     payload: dict[str, Any] = (
         payload_raw if isinstance(payload_raw, dict) else {}
@@ -485,23 +471,32 @@ def run_gold_chat_final_acceptance(
                 mom_max = max(0, int(cached))
             except (TypeError, ValueError):
                 pass
-
-    from app.services.gold_story.gold_chat.patch import (
-        apply_opening_causality_local_patch,
-    )
-    from app.services.gold_story.gold_chat.validate import (
-        apply_n_beat_role_speaker_align,
-        collect_opening_causality_issues,
-        format_opening_causality_hard_error,
-    )
-
     contract_type = str(
         scene_contract.get("story_type")
         or row.get("structure_type")
         or chat.get("story_type")
         or ""
     ).strip()
-    chat, n_role_patched = apply_n_beat_role_speaker_align(
+    return beat_chain, dialogue_seed, mom_max, contract_type
+
+
+def apply_final_acceptance_local_patches(
+    chat: dict[str, Any],
+    row: dict[str, Any],
+) -> dict[str, Any]:
+    """终检语义审核前本地 patch，与审核行号对齐的稿件基线。"""
+    from app.services.gold_story.gold_chat.patch import (
+        apply_opening_causality_local_patch,
+    )
+    from app.services.gold_story.gold_chat.validate import (
+        apply_n_beat_role_speaker_align,
+    )
+
+    beat_chain, dialogue_seed, mom_max, contract_type = _final_acceptance_row_context(
+        chat,
+        row,
+    )
+    patched, n_role_patched = apply_n_beat_role_speaker_align(
         chat,
         beat_chain=beat_chain,
         structure_type=contract_type,
@@ -509,14 +504,58 @@ def run_gold_chat_final_acceptance(
     if n_role_patched:
         logger.info("[GOLD_CHAT] final acceptance N beat role speaker align")
 
-    chat, opening_patched = apply_opening_causality_local_patch(
-        chat,
+    patched, opening_patched = apply_opening_causality_local_patch(
+        patched,
         beat_chain=beat_chain,
         mom_lines_max=mom_max,
         dialogue_seed=dialogue_seed,
     )
     if opening_patched:
         logger.info("[GOLD_CHAT] final acceptance opening causality local patch")
+    return patched
+
+
+def _export_repair_dialogue_base(
+    current: dict[str, Any],
+    row: dict[str, Any],
+    exc: BaseException,
+) -> dict[str, Any]:
+    """定点修稿须与终检本地 patch 后送审稿对齐（语义/重复共用）。"""
+    if isinstance(exc, (GoldChatSemanticBlocked, GoldChatLocalDuplicateBlocked)):
+        return apply_final_acceptance_local_patches(current, row)
+    return current
+
+
+def run_gold_chat_final_acceptance(
+    chat: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    sid: str,
+) -> dict[str, Any]:
+    """补字/改 speaker 完成后统一终验；未过则抛错，不写导出文件。"""
+    from app.services.daily_story.quality import stamp_gold_chat_acceptance_quality
+    from app.services.daily_story.review import (
+        collect_escalation_chatter_signals,
+        collect_export_blocking_local_issues,
+        format_export_blocking_issue_summary,
+        partition_llm_export_blocking_issues,
+        run_export_semantic_review,
+    )
+
+    theme = str(
+        row.get("title") or chat.get("scene_title") or chat.get("key") or sid
+    ).strip()
+    beat_chain, dialogue_seed, mom_max, _contract_type = _final_acceptance_row_context(
+        chat,
+        row,
+    )
+
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        format_opening_causality_hard_error,
+    )
+
+    chat = apply_final_acceptance_local_patches(chat, row)
 
     opening_block = collect_opening_causality_issues(
         chat,
@@ -677,9 +716,10 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                 raise
             attempt += 1
             last_err = str(exc).strip()
+            repair_base = _export_repair_dialogue_base(current, row, exc)
             prompt = _build_export_repair_feedback(
                 exc,
-                current,
+                repair_base,
                 row,
                 st_final=st_final,
                 mom_max=int(mom_max),
@@ -687,7 +727,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
             if attempt > 0 and last_err:
                 prompt = f"{prompt}\n【上一轮未过】{last_err}"
             lifted = fix_llm(
-                current,
+                repair_base,
                 prompt,
                 banned_literals=[str(x) for x in banned],
                 mom_lines_max=int(mom_max),
@@ -695,7 +735,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
             if isinstance(exc, GoldChatSemanticBlocked):
                 targets = _semantic_repair_target_lines(exc)
                 repaired, scoped_changed = _sanitize_semantic_scoped_repair(
-                    current,
+                    repair_base,
                     lifted,
                     target_lines=targets,
                     st_final=st_final,
@@ -717,7 +757,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                     targets = _duplicate_repair_target_lines(exc)
                     if targets:
                         repaired = _freeze_duplicate_repair_scope(
-                            current,
+                            repair_base,
                             repaired,
                             target_lines=targets,
                         )

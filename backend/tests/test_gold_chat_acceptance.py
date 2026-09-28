@@ -34,6 +34,7 @@ from app.services.daily_story.prompts import (
 from app.services.gold_story.gold_chat.finalize import (
     GoldChatAcceptanceBlocked,
     GoldChatAcceptanceIncomplete,
+    GoldChatLocalDuplicateBlocked,
     GoldChatSemanticBlocked,
     GoldChatValidationRepairableError,
     _is_export_repairable,
@@ -1092,6 +1093,148 @@ def test_final_acceptance_semantic_block_preserves_structured_issues(monkeypatch
 
     assert caught.value.issues == [issue]
     assert "接不上" in str(caught.value)
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_duplicate_repair_uses_acceptance_patched_baseline(mock_acceptance):
+    """重复定点修稿基线须与终检 patch 后稿一致，避免行号错位。"""
+    issue = {
+        "lines": [2, 5],
+        "kind": "重复",
+        "desc": "第2句与第5句同义复读",
+        "fix": "只改第5句",
+    }
+    calls = {"n": 0}
+    seen_fix_chat: list[int] = []
+
+    def acceptance_side_effect(candidate, _row, *, sid):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise GoldChatLocalDuplicateBlocked(
+                "终检本地硬伤：重复",
+                issues=[issue],
+            )
+        return candidate
+
+    mock_acceptance.side_effect = acceptance_side_effect
+    original_dialogue = [
+        {"speaker": "妈妈", "line": "先把作业写完。"},
+        {"speaker": "昭昭", "line": "我等会儿就写。"},
+        {"speaker": "灿灿", "line": "那你快点。"},
+        {"speaker": "昭昭", "line": "我知道了。"},
+    ]
+    chat = _story(original_dialogue)
+
+    def fake_patch(chat_in, _row):
+        dlg = list(chat_in["dialogue"])
+        dlg.insert(
+            2,
+            {"speaker": "妈妈", "line": "终检补句：先把话说清楚。"},
+        )
+        return {**chat_in, "dialogue": dlg}
+
+    with patch(
+        "app.services.gold_story.gold_chat.finalize.apply_final_acceptance_local_patches",
+        side_effect=fake_patch,
+    ):
+        def fake_fix(repair_chat, feedback, **_kw):
+            seen_fix_chat.append(len(repair_chat.get("dialogue") or []))
+            assert "只允许改第5句" in feedback
+            dlg = list(repair_chat["dialogue"])
+            dlg[4] = {
+                **dlg[4],
+                "line": "我现在就去写，写完再玩积木。",
+            }
+            return {**repair_chat, "dialogue": dlg}
+
+        result, score = run_gold_chat_final_acceptance_with_semantic_repair(
+            chat,
+            {"title": "测试"},
+            sid="BV_TEST",
+            st_final="N",
+            banned=[],
+            mom_max=1,
+            source_type="field",
+            attach_score=lambda c, _r: c,
+            gate_score=lambda _c: 80,
+            normalize_chat=lambda c: c,
+            fix_llm=fake_fix,
+            validate_chat=lambda _c: None,
+            max_repairs=2,
+        )
+
+    assert score == 80
+    assert seen_fix_chat == [5]
+    assert len(result["dialogue"]) == 5
+    assert result["dialogue"][4]["line"] == "我现在就去写，写完再玩积木。"
+    assert result["dialogue"][2]["line"] == "终检补句：先把话说清楚。"
+
+
+@patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
+def test_semantic_repair_uses_acceptance_patched_baseline(mock_acceptance):
+    """定点修稿基线须与终检本地 patch 后送审稿一致（行号/speaker 对齐）。"""
+    beats = [
+        {"speaker": "妈妈", "intent": "交代旧事：昭昭掉进菜篓子"},
+        {"speaker": "灿灿", "intent": "追问：那你怎么会在篓子里睡着？"},
+        {"speaker": "昭昭", "intent": "荒诞解释：我挑的地方好"},
+    ]
+    row = {
+        "title": "测试",
+        "structure_type": "N",
+        "payload": {"scene_contract": {"story_type": "N", "beat_chain": beats}},
+    }
+    original_dialogue = [
+        {"speaker": "妈妈", "line": "昭昭小时候掉进菜篓子还睡着了。"},
+        {"speaker": "灿灿", "line": "你那时候胆子也太大了吧。"},
+        {"speaker": "昭昭", "line": "那叫会挑地方落。"},
+        {"speaker": "昭昭", "line": "你怎么在篓子里睡着了？"},
+        {"speaker": "灿灿", "line": "因为菜篓子软，我躺着舒服呀。"},
+    ]
+    issue = {
+        "lines": [4],
+        "kind": "接不上",
+        "desc": "第4句追问没接住上一句",
+        "fix": "只改第4句",
+    }
+    calls = {"n": 0}
+
+    def acceptance_side_effect(candidate, _row, *, sid):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise GoldChatSemanticBlocked(
+                "终检语义硬伤：第[4]句·接不上：测试",
+                issues=[issue],
+            )
+        return candidate
+
+    mock_acceptance.side_effect = acceptance_side_effect
+    chat = _story(original_dialogue)
+
+    def fake_fix(_chat, _feedback, **_kw):
+        dlg = list(_chat["dialogue"])
+        dlg[3] = {**dlg[3], "line": "那你怎么会在篓子里睡着呀？"}
+        return {**_chat, "dialogue": dlg}
+
+    result, score = run_gold_chat_final_acceptance_with_semantic_repair(
+        chat,
+        row,
+        sid="BV_TEST",
+        st_final="N",
+        banned=[],
+        mom_max=1,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fake_fix,
+        validate_chat=lambda _c: None,
+        max_repairs=2,
+    )
+
+    assert score == 80
+    assert result["dialogue"][3]["speaker"] == "灿灿"
+    assert result["dialogue"][3]["line"] == "那你怎么会在篓子里睡着呀？"
+    assert result["dialogue"][4]["speaker"] == "昭昭"
 
 
 @patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
