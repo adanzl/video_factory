@@ -628,6 +628,82 @@ def _parent_in_contract(contract: dict[str, Any]) -> bool:
     return any(p in note for p in ("妈妈", "爸爸", "家长"))
 
 
+_K_PARENT_INTERVENTION_RE = re.compile(
+    r"止争|平息|调解|劝架|提议|建议|一人.{0,8}一个|各.{0,6}一个|别抢|别闹|分开"
+)
+_K_PARENT_FAIL_CLOSE_RE = re.compile(
+    r"叹气|劝不动|劝不了|管不了|拦不住|制止失败|僵持|不和好"
+)
+
+
+def normalize_k_parent_intervention_budget(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """K-A 两句家长预算下合并同轮干预，保住开场因果与最终劝失败。
+
+    仅处理窄形状：K、mom_lines_max=2、恰有 3 个同一家长 beat，
+    首拍与中拍都是干预/止争，末拍明确是劝失败/僵持。其它形状不猜。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    if str(contract.get("story_type") or "").strip().upper() != "K":
+        return contract, []
+    try:
+        mom_max = max(0, int(contract.get("mom_lines_max") or 0))
+    except (TypeError, ValueError):
+        return contract, []
+    if mom_max != 2:
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or len(chain) < 5:
+        return contract, []
+
+    parent_rows: list[tuple[int, dict[str, Any]]] = []
+    for idx, row in enumerate(chain):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("speaker") or "").strip() in _PARENT_SPEAKERS:
+            parent_rows.append((idx, row))
+    if len(parent_rows) != 3:
+        return contract, []
+
+    (first_idx, first), (middle_idx, middle), (last_idx, last) = parent_rows
+    parent = str(first.get("speaker") or "").strip()
+    if any(str(row.get("speaker") or "").strip() != parent for _, row in parent_rows):
+        return contract, []
+    first_intent = str(first.get("intent") or first.get("beat") or "").strip()
+    middle_intent = str(middle.get("intent") or middle.get("beat") or "").strip()
+    last_intent = str(last.get("intent") or last.get("beat") or "").strip()
+    if not (
+        _K_PARENT_INTERVENTION_RE.search(first_intent)
+        and _K_PARENT_INTERVENTION_RE.search(middle_intent)
+        and _K_PARENT_FAIL_CLOSE_RE.search(last_intent)
+        and first_idx < middle_idx < last_idx
+    ):
+        return contract, []
+
+    merged_first = dict(first)
+    merged_first["intent"] = f"{first_intent}；同轮继续干预：{middle_intent}".strip("；")
+    new_chain: list[Any] = []
+    for idx, row in enumerate(chain):
+        if idx == middle_idx:
+            continue
+        new_chain.append(merged_first if idx == first_idx else row)
+
+    normalized: list[Any] = []
+    for beat_no, row in enumerate(new_chain, 1):
+        if isinstance(row, dict):
+            item = dict(row)
+            if "beat" in item:
+                item["beat"] = beat_no
+            normalized.append(item)
+        else:
+            normalized.append(row)
+    out = dict(contract)
+    out["beat_chain"] = normalized
+    return out, [f"K家长预算2合并同轮干预:{parent}"]
+
+
 def apply_parent_role_budget(
     contract: dict[str, Any],
     *,
