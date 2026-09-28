@@ -816,9 +816,14 @@ def _validate_export_review_raw(
         desc = item.get("desc")
         if not isinstance(desc, str) or not str(desc).strip():
             return f"issues[{idx}].desc 无效"
-        if "missing_beat" in item:
-            if _normalize_missing_beat(item.get("missing_beat")) is None:
+        missing_beat = _normalize_missing_beat(item.get("missing_beat"))
+        if kind == "缺前提":
+            if missing_beat is None:
                 return f"issues[{idx}].missing_beat 无效"
+        elif "missing_beat" in item and missing_beat is None:
+            # missing_beat 只服务于「缺前提」。其他类型偶发携带坏的可选字段时，
+            # 不应让整份终检 JSON 作废；parse_review_issues 会自然丢掉它。
+            pass
         if "evidence" in item:
             parsed_ev = _parse_issue_evidence_entries(
                 item.get("evidence"),
@@ -967,6 +972,10 @@ def run_export_semantic_review(
             + f"上一份审核未通过格式校验：{shape_err}\n"
             + "稿件未改变。请纠正审核 JSON，保持审核标准，勿为通过校验删除问题。"
             + "evidence 的 line 必须为 issues.lines 内的整数，quote 必须从该行原样摘录至少两个字。"
+            + "只有 kind=缺前提 时才输出 missing_beat；它必须是对象"
+            + '{"beat":1,"intent":"对应 beat_chain 的 intent 原文"}，'
+            + "beat 必须是 beat_chain 的 1-based JSON 整数，不能是字符串、小数或 null；"
+            + "其他 kind 不要输出 missing_beat。"
             + "输出完整审核 JSON，不要改写稿件。\n上一份审核：\n"
             + json.dumps(raw, ensure_ascii=False)
         )
@@ -1275,6 +1284,10 @@ def build_review_prompts(
         "evidence 只需且必须逐一覆盖 issues.lines。\n"
         "- kind 为矛盾/称谓/错位/接不上/语病/缺前提/无效插话时 evidence 必填"
         "（缺前提另须 missing_beat）；quote 须能在该行对白中逐字找到；"
+        "missing_beat 只允许用于 kind=缺前提，且必须严格写成对象"
+        '{"beat":1,"intent":"对应 beat_chain 的 intent 原文"}；'
+        "beat 是 scene_contract.beat_chain 的 1-based JSON 整数，禁止字符串、小数/null；"
+        "intent 直接复制该 beat 的 intent，不要改写；其他 kind 不要输出 missing_beat。\n"
         "重复类仍以本地检测为主，报重复时也请给 evidence 便于人读。\n"
         "缺前提示例见 missing_beat + evidence（勿伪造缺失句 quote）。\n\n"
         "只输出 JSON：\n"

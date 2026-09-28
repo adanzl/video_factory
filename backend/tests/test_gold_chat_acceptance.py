@@ -1686,6 +1686,71 @@ def test_export_review_corrects_invalid_evidence_once(monkeypatch, recovered):
         assert "evidence" in result.error
 
 
+def test_export_review_ignores_malformed_missing_beat_on_non_gap_issue(monkeypatch):
+    from app.services.llm import llm_mgr
+
+    calls = []
+    payload = {
+        "issues": [
+            {
+                "kind": "书面",
+                "lines": [1],
+                "desc": "措辞偏书面",
+                "missing_beat": 2,
+            }
+        ]
+    }
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            calls.append(user)
+            return payload, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    result = run_export_semantic_review(
+        "测试",
+        _story([{"speaker": "昭昭", "line": "姐姐好。"}]),
+    )
+    assert result.completed is True
+    assert len(calls) == 1
+    assert len(result.issues) == 1
+    assert "missing_beat" not in result.issues[0]
+
+
+def test_export_review_corrects_invalid_missing_beat_once(monkeypatch):
+    from app.services.llm import llm_mgr
+
+    intent = "因作业未做批评灿灿"
+    invalid = {
+        "issues": [{"kind": "缺前提", "lines": [1], "desc": "缺少批评前提",
+                    "missing_beat": {"beat": 1.9, "intent": intent},
+                    "evidence": [{"line": 1, "quote": "姐姐"}]}]
+    }
+    corrected = {
+        "issues": [{"kind": "缺前提", "lines": [1], "desc": "缺少批评前提",
+                    "missing_beat": {"beat": 1, "intent": intent},
+                    "evidence": [{"line": 1, "quote": "姐姐"}]}]
+    }
+    calls = []
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            calls.append(user)
+            return (corrected if len(calls) == 2 else invalid), None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    result = run_export_semantic_review(
+        "测试",
+        _story([{"speaker": "昭昭", "line": "姐姐好。"}]),
+        beat_chain=[{"speaker": "妈妈", "intent": intent}],
+    )
+    assert result.completed is True
+    assert len(calls) == 2
+    assert "只有 kind=缺前提 时才输出 missing_beat" in calls[1]
+    assert '"beat":1' in calls[1]
+    assert result.issues[0]["missing_beat"] == {"beat": 1, "intent": intent}
+
+
 def test_export_review_timeout_does_not_retry(monkeypatch):
     from app.services.llm import llm_mgr
     calls = []
