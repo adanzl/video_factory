@@ -1384,7 +1384,12 @@ def apply_n_beat_role_speaker_align(
             continue
 
         # beat 已唯一确定追问方时，回答方不能反过来用“你…”追问对方。
-        is_direct_question = "你" in line and bool(_N_DIALOGUE_QUESTION.search(line))
+        # 因果/第一人称作答里带反问（如「因为…，你不知道吗？」）不算追问。
+        is_direct_question = (
+            "你" in line
+            and bool(_N_DIALOGUE_QUESTION.search(line))
+            and not bool(_N_DIALOGUE_ANSWER_CUE.search(line))
+        )
         if is_direct_question:
             if speaker == answerer:
                 item["speaker"] = questioner

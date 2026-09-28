@@ -55,6 +55,27 @@ def test_n_beat_role_align_repairs_swapped_question_answer_block():
     ]
 
 
+def test_n_beat_role_align_keeps_rhetorical_answer_with_question_mark():
+    story = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "月亮晚上为什么也亮亮的？"},
+            {"speaker": "昭昭", "line": "因为月亮也怕冷，你不知道吗？"},
+        ],
+    }
+    beats = [
+        {"speaker": "灿灿", "intent": "追问：月亮为什么亮"},
+        {"speaker": "昭昭", "intent": "回答：用荒诞因果讲圆"},
+    ]
+    out, changed = apply_n_beat_role_speaker_align(
+        story,
+        beat_chain=beats,
+        structure_type="N",
+    )
+    assert not changed
+    assert out["dialogue"][1]["speaker"] == "昭昭"
+
+
 def test_n_beat_role_align_keeps_correct_roles_and_ambiguous_contract():
     correct = {
         "story_type": "N",

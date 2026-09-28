@@ -18,6 +18,7 @@ from app.services.gold_story.scene import (
     remap_story_raw_sibling_roles,
     seed_from_beat_chain,
     sanitize_dialogue_meta_label_suffix,
+    is_terminal_no_reply_intent,
     trim_terminal_no_reply_rows,
     validate_scene,
 )
@@ -136,6 +137,26 @@ def test_seed_from_beat_chain_does_not_turn_terminal_silence_into_dialogue():
     assert len(seed) == 4
     assert seed[-1]["speaker"] == "昭昭"
     assert "会挑地方落" in seed[-1]["intent"]
+
+
+def test_terminal_no_reply_does_not_match_dialogue_answer_intent():
+    assert not is_terminal_no_reply_intent("回答：你怎么不说话了？")
+    assert not is_terminal_no_reply_intent("作答：你怎么还不接话？")
+
+
+def test_trim_terminal_no_reply_keeps_seed_with_spoken_line():
+    seed = [
+        {"speaker": "灿灿", "intent": "灵魂拷问", "line": "你怎么还不说话？"},
+        {
+            "speaker": "昭昭",
+            "intent": "回答：你怎么不说话了？",
+            "line": "我刚才就是在认真想怎么回答你。",
+        },
+    ]
+    out, notes = trim_terminal_no_reply_rows(seed)
+    assert notes == []
+    assert len(out) == 2
+    assert out[-1]["line"].startswith("我刚才")
 
 
 def test_trim_terminal_no_reply_keeps_mid_scene_silence_reaction():

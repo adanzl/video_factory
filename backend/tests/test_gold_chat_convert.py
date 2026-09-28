@@ -388,6 +388,49 @@ def test_n_post_align_221_stabilizer_uses_contract_context():
     assert "照这个道理认真想" in closed["dialogue"][4]["line"]
 
 
+def test_n_natural_mid_pairs_skips_when_parent_qa_in_closing_tail():
+    """契约要求落在家长追问之后，但 Q/A 已在末段时不得退回早先 reason_idx 插句。"""
+    from app.services.gold_story.gold_chat.length import _n_natural_mid_pairs
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "又说起你小时候那件旧事。"},
+        {"speaker": "昭昭", "line": "那不叫命大，我会挑地方落。"},
+        {"speaker": "灿灿", "line": "你每次都说得特别认真。"},
+        {"speaker": "妈妈", "line": "菜篓子不是你摆的，你怎么挑？"},
+        {"speaker": "昭昭", "line": "我看准软地方才往那边落。"},
+        {"speaker": "妈妈", "line": "行吧，先吃饭。"},
+    ]
+    beat_chain = [
+        {"speaker": "妈妈", "intent": "重提旧事：说起昭昭小时候的意外"},
+        {"speaker": "昭昭", "intent": "质疑：那不是命大，是自己会挑地方落"},
+        {"speaker": "妈妈", "intent": "追问：地方又不是你摆的，怎么挑"},
+    ]
+    pairs, insert_at = _n_natural_mid_pairs(dialogue, beat_chain=beat_chain)
+    assert pairs == ()
+    assert insert_at is None
+
+
+def test_n_natural_mid_pairs_skips_insert_when_reason_in_closing_tail():
+    from app.services.gold_story.gold_chat.length import _n_natural_mid_pairs
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "又提起以前那件事。"},
+        {"speaker": "灿灿", "line": "你怎么回事？"},
+        {"speaker": "昭昭", "line": "我才不要听你指挥。"},
+        {"speaker": "妈妈", "line": "那你讲清楚。"},
+        {"speaker": "昭昭", "line": "因为我早就看好了位置。"},
+        {"speaker": "妈妈", "line": "行吧，先吃饭。"},
+    ]
+    beat_chain = [
+        {"speaker": "妈妈", "intent": "重提旧事"},
+        {"speaker": "昭昭", "intent": "嘴硬：先顶一句"},
+        {"speaker": "昭昭", "intent": "回答：给出荒诞理由"},
+    ]
+    pairs, insert_at = _n_natural_mid_pairs(dialogue, beat_chain=beat_chain)
+    assert pairs == ()
+    assert insert_at is None
+
+
 def test_n_contract_length_fallback_rejects_ambiguous_reasoner():
     """两个孩子都被契约标成解释方时禁止猜角色，宁可交上层修稿。"""
     from app.services.gold_story.gold_chat.length import _n_natural_mid_pairs

@@ -655,10 +655,16 @@ def _n_natural_mid_pairs(
                     for idx in range(reason_idx + 1, len(dialogue))
                     if isinstance(dialogue[idx], dict)
                     and str(dialogue[idx].get("speaker") or "").strip() == parent_after
+                    and re.search(
+                        r"[？?]|怎么|为何|为啥|凭什么|是不是|要不要|能不能",
+                        str(dialogue[idx].get("line") or ""),
+                    )
                 ),
                 -1,
             )
-            if parent_idx >= 0:
+            if parent_idx < 0:
+                pass
+            else:
                 response_idx = next(
                     (
                         idx
@@ -668,7 +674,10 @@ def _n_natural_mid_pairs(
                     ),
                     -1,
                 )
-                reason_idx = response_idx if response_idx >= 0 else parent_idx
+                bumped = response_idx if response_idx >= 0 else parent_idx
+                if bumped >= len(dialogue) - 2:
+                    return (), None
+                reason_idx = bumped
 
     listener = "灿灿" if reasoner == "昭昭" else "昭昭"
     pairs = tuple(
@@ -680,7 +689,10 @@ def _n_natural_mid_pairs(
         for ask, answer in _N_NATURAL_MID_TEMPLATES
         for line in (ask, answer)
     }
-    insert_at = min(reason_idx + 1, max(2, len(dialogue) - 2))
+    # 禁止 min(...) 把 insert_at 拉回理由行之前；末两拍 reserved 且无空位则不补。
+    if reason_idx >= len(dialogue) - 2:
+        return (), None
+    insert_at = reason_idx + 1
     while insert_at < len(dialogue):
         item = dialogue[insert_at]
         if not isinstance(item, dict):

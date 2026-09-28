@@ -56,10 +56,21 @@ _TERMINAL_NO_REPLY_RE = re.compile(
 )
 
 
+_TERMINAL_NO_REPLY_DIALOGUE_INTENT = re.compile(
+    r"^(?:回答|作答|解释|反驳|嘴硬|接话|回嘴)[:：]"
+)
+
+
 def is_terminal_no_reply_intent(intent: str) -> bool:
     """是否是只能作为表演结果、不能再生成一条对白的末拍。"""
     text = str(intent or "").strip()
-    return bool(text and _TERMINAL_NO_REPLY_RE.search(text))
+    if not text:
+        return False
+    if _TERMINAL_NO_REPLY_DIALOGUE_INTENT.match(text):
+        return False
+    if re.search(r"[？?]", text):
+        return False
+    return bool(_TERMINAL_NO_REPLY_RE.search(text))
 
 
 def trim_terminal_no_reply_rows(rows: list[Any] | None) -> tuple[list[Any], list[str]]:
@@ -69,6 +80,8 @@ def trim_terminal_no_reply_rows(rows: list[Any] | None) -> tuple[list[Any], list
     while out:
         row = out[-1]
         if not isinstance(row, dict):
+            break
+        if isinstance(row, dict) and str(row.get("line") or "").strip():
             break
         intent = str(row.get("intent") or row.get("beat") or "").strip()
         if not is_terminal_no_reply_intent(intent):
