@@ -961,6 +961,47 @@ def test_opening_causality_patch_uses_seed_for_missing_middle_beat():
     assert fixed["dialogue"][3]["speaker"] == "妈妈"
 
 
+def test_opening_causality_patch_reuses_o106_rule_seed_paraphrase():
+    """#106：可信 H3b seed 的自然改写应能补回妈妈首句立规，不烧 LLM 修稿预算。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "端出蛋挞和烤鸭，宣布用绕口令抢吃"},
+        {"beat": 2, "speaker": "昭昭", "intent": "磕巴念绕口令，口误笑场，急得跺脚"},
+    ]
+    seed = [
+        {"speaker": "妈妈", "intent": "蛋挞烤鸭上桌，绕口令抢吃"},
+        {"speaker": "昭昭", "intent": "磕巴念绕口令，口误笑场，急得跺脚"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "磕巴念绕口令，口误笑场，急得跺脚。"},
+        ],
+    }
+
+    assert not opening_causality_passes(story, beat, mom_lines_max=2)
+    fixed, changed = apply_opening_causality_local_patch(
+        story,
+        beat_chain=beat,
+        mom_lines_max=2,
+        dialogue_seed=seed,
+    )
+
+    assert changed
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert fixed["dialogue"][0]["line"].startswith("说好了，")
+    assert "蛋挞烤鸭上桌" in fixed["dialogue"][0]["line"]
+    assert opening_causality_passes(fixed, beat, mom_lines_max=2)
+
+
+def test_opening_rule_announcement_detection_is_narrow():
+    from app.services.gold_story.gold_chat.validate import _opening_authority_intent_kind
+
+    assert _opening_authority_intent_kind("端出蛋挞和烤鸭，宣布用绕口令抢吃") == "rule"
+    assert _opening_authority_intent_kind("宣布今天放假") == ""
+
+
 def test_opening_causality_patch_never_synthesizes_non_authority_beat1():
     """非权威旧事 beat1 匹配不到时不能调用 authority 生成器，更不能删后续妈妈追问来“验过”。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch

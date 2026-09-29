@@ -2129,6 +2129,9 @@ def apply_opening_causality_local_patch(
         _beat_chain_entries,
         _intent_speech_acts,
         _line_fulfills_beat,
+        _opening_authority_intent_kind,
+        _opening_clause_matches_line,
+        _opening_semantic_clauses,
         _parent_trigger_starts_as_late_reaction,
         collect_opening_causality_issues,
         opening_causality_passes,
@@ -2193,6 +2196,31 @@ def apply_opening_causality_local_patch(
                 continue
             if _line_fulfills_beat(expected, spoken, entry):
                 return {"speaker": expected, "line": spoken}
+
+            # H3b seed 是已生成契约，可接受与 beat intent 的自然改写；
+            # 但只在家长立规拍里把语义等价 seed 补成显式规则句，
+            # 不放宽普通正文的 opening validator。
+            intent = str(entry.get("intent") or "")
+            if expected not in {"妈妈", "爸爸"} or _opening_authority_intent_kind(intent) != "rule":
+                continue
+            clauses = _opening_semantic_clauses(intent)
+            line_han = "".join(re.findall(r"[\u4e00-\u9fff]", spoken))
+            hits = sum(
+                1
+                for clause in clauses
+                if _opening_clause_matches_line(clause, line_han)
+            )
+            required = len(clauses) if len(clauses) <= 2 else 2
+            if not clauses or hits < required:
+                continue
+            rule_spoken = spoken
+            if not RE_AUTH_RULE_SLOT.search(rule_spoken):
+                rule_spoken = f"说好了，{rule_spoken}"
+            if (
+                len(rule_spoken) <= CHAT_MAX_LINE_CHARS
+                and _line_fulfills_beat(expected, rule_spoken, entry)
+            ):
+                return {"speaker": expected, "line": rule_spoken}
         return None
 
     # 对中间缺拍优先用 H3b seed 落地：seed 是已生成契约，不新增剧情事实，且不占 LLM 修稿预算。
