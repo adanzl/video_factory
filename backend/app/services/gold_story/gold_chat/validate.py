@@ -1745,6 +1745,9 @@ _RE_INTENT_TRIGGER = re.compile(
 )
 _RE_INTENT_BLAME = re.compile(r"责备|批评|指责|训斥|责骂")
 _RE_INTENT_RULE = re.compile(r"立规|约好|规定|规矩|定规|说好|约定")
+_RE_INTENT_RULE_ANNOUNCE = re.compile(
+    r"宣布.{0,12}(?:规则|比赛|竞赛|抢吃|谁先|先吃|先用)",
+)
 _RE_INTENT_ACCOUNTABILITY = re.compile(r"定责|问责|归责|追责|判责|分责")
 _RE_INTENT_INTERRUPT = re.compile(r"插嘴|打断|岔|救场|转移|离谱|请求|打岔")
 _RE_INTENT_DEFEND = re.compile(r"辩解|推托|忘|本来|没做|没写|推脱|借口")
@@ -1825,7 +1828,7 @@ def _opening_authority_intent_kind(intent: str) -> str:
     tag = re.split(r"[：:]", text, maxsplit=1)[0].strip()
     if _RE_INTENT_BLAME.search(tag):
         return "blame"
-    if _RE_INTENT_RULE.search(tag):
+    if _RE_INTENT_RULE.search(tag) or _RE_INTENT_RULE_ANNOUNCE.search(text):
         return "rule"
     if _RE_INTENT_ACCOUNTABILITY.search(tag):
         return "accountability"
