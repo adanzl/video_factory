@@ -175,7 +175,20 @@
         </div>
 
         <div
-          v-if="detail.gold_chat_error?.error"
+          v-if="detail.gold_chat_review_pending"
+          class="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800"
+        >
+          <div class="font-medium">存在待审核候选，旧导出稿不会被覆盖</div>
+          <div v-if="detail.gold_chat_review_pending.error" class="mt-1 leading-relaxed wrap-break-word">
+            {{ detail.gold_chat_review_pending.error }}
+          </div>
+          <div v-if="detail.gold_chat_review_pending.candidate?.dialogue?.length" class="mt-1 text-amber-700">
+            候选 {{ detail.gold_chat_review_pending.candidate.dialogue.length }} 句，需人工确认后再作为正式导出稿。
+          </div>
+        </div>
+
+        <div
+          v-if="detail.gold_chat_error?.error && detail.gold_chat_error?.review_status !== 'review_pending'"
           class="border-b border-red-100 bg-red-50 px-4 py-2"
         >
           <el-tooltip placement="top" :show-after="300">

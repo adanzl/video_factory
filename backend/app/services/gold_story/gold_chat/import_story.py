@@ -2,48 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
 from app.services.gold_story.gold_chat.export import load_gold_chat_for_row
-from app.services.gold_story.gold_chat.patch import (
-    patch_m5_break_sibling_consecutive,
-)
-
-logger = logging.getLogger(__name__)
-
-
-def _review_gold_chat_import_story(story: dict[str, Any], theme: str) -> dict[str, Any]:
-    """gold_chat 导入 daily_story：单次 LLM 审读，注入 humor.funny_score。"""
-    try:
-        from app.services.daily_story.review import (
-            apply_review_to_quality,
-            collect_local_issues,
-            merge_issues,
-        )
-        from app.services.llm import llm_mgr
-
-        client = llm_mgr._get_client()
-        review = getattr(client, "review_daily_story_issues", None)
-        if not callable(review):
-            return story
-        issues_, humor_ = review(theme, story)  # type: ignore[union-attr]
-        issues = merge_issues(collect_local_issues(story), issues_)
-        return apply_review_to_quality(
-            story,
-            issues,
-            humor=humor_,
-            apply_penalty=False,
-        )
-    except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "gold_chat import review skipped: %s",
-            exc,
-        )
-        return story
-
 
 def validate_gold_chat_story_for_row(
     story: dict[str, Any],
@@ -55,11 +18,11 @@ def validate_gold_chat_story_for_row(
         validate_gold_chat,
     )
 
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-    scene_contract = (
-        payload.get("scene_contract")
-        if isinstance(payload.get("scene_contract"), dict)
-        else {}
+    payload_raw = row.get("payload")
+    payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
+    scene_contract_raw = payload.get("scene_contract")
+    scene_contract: dict[str, Any] = (
+        scene_contract_raw if isinstance(scene_contract_raw, dict) else {}
     )
     banned = sanitize_banned_literals(
         payload.get("banned_literals") or scene_contract.get("banned_literals"),
@@ -81,13 +44,22 @@ def validate_gold_chat_story_for_row(
     )
 
 
-def _exported_quality_is_final(story: dict[str, Any]) -> bool:
-    """转换终检已写入结构分和好笑分时，导入沿用这一版，不再重算。"""
-    quality = story.get("quality")
-    if not isinstance(quality, dict) or quality.get("structure_score") is None:
-        return False
-    humor = quality.get("humor")
-    return isinstance(humor, dict) and humor.get("funny_score") is not None
+def _exported_quality_is_final(
+    story: dict[str, Any],
+    row: dict[str, Any],
+) -> bool:
+    """只有终验摘要仍绑定当前正文/来源契约时，导入才原样沿用。"""
+    from app.services.daily_story.quality import (
+        gold_story_review_contract,
+        story_production_eligibility,
+    )
+
+    return bool(
+        story_production_eligibility(
+            story,
+            review_contract=gold_story_review_contract(row, story),
+        ).get("ok")
+    )
 
 
 def import_gold_chat_daily_story(
@@ -99,12 +71,16 @@ def import_gold_chat_daily_story(
 ) -> dict[str, Any]:
     """gold_chat 导出 → daily_story；force 时覆盖已有导入。
 
-    导出稿已带结构分 + 好笑分时原样入库。没有终分的旧稿才归一化、
-    重算结构分并审读。
+    导入只核对导出稿终验摘要并原样入库；摘要缺失/失效则保存为 review_pending，
+    不在导入阶段归一化、改稿或重新打分。
     """
+    del review  # 导入不触发改稿/重评；保留参数兼容既有调用方。
     from app.repositories import repo_daily_story
-    from app.services.daily_story.prompts import sync_discovery_opening_from_dialogue
-    from app.services.daily_story.quality import attach_daily_story_quality
+    from app.services.daily_story.quality import (
+        find_story_duplicate_matches,
+        gold_story_review_contract,
+        story_production_eligibility,
+    )
 
     gid = int(row.get("id") or 0)
     sid = str(row.get("source_id") or "").strip()
@@ -121,7 +97,7 @@ def import_gold_chat_daily_story(
     if not (chat.get("dialogue") or []):
         raise ValueError("gold_chat 对白为空")
 
-    story = dict(chat)
+    story: dict[str, Any] = dict(chat)
     theme = str(
         story.get("scene_title")
         or story.get("key")
@@ -129,74 +105,118 @@ def import_gold_chat_daily_story(
         or sid
     ).strip()
     story_type = str(row.get("structure_type") or "").strip().upper()[:1] or None
-    mech = str(row.get("mechanism") or "").strip().upper()
     if story_type:
         story["story_type"] = story_type
-    if _exported_quality_is_final(story):
-        sync_discovery_opening_from_dialogue(story)
-    else:
-        from app.services.gold_story.gold_chat.convert import (
-            apply_gold_chat_normalizations,
-        )
-
-        story, _ = apply_gold_chat_normalizations(story, row=row)
-        if mech == "M5" and story_type == "H":
-            story, _ = patch_m5_break_sibling_consecutive(story)
-        # 与 convert._attach_gold_chat_structure_score 一致：先按正文一体计分，
-        # 再 sync discovery_opening，避免开场双句被二次扣分。
-        story.pop("discovery_opening", None)
-        attach_daily_story_quality(
-            story, theme=theme, finalize=True, skip_relevancy=True
-        )
-        sync_discovery_opening_from_dialogue(story)
-        if review:
-            story = _review_gold_chat_import_story(story, theme)
-    validate_gold_chat_story_for_row(story, row)
+    exported_final = _exported_quality_is_final(story, row)
+    # 导入只消费导出事实，不在这里改稿、同步正文镜像或重评。已绑定当前正文/契约的
+    # 终验稿可直接沿用；旧导出稿（无 hash / hash 失效）原样保存为 review_pending。
+    hard_error: str | None = None
+    try:
+        validate_gold_chat_story_for_row(story, row)
+    except Exception as exc:
+        hard_error = str(exc).strip() or exc.__class__.__name__
     story_key = str(story.get("key") or "").strip() or None
 
     existing_raw = row.get("gold_chat_daily_story_id")
     existing_id = int(existing_raw) if existing_raw else 0
 
-    if existing_id > 0 and not force:
+    existing_daily: dict[str, Any] | None = None
+    if existing_id > 0:
+        try:
+            existing_daily = repo_daily_story.get_story(existing_id)
+        except KeyError:
+            existing_id = 0
+
+    if existing_id > 0 and not force and existing_daily is not None:
+        existing_story = existing_daily.get("story")
+        existing_quality_raw = (
+            existing_story.get("quality") if isinstance(existing_story, dict) else None
+        )
+        existing_quality: dict[str, Any] = (
+            existing_quality_raw if isinstance(existing_quality_raw, dict) else {}
+        )
         return {
             "action": "skip",
             "reason": "already_imported",
             "gold_story_id": gid,
             "source_id": sid,
             "daily_story_id": existing_id,
+            "status": existing_daily.get("status"),
+            "production_reasons": list(existing_quality.get("production_reasons") or []),
         }
 
-    if existing_id > 0:
-        try:
-            repo_daily_story.get_story(existing_id)
-        except KeyError:
-            existing_id = 0
+    # 最终入库前查全库，不按类型排除；完全/高度重复阻断 active，但仍保存原因供确认。
+    # 真正写库前在同一事务中重读一次最新候选，缩小并发生成/导入的漏查窗口。
+    from app.repositories.sql_exec import atomic
+
+    with atomic():
+        candidates = repo_daily_story.list_all_stories(
+            exclude_id=existing_id if existing_id > 0 else None,
+        )
+        duplicate_matches = find_story_duplicate_matches(
+            story,
+            candidates,
+            exclude_story_id=existing_id if existing_id > 0 else None,
+        )
+        duplicate_block = [
+            item for item in duplicate_matches if item.get("severity") == "block"
+        ]
+        raw_quality = story.get("quality")
+        quality: dict[str, Any] = raw_quality if isinstance(raw_quality, dict) else {}
+        if raw_quality is not quality:
+            story["quality"] = quality
+        if duplicate_matches:
+            quality["dedupe_matches"] = duplicate_matches[:10]
+        eligibility = story_production_eligibility(
+            story,
+            hard_error=hard_error,
+            review_contract=gold_story_review_contract(row, story),
+        )
+        if not exported_final:
+            eligibility["ok"] = False
+            eligibility.setdefault("reasons", []).append("导出稿缺少当前正文终验摘要，需重新终验")
+        if duplicate_block:
+            eligibility["ok"] = False
+            ids = ",".join(str(item.get("story_id")) for item in duplicate_block[:5])
+            eligibility.setdefault("reasons", []).append(
+                f"库内高度重复：story_id={ids}"
+            )
+        quality["production_reasons"] = list(eligibility.get("reasons") or [])
+        status = "active" if eligibility.get("ok") else "review_pending"
+
+        if existing_id > 0:
+            updated = repo_daily_story.update_story(
+                existing_id,
+                story=story,
+                status=status,
+                story_type=story_type,
+                key=story_key,
+            )
+            daily_story_id = existing_id
+        else:
+            daily_story_id = repo_daily_story.insert_story(
+                theme=theme,
+                story=story,
+                status=status,
+                story_type=story_type,
+                key=story_key,
+            )
+        repo_gold_story.set_gold_chat_daily_story_id(gid, daily_story_id)
 
     if existing_id > 0:
-        updated = repo_daily_story.update_story(
-            existing_id,
-            story=story,
-            story_type=story_type,
-            key=story_key,
-        )
-        repo_gold_story.set_gold_chat_daily_story_id(gid, existing_id)
         return {
             "action": "update",
             "gold_story_id": gid,
             "source_id": sid,
-            "daily_story_id": existing_id,
+            "daily_story_id": daily_story_id,
             "theme": updated.get("theme"),
             "story_type": updated.get("story_type"),
+            "status": status,
+            "production_reasons": list(quality.get("production_reasons") or []),
             "daily_story": story,
         }
 
-    new_id = repo_daily_story.insert_story(
-        theme=theme,
-        story=story,
-        story_type=story_type,
-        key=story_key,
-    )
-    repo_gold_story.set_gold_chat_daily_story_id(gid, new_id)
+    new_id = daily_story_id
     return {
         "action": "insert",
         "gold_story_id": gid,
@@ -204,6 +224,8 @@ def import_gold_chat_daily_story(
         "daily_story_id": new_id,
         "theme": theme,
         "story_type": story_type,
+        "status": status,
+        "production_reasons": list(quality.get("production_reasons") or []),
         "daily_story": story,
     }
 

@@ -129,6 +129,47 @@ def list_stories(
     return [_row_to_dict(row) for row in rows]
 
 
+def list_all_stories(*, exclude_id: int | None = None) -> list[dict]:
+    """查重专用全库候选；按 id 游标分页，避免并发插入使 OFFSET 漏候选。"""
+    out: list[dict] = []
+    before_id: int | None = None
+    while True:
+        if before_id is None:
+            rows = sql.fetchall(
+                f"""
+                SELECT {_DAILY_STORY_COLUMNS}
+                FROM daily_story
+                ORDER BY id DESC
+                LIMIT 200
+                """,
+            )
+        else:
+            rows = sql.fetchall(
+                f"""
+                SELECT {_DAILY_STORY_COLUMNS}
+                FROM daily_story
+                WHERE id < ?
+                ORDER BY id DESC
+                LIMIT 200
+                """,
+                (before_id,),
+            )
+        sql.commit()
+        batch = [_row_to_dict(row) for row in rows]
+        if not batch:
+            break
+        for row in batch:
+            if exclude_id is not None and int(row.get("id") or 0) == int(exclude_id):
+                continue
+            out.append(row)
+        if len(batch) < 200:
+            break
+        before_id = int(batch[-1].get("id") or 0)
+        if before_id <= 0:
+            break
+    return out
+
+
 def list_recent_themes(limit: int = 40) -> list[str]:
     """最近入库主题（去重保序），做出题避重负样本。"""
     limit = max(1, min(limit, 100))

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import Counter
+from difflib import SequenceMatcher
 from typing import Any
 
 _LIMP_SOFT_CLOSE_MARKERS = (
@@ -77,6 +80,358 @@ _HUMOR_POINTS_FOR_GOOD = HUMOR_PUBLISH_MIN
 _HUMOR_POINTS_FOR_GREAT = 15
 # 共享数字加分（A/B/C/E 兜底）：全文任意「数字+分钟/秒/下」≥2 处 → +2
 _RE_NUMBER_BONUS = re.compile(r"(?:\d+|[一二三四五六七八九十两]+)(?:分钟|秒|下)")
+
+
+def _stable_review_value(value: Any) -> Any:
+    """只保留可稳定 JSON 化的审核契约值，避免运行时对象污染摘要。"""
+    if isinstance(value, dict):
+        return {
+            str(k): _stable_review_value(v)
+            for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+            if not str(k).startswith("_")
+        }
+    if isinstance(value, list):
+        return [_stable_review_value(v) for v in value]
+    if isinstance(value, tuple):
+        return [_stable_review_value(v) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def story_review_contract_snapshot(
+    story: dict[str, Any],
+    review_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """审核摘要所绑定的契约快照；优先使用终验时显式保存的契约。"""
+    if isinstance(review_contract, dict):
+        return _stable_review_value(review_contract)
+    quality = story.get("quality")
+    if isinstance(quality, dict) and isinstance(quality.get("review_contract"), dict):
+        return _stable_review_value(quality["review_contract"])
+    snapshot: dict[str, Any] = {}
+    beat_chain = story.get("gold_beat_chain")
+    if isinstance(beat_chain, list) and beat_chain:
+        snapshot["beat_chain"] = beat_chain
+    mom_max = story.get("_gold_chat_mom_lines_max")
+    if mom_max is not None:
+        snapshot["mom_lines_max"] = mom_max
+    return _stable_review_value(snapshot)
+
+
+def gold_story_review_contract(
+    row: dict[str, Any] | None,
+    story: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """从 gold_story 来源行提取真正会影响终验/硬卡的稳定契约。
+
+    不把 location/remap_note 等展示或迁移说明塞进摘要，避免无关元数据变化使
+    已终验正文失效；同时纳入 beat_chain/dialogue_seed 等会影响终检归位的输入。
+    """
+    if not isinstance(row, dict):
+        return story_review_contract_snapshot(story or {})
+    payload_raw = row.get("payload")
+    payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
+    scene_contract_raw = payload.get("scene_contract")
+    scene_contract: dict[str, Any] = (
+        scene_contract_raw if isinstance(scene_contract_raw, dict) else {}
+    )
+    mom_raw = scene_contract.get("mom_lines_max")
+    try:
+        mom_lines_max = max(0, int(mom_raw)) if mom_raw is not None else 1
+    except (TypeError, ValueError):
+        mom_lines_max = 1
+    out: dict[str, Any] = {
+        "structure_type": str(
+            row.get("structure_type")
+            or scene_contract.get("story_type")
+            or (story.get("story_type") if isinstance(story, dict) else None)
+            or ""
+        ).strip().upper(),
+        "mechanism": str(row.get("mechanism") or "").strip().upper(),
+        "source_type": str(
+            payload.get("source_type")
+            or scene_contract.get("source_type")
+            or "field"
+        ).strip(),
+        "mom_lines_max": mom_lines_max,
+    }
+    beat_chain = scene_contract.get("beat_chain")
+    if isinstance(beat_chain, list) and beat_chain:
+        out["beat_chain"] = beat_chain
+    dialogue_seed = payload.get("dialogue_seed")
+    if isinstance(dialogue_seed, list) and dialogue_seed:
+        out["dialogue_seed"] = dialogue_seed
+    beat = payload.get("beat")
+    if isinstance(beat, list) and beat:
+        out["source_beat"] = beat
+    banned = payload.get("banned_literals") or scene_contract.get("banned_literals")
+    if isinstance(banned, list) and banned:
+        out["banned_literals"] = banned
+    closing = payload.get("closing_intent") or scene_contract.get("closing_intent")
+    if str(closing or "").strip():
+        out["closing_intent"] = str(closing).strip()
+    k_close_mode = payload.get("k_close_mode") or scene_contract.get("k_close_mode")
+    if str(k_close_mode or "").strip():
+        out["k_close_mode"] = str(k_close_mode).strip()
+    return _stable_review_value(out)
+
+
+def _canonical_review_story_type(story: dict[str, Any]) -> str:
+    """终验摘要使用语义类型而非字段是否已显式落盘，避免纯元数据补写使 hash 失效。"""
+    raw = str(story.get("story_type") or "").strip()
+    try:
+        from app.services.daily_story.story_types import (
+            parse_story_type_code,
+            resolve_story_type_code,
+        )
+
+        if raw:
+            return str(parse_story_type_code(story_type=raw) or raw).strip().upper()
+        return str(resolve_story_type_code(story) or "").strip().upper()
+    except Exception:
+        return raw.upper()
+
+
+def story_review_content_hash(
+    story: dict[str, Any],
+    *,
+    review_contract: dict[str, Any] | None = None,
+) -> str:
+    """正文终验摘要：角色、对白顺序/文本 + 会影响审核的故事/契约字段。"""
+    dialogue: list[dict[str, str]] = []
+    for item in story.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        dialogue.append({
+            "speaker": str(item.get("speaker") or "").strip(),
+            "line": str(item.get("line") or "").strip(),
+        })
+    payload = {
+        "story_type": _canonical_review_story_type(story),
+        "setting": str(story.get("setting") or "").strip(),
+        "conflict_core": str(story.get("conflict_core") or "").strip(),
+        "closing_mode": str(story.get("closing_mode") or "").strip(),
+        "k_close_mode": str(story.get("k_close_mode") or "").strip(),
+        "dialogue": dialogue,
+        "contract": story_review_contract_snapshot(story, review_contract),
+    }
+    raw = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def stamp_story_review_binding(
+    story: dict[str, Any],
+    *,
+    semantic_pass: bool,
+    review_contract: dict[str, Any] | None = None,
+) -> None:
+    """把语义/好笑终验绑定到当前正文版本。"""
+    from datetime import datetime, timezone
+
+    quality = story.get("quality")
+    if not isinstance(quality, dict):
+        return
+    contract = story_review_contract_snapshot(story, review_contract)
+    quality["review_contract"] = contract
+    quality["reviewed_content_hash"] = story_review_content_hash(
+        story,
+        review_contract=contract,
+    )
+    quality["semantic_pass"] = bool(semantic_pass)
+    quality["semantic_pending"] = False
+    quality["semantic_reviewed_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def story_production_eligibility(
+    story: dict[str, Any],
+    *,
+    hard_error: str | None = None,
+    review_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """统一“可制作视频”判断；不触发 LLM，只核对当前稿已有终验事实。"""
+    reasons: list[str] = []
+    quality = story.get("quality")
+    if not isinstance(quality, dict):
+        quality = {}
+    if hard_error:
+        reasons.append(f"硬校验未通过：{hard_error}")
+    structure = structure_score_of(quality)
+    if structure < STRUCTURE_PUBLISH_MIN:
+        reasons.append(f"结构分不足：{structure}<{STRUCTURE_PUBLISH_MIN}")
+    humor = quality.get("humor")
+    funny: int | None = None
+    raw_funny = humor.get("funny_score") if isinstance(humor, dict) else None
+    if isinstance(raw_funny, (int, float, str)) and not isinstance(raw_funny, bool):
+        try:
+            funny = int(raw_funny)
+        except (TypeError, ValueError):
+            funny = None
+    if funny is None:
+        reasons.append("好笑分待最终审核")
+    elif funny < HUMOR_PUBLISH_MIN:
+        reasons.append(f"好笑分不足：{funny}<{HUMOR_PUBLISH_MIN}")
+    if quality.get("semantic_pass") is not True:
+        reasons.append("最终正文语义审核未通过或待审")
+    current_hash = story_review_content_hash(
+        story,
+        review_contract=review_contract,
+    )
+    reviewed_hash = str(quality.get("reviewed_content_hash") or "").strip()
+    if not reviewed_hash:
+        reasons.append("缺少最终正文审核摘要")
+    elif reviewed_hash != current_hash:
+        reasons.append("正文或审核契约已改动，旧终验结果已失效")
+    return {
+        "ok": not reasons,
+        "reasons": reasons,
+        "structure_score": structure,
+        "funny_score": funny,
+        "current_content_hash": current_hash,
+        "reviewed_content_hash": reviewed_hash or None,
+    }
+
+
+def _dedupe_text(story: dict[str, Any], *, with_speaker: bool = False) -> str:
+    parts: list[str] = []
+    for item in story.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        line = re.sub(r"[\s，。！？、；：,.!?;:~—…“”\"'（）()]+", "", str(item.get("line") or ""))
+        if not line:
+            continue
+        if with_speaker:
+            line = f"{str(item.get('speaker') or '').strip()}:{line}"
+        parts.append(line)
+    return "|".join(parts)
+
+
+def _dedupe_similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _dedupe_common_fragment(
+    a: str,
+    b: str,
+    *,
+    max_chars: int = 160,
+) -> tuple[str, str]:
+    """返回真实命中的最长公共片段，而不是拿两边开头冒充“相似部分”。"""
+    if not a or not b:
+        return "", ""
+    match = SequenceMatcher(None, a, b).find_longest_match()
+    if match.size <= 0:
+        return "", ""
+    size = min(match.size, max(1, int(max_chars)))
+    return a[match.a : match.a + size], b[match.b : match.b + size]
+
+
+def find_story_duplicate_matches(
+    story: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    exclude_story_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """全库通用查重：完全重复优先，其次综合正文/冲突/关键动作段/结尾。"""
+    body = _dedupe_text(story, with_speaker=True)
+    body_plain = _dedupe_text(story)
+    conflict = re.sub(r"\s+", "", str(story.get("conflict_core") or ""))
+    lines = [
+        re.sub(r"\s+", "", str(x.get("line") or ""))
+        for x in story.get("dialogue") or []
+        if isinstance(x, dict)
+    ]
+    middle = "|".join(lines[1:-3] if len(lines) > 5 else lines[:-2])
+    ending = "|".join(lines[-3:])
+    matches: list[dict[str, Any]] = []
+    for row in rows:
+        row_id = int(row.get("id") or 0)
+        if exclude_story_id is not None and row_id == int(exclude_story_id):
+            continue
+        old = row.get("story")
+        if not isinstance(old, dict) or not (old.get("dialogue") or []):
+            continue
+        old_body = _dedupe_text(old, with_speaker=True)
+        old_plain = _dedupe_text(old)
+        old_lines = [
+            re.sub(r"\s+", "", str(x.get("line") or ""))
+            for x in old.get("dialogue") or []
+            if isinstance(x, dict)
+        ]
+        old_middle = "|".join(old_lines[1:-3] if len(old_lines) > 5 else old_lines[:-2])
+        old_ending = "|".join(old_lines[-3:])
+        old_conflict = re.sub(r"\s+", "", str(old.get("conflict_core") or ""))
+        exact = bool(body and body == old_body)
+        body_ratio = _dedupe_similarity(body_plain, old_plain)
+        conflict_ratio = _dedupe_similarity(conflict, old_conflict)
+        action_ratio = _dedupe_similarity(middle, old_middle)
+        ending_ratio = _dedupe_similarity(ending, old_ending)
+        severity = ""
+        if exact or body_ratio >= 0.90:
+            severity = "block"
+        elif (
+            body_ratio >= 0.80
+            and action_ratio >= 0.72
+            and (conflict_ratio >= 0.70 or ending_ratio >= 0.75)
+        ):
+            severity = "block"
+        elif (
+            body_ratio >= 0.68
+            and max(conflict_ratio, action_ratio, ending_ratio) >= 0.72
+        ):
+            severity = "warning"
+        if severity:
+            matched_parts: list[dict[str, str]] = []
+
+            def add_part(part: str, left: str, right: str, *, max_chars: int) -> None:
+                candidate_fragment, matched_fragment = _dedupe_common_fragment(
+                    left,
+                    right,
+                    max_chars=max_chars,
+                )
+                if not candidate_fragment:
+                    return
+                matched_parts.append({
+                    "part": part,
+                    "candidate": candidate_fragment,
+                    "matched": matched_fragment,
+                })
+
+            if exact or body_ratio >= 0.68:
+                add_part("dialogue", body_plain, old_plain, max_chars=180)
+            if conflict_ratio >= 0.70 and (conflict or old_conflict):
+                add_part("conflict_core", conflict, old_conflict, max_chars=120)
+            if action_ratio >= 0.72 and (middle or old_middle):
+                add_part("key_actions", middle, old_middle, max_chars=160)
+            if ending_ratio >= 0.75 and (ending or old_ending):
+                add_part("ending", ending, old_ending, max_chars=160)
+            matches.append({
+                "story_id": row_id,
+                "severity": severity,
+                "exact": exact,
+                "similarity": round(body_ratio, 4),
+                "overlap": {
+                    "conflict_core": round(conflict_ratio, 4),
+                    "key_actions": round(action_ratio, 4),
+                    "ending": round(ending_ratio, 4),
+                },
+                "matched_parts": matched_parts,
+            })
+    matches.sort(
+        key=lambda x: (
+            0 if x["severity"] == "block" else 1,
+            -float(x["similarity"]),
+            int(x["story_id"]),
+        )
+    )
+    return matches
 
 _RE_HAMMER = re.compile(
     # 禁止裸 \d+ 凑「一锤」（如「少了1块」）；须带量词或翻车动作
@@ -1217,16 +1572,12 @@ def stamp_gold_chat_acceptance_quality(
     humor: dict[str, Any] | None,
     chatter_signals: list[str],
     semantic_pass: bool,
+    review_contract: dict[str, Any] | None = None,
 ) -> None:
     """gold_chat 终验通过后写回 quality（含语义/好笑状态）。"""
-    from datetime import datetime, timezone
-
     quality = chat.get("quality")
     if not isinstance(quality, dict):
         return
-    quality["semantic_pass"] = semantic_pass
-    quality["semantic_pending"] = False
-    quality["semantic_reviewed_at"] = datetime.now(timezone.utc).isoformat()
     quality["review_issues"] = review_issues
     reasons = [str(r) for r in (quality.get("reasons") or [])]
     for sig in chatter_signals:
@@ -1245,6 +1596,11 @@ def stamp_gold_chat_acceptance_quality(
         humor=humor if isinstance(humor, dict) else None,
         review_penalty_points=0,
     )
+    stamp_story_review_binding(
+        chat,
+        semantic_pass=semantic_pass,
+        review_contract=review_contract,
+    )
     enrich_quality_acceptance_defaults(quality)
 
 
@@ -1258,7 +1614,7 @@ def attach_daily_story_quality(
     """重算观感分。默认 finalize=True：有 LLM 好笑则总分=结构+LLM 好笑，否则暂=结构分。
 
     生成循环比较结构分请用 ``structure_score_of(quality)``，不要看总分。
-    若稿上已有 LLM ``quality.humor``，finalize 时保留并优先用它。
+    仅当 ``reviewed_content_hash`` 仍对应当前正文时，才沿用已有 LLM 好笑分/语义终验。
     """
     if not isinstance(story, dict):
         return story
@@ -1266,13 +1622,47 @@ def attach_daily_story_quality(
 
     repair_punchline_explain_for_story_type(story)
     prev = story.get("quality") if isinstance(story.get("quality"), dict) else None
-    prev_humor = prev.get("humor") if isinstance(prev, dict) else None
+    prev_contract = (
+        prev.get("review_contract")
+        if isinstance(prev, dict) and isinstance(prev.get("review_contract"), dict)
+        else None
+    )
+    current_hash = story_review_content_hash(story, review_contract=prev_contract)
+    prev_reviewed_hash = (
+        str(prev.get("reviewed_content_hash") or "").strip()
+        if isinstance(prev, dict)
+        else ""
+    )
+    review_is_current = bool(prev_reviewed_hash and prev_reviewed_hash == current_hash)
+    prev_humor = (
+        prev.get("humor")
+        if review_is_current and isinstance(prev, dict)
+        else None
+    )
     quality = score_daily_story(story, theme=theme, skip_relevancy=skip_relevancy)
     if finalize:
         finalize_daily_story_total(
             quality,
             humor=prev_humor if isinstance(prev_humor, dict) else None,
         )
+    if review_is_current and isinstance(prev, dict):
+        for key in (
+            "review_contract",
+            "reviewed_content_hash",
+            "semantic_pass",
+            "semantic_pending",
+            "semantic_reviewed_at",
+            "review_issues",
+        ):
+            if key in prev:
+                quality[key] = prev[key]
+    elif prev_reviewed_hash:
+        quality["stale_reviewed_content_hash"] = prev_reviewed_hash
+        quality["semantic_pass"] = None
+        quality["semantic_pending"] = True
+        quality.pop("humor", None)
+        quality["humor_pending"] = True
+        quality.pop("pass", None)
     enrich_quality_acceptance_defaults(quality)
     story["quality"] = quality
     return story

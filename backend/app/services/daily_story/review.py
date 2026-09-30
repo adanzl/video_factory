@@ -36,6 +36,7 @@ REVIEW_KINDS: tuple[str, ...] = (
     "塑料",
     "语病",
     "书面",
+    "旁白",
     "引用无据",
     "动作误说",
     "接不上",
@@ -55,6 +56,7 @@ _KIND_PENALTY: dict[str, int] = {
     "塑料": 5,
     "语病": 8,
     "书面": 5,
+    "旁白": 8,
     "引用无据": 8,
     "动作误说": 5,
     "接不上": 8,
@@ -370,6 +372,10 @@ _LLM_EXPORT_BLOCKING_KINDS: frozenset[str] = frozenset({
     "矛盾",
     "称谓",
     "错位",
+    "重复",
+    "旁白",
+    "引用无据",
+    "动作误说",
     "接不上",
     "语病",
     "缺前提",
@@ -658,6 +664,13 @@ def _normalize_missing_beat(raw: Any) -> dict[str, Any] | None:
     return out if out else None
 
 
+def _normalize_missing_relation(raw: Any) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    return text[:160] if text else None
+
+
 def _beat_chain_entry(
     beat_chain: list[Any] | None,
     beat_no: int,
@@ -705,6 +718,9 @@ def format_export_blocking_issue_summary(item: dict[str, Any]) -> str:
         intent = str(mb.get("intent") or "").strip()
         if beat is not None or intent:
             base += f"（缺失契约 beat={beat} {intent}）".rstrip()
+    relation = _normalize_missing_relation(item.get("missing_relation"))
+    if relation:
+        base += f"（缺失关系：{relation}）"
     return base
 
 
@@ -714,11 +730,12 @@ def _issue_has_contract_gap_evidence(
     *,
     beat_chain: list[Any] | None = None,
 ) -> bool:
-    """缺前提：missing_beat 描述契约事件，evidence 只引现有对白，勿伪造缺失句。"""
+    """缺前提：契约缺拍或文本关系缺失；evidence 只引现有依赖句。"""
     mb = _normalize_missing_beat(issue.get("missing_beat"))
-    if mb is None:
+    relation = _normalize_missing_relation(issue.get("missing_relation"))
+    if mb is not None and not _missing_beat_matches_chain(mb, beat_chain):
         return False
-    if not _missing_beat_matches_chain(mb, beat_chain):
+    if mb is None and relation is None:
         return False
     nos = issue.get("lines")
     if not isinstance(nos, list) or not nos:
@@ -817,13 +834,16 @@ def _validate_export_review_raw(
         if not isinstance(desc, str) or not str(desc).strip():
             return f"issues[{idx}].desc 无效"
         missing_beat = _normalize_missing_beat(item.get("missing_beat"))
+        missing_relation = _normalize_missing_relation(item.get("missing_relation"))
         if kind == "缺前提":
-            if missing_beat is None:
-                return f"issues[{idx}].missing_beat 无效"
+            if missing_beat is None and missing_relation is None:
+                return f"issues[{idx}] 缺少有效 missing_beat/missing_relation"
         elif "missing_beat" in item and missing_beat is None:
             # missing_beat 只服务于「缺前提」。其他类型偶发携带坏的可选字段时，
             # 不应让整份终检 JSON 作废；parse_review_issues 会自然丢掉它。
             pass
+        if "missing_relation" in item and missing_relation is None:
+            return f"issues[{idx}].missing_relation 无效"
         if "evidence" in item:
             parsed_ev = _parse_issue_evidence_entries(
                 item.get("evidence"),
@@ -865,7 +885,7 @@ def filter_llm_export_blocking_issues(
     *,
     beat_chain: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """LLM 严重矛盾/称谓/错位/接不上/语病：须 evidence 有效才拦导出。"""
+    """LLM 叙事/连续性硬伤须 evidence 有效才拦导出；纯“书面”风格不硬拦。"""
     valid, _ = partition_llm_export_blocking_issues(
         issues,
         story,
@@ -952,10 +972,26 @@ def run_export_semantic_review(
             shape_err = "审读 JSON 缺 issues 字段"
         else:
             shape_err = _validate_export_review_raw(raw, line_count=n_lines)
+        parsed_issues: list[dict[str, Any]] = []
+        if not shape_err:
+            parsed_issues = parse_review_issues(raw, line_count=n_lines, for_export=True)
+            _valid_blocking, invalid_evidence = partition_llm_export_blocking_issues(
+                parsed_issues,
+                story,
+                beat_chain=beat_chain,
+            )
+            if invalid_evidence:
+                shape_err = (
+                    "阻断问题 evidence 与原文不一致："
+                    + "；".join(
+                        format_export_blocking_issue_summary(it)
+                        for it in invalid_evidence[:3]
+                    )
+                )
         if not shape_err:
             return ExportSemanticReviewResult(
                 completed=True,
-                issues=parse_review_issues(raw, line_count=n_lines, for_export=True),
+                issues=parsed_issues,
                 humor=parse_humor(raw),
             )
         if attempt == 1:
@@ -972,10 +1008,10 @@ def run_export_semantic_review(
             + f"上一份审核未通过格式校验：{shape_err}\n"
             + "稿件未改变。请纠正审核 JSON，保持审核标准，勿为通过校验删除问题。"
             + "evidence 的 line 必须为 issues.lines 内的整数，quote 必须从该行原样摘录至少两个字。"
-            + "只有 kind=缺前提 时才输出 missing_beat；它必须是对象"
+            + "kind=缺前提 时必须说明 missing_relation；若对应 beat_chain 缺拍，再输出 missing_beat 对象"
             + '{"beat":1,"intent":"对应 beat_chain 的 intent 原文"}，'
             + "beat 必须是 beat_chain 的 1-based JSON 整数，不能是字符串、小数或 null；"
-            + "其他 kind 不要输出 missing_beat。"
+            + "其他 kind 不要输出 missing_beat；missing_relation 必须是简短字符串。"
             + "输出完整审核 JSON，不要改写稿件。\n上一份审核：\n"
             + json.dumps(raw, ensure_ascii=False)
         )
@@ -1183,7 +1219,18 @@ def build_review_prompts(
     system = (
         "你是儿童短视频文案的审稿人，不是作者。"
         "你的唯一任务是像观众一样逐句读这段对白，挑出「读着出戏」的硬伤。\n"
-        "只报下面 12 类，别夸、别改写全文：\n"
+        "先做五项全文关系核对，且只依据稿内可验证信息，不靠题材常识脑补：\n"
+        "A 自然对白：角色是在对现场的人说话，而不是念剧情指令、规则说明、舞台动作或作者旁白；"
+        "自然立规对白本身允许，判断要结合说话动机、对方回应和冲突现场。\n"
+        "B 人物/物件：关键人物、物件、数量、归属、位置或状态发生变化时，前后须有可追踪的建立/转场；"
+        "多个物件同时存在完全正常，只有后文依赖了一个未经交代的替换/状态变化才报。\n"
+        "C 规则：谁宣布什么规则、按什么判输赢、谁赢、赢了得到什么须前后一致；"
+        "允许角色明确提出加赛/改规则，但不能无对白依据地从一种玩法跳到另一种。\n"
+        "D 事件前提：后文结果、损坏、分割、输赢、拿到某物等若依赖前文事件，须先有文本依据；"
+        "若缺失，kind=缺前提，并写 missing_relation 说明『缺什么关系/事件 → 后文哪句依赖它』。\n"
+        "E 重复推进：只有新增事实、理由、动作、规则变化、关系变化、情绪升级或后果才算推进；"
+        "换词反复同一态度/同一不服而没有新增信息，要报重复。结尾一次引用前文规则作回旋镖不算重复。\n"
+        "只报下面这些类别，别夸、别改写全文；纯风格问题和叙事硬伤必须分开：\n"
         "1 矛盾：前后事实打架"
         "（例：说「锅里一粒米都没有」，后面又说「你把剩饭倒掉了」；"
         "或同一件道具的位置/状态打架：钥匙一会儿还挂在门口钩上，"
@@ -1197,40 +1244,40 @@ def build_review_prompts(
         "（例：妈妈说「这事不能让奶奶知道」「别告诉爸爸」）。\n"
         "  注意：大人自己言行不一、被孩子当场抓住双标，是本片的笑点设定，"
         "不算坏示范，别报；孩子之间商量瞒着大人也是设定，别报。\n"
-        "4 重复：同一件事换词说两遍以上，或同一个质问反复问；"
+        "4 重复：同一件事换词说两遍以上，或同一个质问/态度反复说而没有新信息；"
         "帮腔开脱用同一个理由说两遍也算；"
         "段4互甩只许一轮（各1句），来回两圈（你还说我→你也怪）也算重复。\n"
         "5 塑料：不像真人会说的话"
         "（例：被当场抓住的人不接话，张口先讲道理教育对方；"
         "或 10 岁孩子嘴硬说「买新的/我明天买/攒钱买」——孩子没有购买力，"
         "要说就「找妈妈要/让妈妈买」，自己出钱买超龄）。\n"
-        "6 书面/绕口/旁白感：不像孩子会对人说的话，或在念旁白/舞台说明"
+        "6 书面/绕口：措辞偏成人或不够口语，但仍是角色对现场的人自然可说、能听懂的话；"
+        "这是风格建议，不是导出硬伤。只有真的影响理解时改报语病/接不上。\n"
+        "7 旁白：角色台词实际在念动作、镜头、舞台说明或剧情指令，这是硬伤"
         "（例：昭昭自述「我轻轻推门，客厅门缝还开着」；"
-        "或「只用了两成力，门缝变小了半指宽」这类成人精确计量；"
-        "或事后解说动作结果「我滑了一跤」「相框又掉地上了」——"
+        "或事后解说动作结果「我滑了一跤」「相框又掉地上了」；"
         "或「我一弯腰，头撞到茶几角了」这种「我+动作过程+结果」自述；"
-        "或一句念完多步因果「你绊倒了，相框又飞出去，砸到茶几腿」——"
-        "孩子该当场惊呼，不是念结果）。"
-        "孩子台词要能直接对另一个角色说，禁止自述动作、精确计量、书面连接词。\n"
-        "7 语病/看不懂：句子读一遍读不懂，结构断裂、指代不清、语义混乱"
+        "或一句念完多步因果「你绊倒了，相框又飞出去，砸到茶几腿」）。"
+        "注意：只因句子稍完整、稍书面，不得报旁白。\n"
+        "8 语病/看不懂：句子读一遍读不懂，结构断裂、指代不清、语义混乱"
         "（例：「你说轻点，我就轻轻推，没使劲，门合不上吗？」——"
         "不知道他在问什么；"
         "或「我够不着，你手短，你去捡」——够不着还让手更短的去捡，逻辑自相矛盾）。"
         "这不是风格问题，是硬伤，必须改。\n"
-        "8 引用无据：孩子引用大人没说过的话"
+        "9 引用无据：孩子引用大人没说过的话"
         "（例：灿灿只说过「土湿透就行」，昭昭却说「这不就是你之前说的效果」）。\n"
-        "9 动作误说：把大人的动作说成“说”"
+        "10 动作误说：把大人的动作说成“说”"
         "（例：灿灿把托盘浇满，昭昭却说「怎么现在又说托盘浇满了」）。\n"
-        "10 接不上：回句没接住上一句的话头，答非所问或训错对象"
+        "11 接不上：回句没接住上一句的话头，答非所问或训错对象"
         "（例：孩子说「你自己没换鞋就进来了」，"
         "大人却回头命令孩子「赶紧脱了放鞋柜上」——孩子并没穿着鞋）。\n"
-        "11 无效证据：追问方摆出的证据在证明一个没人否认的事，"
+        "12 无效证据：追问方摆出的证据在证明一个没人否认的事，"
         "没打在对方刚说的开脱上"
         "（例：大人已承认没换鞋、只辩称「拿个东西不算」，"
         "孩子却还在花几句证明「这双就是出门的鞋」——该拆的是「不算」）。\n"
         "  故意荒诞的开脱（钥匙会跑、地板长花纹）是笑点设定，"
         "只要接住了话头就别报。\n"
-        "12 其他：上面装不下但确实读着出戏的。\n"
+        "13 其他：上面装不下但确实读着出戏的。\n"
         f"{export_beat_block}"
         "下面几处是本类结构设计，即使看着像重复也别报：\n"
         "- 开场两句是片头定格，与正文开头重合是正常拼接；\n"
@@ -1282,9 +1329,10 @@ def build_review_prompts(
         "- issues.lines **只列真正需要修改的故障行**；用于理解问题的正常上下文行、正确问句/答句不要塞进 lines。"
         "例如只有第11、13句把人物主体说反，就写 lines:[11,13]，不要扩大成[11,12,13,14]；"
         "evidence 只需且必须逐一覆盖 issues.lines。\n"
-        "- kind 为矛盾/称谓/错位/接不上/语病/缺前提/无效插话时 evidence 必填"
-        "（缺前提另须 missing_beat）；quote 须能在该行对白中逐字找到；"
-        "missing_beat 只允许用于 kind=缺前提，且必须严格写成对象"
+        "- kind 为矛盾/称谓/错位/重复/书面/引用无据/动作误说/接不上/语病/缺前提/无效插话时 evidence 必填；"
+        "quote 须能在该行对白中逐字找到；\n"
+        "- kind=缺前提 必须写 missing_relation（简短说明缺失事件/关系及后文依赖）；"
+        "若它对应 beat_chain 缺拍，再额外写 missing_beat，且必须严格写成对象"
         '{"beat":1,"intent":"对应 beat_chain 的 intent 原文"}；'
         "beat 是 scene_contract.beat_chain 的 1-based JSON 整数，禁止字符串、小数/null；"
         "intent 直接复制该 beat 的 intent，不要改写；其他 kind 不要输出 missing_beat。\n"
@@ -1379,6 +1427,9 @@ def parse_review_issues(
         mb = _normalize_missing_beat(item.get("missing_beat"))
         if mb is not None:
             entry["missing_beat"] = mb
+        relation = _normalize_missing_relation(item.get("missing_relation"))
+        if relation is not None:
+            entry["missing_relation"] = relation
         out.append(entry)
     # 严重度优先：避免「书面」等轻问题先占满名额，把「矛盾/语病」挤掉；
     # 风格类「书面」最多计 2 条，其余类型仍受 REVIEW_MAX_ISSUES 总控。
@@ -1893,6 +1944,7 @@ def apply_review_to_quality(
     humor: dict[str, Any] | None = None,
     *,
     apply_penalty: bool = True,
+    bind_review: bool = False,
 ) -> dict:
     """把审读结果落到 quality：扣硬伤分、写入 LLM 好笑分、判定发布线。
 
@@ -1906,6 +1958,7 @@ def apply_review_to_quality(
         HUMOR_PUBLISH_MIN,
         _grade_from_score,
         enrich_quality_acceptance_defaults,
+        stamp_story_review_binding,
     )
 
     quality = story.get("quality")
@@ -1950,10 +2003,14 @@ def apply_review_to_quality(
             humor=humor,
             review_penalty_points=points,
         )
+        if bind_review:
+            stamp_story_review_binding(story, semantic_pass=not bool(issues))
         enrich_quality_acceptance_defaults(quality)
         return story
 
     if not points:
+        if bind_review:
+            stamp_story_review_binding(story, semantic_pass=not bool(issues))
         enrich_quality_acceptance_defaults(quality)
         return story
     score = max(0, int(quality.get("score") or 0) - points)
@@ -1964,6 +2021,8 @@ def apply_review_to_quality(
     quality["summary"] = (
         f"{head}，另有{len(reasons) - 1}项" if len(reasons) > 1 else head
     )
+    if bind_review:
+        stamp_story_review_binding(story, semantic_pass=not bool(issues))
     enrich_quality_acceptance_defaults(quality)
     return story
 
@@ -2235,8 +2294,8 @@ def run_daily_story_review(
     """审读→定点修→复审→（remaining 可修时）再补一轮定点修，全程固定次数。
 
     审读与好笑评估合并为一次 LLM 调用（review_daily_story_issues 返回
-    (issues, humor)）；好笑分取首轮审读结果，最后随 remaining 一起落进
-    quality。客户端不支持审读则只走程序检查。
+    (issues, humor)）；每次正文发生定点修改后，以最终正文最后一次审读的
+    humor/semantic 结果为准并绑定正文摘要。客户端不支持审读则只走程序检查。
     """
     if not isinstance(story, dict) or not _dialogue(story):
         return story
@@ -2285,23 +2344,35 @@ def run_daily_story_review(
         )
 
     humor_seen: dict[str, Any] | None = None
+    semantic_review_completed = False
 
     def _run_review(s: dict) -> list[dict[str, Any]]:
-        nonlocal humor_seen
+        nonlocal humor_seen, semantic_review_completed
+        # 每次整篇复审都以当前正文为唯一依据；最终稿未返回 humor 时必须待审，
+        # 不能回退沿用上一版正文的好笑分。没有实际调用 LLM 审读时也不能伪造
+        # semantic_pass=True，只能保留“语义待审”。
+        humor_seen = None
+        semantic_review_completed = False
         issues: list[dict[str, Any]] = []
         for _ in range(REVIEW_FIRST_PASSES):
             if not callable(review):
                 continue
             issues_, humor_ = review(theme, s)  # type: ignore[call-arg]
+            semantic_review_completed = True
             issues = merge_issues(issues, issues_)
-            if humor_seen is None and humor_:
+            if humor_:
                 humor_seen = humor_
         return merge_issues(collect_local_issues(s), issues)
 
     issues = _run_review(story)
     if not issues:
         logger.info("[DAILY_STORY] review clean, no spot fix")
-        return apply_review_to_quality(story, [], humor=humor_seen)
+        return apply_review_to_quality(
+            story,
+            [],
+            humor=humor_seen,
+            bind_review=semantic_review_completed,
+        )
 
     logger.info(
         "[DAILY_STORY] review found %d issue(s): %s",
@@ -2336,13 +2407,12 @@ def run_daily_story_review(
                     coherence_checker=_coherence_ok,
                 )
                 if accepted:
-                    kept = [
-                        it
-                        for it in remaining
-                        if not _issue_fully_fixed(it, accepted, story)
-                    ]
-                    remaining = merge_issues(
-                        collect_local_issues(story),
-                        kept,
-                    )
-    return apply_review_to_quality(story, remaining, humor=humor_seen)
+                    # 第二轮正文已经改变：必须对最终版本完整复审，不能沿用修前
+                    # remaining 或首轮好笑分。
+                    remaining = _run_review(story)
+    return apply_review_to_quality(
+        story,
+        remaining,
+        humor=humor_seen,
+        bind_review=semantic_review_completed,
+    )

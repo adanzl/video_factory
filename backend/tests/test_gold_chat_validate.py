@@ -961,8 +961,8 @@ def test_opening_causality_patch_uses_seed_for_missing_middle_beat():
     assert fixed["dialogue"][3]["speaker"] == "妈妈"
 
 
-def test_opening_causality_patch_reuses_o106_rule_seed_paraphrase():
-    """#106：可信 H3b seed 的自然改写应能补回妈妈首句立规，不烧 LLM 修稿预算。"""
+def test_opening_causality_patch_rejects_o106_narrative_rule_seed():
+    """#106：剧情式 H3b seed 不能靠补“说好了”伪装成自然规则对白。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
     from app.services.gold_story.gold_chat.validate import opening_causality_passes
 
@@ -988,11 +988,9 @@ def test_opening_causality_patch_reuses_o106_rule_seed_paraphrase():
         dialogue_seed=seed,
     )
 
-    assert changed
-    assert fixed["dialogue"][0]["speaker"] == "妈妈"
-    assert fixed["dialogue"][0]["line"].startswith("说好了，")
-    assert "蛋挞烤鸭上桌" in fixed["dialogue"][0]["line"]
-    assert opening_causality_passes(fixed, beat, mom_lines_max=2)
+    assert not changed
+    assert fixed == story
+    assert not opening_causality_passes(fixed, beat, mom_lines_max=2)
 
 
 def test_opening_rule_announcement_detection_is_narrow():
@@ -1189,8 +1187,8 @@ def test_opening_causality_local_patch_inserts_missing_mom_blame():
     assert "作业" in fixed["dialogue"][0]["line"]
 
 
-def test_opening_causality_local_patch_repairs_rule_homework_when_beat2_starts():
-    """#96 形状：对白直接从 beat=2 昭昭起跳，beat=1 作业立规应本地补回。"""
+def test_opening_causality_local_patch_accepts_natural_imperative_rule_homework():
+    """#96 形状：天然祈使句可直接落地，但不得补“说好了”之类规则前缀。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
     from app.services.gold_story.gold_chat.validate import opening_causality_passes
 
@@ -1214,9 +1212,11 @@ def test_opening_causality_local_patch_repairs_rule_homework_when_beat2_starts()
     )
 
     assert ok
-    assert fixed["dialogue"][0]["speaker"] == "妈妈"
-    assert "说好" in fixed["dialogue"][0]["line"] or "规矩" in fixed["dialogue"][0]["line"]
-    assert "作业" in fixed["dialogue"][0]["line"]
+    assert fixed["dialogue"][0] == {
+        "speaker": "妈妈",
+        "line": "灿灿作业没写，先把作业补上。",
+    }
+    assert "说好了" not in fixed["dialogue"][0]["line"]
     assert opening_causality_passes(fixed, beat, mom_lines_max=3)
 
 

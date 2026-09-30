@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any, cast
 
 from app.config import Config
@@ -1355,76 +1356,146 @@ def convert_gold_chat(
     *,
     config: Config | None = None,
 ) -> dict[str, Any]:
-    """转换 + 落盘，返回摘要。
+    """转换 + 落盘，返回摘要，并记录实际执行阶段耗时。
 
     会先重跑 H3a/H3b 刷新 scene_contract（重转的切入点），再扩写对白。
+    未执行的阶段不写 0；失败时把失败阶段和已发生耗时挂到异常，交由上层落库。
     """
     from app.services.gold_story.gold_chat.finalize import run_gold_chat_finalize
-
-    row = _persist_m5_h_contract_if_needed(row)
-    row, structure_notes = _resolve_structure_row(row)
-    row = _persist_structure_correction(row, structure_notes)
-    row = _rebuild_h3a_h3b_on_convert(row)
     from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+    from app.services.gold_story.gold_chat.status import record_gold_chat_success_timing
 
-    sid = str(row.get("source_id") or "").strip()
-    repair_budget = GoldChatRepairBudget(max_repairs=2)
-    chat = gold_story_to_gold_chat(row, repair_budget=repair_budget)
-    chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)
-    payload0 = cast(dict[str, Any], row.get("payload") or {})
-    chat = _realign_j_role_speakers(
-        chat,
-        dialogue_seed=payload0.get("dialogue_seed")
-        if isinstance(payload0.get("dialogue_seed"), list)
-        else None,
-        structure_type=str(row.get("structure_type") or ""),
-    )
-    chat = _refine_after_normalize(chat, row, repair_budget=repair_budget)
-    _st0 = str(row.get("structure_type") or chat.get("story_type") or "")
-    _mech0 = str(row.get("mechanism") or "")
-    chat, _ = _ensure_gold_chat_min_chars(
-        chat,
-        mechanism=_mech0,
-        structure_type=_st0,
-    )
-    chat = _realign_j_role_speakers(
-        chat,
-        dialogue_seed=payload0.get("dialogue_seed")
-        if isinstance(payload0.get("dialogue_seed"), list)
-        else None,
-        structure_type=str(row.get("structure_type") or ""),
-    )
-    chat, struct = run_gold_chat_finalize(
-        chat,
-        row,
-        sid=sid,
-        norm_notes=list(norm_notes or []),
-        payload0=payload0,
-        st0=_st0,
-        mech0=_mech0,
-        repair_budget=repair_budget,
-    )
-    cfg = config or Config()
-    paths = export_gold_chat_files(
-        source_id=sid,
-        row=row,
-        chat=chat,
-        config=cfg,
-    )
-    _backfill_gold_story_after_export(row, chat=chat, paths=paths, config=cfg)
-    logger.info("[GOLD_CHAT] convert %s exported paths=%s", sid, list(paths.keys()))
-    return {
-        "ok": True,
-        "generated": True,
-        "exported": True,
-        "backfilled": True,
-        "source_id": sid,
-        "gold_story_id": row.get("id"),
-        "chat_chars": dialogue_total_chars(chat),
-        "chat_lines": len(chat.get("dialogue") or []),
-        "scene_title": chat.get("scene_title"),
-        "structure_score": struct,
-        "quality": chat.get("quality"),
-        "export": paths,
-        "daily_story": chat,
-    }
+    started = time.perf_counter()
+    stage_started = started
+    current_stage = "contract"
+    stages_ms: dict[str, float] = {}
+
+    def finish_stage(name: str) -> None:
+        nonlocal stage_started
+        now = time.perf_counter()
+        stages_ms[name] = round((now - stage_started) * 1000.0, 3)
+        stage_started = now
+
+    def timing_snapshot(*, status: str, stage: str, include_current: bool) -> dict[str, Any]:
+        now = time.perf_counter()
+        measured = dict(stages_ms)
+        if include_current and stage and stage not in measured:
+            measured[stage] = round((now - stage_started) * 1000.0, 3)
+        return {
+            "version": 1,
+            "status": status,
+            "stage": stage,
+            "total_ms": round((now - started) * 1000.0, 3),
+            "stages_ms": measured,
+        }
+
+    try:
+        row = _persist_m5_h_contract_if_needed(row)
+        row, structure_notes = _resolve_structure_row(row)
+        row = _persist_structure_correction(row, structure_notes)
+        row = _rebuild_h3a_h3b_on_convert(row)
+        finish_stage("contract")
+
+        current_stage = "draft"
+        sid = str(row.get("source_id") or "").strip()
+        repair_budget = GoldChatRepairBudget(max_repairs=2)
+        chat = gold_story_to_gold_chat(row, repair_budget=repair_budget)
+        finish_stage("draft")
+
+        current_stage = "normalize_refine"
+        chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)
+        payload_raw = row.get("payload")
+        payload0: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
+        chat = _realign_j_role_speakers(
+            chat,
+            dialogue_seed=payload0.get("dialogue_seed")
+            if isinstance(payload0.get("dialogue_seed"), list)
+            else None,
+            structure_type=str(row.get("structure_type") or ""),
+        )
+        chat = _refine_after_normalize(chat, row, repair_budget=repair_budget)
+        _st0 = str(row.get("structure_type") or chat.get("story_type") or "")
+        _mech0 = str(row.get("mechanism") or "")
+        chat, _ = _ensure_gold_chat_min_chars(
+            chat,
+            mechanism=_mech0,
+            structure_type=_st0,
+        )
+        chat = _realign_j_role_speakers(
+            chat,
+            dialogue_seed=payload0.get("dialogue_seed")
+            if isinstance(payload0.get("dialogue_seed"), list)
+            else None,
+            structure_type=str(row.get("structure_type") or ""),
+        )
+        finish_stage("normalize_refine")
+
+        current_stage = "finalize"
+        chat, struct = run_gold_chat_finalize(
+            chat,
+            row,
+            sid=sid,
+            norm_notes=list(norm_notes or []),
+            payload0=payload0,
+            st0=_st0,
+            mech0=_mech0,
+            repair_budget=repair_budget,
+        )
+        finish_stage("finalize")
+
+        current_stage = "export_backfill"
+        cfg = config or Config()
+        paths = export_gold_chat_files(
+            source_id=sid,
+            row=row,
+            chat=chat,
+            config=cfg,
+        )
+        _backfill_gold_story_after_export(row, chat=chat, paths=paths, config=cfg)
+        finish_stage("export_backfill")
+        timing = timing_snapshot(status="success", stage="done", include_current=False)
+        gid = int(row.get("id") or 0)
+        if gid > 0:
+            try:
+                record_gold_chat_success_timing(gid, timing)
+            except Exception as timing_exc:
+                # 观测数据不能反过来让已经成功导出的转换变成失败。
+                logger.warning(
+                    "[GOLD_CHAT] timing persist failed id=%s source_id=%s: %s",
+                    gid,
+                    sid,
+                    timing_exc,
+                )
+        logger.info(
+            "[GOLD_CHAT] convert %s exported paths=%s total_ms=%s",
+            sid,
+            list(paths.keys()),
+            timing["total_ms"],
+        )
+        return {
+            "ok": True,
+            "generated": True,
+            "exported": True,
+            "backfilled": True,
+            "source_id": sid,
+            "gold_story_id": row.get("id"),
+            "chat_chars": dialogue_total_chars(chat),
+            "chat_lines": len(chat.get("dialogue") or []),
+            "scene_title": chat.get("scene_title"),
+            "structure_score": struct,
+            "quality": chat.get("quality"),
+            "export": paths,
+            "daily_story": chat,
+            "timing": timing,
+        }
+    except Exception as exc:
+        timing = timing_snapshot(
+            status="failed",
+            stage=current_stage,
+            include_current=True,
+        )
+        try:
+            setattr(exc, "gold_chat_timing", timing)
+        except Exception:
+            logger.debug("[GOLD_CHAT] cannot attach timing to %s", type(exc).__name__)
+        raise

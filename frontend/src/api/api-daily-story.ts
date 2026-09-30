@@ -19,6 +19,7 @@ export interface StoryQuality {
   acceptance_tags?: string[];
   humor?: { funny_score: number; best_moment?: string; humor_type?: string };
   review_issues?: unknown[];
+  production_reasons?: string[];
 }
 
 export interface StoryContent {

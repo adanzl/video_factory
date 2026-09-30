@@ -78,11 +78,20 @@
           {{ formatDailyStoryType(row.story_type) }}
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="80" align="center">
+      <el-table-column label="状态" width="90" align="center">
         <template #default="{ row }">
           <el-tag v-if="row.status === 'processing'" type="warning" size="small">生成中</el-tag>
           <el-tag v-else-if="row.status === 'failed'" type="danger" size="small">失败</el-tag>
-          <el-tag v-else type="success" size="small">就绪</el-tag>
+          <el-tooltip
+            v-else-if="row.status === 'review_pending'"
+            placement="top"
+            :disabled="!(row.story?.quality?.production_reasons?.length)"
+            :content="row.story?.quality?.production_reasons?.join('；') || '尚未满足制作视频门槛'"
+          >
+            <el-tag type="warning" size="small" class="cursor-default">待审核</el-tag>
+          </el-tooltip>
+          <el-tag v-else-if="row.status === 'active'" type="success" size="small">就绪</el-tag>
+          <el-tag v-else type="info" size="small">{{ row.status || "未知" }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="设定" min-width="150" show-overflow-tooltip>

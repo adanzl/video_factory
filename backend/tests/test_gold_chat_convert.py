@@ -953,10 +953,16 @@ def test_convert_failure_preserves_existing_export(tmp_path, monkeypatch):
 
     monkeypatch.setattr(gcf, "run_gold_chat_finalize", _fail_finalize)
 
-    with pytest.raises(GoldChatAcceptanceBlocked):
+    with pytest.raises(GoldChatAcceptanceBlocked) as exc_info:
         gc.convert_gold_chat(row)
 
     assert json_path.read_text(encoding="utf-8") == original
+    timing = getattr(exc_info.value, "gold_chat_timing", None)
+    assert isinstance(timing, dict)
+    assert timing["status"] == "failed"
+    assert timing["stage"] == "finalize"
+    assert set(timing["stages_ms"]) == {"contract", "draft", "normalize_refine", "finalize"}
+    assert "export_backfill" not in timing["stages_ms"]
 
 
 def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
@@ -1250,26 +1256,37 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
         out = gc.import_gold_chat_daily_story(row, review=False)
         assert out["action"] == "insert"
         assert captured_mom_max[0] == 0
+        assert out["status"] == "review_pending"
+        assert any("需重新终验" in reason for reason in out["production_reasons"])
         ds_id = int(out["daily_story_id"])
         saved = repo_daily_story.get_story(ds_id)
         assert saved["story"]["scene_title"] == "关门练功"
+        assert saved["status"] == "review_pending"
+        assert saved["story"]["dialogue"] == chat["dialogue"]
+        assert "需重新终验" in "；".join(
+            saved["story"].get("quality", {}).get("production_reasons", [])
+        )
 
         row["gold_chat_daily_story_id"] = ds_id
         skip = gc.import_gold_chat_daily_story(row, review=False)
         assert skip["action"] == "skip"
+        assert skip["status"] == "review_pending"
+        assert any("需重新终验" in reason for reason in skip["production_reasons"])
 
         chat2 = dict(chat)
         chat2["scene_title"] = "新标题"
         gc.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat2)
         updated = gc.import_gold_chat_daily_story(row, force=True, review=False)
         assert updated["action"] == "update"
+        assert updated["status"] == "review_pending"
+        assert updated["production_reasons"]
         saved2 = repo_daily_story.get_story(ds_id)
         assert saved2["story"]["scene_title"] == "新标题"
 
 
 def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch):
     from app.repositories import repo_daily_story, repo_gold_story
-    from app.services.gold_story.gold_chat import import_story as gis
+    from app.services.llm import llm_mgr as llm_mgr_mod
 
     with app_ctx.app_context():
         inserted = repo_gold_story.insert_or_skip(
@@ -1309,6 +1326,16 @@ def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch):
         "summary": "结构80，好笑11，总分91",
         "reasons": ["总分91=结构80+LLM好笑11"],
     }
+    chat["story_type"] = "A"
+    from app.services.daily_story.quality import (
+        gold_story_review_contract,
+        stamp_story_review_binding,
+    )
+    stamp_story_review_binding(
+        chat,
+        semantic_pass=True,
+        review_contract=gold_story_review_contract(row, chat),
+    )
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     gc.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat)
@@ -1320,11 +1347,13 @@ def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch):
         raise AssertionError("终分稿不应再审读")
 
     monkeypatch.setattr(gc, "apply_gold_chat_normalizations", _forbid_renorm)
-    monkeypatch.setattr(gis, "_review_gold_chat_import_story", _forbid_review)
+    monkeypatch.setattr(llm_mgr_mod, "_get_client", _forbid_review)
 
     with app_ctx.app_context():
         out = gc.import_gold_chat_daily_story(row, review=True)
         assert out["action"] == "insert"
+        assert out["status"] == "active"
+        assert out["production_reasons"] == []
         saved = repo_daily_story.get_story(int(out["daily_story_id"]))
 
     quality = saved["story"]["quality"]
@@ -1332,6 +1361,102 @@ def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch):
     assert quality["structure_score"] == 80
     assert quality["humor"]["funny_score"] == 11
     assert saved["story"]["dialogue"] == dialogue
+    assert saved["status"] == "active"
+
+
+def test_real_final_acceptance_export_import_stays_active(
+    app_ctx, tmp_path, monkeypatch,
+):
+    """真实终验入口绑定最终正文后，导出再导入必须原样保持 active。"""
+    from app.repositories import repo_daily_story, repo_gold_story
+    from app.services.daily_story.review import ExportSemanticReviewResult
+
+    with app_ctx.app_context():
+        inserted = repo_gold_story.insert_or_skip(
+            source="bilibili",
+            source_id="BV1TESTIMPORT03",
+            url="https://www.bilibili.com/video/BV1TESTIMPORT03",
+            mechanism="M6",
+            structure_type="A",
+            story_raw="真实终验导入链路" * 20,
+            payload={
+                "setting": "卧室门口",
+                "dialogue_seed": [
+                    {"speaker": "昭昭", "intent": "抱怨被欺负"},
+                    {"speaker": "灿灿", "intent": "得意威胁"},
+                ],
+                "closing_intent": "昭昭嘴硬收场",
+                "scene_contract": {"mom_lines_max": 1},
+            },
+            title="真实终验导入链路",
+            conflict_core="弟弟幻想报复姐姐，开门秒怂",
+            extract_confidence=0.8,
+            structure_confidence=0.8,
+            dialogue_confidence=0.8,
+            auto_score=0.9,
+            status="active",
+        )
+        row = repo_gold_story.get_story(int(inserted["id"]))
+
+    chat = _sample_chat()
+    chat["dialogue"][-4:] = [
+        {"speaker": "昭昭", "line": "我先把门开一条缝看看，你别突然冲进来呀。"},
+        {"speaker": "灿灿", "line": "你开呀，我就在门口站着，看看你练成什么了。"},
+        {"speaker": "昭昭", "line": "等等，我鞋带还没系好，高手出门也得先系鞋带。"},
+        {"speaker": "灿灿", "line": "你刚才练的不会就是系鞋带功夫吧，笑死我了。"},
+    ]
+    chat["story_type"] = "A"
+    chat["quality"] = {
+        "structure_score": 80,
+        "score": 80,
+        "grade": "好",
+        "summary": "结构80",
+        "reasons": [],
+    }
+    semantic_result = ExportSemanticReviewResult(
+        completed=True,
+        issues=[],
+        humor={
+            "funny_score": 11,
+            "best_moment": "开门秒怂",
+            "humor_type": "situational",
+        },
+        error=None,
+    )
+    monkeypatch.setattr(
+        "app.services.daily_story.review.run_export_semantic_review",
+        lambda *_args, **_kwargs: semantic_result,
+    )
+
+    accepted = gcf.run_gold_chat_final_acceptance(
+        chat,
+        row,
+        sid=str(row["source_id"]),
+    )
+    assert accepted["quality"]["semantic_pass"] is True
+    assert accepted["quality"]["reviewed_content_hash"]
+    assert accepted["quality"]["humor"]["funny_score"] == 11
+
+    monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    gc.export_gold_chat_files(
+        source_id=str(row["source_id"]),
+        row=row,
+        chat=accepted,
+    )
+
+    with app_ctx.app_context():
+        out = gc.import_gold_chat_daily_story(row, review=True)
+        saved = repo_daily_story.get_story(int(out["daily_story_id"]))
+
+    assert out["status"] == "active"
+    assert out["production_reasons"] == []
+    assert saved["status"] == "active"
+    assert saved["story"]["dialogue"] == accepted["dialogue"]
+    assert (
+        saved["story"]["quality"]["reviewed_content_hash"]
+        == accepted["quality"]["reviewed_content_hash"]
+    )
 
 
 def test_resolve_gold_chat_snippet_same_source():

@@ -556,7 +556,10 @@ def run_gold_chat_final_acceptance(
     sid: str,
 ) -> dict[str, Any]:
     """补字/改 speaker 完成后统一终验；未过则抛错，不写导出文件。"""
-    from app.services.daily_story.quality import stamp_gold_chat_acceptance_quality
+    from app.services.daily_story.quality import (
+        gold_story_review_contract,
+        stamp_gold_chat_acceptance_quality,
+    )
     from app.services.daily_story.review import (
         collect_escalation_chatter_signals,
         collect_export_blocking_local_issues,
@@ -647,6 +650,7 @@ def run_gold_chat_final_acceptance(
         humor=review.humor,
         chatter_signals=signals,
         semantic_pass=True,
+        review_contract=gold_story_review_contract(row, chat),
     )
     logger.info(
         "[GOLD_CHAT] final acceptance ok %s issues=%s humor=%s",
@@ -676,7 +680,10 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     repair_budget: Any | None = None,
 ) -> tuple[dict[str, Any], int]:
     """导出前统一修稿；共享预算耗尽后，纯重复终检仅额外救援一次。"""
-    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+    from app.services.gold_story.gold_chat.repair import (
+        GoldChatRepairBudget,
+        GoldChatRepairExhausted,
+    )
 
     del source_type  # 校验由 validate_chat 闭包注入
 
@@ -734,7 +741,21 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                         )
                     else:
                         budget.note_failure(str(exc))
-                        raise
+                        pending: dict[str, Any] = dict(current)
+                        raw_pending_quality = pending.get("quality")
+                        pending_quality: dict[str, Any] = (
+                            dict(raw_pending_quality)
+                            if isinstance(raw_pending_quality, dict)
+                            else {}
+                        )
+                        pending_quality["review_status"] = "review_pending"
+                        pending_quality["review_failure_reason"] = str(exc)
+                        pending["quality"] = pending_quality
+                        raise GoldChatRepairExhausted(
+                            stage="final_acceptance",
+                            reason=str(exc),
+                            candidate=pending,
+                        ) from exc
             elif attempt >= local_max:
                 raise
             attempt += 1
@@ -788,6 +809,24 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                             "gold_chat duplicate repair frozen scope target_lines=%s",
                             sorted(targets),
                         )
+            # 只有正文实际变化才做额外回归门；模型原样返回时让主循环正常复验，
+            # 避免重复跑同一套纯本地校验。正文一旦变化，若破坏已通过硬条件/结构，
+            # 则保留修前候选，不让坏修稿成为下一轮基线。
+            if repaired.get("dialogue") != repair_base.get("dialogue"):
+                try:
+                    _validate_chat_or_repairable(validate_chat, repaired)
+                    regression_scored = attach_score(repaired, row)
+                    _gate_structure_or_raise(gate_score, regression_scored)
+                except BaseException as regression_exc:
+                    last_err = f"终检修稿回归：{regression_exc}"
+                    if budget is not None:
+                        budget.note_failure(last_err)
+                    logger.warning(
+                        "gold_chat final repair regressed; keep previous candidate reason=%s",
+                        regression_exc,
+                    )
+                    current = repair_base
+                    continue
             current = repaired
             continue
     raise GoldChatAcceptanceBlocked(last_err or "终检修稿未通过")
