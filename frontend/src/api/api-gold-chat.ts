@@ -67,9 +67,19 @@ export interface GoldStoryAudit {
 export interface GoldChatErrorInfo {
   error: string;
   failed_at?: string;
+  review_status?: "review_pending";
+}
+
+export interface GoldChatReviewPendingInfo {
+  status: "review_pending";
+  candidate: StoryContent;
+  error?: string;
+  failed_at?: string;
+  stage?: string;
 }
 
 export interface GoldStoryDetail {
+  gold_chat_review_pending?: GoldChatReviewPendingInfo | null;
   id?: number;
   source_id: string;
   url?: string;
@@ -121,6 +131,8 @@ export interface GoldChatImportResult {
   theme?: string;
   story_type?: string;
   daily_story?: StoryContent;
+  status?: string;
+  production_reasons?: string[];
 }
 
 export interface GoldChatConvertResult {

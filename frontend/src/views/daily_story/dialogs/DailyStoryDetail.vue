@@ -44,6 +44,15 @@
           <el-input v-if="editing" v-model="editStory.punchline_explain" type="textarea" :rows="4" size="small" />
           <div v-else class="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">{{ editStory.punchline_explain }}</div>
         </div>
+        <div
+          v-if="isReviewPending"
+          class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"
+        >
+          <div class="font-medium">待审核，暂不可制作或同步视频</div>
+          <ul v-if="productionReasons.length" class="mt-1 list-disc space-y-0.5 pl-4">
+            <li v-for="(reason, i) in productionReasons" :key="i">{{ reason }}</li>
+          </ul>
+        </div>
         <div>
           <div class="mb-1 text-xs text-gray-400">评价</div>
           <template v-if="editStory.quality?.score != null">
@@ -143,7 +152,7 @@
             type="primary"
             size="small"
             :loading="submitting"
-            :disabled="!localStory?.id || isProcessing || !(editStory.dialogue?.length)"
+            :disabled="!localStory?.id || isProcessing || isReviewPending || !(editStory.dialogue?.length)"
             @click="handleCreateJob"
           >
             发起任务
@@ -162,7 +171,7 @@
             type="warning"
             size="small"
             :loading="syncing"
-            :disabled="isProcessing"
+            :disabled="isProcessing || isReviewPending"
             @click="handleSyncToJob"
           >
             同步
@@ -276,6 +285,7 @@ const visible = computed({
 const localStory = computed(() => props.story);
 
 const isProcessing = computed(() => localStory.value?.status === "processing");
+const isReviewPending = computed(() => localStory.value?.status === "review_pending");
 
 /** 本地可编辑副本 */
 const editStory = ref<StoryContent>({
@@ -317,6 +327,10 @@ const totalChars = computed(() => {
 
 const qualityAcceptanceTags = computed(() =>
   acceptanceTags(editStory.value.quality),
+);
+
+const productionReasons = computed(() =>
+  editStory.value.quality?.production_reasons ?? [],
 );
 
 const showQualityCompositeGrade = computed(() =>
@@ -425,6 +439,8 @@ async function handleRegenerate() {
       ElMessage.error("重新生成失败，仍保留上一稿");
     } else if (newStory.status === "processing") {
       ElMessage.warning("仍在生成中，请稍后刷新");
+    } else if (newStory.status === "review_pending") {
+      ElMessage.warning("重新生成完成，但终验未通过，已进入待审核");
     } else if (visible.value) {
       ElMessage.success("已重新生成");
     }

@@ -1640,22 +1640,33 @@ def _authority_beat0(
     return "", ""
 
 
-def _intent_to_rule_line(intent: str) -> str:
-    """beat0 intent → 可说出口的短立规句（须命中立规槽正则）。"""
+def _intent_to_rule_line(intent: str, *, require_rule_slot: bool = True) -> str:
+    """立规 intent → 可直接说出口的短句；绝不靠补“说好了”把剧情描述伪装成对白。
+
+    K 类 authority 开场仍要求显式规则槽；opening causality 补拍可接受天然祈使句，
+    例如“灿灿作业没写，先把作业补上”。
+    """
     text = str(intent or "").strip()
     text = re.sub(r"^(?:立规|约好|规定|规矩|定规|说好|约定)[：:]", "", text).strip()
     if not text:
-        text = "谁先完成谁先用"
-    # 无抽象立规槽时补「说好了，」保证机审可识别（不绑单篇词）
-    if not RE_AUTH_RULE_SLOT.search(text):
-        text = f"说好了，{text}"
+        return ""
+    has_rule_slot = bool(RE_AUTH_RULE_SLOT.search(text))
+    has_direct_imperative = bool(
+        re.search(
+            r"(?:先把|先去|先给|先做|先写|先补|先道歉|别|不要|不许|必须|得把|快把|赶紧|轮流|谁先|谁赢|赢了|输了|才能)",
+            text,
+        )
+    )
+    if require_rule_slot:
+        if not has_rule_slot:
+            return ""
+    elif not (has_rule_slot or has_direct_imperative):
+        # 如“端出蛋挞和烤鸭，宣布用绕口令抢吃”只是剧情描述，不能原样塞进对白。
+        return ""
     if not text.endswith(("。", "！", "？", "~")):
         text = text + "。"
     if len(text) > 28:
-        text = text[:27] + "。"
-    # 截断后若槽位丢失，回退到稳妥短句
-    if not RE_AUTH_RULE_SLOT.search(text):
-        return "说好了，谁先完成谁先用。"
+        return ""
     return text
 
 
@@ -1756,7 +1767,10 @@ def patch_authority_insert_rule_opening(
     # 首句不合格：优先改写首句，避免妈妈句数≥4被结构分 -10
     out = copy.deepcopy(story)
     dlg = list(out.get("dialogue") or [])
-    rule = {"speaker": beat0, "line": _intent_to_rule_line(intent)}
+    rule_line = _intent_to_rule_line(intent)
+    if not rule_line:
+        return story, False
+    rule = {"speaker": beat0, "line": rule_line}
     mom_n = sum(
         1
         for r in dlg
@@ -2088,9 +2102,8 @@ def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str
     parts = re.split(r"[：:]", raw, maxsplit=1)
     text = parts[1].strip() if len(parts) == 2 else raw
     if authority_kind == "rule":
-        # 立规必须保留 rule anchor；即使规则内容涉及作业，也不能降级成普通责备句，
-        # 否则本地补出的首句会被 opening validator 自己判定为“不满足 beat=1 立规”。
-        return _intent_to_rule_line(raw)
+        # opening causality 补拍允许天然祈使句落地，但仍拒绝纯剧情描述；不补“说好了”。
+        return _intent_to_rule_line(raw, require_rule_slot=False)
     text = re.sub(r"[，,]?气氛紧张", "", text).strip()
     core = str(story.get("conflict_core") or "")
     blob = f"{text}{core}"
@@ -2213,9 +2226,9 @@ def apply_opening_causality_local_patch(
             required = len(clauses) if len(clauses) <= 2 else 2
             if not clauses or hits < required:
                 continue
-            rule_spoken = spoken
-            if not RE_AUTH_RULE_SLOT.search(rule_spoken):
-                rule_spoken = f"说好了，{rule_spoken}"
+            rule_spoken = _intent_to_rule_line(spoken, require_rule_slot=False)
+            if not rule_spoken:
+                continue
             if (
                 len(rule_spoken) <= CHAT_MAX_LINE_CHARS
                 and _line_fulfills_beat(expected, rule_spoken, entry)
@@ -2313,9 +2326,14 @@ def apply_opening_causality_local_patch(
         changed = True
     elif move_idx < 0:
         intent = str(beat1_entry.get("intent") or "")
+        opening_line = _intent_to_authority_opening_line(intent, story)
+        if not opening_line:
+            # 立规 intent 若只是剧情描述，本地不伪造对白；保留此前安全 seed 补丁，
+            # 其余缺拍交给上层限定范围修稿。
+            return probe, bool(changed)
         new_row = {
             "speaker": speaker,
-            "line": _intent_to_authority_opening_line(intent, story),
+            "line": opening_line,
         }
         mom_n = sum(
             1

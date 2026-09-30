@@ -9,16 +9,21 @@ import pytest
 from app.services.daily_story.quality import (
     acceptance_tags_for_quality,
     enrich_quality_acceptance_defaults,
+    find_story_duplicate_matches,
+    stamp_story_review_binding,
+    story_production_eligibility,
     structure_score_of,
 )
 from app.services.daily_story.review import (
     ExportSemanticReviewResult,
     _normalize_missing_beat,
+    _normalize_missing_relation,
     _validate_export_review_raw,
     collect_escalation_chatter_signals,
     collect_export_blocking_local_issues,
     collect_sibling_address_issues,
     filter_llm_export_blocking_issues,
+    format_export_blocking_issue_summary,
     partition_llm_export_blocking_issues,
     parse_review_issues,
     run_export_semantic_review,
@@ -64,6 +69,18 @@ def test_review_prompt_scores_multi_line_situational_humor_without_requiring_one
     assert "不要因为找不到独立金句就把整段压到 5-9 分" in system
     assert "它只是整段笑点的代表锚点" in system
     assert "评分看完整情境" in system
+
+
+def test_review_prompt_has_relation_checks_and_false_positive_guards():
+    from app.services.daily_story.review import build_review_prompts
+
+    system, _ = build_review_prompts("测试", _story([]))
+    assert "多个物件同时存在完全正常" in system
+    assert "允许角色明确提出加赛/改规则" in system
+    assert "后文结果、损坏、分割、输赢" in system
+    assert "换词反复同一态度/同一不服" in system
+    assert "结尾一次引用前文规则作回旋镖不算重复" in system
+    assert "剧情指令" in system
 
 
 @patch("app.services.daily_story.review.run_export_semantic_review")
@@ -1712,6 +1729,44 @@ def test_contract_gap_rejects_fictional_beat_or_bad_types():
     assert _normalize_missing_beat(float_issue[0]["missing_beat"]) is None
 
 
+def test_missing_relation_gap_requires_string_and_valid_evidence():
+    story = _story(
+        [
+            {"speaker": "昭昭", "line": "那我就拿走这个杯子啦。"},
+            {"speaker": "灿灿", "line": "等等，你凭什么拿走？"},
+        ],
+    )
+    base = {
+        "lines": [1],
+        "kind": "缺前提",
+        "desc": "拿走杯子依赖前文归属规则，但前文没有建立",
+        "fix": "在此前自然建立杯子归属关系",
+        "evidence": [{"line": 1, "quote": "拿走这个杯子"}],
+    }
+    valid_issue = {
+        **base,
+        "missing_relation": "前文未建立昭昭拥有或赢得这个杯子的关系",
+    }
+    valid, bad = partition_llm_export_blocking_issues([valid_issue], story)
+    assert len(valid) == 1
+    assert bad == []
+    assert "缺失关系：前文未建立昭昭拥有或赢得这个杯子的关系" in (
+        format_export_blocking_issue_summary(valid[0])
+    )
+
+    assert _normalize_missing_relation({"relation": "错误类型"}) is None
+    invalid_type, bad_type = partition_llm_export_blocking_issues(
+        [{**base, "missing_relation": {"relation": "错误类型"}}],
+        story,
+    )
+    assert invalid_type == []
+    assert len(bad_type) == 1
+
+    missing_both, bad_missing = partition_llm_export_blocking_issues([base], story)
+    assert missing_both == []
+    assert len(bad_missing) == 1
+
+
 def test_interjection_blocking_positive_and_negative():
     story = _story(
         [
@@ -1806,6 +1861,100 @@ def test_export_review_corrects_invalid_evidence_once(monkeypatch, recovered):
         assert "evidence" in result.error
 
 
+def _run_mock_reviewer(monkeypatch, story, payload):
+    """独立 reviewer mock：测试专家/Qwen 给相同事实证据时，程序硬拦口径一致。"""
+    from app.services.llm import llm_mgr
+
+    class Client:
+        def _chat_json(self, *_args, **_kwargs):
+            return payload, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    return run_export_semantic_review("测试", story)
+
+
+def test_export_review_three_party_relation_consensus(monkeypatch):
+    cases = [
+        (
+            _story([{"speaker": "昭昭", "line": "我轻轻推门，客厅门缝还开着。"}]),
+            {
+                "kind": "旁白",
+                "lines": [1],
+                "desc": "角色在念动作和场景说明，不是在对现场的人说话",
+                "fix": "改成对现场角色可直接说的话",
+                "evidence": [{"line": 1, "quote": "我轻轻推门"}],
+            },
+        ),
+        (
+            _story([
+                {"speaker": "昭昭", "line": "红杯子先放你那边。"},
+                {"speaker": "灿灿", "line": "那我把蓝杯子拿走啦。"},
+            ]),
+            {
+                "kind": "缺前提",
+                "lines": [2],
+                "desc": "蓝杯子突然成为可拿走的对象，前文没有建立",
+                "fix": "先自然建立蓝杯子的存在或归属",
+                "missing_relation": "前文未建立蓝杯子的存在/归属 → 第2句直接拿走",
+                "evidence": [{"line": 2, "quote": "蓝杯子拿走"}],
+            },
+        ),
+        (
+            _story([{"speaker": "昭昭", "line": "我赢了，所以蛋糕归我。"}]),
+            {
+                "kind": "缺前提",
+                "lines": [1],
+                "desc": "蛋糕奖励依赖未建立的输赢规则",
+                "fix": "前文先建立赢家获得蛋糕的规则",
+                "missing_relation": "前文未建立赢家获得蛋糕 → 第1句直接据此领奖",
+                "evidence": [{"line": 1, "quote": "蛋糕归我"}],
+            },
+        ),
+    ]
+    for story, issue in cases:
+        expert = _run_mock_reviewer(
+            monkeypatch,
+            story,
+            {"issues": [issue], "humor": {"funny_score": 10}},
+        )
+        qwen = _run_mock_reviewer(
+            monkeypatch,
+            story,
+            {"issues": [dict(issue)], "humor": {"funny_score": 10}},
+        )
+        assert expert.completed and qwen.completed
+        # “我”：程序自己的证据校验/阻断判定，与两家 mock 的结论必须一致。
+        assert len(filter_llm_export_blocking_issues(expert.issues, story)) == 1
+        assert len(filter_llm_export_blocking_issues(qwen.issues, story)) == 1
+
+
+def test_export_review_three_party_allows_natural_transition_and_style(monkeypatch):
+    natural = _story([
+        {"speaker": "昭昭", "line": "姐姐，红杯子给你，我拿蓝杯子。"},
+        {"speaker": "灿灿", "line": "行，那我们就这么分。"},
+    ])
+    for payload in ({"issues": []}, {"issues": []}):  # expert mock / Qwen mock
+        result = _run_mock_reviewer(monkeypatch, natural, payload)
+        assert result.completed
+        assert filter_llm_export_blocking_issues(result.issues, natural) == []
+
+    style_story = _story([
+        {"speaker": "昭昭", "line": "姐姐，我觉得这件事情有一点不太对劲。"},
+    ])
+    style_issue = {
+        "kind": "书面",
+        "lines": [1],
+        "desc": "句子稍完整、偏书面，但仍是对姐姐自然可说的话",
+        "fix": "可选：改得更口语",
+        "evidence": [{"line": 1, "quote": "这件事情有一点不太对劲"}],
+    }
+    for payload in ({"issues": [style_issue]}, {"issues": [dict(style_issue)]}):
+        result = _run_mock_reviewer(monkeypatch, style_story, payload)
+        assert result.completed
+        assert len(result.issues) == 1
+        assert filter_llm_export_blocking_issues(result.issues, style_story) == []
+
+
 def test_export_review_ignores_malformed_missing_beat_on_non_gap_issue(monkeypatch):
     from app.services.llm import llm_mgr
 
@@ -1817,6 +1966,7 @@ def test_export_review_ignores_malformed_missing_beat_on_non_gap_issue(monkeypat
                 "lines": [1],
                 "desc": "措辞偏书面",
                 "missing_beat": 2,
+                "evidence": [{"line": 1, "quote": "姐姐"}],
             }
         ]
     }
@@ -1866,7 +2016,7 @@ def test_export_review_corrects_invalid_missing_beat_once(monkeypatch):
     )
     assert result.completed is True
     assert len(calls) == 2
-    assert "只有 kind=缺前提 时才输出 missing_beat" in calls[1]
+    assert "其他 kind 不要输出 missing_beat" in calls[1]
     assert '"beat":1' in calls[1]
     assert result.issues[0]["missing_beat"] == {"beat": 1, "intent": intent}
 
@@ -1884,6 +2034,187 @@ def test_export_review_timeout_does_not_retry(monkeypatch):
     result = run_export_semantic_review("测试", _story([]))
     assert not result.completed
     assert len(calls) == 1
+
+
+def test_production_eligibility_binds_review_to_current_dialogue():
+    # type 字段稍后由 manager 补写时，只要与终验时可解析类型一致，不应误判正文变化。
+    story = _story([
+        {"speaker": "昭昭", "line": "你先说规则。"},
+        {"speaker": "灿灿", "line": "谁先完成谁先用。"},
+    ])
+    story["quality"]["humor"] = {"funny_score": 10}
+    stamp_story_review_binding(story, semantic_pass=True)
+
+    ready = story_production_eligibility(story)
+    assert ready["ok"] is True
+    reviewed_hash = story["quality"]["reviewed_content_hash"]
+
+    story["dialogue"][1]["line"] = "谁先完成就归谁。"
+    stale = story_production_eligibility(story)
+    assert stale["ok"] is False
+    assert stale["reviewed_content_hash"] == reviewed_hash
+    assert any("旧终验结果已失效" in reason for reason in stale["reasons"])
+
+
+def test_direct_review_does_not_reuse_pre_repair_humor(monkeypatch):
+    from app.services.daily_story import review as review_mod
+
+    story = _story([
+        {"speaker": "昭昭", "line": "姐姐你先说。"},
+        {"speaker": "灿灿", "line": "这句原来不顺。"},
+        {"speaker": "昭昭", "line": "那我等你。"},
+    ])
+    calls = {"review": 0}
+
+    class Client:
+        def review_daily_story_issues(self, _theme, _story):
+            calls["review"] += 1
+            if calls["review"] == 1:
+                return ([{
+                    "lines": [2],
+                    "kind": "语病",
+                    "desc": "测试修稿",
+                    "fix": "改顺",
+                }], {"funny_score": 14, "best_moment": "旧稿笑点", "humor_type": "natural"})
+            return ([], None)
+
+        def spot_fix_daily_story(self, *_args, **_kwargs):
+            return {"fixes": [{"no": 2, "line": "这句已经改顺啦。"}]}
+
+    def fake_apply(s, _raw, **_kwargs):
+        out = {**s, "dialogue": [dict(x) for x in s["dialogue"]]}
+        out["dialogue"][1]["line"] = "这句已经改顺啦。"
+        return out, [2]
+
+    monkeypatch.setattr(review_mod, "_apply_fixes_greedily", fake_apply)
+    result = review_mod.run_daily_story_review(Client(), "测试", story)
+
+    assert calls["review"] == 2
+    assert result["dialogue"][1]["line"] == "这句已经改顺啦。"
+    assert "humor" not in result["quality"]
+    assert "好笑待审" in result["quality"].get("acceptance_tags", [])
+
+
+def test_direct_review_without_llm_reviewer_stays_semantic_pending():
+    from app.services.daily_story import review as review_mod
+
+    story = _story([
+        {"speaker": "昭昭", "line": "姐姐你先说规则。"},
+        {"speaker": "灿灿", "line": "谁先收完谁先选。"},
+        {"speaker": "昭昭", "line": "那我先收蓝色的。"},
+    ])
+
+    result = review_mod.run_daily_story_review(object(), "测试", story)
+
+    assert result["quality"].get("semantic_pass") is None
+    assert "reviewed_content_hash" not in result["quality"]
+    assert "语义待审" in result["quality"].get("acceptance_tags", [])
+    assert story_production_eligibility(result)["ok"] is False
+
+
+def test_review_hash_uses_canonical_type_before_manager_persists_field():
+    story = _story([
+        {"speaker": "昭昭", "line": "谁先收完谁先选。"},
+        {"speaker": "灿灿", "line": "那我先收蓝色的。"},
+    ])
+    story["punchline_explain"] = "A类权威翻车：姐姐立规后被弟弟拿原话反将一军"
+    story["quality"]["humor"] = {"funny_score": 10}
+    stamp_story_review_binding(story, semantic_pass=True)
+    before = story["quality"]["reviewed_content_hash"]
+
+    story["story_type"] = "A"
+    after = story_production_eligibility(story)
+    assert after["ok"] is True
+    assert after["current_content_hash"] == before
+
+
+def test_gold_review_contract_ignores_notes_but_binds_dialogue_seed():
+    from app.services.daily_story.quality import gold_story_review_contract
+
+    story = _story([
+        {"speaker": "昭昭", "line": "姐姐先说规则。"},
+        {"speaker": "灿灿", "line": "谁先收完谁先选。"},
+    ])
+    story["story_type"] = "A"
+    story["quality"]["humor"] = {"funny_score": 10}
+    row = {
+        "structure_type": "A",
+        "mechanism": "M6",
+        "payload": {
+            "dialogue_seed": [{"speaker": "昭昭", "intent": "先问规则"}],
+            "scene_contract": {
+                "mom_lines_max": 1,
+                "beat_chain": [{"beat": 1, "speaker": "昭昭", "intent": "先问规则"}],
+                "location": "客厅",
+                "remap_note": "说明A",
+            },
+        },
+    }
+    stamp_story_review_binding(
+        story,
+        semantic_pass=True,
+        review_contract=gold_story_review_contract(row, story),
+    )
+
+    row["payload"]["scene_contract"]["location"] = "餐桌旁"
+    row["payload"]["scene_contract"]["remap_note"] = "说明B"
+    still_ready = story_production_eligibility(
+        story,
+        review_contract=gold_story_review_contract(row, story),
+    )
+    assert still_ready["ok"] is True
+
+    row["payload"]["dialogue_seed"][0]["intent"] = "改成另一个前提"
+    stale = story_production_eligibility(
+        story,
+        review_contract=gold_story_review_contract(row, story),
+    )
+    assert stale["ok"] is False
+    assert any("旧终验结果已失效" in reason for reason in stale["reasons"])
+
+
+def test_full_library_dedupe_blocks_exact_cross_type_but_not_topic_only():
+    candidate = {
+        "story_type": "A",
+        "conflict_core": "争先后顺序",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我先来的。"},
+            {"speaker": "灿灿", "line": "明明是我先拿到。"},
+            {"speaker": "昭昭", "line": "那就猜拳。"},
+        ],
+    }
+    rows = [
+        {"id": 7, "story": {**candidate, "story_type": "H"}},
+        {
+            "id": 8,
+            "story": {
+                "story_type": "A",
+                "conflict_core": "同题材但冲突不同",
+                "dialogue": [
+                    {"speaker": "昭昭", "line": "今天轮到你收玩具。"},
+                    {"speaker": "灿灿", "line": "我收蓝色的，你收红色的。"},
+                    {"speaker": "昭昭", "line": "行，分开收更快。"},
+                ],
+            },
+        },
+    ]
+    matches = find_story_duplicate_matches(candidate, rows)
+    assert matches[0]["story_id"] == 7
+    assert matches[0]["severity"] == "block"
+    assert any(part["part"] == "dialogue" for part in matches[0]["matched_parts"])
+    dialogue_part = next(
+        part for part in matches[0]["matched_parts"] if part["part"] == "dialogue"
+    )
+    assert dialogue_part["candidate"] == dialogue_part["matched"]
+    assert "我先来的" in dialogue_part["candidate"]
+    assert all(item["story_id"] != 8 for item in matches)
+
+
+def test_authority_rule_patch_refuses_narrative_disguised_as_dialogue():
+    from app.services.gold_story.gold_chat.patch import _intent_to_rule_line
+
+    assert _intent_to_rule_line("立规：谁先完成谁先用") == "谁先完成谁先用。"
+    assert _intent_to_rule_line("立规：端出奖品，宣布比赛开始") == ""
 
 
 @pytest.mark.parametrize("recover", [True, False])

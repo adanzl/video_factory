@@ -477,17 +477,25 @@ def test_create_chat_job_writes_type_info(app_ctx, monkeypatch) -> None:
     """chat 建任务时信息栏写入矛盾类型。"""
     from app.repositories import repo_daily_story
     from app.services.daily_story.daily_story_mgr import daily_story_mgr
+    from app.services.daily_story.quality import stamp_story_review_binding
     monkeypatch.setattr(
         "app.services.daily_story.prompts.validate_daily_story_json",
         lambda *_args, **_kwargs: None,
     )
 
+    story = {
+        "scene_title": "明明酸奶我先抢",
+        "dialogue": [{"speaker": "昭昭", "line": "给我"}],
+        "quality": {
+            "structure_score": 76,
+            "score": 86,
+            "humor": {"funny_score": 10},
+        },
+    }
+    stamp_story_review_binding(story, semantic_pass=True)
     story_id = repo_daily_story.insert_story(
         theme="抢酸奶",
-        story={
-            "scene_title": "明明酸奶我先抢",
-            "dialogue": [{"speaker": "昭昭", "line": "给我"}],
-        },
+        story=story,
         story_type="A",
         status="active",
     )
@@ -510,8 +518,149 @@ def test_create_chat_job_rejects_story_pending_review(app_ctx) -> None:
         story_type="A",
         status="review_pending",
     )
-    with pytest.raises(ValueError, match="审核通过后"):
+    with pytest.raises(ValueError, match="未通过制作终验"):
         daily_story_mgr.create_job(story_id)
+
+
+def test_create_job_rechecks_quality_semantic_and_content_hash(app_ctx, monkeypatch) -> None:
+    from app.repositories import repo_daily_story
+    from app.services.daily_story import daily_story_mgr as daily_story_mgr_module
+    from app.services.daily_story.daily_story_mgr import daily_story_mgr
+    from app.services.daily_story.quality import stamp_story_review_binding
+
+    monkeypatch.setattr(
+        daily_story_mgr_module,
+        "_validate_story_hard",
+        lambda *_args, **_kwargs: None,
+    )
+
+    cases = []
+    for label in ("low_structure", "semantic_pending", "content_changed"):
+        story = {
+            "scene_title": label,
+            "story_type": "A",
+            "dialogue": [{"speaker": "昭昭", "line": "原稿已经终验。"}],
+            "quality": {
+                "structure_score": 80,
+                "score": 91,
+                "humor": {"funny_score": 11},
+            },
+        }
+        stamp_story_review_binding(story, semantic_pass=True)
+        if label == "low_structure":
+            story["quality"]["structure_score"] = 74
+        elif label == "semantic_pending":
+            story["quality"]["semantic_pass"] = False
+            story["quality"]["semantic_pending"] = True
+        else:
+            story["dialogue"][0]["line"] = "正文后来被改过。"
+        cases.append((label, story))
+
+    for label, story in cases:
+        story_id = repo_daily_story.insert_story(
+            theme=label,
+            story=story,
+            story_type="A",
+            status="active",
+        )
+        with pytest.raises(ValueError, match="未通过制作终验"):
+            daily_story_mgr.create_job(story_id)
+        saved = repo_daily_story.get_story(story_id)
+        assert saved["status"] == "review_pending"
+
+
+def test_edit_save_invalidates_old_review_and_humor(app_ctx, monkeypatch) -> None:
+    from app.repositories import repo_daily_story
+    from app.services.daily_story import daily_story_mgr as daily_story_mgr_module
+    from app.services.daily_story import prompts as daily_story_prompts
+    from app.services.daily_story.daily_story_mgr import daily_story_mgr
+    from app.services.daily_story.quality import stamp_story_review_binding
+
+    monkeypatch.setattr(
+        daily_story_mgr_module,
+        "_validate_story_hard",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        daily_story_prompts,
+        "sync_discovery_opening_from_dialogue",
+        lambda _story: None,
+    )
+    monkeypatch.setattr(
+        daily_story_prompts,
+        "try_local_patch_daily_story_body",
+        lambda story: (story, False),
+    )
+
+    story = {
+        "scene_title": "编辑失效",
+        "story_type": "A",
+        "dialogue": [{"speaker": "昭昭", "line": "原稿已经终验。"}],
+        "quality": {
+            "structure_score": 80,
+            "score": 91,
+            "humor": {"funny_score": 11},
+        },
+    }
+    stamp_story_review_binding(story, semantic_pass=True)
+    reviewed_hash = story["quality"]["reviewed_content_hash"]
+    story_id = repo_daily_story.insert_story(
+        theme="编辑失效",
+        story=story,
+        story_type="A",
+        status="active",
+    )
+
+    edited = {**story, "dialogue": [{"speaker": "昭昭", "line": "正文已经改过了。"}]}
+    saved = daily_story_mgr.update_story(story_id, story=edited)
+    quality = saved["story"]["quality"]
+    assert saved["status"] == "review_pending"
+    assert quality["stale_reviewed_content_hash"] == reviewed_hash
+    assert quality["semantic_pending"] is True
+    assert "humor" not in quality
+
+
+def test_sync_to_job_rechecks_eligibility_before_task_reset(app_ctx, monkeypatch) -> None:
+    from app.repositories import repo_daily_story, repo_job
+    from app.services.daily_story import daily_story_mgr as daily_story_mgr_module
+    from app.services.daily_story.daily_story_mgr import daily_story_mgr
+    from app.services.job.job_mgr import job_mgr
+
+    story_id = repo_daily_story.insert_story(
+        theme="同步双检",
+        story={
+            "scene_title": "同步双检",
+            "dialogue": [{"speaker": "昭昭", "line": "原稿。"}],
+        },
+        story_type="A",
+        status="active",
+    )
+    job = repo_job.create_job(
+        "同步双检",
+        pipeline="chat",
+        material_id=story_id,
+        status="pending",
+    )
+    repo_daily_story.set_job_id(story_id, int(job["id"]))
+
+    calls = {"n": 0}
+
+    def eligibility(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"ok": True, "reasons": []}
+        return {"ok": False, "reasons": ["正文或审核契约已改动，旧终验结果已失效"]}
+
+    reset_calls: list[int] = []
+    monkeypatch.setattr(daily_story_mgr_module, "_story_production_eligibility", eligibility)
+    monkeypatch.setattr(job_mgr, "prepare_rerun", lambda jid, _stage: reset_calls.append(jid))
+
+    with pytest.raises(ValueError, match="旧终验结果已失效"):
+        daily_story_mgr.sync_to_job(story_id)
+
+    assert calls["n"] == 2
+    assert reset_calls == []
+    assert repo_daily_story.get_story(story_id)["status"] == "review_pending"
 
 
 def test_create_gold_chat_job_counts_full_dialogue_chars(
@@ -520,6 +669,10 @@ def test_create_gold_chat_job_counts_full_dialogue_chars(
 ) -> None:
     from app.repositories import repo_daily_story
     from app.services.daily_story.daily_story_mgr import daily_story_mgr
+    from app.services.daily_story.quality import (
+        gold_story_review_contract,
+        stamp_story_review_binding,
+    )
 
     dialogue = [
         {"speaker": "灿灿", "line": "你干嘛弄坏我的画！"},
@@ -551,7 +704,21 @@ def test_create_gold_chat_job_counts_full_dialogue_chars(
         "story_type": "H",
         "discovery_opening": dialogue[:2],
         "dialogue": dialogue,
+        "quality": {
+            "structure_score": 76,
+            "score": 86,
+            "humor": {"funny_score": 10},
+        },
     }
+    source_row = {
+        "structure_type": "H",
+        "payload": {"scene_contract": {"mom_lines_max": 3}},
+    }
+    stamp_story_review_binding(
+        story,
+        semantic_pass=True,
+        review_contract=gold_story_review_contract(source_row, story),
+    )
     story_id = repo_daily_story.insert_story(
         theme="金故事字数口径",
         story=story,
@@ -560,9 +727,7 @@ def test_create_gold_chat_job_counts_full_dialogue_chars(
     )
     monkeypatch.setattr(
         "app.services.daily_story.daily_story_mgr._gold_chat_source_row",
-        lambda _story_id: {
-            "payload": {"scene_contract": {"mom_lines_max": 3}},
-        },
+        lambda _story_id: source_row,
     )
 
     job = daily_story_mgr.create_job(story_id)
