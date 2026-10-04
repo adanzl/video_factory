@@ -448,6 +448,13 @@ _M8_J_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
         ("灿灿", "规矩先讲好，输了别赖账！"),
     ),
 )
+# G/M4 行动软化的收拾类 near-miss：只补同域动作对白，不凭空制造护短/真情戏。
+_G_CLEANUP_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
+    (
+        ("昭昭", "你还真要把这些都收好啊？"),
+        ("灿灿", "我先把手边这些放回去。"),
+    ),
+)
 # K：只补抽象互顶与僵持，不凭空新增道具、追跑或肢体动作。
 _K_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
     (
@@ -1143,6 +1150,15 @@ def _boost_short_with_mid_lines(
 
     existing = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
     blob = "".join(existing)
+    seed_blob = "".join(
+        str(item.get("line") or item.get("intent") or "")
+        for item in (dialogue_seed or [])
+        if isinstance(item, dict)
+    )
+    g_cleanup = bool(
+        st == "G"
+        and re.search(r"收(?:好|拾|回|玩具)|放回|整理", f"{blob}{seed_blob}")
+    )
     if m8_j:
         if _j_lose_line_index(dialogue) >= 0:
             return story, False
@@ -1210,6 +1226,8 @@ def _boost_short_with_mid_lines(
         pair_pool = _M8_J_NATURAL_MID_PAIRS
     elif st == "J":
         pair_pool = _GOLD_CHAT_NATURAL_MID_PAIRS
+    elif g_cleanup:
+        pair_pool = _G_CLEANUP_NATURAL_MID_PAIRS
     elif st == "N":
         pair_pool = n_pair_pool
     elif st == "K":

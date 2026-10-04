@@ -38,6 +38,7 @@ _RELAY_SPEECH = re.compile(
     r"(?:妈妈|爸爸)(?:说了|说，|教过|告诉我|说过)|"
     r"你上次说的呀|一位(?:妈妈|爸爸)|经验分享|第[一二三四1-4]招"
 )
+_RELAY_PARENT_PREFIX = re.compile(r"^(?:妈妈|爸爸)(?:说了|说过|说)[，,:： ]+")
 _REMAP_SIBLING_TERMS = re.compile(r"哥哥|弟弟")
 
 CHAT_LINE_COUNT_MIN = 12
@@ -1050,6 +1051,11 @@ def patch_dialogue_narration_to_speech(story: dict[str, Any]) -> list[str]:
             continue
         sp = str(item.get("speaker") or "").strip()
         line = str(item.get("line") or "").strip()
+        relay_direct = _RELAY_PARENT_PREFIX.sub("", line).strip()
+        if relay_direct and relay_direct != line:
+            item["line"] = relay_direct
+            line = relay_direct
+            notes.append(f"转述→现场对白[{i + 1}]")
         if not looks_like_narration_line(line):
             continue
         new_line = rewrite_narration_to_speech(line, speaker=sp)

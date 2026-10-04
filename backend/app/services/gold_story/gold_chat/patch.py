@@ -2180,17 +2180,17 @@ def apply_opening_causality_local_patch(
         expected = str(entry.get("speaker") or "").strip()
         if not expected or not seed:
             return None
-        candidates: list[Any] = []
+        candidates: list[tuple[Any, bool]] = []
         if 0 <= entry_index < len(seed):
-            candidates.append(seed[entry_index])
+            candidates.append((seed[entry_index], True))
         candidates.extend(
-            item
+            (item, False)
             for i, item in enumerate(seed[: len(entries)])
             if i != entry_index
         )
         from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
 
-        for item in candidates:
+        for item, same_slot in candidates:
             if not isinstance(item, dict):
                 continue
             if str(item.get("speaker") or "").strip() != expected:
@@ -2209,6 +2209,25 @@ def apply_opening_causality_local_patch(
                 continue
             if _line_fulfills_beat(expected, spoken, entry):
                 return {"speaker": expected, "line": spoken}
+
+            # H3b 同槽 seed 可能用语义标签表达 speech-act，而冒号后才是真正对白。
+            # 例如 beat 写“嬉皮笑脸东拉西扯”，seed 写“嬉皮笑脸：姐你今天真好看”。
+            # 仅信任“同槽 + 标签命中 beat + 冒号后为可说出口对白”，避免把动作 seed 当台词。
+            if same_slot and raw_intent and re.search(r"[：:]", raw_intent):
+                tag = re.split(r"[：:]", raw_intent, maxsplit=1)[0].strip()
+                entry_intent = str(entry.get("intent") or entry.get("beat") or "")
+                if 2 <= len(tag) <= 12 and tag in entry_intent:
+                    from app.services.gold_story.scene import (
+                        collect_voice_errors,
+                        looks_like_narration_line,
+                    )
+
+                    seed_row = {"speaker": expected, "line": spoken}
+                    if (
+                        not looks_like_narration_line(spoken)
+                        and not collect_voice_errors([seed_row])
+                    ):
+                        return seed_row
 
             # H3b seed 是已生成契约，可接受与 beat intent 的自然改写；
             # 但只在家长立规拍里把语义等价 seed 补成显式规则句，

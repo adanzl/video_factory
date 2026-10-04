@@ -1753,6 +1753,15 @@ _RE_INTENT_INTERRUPT = re.compile(r"插嘴|打断|岔|救场|转移|离谱|请�
 _RE_INTENT_DEFEND = re.compile(r"辩解|推托|忘|本来|没做|没写|推脱|借口")
 _RE_INTENT_STUN = re.compile(r"愣|停|放下|叹气|接不住|傻眼")
 _RE_INTENT_REBUTTAL = re.compile(r"质疑|反驳|嘴硬|否认|纠正")
+_RE_INTENT_STALL = re.compile(
+    r"耍赖|嬉皮笑脸|东拉西扯|转移话题|拖延|磨蹭|打哈哈|插科打诨"
+)
+_RE_STALL_LINE = re.compile(
+    r"真好看|真漂亮|漂亮|好帅|真帅|真可爱|"
+    r"先(?:歇|休息|等会|等等)|等会|待会|一会儿|"
+    r"行不行|能不能|可不可以|别急|聊点|说点别的|"
+    r"我(?:手疼|累|渴|饿)"
+)
 _RE_REBUTTAL_LINE = re.compile(
     r"(?:不是|不叫|不算|才不|哪是|明明|我(?:才|明明|就是|那叫))"
 )
@@ -1867,6 +1876,10 @@ def _intent_speech_acts(intent: str) -> set[str]:
         body and _RE_INTENT_REBUTTAL.search(body) and not acts
     ):
         acts.add("rebuttal")
+    if _RE_INTENT_STALL.search(tag) or (
+        body and _RE_INTENT_STALL.search(body) and not acts
+    ):
+        acts.add("stall")
     if not acts:
         if (
             _RE_INTENT_TRIGGER.search(text)
@@ -1882,6 +1895,8 @@ def _intent_speech_acts(intent: str) -> set[str]:
             acts.add("stun")
         if _RE_INTENT_REBUTTAL.search(text):
             acts.add("rebuttal")
+        if _RE_INTENT_STALL.search(text):
+            acts.add("stall")
     return acts
 
 
@@ -1996,6 +2011,8 @@ def _line_fulfills_beat(
         return True
     if "rebuttal" in acts and _opening_rebuttal_matches(intent, line):
         return True
+    if "stall" in acts and speaker in {"昭昭", "灿灿"}:
+        return bool(_RE_STALL_LINE.search(line))
     if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
         authority_kind = _opening_authority_intent_kind(intent)
         if authority_kind == "blame":

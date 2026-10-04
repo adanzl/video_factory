@@ -182,6 +182,74 @@ def test_generic_n_near_miss_does_not_inject_attitude_tails():
     assert already_particle == "铅笔找不到了嘛。"
 
 
+def test_relay_parent_prefix_is_rewritten_to_direct_speech():
+    from app.services.gold_story.scene import (
+        collect_voice_errors,
+        patch_dialogue_narration_to_speech,
+    )
+
+    story = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "妈妈说，用过的东西放回原位，这是习惯。"},
+        ],
+    }
+    notes = patch_dialogue_narration_to_speech(story)
+
+    assert story["dialogue"][0]["line"] == "用过的东西放回原位，这是习惯。"
+    assert notes == ["转述→现场对白[1]"]
+    assert collect_voice_errors(story["dialogue"]) == []
+
+
+    not_relay = {"dialogue": [{"speaker": "昭昭", "line": "反正爸爸说了算。"}]}
+    assert patch_dialogue_narration_to_speech(not_relay) == []
+    assert not_relay["dialogue"][0]["line"] == "反正爸爸说了算。"
+
+
+def test_g_cleanup_224_near_miss_closes_with_semantic_mid_pair():
+    from app.services.gold_story.gold_chat.length import _stabilize_local_length_candidate
+
+    def fit(text: str, size: int) -> str:
+        core = text.rstrip("。")
+        return (core + "真" * size)[: size - 1] + "。"
+
+    bases = [
+        ("妈妈", "昭昭把玩具收好"),
+        ("昭昭", "我还没玩完等会再收"),
+        ("灿灿", "用完的东西要放回去"),
+        ("昭昭", "你干嘛动我的积木"),
+        ("灿灿", "我先把这边收起来"),
+        ("昭昭", "我还想继续玩呢"),
+        ("灿灿", "那我先去看书了"),
+        ("昭昭", "等等剩下的我来收"),
+        ("灿灿", "那边还有几块别漏"),
+        ("昭昭", "知道啦我这就收"),
+        ("灿灿", "我去沙发看书"),
+        ("昭昭", "那我也读给我留位置"),
+    ]
+    dialogue = [
+        {"speaker": speaker, "line": fit(line, 18 if i < 8 else 20)}
+        for i, (speaker, line) in enumerate(bases)
+    ]
+    story = {"story_type": "G", "dialogue": dialogue}
+    assert gc.dialogue_total_chars(story) == 224
+
+    out, changed = _stabilize_local_length_candidate(
+        story,
+        structure_type="G",
+        mechanism="M4",
+        dialogue_seed=[
+            {"speaker": "妈妈", "intent": "昭昭，把玩具收好"},
+            {"speaker": "灿灿", "intent": "把积木按颜色码进箱子"},
+        ],
+    )
+
+    assert changed
+    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    lines = [str(row.get("line") or "") for row in out["dialogue"]]
+    assert "你还真要把这些都收好啊？" in lines
+    assert "我先把手边这些放回去。" in lines
+
+
 def test_n_local_semantic_mid_pair_recovers_clean_q96_shape():
     from app.services.daily_story.story_types.n.validate import append_n_body_errors
     from app.services.gold_story.gold_chat.length import (

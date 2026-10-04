@@ -961,6 +961,41 @@ def test_opening_causality_patch_uses_seed_for_missing_middle_beat():
     assert fixed["dialogue"][3]["speaker"] == "妈妈"
 
 
+def test_opening_causality_patch_uses_tagged_same_slot_seed_for_102_teasing_beat():
+    """#102：一锤已出现但 beat2 缺失时，用同槽 H3b 的现场调侃对白补在一锤之前。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "灿灿", "intent": "立规：辅导作业，沉脸警告昭昭别耍赖"},
+        {"beat": 2, "speaker": "昭昭", "intent": "耍赖：嬉皮笑脸东拉西扯不听"},
+        {"beat": 3, "speaker": "灿灿", "intent": "一锤：抬手一巴掌，昭昭立刻老实"},
+    ]
+    seed = [
+        {"speaker": "灿灿", "intent": "沉脸警告：写作业别耍赖"},
+        {"speaker": "昭昭", "intent": "嬉皮笑脸：姐你今天真好看"},
+        {"speaker": "灿灿", "intent": "别扯别的，笔拿起来"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "写作业别耍赖，笔拿起来。"},
+            {"speaker": "灿灿", "line": "抬手一巴掌，昭昭立刻老实。"},
+        ],
+    }
+
+    fixed, changed = apply_opening_causality_local_patch(
+        story,
+        beat_chain=beat,
+        mom_lines_max=3,
+        dialogue_seed=seed,
+    )
+
+    assert changed
+    assert fixed["dialogue"][1] == {"speaker": "昭昭", "line": "姐你今天真好看。"}
+    assert fixed["dialogue"][2]["line"] == "抬手一巴掌，昭昭立刻老实。"
+    assert opening_causality_passes(fixed, beat, mom_lines_max=3)
+
+
 def test_opening_causality_patch_rejects_o106_narrative_rule_seed():
     """#106：剧情式 H3b seed 不能靠补“说好了”伪装成自然规则对白。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
