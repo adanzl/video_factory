@@ -2047,6 +2047,34 @@ def gold_story_to_gold_chat(
                     dialogue_seed=seed,
                     mechanism=mechanism,
                 )
+            if (
+                str(structure_type or "").upper() == "G"
+                and str(mechanism or "").upper() == "M4"
+            ):
+                from app.services.gold_story.gold_chat.convert import (
+                    patch_gold_chat_consecutive_siblings,
+                )
+
+                before_g_chars = dialogue_total_chars(chat)
+                chat, g_consecutive_notes = patch_gold_chat_consecutive_siblings(
+                    chat,
+                    dialogue_seed=seed if isinstance(seed, list) else None,
+                )
+                if g_consecutive_notes:
+                    if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
+                        chat, _ = _boost_short_with_mid_lines(
+                            chat,
+                            mechanism=mechanism,
+                            structure_type="G",
+                            beat_chain=beat_chain,
+                            dialogue_seed=seed if isinstance(seed, list) else None,
+                        )
+                    logger.info(
+                        "gold_chat pre-score G behavior consecutive close chars=%s->%s notes=%s",
+                        before_g_chars,
+                        dialogue_total_chars(chat),
+                        "；".join(g_consecutive_notes[:6]),
+                    )
             # 留在当前候选上修复；预算耗尽才退出，不丢稿重抽。
             repair_error = ""
             while True:

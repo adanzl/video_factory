@@ -250,6 +250,124 @@ def test_g_cleanup_224_near_miss_closes_with_semantic_mid_pair():
     assert "我先把手边这些放回去。" in lines
 
 
+def test_g_111_pre_score_consecutive_cleanup_recovers_structure_without_filler():
+    from app.services.daily_story.prompts import dialogue_total_chars
+    from app.services.daily_story.quality import score_daily_story
+    from app.services.gold_story.gold_chat.convert import (
+        patch_gold_chat_consecutive_siblings,
+    )
+    from app.services.gold_story.gold_chat.length import _boost_short_with_mid_lines
+
+    story = {
+        "story_type": "G",
+        "conflict_core": "昭昭拒绝收玩具，灿灿示范后昭昭主动跟随",
+        "punchline_explain": "G类嘴硬心软，行动示范后主动跟随暖收",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭，把玩具收好，地上都下不去脚了。"},
+            {"speaker": "昭昭", "line": "我还没玩完呢，等会儿再收。"},
+            {"speaker": "灿灿", "line": "昭昭，你踢积木干嘛？都散到沙发底下了。"},
+            {"speaker": "昭昭", "line": "我就踢！反正我还没玩完，不收。"},
+            {"speaker": "灿灿", "line": "用过的东西放回原位，这是习惯。"},
+            {"speaker": "灿灿", "line": "不是罚你，是下次想玩一找就找到。"},
+            {"speaker": "昭昭", "line": "我就是还没玩完，你别管我。"},
+            {"speaker": "灿灿", "line": "行，我不吵，我把积木按颜色码好。"},
+            {"speaker": "灿灿", "line": "红色放这格，蓝色放那格，你看着。"},
+            {"speaker": "昭昭", "line": "姐姐，你码积木干嘛？又不玩了。"},
+            {"speaker": "灿灿", "line": "我拿绘本看，每天读书学习是第十条。"},
+            {"speaker": "昭昭", "line": "第十条？妈妈说的第十条是啥？"},
+            {"speaker": "灿灿", "line": "对，妈妈说的，每天读书学习不能忘。"},
+            {"speaker": "昭昭", "line": "那我也读，等我先把玩具收进柜子。"},
+            {"speaker": "昭昭", "line": "姐姐，我收好了，挤一挤一起看。"},
+            {"speaker": "灿灿", "line": "好，你坐这边，我翻页你跟着念。"},
+            {"speaker": "昭昭", "line": "我念得慢，你别笑我。"},
+            {"speaker": "灿灿", "line": "不笑，我等你，第十条要一起做到。"},
+        ],
+    }
+    seed = [
+        {"speaker": "妈妈", "intent": "昭昭，把玩具收好"},
+        {"speaker": "昭昭", "intent": "我还没玩完呢"},
+        {"speaker": "灿灿", "intent": "把积木按颜色码好"},
+        {"speaker": "昭昭", "intent": "那我也读"},
+    ]
+
+    cleaned, notes = patch_gold_chat_consecutive_siblings(
+        story,
+        dialogue_seed=seed,
+    )
+    assert len([n for n in notes if n.startswith("G行动连说去冗余")]) == 3
+
+    if dialogue_total_chars(cleaned) < gc.DAILY_STORY_BODY_CHARS_MIN:
+        cleaned, changed = _boost_short_with_mid_lines(
+            cleaned,
+            structure_type="G",
+            mechanism="M4",
+            dialogue_seed=seed,
+        )
+        assert changed
+
+    assert dialogue_total_chars(cleaned) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    kid_speakers = [
+        str(row.get("speaker") or "")
+        for row in cleaned["dialogue"]
+        if str(row.get("speaker") or "") in {"昭昭", "灿灿"}
+    ]
+    assert all(a != b for a, b in zip(kid_speakers, kid_speakers[1:]))
+
+    quality = score_daily_story(cleaned, skip_relevancy=True)
+    reasons = " ".join(str(x) for x in quality.get("reasons") or [])
+    assert int(quality.get("structure_score") or 0) >= 75
+    assert "存在同人连说" not in reasons
+    assert "冲突推进不足" not in reasons
+
+
+def test_102_action_narration_is_locally_rewritten_without_structure_repair():
+    from app.services.gold_story.scene import (
+        collect_narration_dialogue_errors,
+        collect_voice_errors,
+        patch_dialogue_narration_to_speech,
+        sanitize_dialogue_seed_speech,
+    )
+
+    story = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "抬手一巴掌拍在桌上，昭昭立刻缩手老实！"},
+            {"speaker": "灿灿", "line": "端碗只说一个字：喝，眼神一冷昭昭就怂！"},
+            {"speaker": "昭昭", "line": "乖乖接过碗，仰头灌了下去，苦得直咧嘴！"},
+            {"speaker": "昭昭", "line": "抹着眼泪，二十年后又是一条好汉！"},
+            {"speaker": "灿灿", "line": "瞪他一眼，作业写不写"},
+        ],
+    }
+    notes = patch_dialogue_narration_to_speech(story)
+
+    assert len(notes) == 5
+    assert [row["line"] for row in story["dialogue"]] == [
+        "一巴掌就老实了吧！",
+        "喝！",
+        "苦死我了！",
+        "二十年后又是一条好汉！",
+        "作业写不写？",
+    ]
+    assert collect_narration_dialogue_errors(story["dialogue"]) == []
+    assert collect_voice_errors(story["dialogue"]) == []
+
+    seed = sanitize_dialogue_seed_speech(
+        [
+            {"speaker": "灿灿", "intent": "抬手一巴掌，昭昭立刻老实"},
+            {"speaker": "灿灿", "intent": "端碗只说一个字：喝"},
+            {"speaker": "昭昭", "intent": "乖乖接过碗，仰头灌了下去"},
+            {"speaker": "昭昭", "intent": "抹着眼泪，二十年后又是一条好汉"},
+            {"speaker": "灿灿", "intent": "瞪他一眼，作业写不写"},
+        ]
+    )
+    assert [row["intent"] for row in seed] == [
+        "一巴掌就老实了吧！",
+        "喝！",
+        "我喝了！",
+        "二十年后又是一条好汉！",
+        "作业写不写？",
+    ]
+
+
 def test_n_local_semantic_mid_pair_recovers_clean_q96_shape():
     from app.services.daily_story.story_types.n.validate import append_n_body_errors
     from app.services.gold_story.gold_chat.length import (

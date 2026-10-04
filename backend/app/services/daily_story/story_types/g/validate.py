@@ -34,7 +34,7 @@ RE_BEHAVIOR_SOFTEN = re.compile(
     r"那我也|我也(?:来|做|收|读|看|学|帮)|我来(?:做|收|帮)|"
     r"我跟你|跟你一起|算我一个|这就(?:做|收|写|读)|一起(?:做|收|读|看|学)"
 )
-RE_BEHAVIOR_REACTION = re.compile(r"你干嘛|你在干嘛|干嘛呢|你做什么|你在做什么")
+RE_BEHAVIOR_REACTION = re.compile(r"你(?:在)?[^，。！？?!]{0,8}(?:干嘛|做什么)|干嘛呢")
 # 须双方僵持结构；裸「谁也不」会误伤「谁也没走成」
 RE_F_STALE = re.compile(
     r"不跟你玩|不跟你好了|不理你|回家.*不|"

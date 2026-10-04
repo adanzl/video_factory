@@ -22,7 +22,7 @@ RE_BEHAVIOR_SOFTEN = re.compile(
     r"那我也|我也(?:来|做|收|读|看|学|帮)|我来(?:做|收|帮)|"
     r"我跟你|跟你一起|算我一个|这就(?:做|收|写|读)|一起(?:做|收|读|看|学)"
 )
-RE_BEHAVIOR_REACTION = re.compile(r"你干嘛|你在干嘛|干嘛呢|你做什么|你在做什么")
+RE_BEHAVIOR_REACTION = re.compile(r"你(?:在)?[^，。！？?!]{0,8}(?:干嘛|做什么)|干嘛呢")
 
 # 与 validate 权威点题槽位对齐（抽象，禁绑单篇词）
 RE_AUTH_RULE = re.compile(r"谁先|立规|约好|规定|规矩|定规|作业|写完")

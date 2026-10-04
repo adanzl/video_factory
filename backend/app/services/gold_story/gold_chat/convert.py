@@ -359,6 +359,14 @@ def _realign_j_role_speakers(
 _MERGE_CONTINUATION = re.compile(
     r"^(所以|而且|那|然后|就是|还|再|可|但|不过|我|你)"
 )
+_G_BEHAVIOR_CLEANUP_CONTEXT_RE = re.compile(
+    r"玩具|积木|收(?:好|拾)|放回|整理|码(?:好|进)|还没玩完|不收|等会(?:儿)?再收"
+)
+_G_BEHAVIOR_REDUNDANT_FOLLOWUP_RE = re.compile(
+    r"^(?:不是罚|下次.{0,12}(?:找|拿|用)|"
+    r"(?:红|蓝|颜色|这格|那格).{0,20}(?:放|码|格)|"
+    r"(?:姐姐[，,])?我(?:已经)?(?:收好|弄好|放好).{0,16}(?:一起|挤|看|读))"
+)
 
 
 def _can_merge_consecutive_sibling_lines(line_a: str, line_b: str) -> bool:
@@ -399,6 +407,14 @@ def patch_gold_chat_consecutive_siblings(
         return out, notes
 
     protect_tail = 4 if code in ("C", "D") else 0
+    body = "".join(
+        str(item.get("line") or "")
+        for item in dialogue
+        if isinstance(item, dict)
+    )
+    g_behavior_cleanup = bool(
+        code == "G" and _G_BEHAVIOR_CLEANUP_CONTEXT_RE.search(body)
+    )
 
     i = 1
     while i < len(dialogue):
@@ -419,6 +435,17 @@ def patch_gold_chat_consecutive_siblings(
             a["line"] = la.rstrip("。！？…!?") + "，" + lb
             dialogue.pop(i)
             notes.append(f"连说合并[{i}]")
+            continue
+        # G/M4 行动软化常把同一拍拆成“主句 + 细节补充”，但通用结构分会把
+        # 任意姐弟连说扣 15 分。只在明确收拾/行动上下文、且第二句是可识别的
+        # 冗余细节时删掉后句；不插“嗯”桥句，也不放宽通用连说评分。
+        if (
+            g_behavior_cleanup
+            and len(dialogue) > 12
+            and _G_BEHAVIOR_REDUNDANT_FOLLOWUP_RE.search(lb)
+        ):
+            dialogue.pop(i)
+            notes.append(f"G行动连说去冗余[{i + 1}]")
             continue
         i += 1
 

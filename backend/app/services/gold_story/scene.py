@@ -865,6 +865,12 @@ _NARRATION_LINE_RE = re.compile(
     r"(?:^|[，,])继续挠|"
     r"(?:看我)?吐舌头|"
     r"瞪你一眼|"
+    # 动作+结果被模型直接塞进 line：巴掌/端碗/吞咽/抹泪/冷眼均须口语化
+    r"(?:^|[，,])(?:抬手|扬手|挥手)[^。！？]{0,18}(?:一巴掌|巴掌|拍|打)|"
+    r"(?:^|[，,])(?:乖乖)?(?:端|端起|接过|拿起)[^。！？]{0,8}(?:碗|杯)|"
+    r"(?:^|[，,])仰头[^。！？]{0,12}(?:喝|灌)|"
+    r"(?:^|[，,])(?:抹着|擦着)眼泪|"
+    r"(?:^|[，,])眼神一冷|"
     # 动作/神态说明混入对白（抽象，不绑场景名词）
     r"拎起|"
     r"塞进(?:袋子|包)|"
@@ -925,6 +931,49 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
     if not raw or not looks_like_narration_line(raw):
         return raw
     sp = str(speaker or "").strip()
+    # “端碗只说一个字：喝”这类动作+原话，优先保留真正说出口的原话。
+    m_only_word = re.search(
+        r"只说(?:一个字|一句)[：:]\s*[“]?([^，。！？!?“”]{1,6})",
+        raw,
+    )
+    if m_only_word:
+        tail = m_only_word.group(1).strip()
+        if tail:
+            return tail + ("" if tail[-1] in "？！。!?" else "！")
+
+    # “抹着眼泪，二十年后……”：动作前缀去掉，保留后面的现场放话。
+    m_tears = re.match(r"^(?:抹着|擦着)眼泪[，,]\s*(.+)$", raw)
+    if m_tears:
+        tail = m_tears.group(1).strip("，。！？ ")
+        if tail and not looks_like_narration_line(tail):
+            return tail + ("" if tail[-1] in "？！。!?" else "！")
+
+    # “瞪他一眼，作业写不写”：去神态，只留可说出口的追问。
+    m_glare = re.match(
+        r"^瞪(?:灿灿|昭昭|她|他|你)?一眼[，,]\s*(.+)$",
+        raw,
+    )
+    if m_glare:
+        tail = m_glare.group(1).strip("，。！？ ")
+        if tail and not looks_like_narration_line(tail):
+            mark = "？" if re.search(r"不|吗|么|啥|什么|怎么|为什么", tail) else "！"
+            return tail + mark
+
+    # 一锤动作+对方秒怂是分镜结果，不让角色自述动作过程；保留“一巴掌/老实”结构锚。
+    if re.search(r"(?:抬手|扬手|挥手).{0,18}(?:一巴掌|巴掌|拍|打)", raw):
+        if re.search(r"老实|缩手|怂|不敢", raw):
+            return "一巴掌就老实了吧！"
+        return "还敢跟我顶嘴！"
+
+    # 接碗/仰头喝属于表演动作；角色只说当场反应。
+    if re.search(
+        r"(?:乖乖)?(?:端|端起|接过|拿起).{0,8}(?:碗|杯)|仰头.{0,12}(?:喝|灌)",
+        raw,
+    ):
+        if re.search(r"苦|咧嘴", raw):
+            return "苦死我了！"
+        return "我喝了！"
+
     # 咀嚼/塞食动作 → 可说的逞强短句（抽象，不绑具体食物）
     if re.search(r"一口(?:吞下|塞进|吞了)|奶油都?(?:挤|溢)", raw):
         return "看我一口吞！"

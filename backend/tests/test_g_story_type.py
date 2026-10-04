@@ -131,7 +131,7 @@ def test_g_validate_accepts_behavioral_follow_warm_branch_like_111():
             {"speaker": "妈妈", "line": "昭昭，玩具收好再玩。"},
             {"speaker": "昭昭", "line": "我还没玩完，等会儿再收。"},
             {"speaker": "灿灿", "line": "你不收，我先把这几块放回去。"},
-            {"speaker": "昭昭", "line": "你干嘛？"},
+            {"speaker": "昭昭", "line": "姐姐，你码积木干嘛？又不玩了。"},
             {"speaker": "灿灿", "line": "红色放这格，蓝色放那格。"},
             {"speaker": "昭昭", "line": "我才不学你呢。"},
             {"speaker": "灿灿", "line": "那我去看书了，你自己慢慢玩。"},
@@ -148,6 +148,16 @@ def test_g_validate_accepts_behavioral_follow_warm_branch_like_111():
     assert errors == [], errors
     lines = [row["line"] for row in story["dialogue"]]
     assert collect_g_humor_issues(lines) == []
+
+
+    from app.services.daily_story.quality import _score_escalation
+    from app.services.daily_story.story_types.g.quality import QUALITY_PROFILE
+
+    esc_points, _ = _score_escalation(
+        lines,
+        layer_patterns=QUALITY_PROFILE.layer_patterns(),
+    )
+    assert esc_points == 14
 
 
 def test_g_validate_authority_punchline_mode_skips_pivot_soft():
