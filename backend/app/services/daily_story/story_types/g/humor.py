@@ -17,6 +17,12 @@ RE_SOFT = re.compile(
     r"擦|药|说好了|行了|过来|撑腰|相视|笑|识相|饶|原谅|算了|"
     r"一起走|一起去|一起回|走吧|同路|顺路|没走成|谁也没",
 )
+RE_BEHAVIOR_RESIST = re.compile(r"还没玩完|别动|不收|不想|不要|先歇|等会")
+RE_BEHAVIOR_SOFTEN = re.compile(
+    r"那我也|我也(?:来|做|收|读|看|学|帮)|我来(?:做|收|帮)|"
+    r"我跟你|跟你一起|算我一个|这就(?:做|收|写|读)|一起(?:做|收|读|看|学)"
+)
+RE_BEHAVIOR_REACTION = re.compile(r"你干嘛|你在干嘛|干嘛呢|你做什么|你在做什么")
 
 # 与 validate 权威点题槽位对齐（抽象，禁绑单篇词）
 RE_AUTH_RULE = re.compile(r"谁先|立规|约好|规定|规矩|定规|作业|写完")
@@ -61,13 +67,20 @@ def collect_g_humor_issues(
         if not RE_AUTH_PUNCH.search(tail) and not RE_AUTH_PUNCH.search(body):
             issues.append("缺权威点题收束")
         return issues
-    if not RE_ESCALATE.search(body):
-        issues.append("缺数落/互损升级")
-    if not RE_PIVOT.search(body):
-        issues.append("缺 pivot 护短/真心")
-    if not RE_STUNNED.search(body):
-        issues.append("缺 pivot 后愣住 beat")
+    behavior_soften = bool(RE_BEHAVIOR_SOFTEN.search(body))
+    if not RE_ESCALATE.search(body) and not (
+        behavior_soften and RE_BEHAVIOR_RESIST.search(body)
+    ):
+        issues.append("缺数落/拒绝升级")
+    if not RE_PIVOT.search(body) and not behavior_soften:
+        issues.append("缺 pivot 护短/真心或行动软化")
+    if not RE_STUNNED.search(body) and not (
+        behavior_soften and RE_BEHAVIOR_REACTION.search(body)
+    ):
+        issues.append("缺 pivot 后愣住/惊讶 beat")
     soft_tail = "".join(lines[-3:]) if lines else ""
-    if soft_tail and not RE_SOFT.search(soft_tail):
-        issues.append("末段缺暖收信号")
+    if soft_tail and not RE_SOFT.search(soft_tail) and not (
+        behavior_soften and RE_BEHAVIOR_SOFTEN.search(soft_tail)
+    ):
+        issues.append("末段缺暖收/主动跟随信号")
     return issues

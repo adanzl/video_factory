@@ -604,6 +604,16 @@ def test_authority_punchline_skin_swap_no_theme_words():
     assert suggests_authority_punchline_close(skin)
 
 
+def test_story_102_natural_compliance_is_m8_j_domination():
+    raw = (
+        "姐姐辅导弟弟写作业，弟弟嬉皮笑脸东拉西扯，姐姐沉脸警告别耍赖。"
+        "弟弟说手疼先歇会儿行不行，姐姐一巴掌后他立刻老实。"
+        "后来姐姐端药只说喝，弟弟乖乖灌下去。"
+        "弟弟刚嘴硬二十年后又是一条好汉，被姐姐瞪一眼马上改口我这就写作业。"
+    )
+    assert suggests_m8_j_domination(raw)
+
+
 def test_true_g_relational_not_authority_mode():
     """真情 pivot+暖收 不得打权威点题旁路。"""
     from app.services.gold_story.structure_resolve import (

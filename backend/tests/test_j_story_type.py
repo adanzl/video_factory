@@ -154,6 +154,33 @@ def test_j_validate_accepts_m8_surrender_phrases():
     assert errors == [], errors
 
 
+def test_j_validate_accepts_natural_m8_compliance_like_102():
+    """M8+J 可用自然试探 + 被压住后照做，不要求字面“我输了/回房间”。"""
+    story = {
+        "story_type": "J",
+        "punchline_explain": "J类权威压住，姐姐一锤镇住后弟弟照做",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "作业先写，别耍赖。"},
+            {"speaker": "昭昭", "line": "姐你今天真好看。"},
+            {"speaker": "灿灿", "line": "别扯别的，笔拿起来。"},
+            {"speaker": "昭昭", "line": "我手疼，先歇会儿行不行？"},
+            {"speaker": "灿灿", "line": "不行，先把这题写完。"},
+            {"speaker": "昭昭", "line": "好吧，我写。"},
+            {"speaker": "妈妈", "line": "昭昭，把药喝了。"},
+            {"speaker": "昭昭", "line": "太苦了，我不喝。"},
+            {"speaker": "灿灿", "line": "喝。"},
+            {"speaker": "昭昭", "line": "行行行，我乖乖喝。"},
+            {"speaker": "昭昭", "line": "二十年后我又是一条好汉。"},
+            {"speaker": "灿灿", "line": "还嘴硬？现在听我的。"},
+            {"speaker": "昭昭", "line": "我这就写作业。"},
+            {"speaker": "灿灿", "line": "听我的就对了。"},
+        ],
+    }
+    errors: list[str] = []
+    append_j_body_errors(story, errors)
+    assert errors == [], errors
+
+
 def test_j_patch_dedupes_authority_repeat():
     from app.services.daily_story.story_types.j.patch import patch_j_body
 

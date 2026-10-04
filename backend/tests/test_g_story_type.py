@@ -121,6 +121,35 @@ def test_g_validate_f_stale_softened_by_warm_tail():
     assert not any("威胁僵持" in e for e in errors)
 
 
+def test_g_validate_accepts_behavioral_follow_warm_branch_like_111():
+    """M4+G 行动递台词：拒绝→看见示范→惊讶→主动跟随，不硬造护短真情。"""
+    from app.services.daily_story.story_types.g.humor import collect_g_humor_issues
+
+    story = {
+        "punchline_explain": "G类嘴硬心软，行动示范后主动跟随暖收",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭，玩具收好再玩。"},
+            {"speaker": "昭昭", "line": "我还没玩完，等会儿再收。"},
+            {"speaker": "灿灿", "line": "你不收，我先把这几块放回去。"},
+            {"speaker": "昭昭", "line": "你干嘛？"},
+            {"speaker": "灿灿", "line": "红色放这格，蓝色放那格。"},
+            {"speaker": "昭昭", "line": "我才不学你呢。"},
+            {"speaker": "灿灿", "line": "那我去看书了，你自己慢慢玩。"},
+            {"speaker": "昭昭", "line": "等等，剩下这些我来收。"},
+            {"speaker": "灿灿", "line": "那边还有两块，别漏了。"},
+            {"speaker": "昭昭", "line": "知道啦，这就收。"},
+            {"speaker": "灿灿", "line": "我去沙发看书。"},
+            {"speaker": "昭昭", "line": "那我也读，给我留个位。"},
+            {"speaker": "灿灿", "line": "行，一起看。"},
+        ],
+    }
+    errors: list[str] = []
+    append_g_body_errors(story, errors)
+    assert errors == [], errors
+    lines = [row["line"] for row in story["dialogue"]]
+    assert collect_g_humor_issues(lines) == []
+
+
 def test_g_validate_authority_punchline_mode_skips_pivot_soft():
     """closing_mode=authority_punchline 走权威点题槽，不卡 pivot/暖收。"""
     from app.services.gold_story.structure_resolve import (

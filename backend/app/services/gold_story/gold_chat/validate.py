@@ -1935,6 +1935,22 @@ def _opening_rebuttal_matches(intent: str, line: str) -> bool:
     required = 2 if len(clauses) >= 2 else 1
     return hits >= required
 
+def _opening_rule_semantic_matches(intent: str, line: str) -> bool:
+    """立规可由家长或年长孩子发起；允许自然祈使句语义落地，但须有命令/约束口气。"""
+    text = str(line or "").strip()
+    if not text:
+        return False
+    if RE_AUTH_RULE_SLOT.search(text):
+        return True
+    if not re.search(r"别|不许|不准|先|要|得|给我|快|赶紧|行不行|听话", text):
+        return False
+    clauses = _opening_semantic_clauses(intent)
+    if not clauses:
+        return False
+    line_han = "".join(re.findall(r"[\u4e00-\u9fff]", text))
+    hits = sum(1 for clause in clauses if _opening_clause_matches_line(clause, line_han))
+    return hits >= 1
+
 
 _RE_PARENT_LATE_REACTION_PREFIX = re.compile(
     r"^(?:你(?:刚才)?说(?:啥|什么)|你说的(?:啥|什么)|"
@@ -1991,7 +2007,7 @@ def _line_fulfills_beat(
             # 裸“怎么/为什么”只能说明是疑问，不能证明它在落地本 beat。
             return bool(_RE_BLAME_LINE.search(line))
         if authority_kind == "rule":
-            return bool(RE_AUTH_RULE_SLOT.search(line))
+            return _opening_rule_semantic_matches(intent, line)
         if authority_kind == "accountability":
             if _RE_STUN_REACT_LINE.search(line) and not (
                 _RE_BLAME_LINE.search(line) or _RE_ACCOUNTABILITY_LINE.search(line)
@@ -2004,6 +2020,12 @@ def _line_fulfills_beat(
                 or _RE_BLAME_LINE.search(line)
             )
         return bool(_RE_PARENT_TRIGGER_LINE.search(line))
+    if (
+        "trigger" in acts
+        and speaker in {"昭昭", "灿灿"}
+        and _opening_authority_intent_kind(intent) == "rule"
+    ):
+        return _opening_rule_semantic_matches(intent, line)
     if "defend" in acts and speaker in {"昭昭", "灿灿"}:
         return bool(_RE_DEFEND_LINE.search(line))
     if "interrupt" in acts and speaker in {"昭昭", "灿灿"}:

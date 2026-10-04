@@ -26,11 +26,14 @@ _RE_C_DUAL_FAIR = re.compile(
     re.DOTALL,
 )
 _RE_DOMINATION = re.compile(
-    r"打|拳|肘击|踢|按倒|锁住|扭打|ko|压制|镇住|一锤|最强形态|"
+    r"打|巴掌|扇|拳|肘击|踢|按倒|锁住|扭打|ko|压制|镇住|一锤|最强形态|"
     r"草莓熊|互毁|互打",
     re.IGNORECASE,
 )
-_RE_SURRENDER = re.compile(r"我输了|认输|不敢再|怂|服软|败下阵来?|当场")
+_RE_SURRENDER = re.compile(
+    r"我输了|认输|不敢再|怂|服软|败下阵来?|当场|"
+    r"立刻老实|老实了|乖乖|我这就(?:写|做|去|喝)|马上(?:改口|写|做|去)"
+)
 _RE_WINNER_RULE = re.compile(r"谁赢了?谁说了算|谁赢谁|赢了说了算|胜者为王")
 _RE_DEFERRED_GRUDGE = re.compile(r"等我长大|以后再|再跟你算账|忍气吞声|来日再")
 _RE_SOLEMN_NONSENSE = re.compile(

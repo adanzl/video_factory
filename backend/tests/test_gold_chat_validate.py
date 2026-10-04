@@ -1486,6 +1486,50 @@ def test_opening_causality_mom_blame_zhao_interrupt_mom_stun_ok():
     assert not collect_opening_causality_issues(story)
 
 
+def test_opening_causality_patch_accepts_sibling_rule_seed_like_102():
+    """姐姐可作为 J/M8 的立规权威；可信 H3b seed 应本地补首拍，不烧 LLM 预算。"""
+    from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {
+            "beat": 1,
+            "speaker": "灿灿",
+            "intent": "立规：辅导作业，沉脸警告昭昭别耍赖",
+        },
+        {
+            "beat": 2,
+            "speaker": "昭昭",
+            "intent": "耍赖：嬉皮笑脸东拉西扯不听",
+        },
+    ]
+    seed = [
+        {"speaker": "灿灿", "intent": "沉脸警告：写作业别耍赖"},
+        {"speaker": "昭昭", "intent": "嬉皮笑脸：姐你今天真好看"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐你今天真好看。"},
+            {"speaker": "灿灿", "line": "别扯别的，笔拿起来。"},
+            {"speaker": "昭昭", "line": "我手疼，先歇会儿行不行？"},
+        ],
+    }
+
+    assert not opening_causality_passes(story, beat, mom_lines_max=3)
+    fixed, changed = apply_opening_causality_local_patch(
+        story,
+        beat_chain=beat,
+        mom_lines_max=3,
+        dialogue_seed=seed,
+    )
+
+    assert changed
+    assert fixed["dialogue"][0]["speaker"] == "灿灿"
+    assert "作业" in fixed["dialogue"][0]["line"]
+    assert "别耍赖" in fixed["dialogue"][0]["line"]
+    assert opening_causality_passes(fixed, beat, mom_lines_max=3)
+
+
 def test_short_spot_unfreezes_head_when_opening_not_ok():
     from app.services.gold_story.gold_chat.repair import list_short_spot_editable_line_nos
 

@@ -27,6 +27,14 @@ RE_SOFT_CLOSE = re.compile(
     r"擦|药|说好了|行了|过来|撑腰|嗯|笑|好\s*吧|别.*欺负|识相|饶|原谅|算了|"
     r"一起走|一起去|一起回|走吧|同路|顺路|没走成|谁也没",
 )
+# M4+G 还允许“行动递台词”：一方先嘴硬/拒绝，看到对方示范后主动跟随，
+# 用行为软化代替护短真情句；这是 H3 已允许的暖收分支，不是放宽成任意和好。
+RE_BEHAVIOR_RESIST = re.compile(r"还没玩完|别动|不收|不想|不要|先歇|等会")
+RE_BEHAVIOR_SOFTEN = re.compile(
+    r"那我也|我也(?:来|做|收|读|看|学|帮)|我来(?:做|收|帮)|"
+    r"我跟你|跟你一起|算我一个|这就(?:做|收|写|读)|一起(?:做|收|读|看|学)"
+)
+RE_BEHAVIOR_REACTION = re.compile(r"你干嘛|你在干嘛|干嘛呢|你做什么|你在做什么")
 # 须双方僵持结构；裸「谁也不」会误伤「谁也没走成」
 RE_F_STALE = re.compile(
     r"不跟你玩|不跟你好了|不理你|回家.*不|"
@@ -133,14 +141,27 @@ def append_g_body_errors(story: dict, errors: list[str]) -> None:
 
     body = "".join(lines)
     tail3 = "".join(lines[-3:])
-    if not RE_PIVOT.search(body):
-        errors.append("G类：正文须有 pivot（护短/护姐/真心一句）")
-    if not RE_STUNNED.search(body):
-        errors.append("G类：pivot 后须有愣住 beat（你说啥/……等）")
-    if not RE_SOFT_CLOSE.search(tail3):
-        errors.append("G类：末段须暖收或半暖（擦药/撑腰/说好了等）")
+    behavior_branch = bool(
+        RE_BEHAVIOR_RESIST.search(body)
+        and RE_BEHAVIOR_SOFTEN.search(body)
+    )
+    pivot_ok = bool(RE_PIVOT.search(body) or behavior_branch)
+    stunned_ok = bool(
+        RE_STUNNED.search(body)
+        or (behavior_branch and RE_BEHAVIOR_REACTION.search(body))
+    )
+    soft_close_ok = bool(
+        RE_SOFT_CLOSE.search(tail3)
+        or (behavior_branch and RE_BEHAVIOR_SOFTEN.search(tail3))
+    )
+    if not pivot_ok:
+        errors.append("G类：正文须有 pivot（护短/真心，或行动示范后主动跟随）")
+    if not stunned_ok:
+        errors.append("G类：pivot 后须有愣住/惊讶 beat（你说啥/你干嘛等）")
+    if not soft_close_ok:
+        errors.append("G类：末段须暖收或主动跟随（擦药/说好了/那我也…等）")
     if RE_BOOMERANG_RULE.search(tail3):
         errors.append("G类：末段勿 C 式回旋镖戳穿")
     # 末段已有暖收信号时，不把残余互呛词当 F 僵持
-    if RE_F_STALE.search(tail3) and not RE_SOFT_CLOSE.search(tail3):
+    if RE_F_STALE.search(tail3) and not soft_close_ok:
         errors.append("G类：末段勿 F 式威胁僵持")
