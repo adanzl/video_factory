@@ -963,15 +963,32 @@ def run_export_semantic_review(
                 temperature=0.0,
             )
         except Exception as exc:
-            logger.warning("[GOLD_CHAT] export semantic review call failed: %s", exc)
-            return ExportSemanticReviewResult(
-                completed=False,
-                error=str(exc) or "LLM 调用失败",
-            )
-        if not isinstance(raw, dict) or "issues" not in raw:
-            shape_err = "审读 JSON 缺 issues 字段"
+            err = str(exc) or "LLM 调用失败"
+            # _chat_json 内部已经对坏 JSON 做过一次格式重试；若两次都只是
+            # JSON 语法失败，export reviewer 再给同一稿件一次完整审核机会。
+            # 网络/超时等调用异常仍直接失败，绝不把格式失败当审核通过。
+            if (
+                attempt == 0
+                and isinstance(exc, ValueError)
+                and "invalid JSON" in err
+            ):
+                shape_err = f"审读 JSON 解析失败：{err}"
+                raw = {}
+                logger.warning(
+                    "[GOLD_CHAT] export semantic review JSON parse retry 1/1: %s",
+                    err,
+                )
+            else:
+                logger.warning("[GOLD_CHAT] export semantic review call failed: %s", exc)
+                return ExportSemanticReviewResult(
+                    completed=False,
+                    error=err,
+                )
         else:
-            shape_err = _validate_export_review_raw(raw, line_count=n_lines)
+            if not isinstance(raw, dict) or "issues" not in raw:
+                shape_err = "审读 JSON 缺 issues 字段"
+            else:
+                shape_err = _validate_export_review_raw(raw, line_count=n_lines)
         parsed_issues: list[dict[str, Any]] = []
         if not shape_err:
             parsed_issues = parse_review_issues(raw, line_count=n_lines, for_export=True)

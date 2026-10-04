@@ -2104,6 +2104,10 @@ def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str
     if authority_kind == "rule":
         # opening causality 补拍允许天然祈使句落地，但仍拒绝纯剧情描述；不补“说好了”。
         return _intent_to_rule_line(raw, require_rule_slot=False)
+    if authority_kind == "directive":
+        # directive beat 常是 "家长指令 + 孩子动作" 的剧情 intent；
+        # 本地不能把它原样加问号当台词，交给 seed 或上层 LLM 修稿。
+        return ""
     text = re.sub(r"[，,]?气氛紧张", "", text).strip()
     core = str(story.get("conflict_core") or "")
     blob = f"{text}{core}"

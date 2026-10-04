@@ -2021,6 +2021,30 @@ def test_export_review_corrects_invalid_missing_beat_once(monkeypatch):
     assert result.issues[0]["missing_beat"] == {"beat": 1, "intent": intent}
 
 
+def test_export_review_retries_invalid_json_after_client_exhausts_internal_retry(monkeypatch):
+    from app.services.llm import llm_mgr
+
+    calls = []
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            calls.append(user)
+            if len(calls) == 1:
+                raise ValueError("LLM returned invalid JSON: Expecting ',' delimiter")
+            return {"issues": []}, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    result = run_export_semantic_review(
+        "测试",
+        _story([{"speaker": "昭昭", "line": "姐姐好。"}]),
+    )
+
+    assert result.completed is True
+    assert len(calls) == 2
+    assert "审核格式纠正" in calls[1]
+    assert "上一份审核未通过格式校验" in calls[1]
+
+
 def test_export_review_timeout_does_not_retry(monkeypatch):
     from app.services.llm import llm_mgr
     calls = []

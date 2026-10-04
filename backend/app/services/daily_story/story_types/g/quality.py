@@ -61,7 +61,14 @@ def score_punchline(
         if g_humor.RE_AUTH_CEDE.search(tail):
             return 4, ["让渡后点题偏弱"]
         return 0, []
-    if RE_SOFT.search(last) or RE_SOFT.search(prev2 + last):
+    tail = prev2 + last
+    body = "".join(lines)
+    if (
+        g_humor.RE_BEHAVIOR_RESIST.search(body)
+        and g_humor.RE_BEHAVIOR_SOFTEN.search(tail)
+    ):
+        return 6, ["行动软化暖收"]
+    if RE_SOFT.search(last) or RE_SOFT.search(tail):
         return 6, ["暖收或半暖"]
     if any(m in last for m in SHARED_PUNCH_SOFT):
         return 3, ["软收束"]

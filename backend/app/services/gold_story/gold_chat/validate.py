@@ -1970,6 +1970,33 @@ def _opening_rule_semantic_matches(intent: str, line: str) -> bool:
     return hits >= 1
 
 
+_RE_OPENING_DIRECTIVE_ACTION = re.compile(
+    r"收|放|归|写|做|拿|捡|扫|洗|关|整|补|读|学|穿|吃|喝|睡|起|坐|站|走|来|去|回"
+)
+_RE_OPENING_DIRECTIVE_MARKER = re.compile(
+    r"别|不许|不准|给我|赶紧|听话|把"
+)
+_RE_OPENING_DIRECTIVE_ADDRESS = re.compile(r"^(?:昭昭|灿灿)[，,]")
+
+
+def _opening_directive_matches(intent: str, line: str) -> bool:
+    """家长 directive beat：只认可说出口的指令，禁 intent 原句冒充对白。"""
+    text = str(line or "").strip()
+    if not text or not _RE_OPENING_DIRECTIVE_ACTION.search(text):
+        return False
+    if not (
+        _RE_OPENING_DIRECTIVE_ADDRESS.search(text)
+        or _RE_OPENING_DIRECTIVE_MARKER.search(text)
+    ):
+        return False
+    clauses = _opening_semantic_clauses(intent)
+    if not clauses:
+        return False
+    line_han = "".join(re.findall(r"[\u4e00-\u9fff]", text))
+    hits = sum(1 for clause in clauses if _opening_clause_matches_line(clause, line_han))
+    return hits >= 1
+
+
 _RE_PARENT_LATE_REACTION_PREFIX = re.compile(
     r"^(?:你(?:刚才)?说(?:啥|什么)|你说的(?:啥|什么)|"
     r"你在说(?:啥|什么)|你再说一遍|你说清楚|"
@@ -2009,6 +2036,12 @@ def _line_fulfills_beat(
         line_kids = {name for name in ("昭昭", "灿灿") if name in line}
         if named_kids and line_kids and not (named_kids & line_kids):
             return False
+    if "trigger" in acts and speaker in {"妈妈", "爸爸"}:
+        if _opening_authority_intent_kind(intent) == "directive":
+            # directive 常把 "家长指令 + 孩子动作" 写在同一条 intent 里。
+            # 必须只认家长可说出口的指令，不能因整句复读 intent 同时命中
+            # "收玩具/踢积木" 等 anchor，就把剧情描述判成对白。
+            return _opening_directive_matches(intent, line)
     anchors = _intent_anchor_tokens(intent)
     if anchors and any(token in line for token in anchors):
         return True
@@ -2043,7 +2076,7 @@ def _line_fulfills_beat(
             # 契约常把“家长发出指令 + 孩子随后动作”写在同一 beat intent，
             # 但 beat.speaker 仍是家长。此处只要求家长可说出口的指令部分落地，
             # 不要求家长台词复述孩子动作结果。
-            return _opening_rule_semantic_matches(intent, line)
+            return _opening_directive_matches(intent, line)
         return bool(_RE_PARENT_TRIGGER_LINE.search(line))
     if (
         "trigger" in acts

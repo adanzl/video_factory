@@ -983,6 +983,117 @@ def test_opening_causality_accepts_111_parent_directive_contract_shape():
     assert opening_causality_passes(story, beat, mom_lines_max=2)
 
 
+def test_opening_causality_rejects_111_directive_intent_echo():
+    """#111：directive beat1 不能把 "家长指令 + 孩子动作" 整句 intent 当台词。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "让昭昭收玩具，昭昭踢散积木"},
+        {"beat": 2, "speaker": "灿灿", "intent": "边捡边搬出妈妈的话：用过的东西放回原位"},
+        {"beat": 3, "speaker": "昭昭", "intent": "嘴硬说还没玩完"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "让昭昭收玩具，昭昭踢散积木？"},
+            {"speaker": "灿灿", "line": "用过的东西放回原位，这是习惯。"},
+            {"speaker": "昭昭", "line": "我还没玩完呢！"},
+        ]
+    }
+
+    assert not opening_causality_passes(story, beat, mom_lines_max=2)
+
+
+def test_opening_causality_accepts_111_natural_parent_directive():
+    """#111：reconcile 后的自然祈使句应该能落地 directive beat1。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "让昭昭收玩具，昭昭踢散积木"},
+        {"beat": 2, "speaker": "灿灿", "intent": "边捡边搬出妈妈的话：用过的东西放回原位"},
+        {"beat": 3, "speaker": "昭昭", "intent": "嘴硬说还没玩完"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭，把玩具收好。"},
+            {"speaker": "灿灿", "line": "用过的东西放回原位，这是习惯。"},
+            {"speaker": "昭昭", "line": "我还没玩完呢！"},
+        ]
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=2)
+
+
+def test_opening_causality_patch_prefers_seed_directive_over_intent_echo():
+    """#111：本地补拍优先用 seed 的自然指令，不能生成 intent 问句。"""
+    from app.services.gold_story.gold_chat.patch import (
+        apply_opening_causality_local_patch,
+    )
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "让昭昭收玩具，昭昭踢散积木"},
+        {"beat": 2, "speaker": "灿灿", "intent": "边捡边搬出妈妈的话：用过的东西放回原位"},
+        {"beat": 3, "speaker": "昭昭", "intent": "嘴硬说还没玩完"},
+    ]
+    seed = [
+        {"speaker": "妈妈", "intent": "昭昭，把玩具收好"},
+        {"speaker": "昭昭", "intent": "我还没玩完呢"},
+        {"speaker": "灿灿", "intent": "妈妈说，用过的东西放回原位"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我还没玩完呢，别动我的积木！"},
+            {"speaker": "灿灿", "line": "用过的东西放回原位，这是习惯。"},
+            {"speaker": "昭昭", "line": "我还没玩完，你别管我，踢散了我自己捡。"},
+        ]
+    }
+
+    fixed, changed = apply_opening_causality_local_patch(
+        story,
+        beat_chain=beat,
+        mom_lines_max=2,
+        dialogue_seed=seed,
+    )
+
+    assert changed
+    assert fixed["dialogue"][0] == {
+        "speaker": "妈妈",
+        "line": "昭昭，把玩具收好。",
+    }
+    assert all(
+        row.get("line") != "让昭昭收玩具，昭昭踢散积木？"
+        for row in fixed["dialogue"]
+    )
+    assert opening_causality_passes(fixed, beat, mom_lines_max=2)
+
+
+def test_opening_causality_patch_never_synthesizes_directive_question():
+    """#111：没有 seed 时 directive beat1 也不能本地硬造 intent 问句。"""
+    from app.services.gold_story.gold_chat.patch import (
+        apply_opening_causality_local_patch,
+    )
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "让昭昭收玩具，昭昭踢散积木"},
+        {"beat": 2, "speaker": "灿灿", "intent": "边捡边搬出妈妈的话：用过的东西放回原位"},
+        {"beat": 3, "speaker": "昭昭", "intent": "嘴硬说还没玩完"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我还没玩完呢！"},
+        ]
+    }
+
+    fixed, changed = apply_opening_causality_local_patch(
+        story,
+        beat_chain=beat,
+        mom_lines_max=2,
+    )
+
+    assert not changed
+    assert fixed == story
+
+
 def test_opening_causality_patch_uses_tagged_same_slot_seed_for_102_teasing_beat():
     """#102：一锤已出现但 beat2 缺失时，用同槽 H3b 的现场调侃对白补在一锤之前。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch

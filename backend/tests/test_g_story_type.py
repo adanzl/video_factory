@@ -160,6 +160,38 @@ def test_g_validate_accepts_behavioral_follow_warm_branch_like_111():
     assert esc_points == 14
 
 
+def test_g_behavioral_follow_real_111_shape_scores_80_not_72():
+    from app.services.daily_story.quality import score_daily_story
+
+    story = {
+        "story_type": "G",
+        "conflict_core": "昭昭拒绝收玩具，灿灿用行动示范，昭昭最后主动跟着收并一起读书",
+        "punchline_explain": "G类嘴硬心软，行动示范后主动跟随暖收",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭，把玩具收好，地上都下不去脚了。"},
+            {"speaker": "昭昭", "line": "我还没玩完呢，别动我的积木！"},
+            {"speaker": "灿灿", "line": "用过的东西放回原位，这是习惯。"},
+            {"speaker": "昭昭", "line": "我还没玩完，你别管我，踢散了我自己捡。"},
+            {"speaker": "灿灿", "line": "这是习惯，不是罚你，我帮你一起码。"},
+            {"speaker": "昭昭", "line": "那也不行，这块红的我还没搭完呢。"},
+            {"speaker": "灿灿", "line": "行，我码我的积木，码好我就看书了。"},
+            {"speaker": "昭昭", "line": "你干嘛拿书？积木还没收完呢。"},
+            {"speaker": "灿灿", "line": "每天读书学习，这是第十条，妈妈定的。"},
+            {"speaker": "昭昭", "line": "第十条？妈妈说的？那我也要听。"},
+            {"speaker": "灿灿", "line": "对，你收完玩具也能来，挤我旁边一起读。"},
+            {"speaker": "昭昭", "line": "那我也读，挤你旁边，这块红的先放箱子里。"},
+            {"speaker": "灿灿", "line": "放吧，按颜色码好，明天找起来才快。"},
+            {"speaker": "昭昭", "line": "姐姐，书翻慢点，我还没坐稳呢。"},
+        ],
+    }
+
+    quality = score_daily_story(story, skip_relevancy=True)
+
+    assert quality["structure_score"] == 80
+    assert quality["structure_cons"] == []
+    assert "行动软化暖收" in quality["reasons"]
+
+
 def test_g_validate_authority_punchline_mode_skips_pivot_soft():
     """closing_mode=authority_punchline 走权威点题槽，不卡 pivot/暖收。"""
     from app.services.gold_story.structure_resolve import (
