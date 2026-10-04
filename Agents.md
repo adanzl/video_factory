@@ -139,7 +139,7 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 
 ## 快捷命令
 
-- push 表示执行提交git 并执行push，不用你管远程pull的事
+- push 表示执行提交git 并执行push，不用你管远程pull的事,提交信息里不要著名ai
 - pull 表示执行本地git pull，并解决本地冲突
 - 不要自动push，需要我同意才行
 - 优化稿子生成 本地测试通过，专家审稿通过，结构分合规，防止过拟合，不要手改稿子，修改过程问专家怎么改
