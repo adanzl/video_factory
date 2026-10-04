@@ -278,6 +278,76 @@ def test_refine_align_shortens_overlong_line_before_repair_budget(monkeypatch):
     assert len(out["dialogue"][0]["line"]) <= 24
 
 
+def test_refine_align_validate_never_carries_240_baseline_down_to_226(monkeypatch):
+    from app.services.daily_story.prompts import dialogue_total_chars
+    from app.services.gold_story.gold_chat import convert as gc
+    from app.services.gold_story.gold_chat import refine as grf
+
+    # #102 实际 15 句稿形：每句均在句长上限内，baseline 已通过本地补字到 241。
+    baseline = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "昭昭，坐好，我辅导你写作业，别耍赖啊。"},
+            {"speaker": "昭昭", "line": "姐你今天真好看，头发像动画片里的公主吧。"},
+            {"speaker": "灿灿", "line": "少扯，写作业，先写三行再喝药，规矩今天就这么定。"},
+            {"speaker": "昭昭", "line": "三行太多，我写一行就喝，行不行啊姐啊。"},
+            {"speaker": "昭昭", "line": "我手疼笔都握不住，明天写也一样对啊。"},
+            {"speaker": "灿灿", "line": "手疼就换左手，本子摊平，别装可怜吧。"},
+            {"speaker": "昭昭", "line": "那我先喝药，喝完药手更抖写不了字啊。"},
+            {"speaker": "妈妈", "line": "昭昭乖，把药喝了，病才能好。"},
+            {"speaker": "昭昭", "line": "太苦了，我不喝，闻着就想吐吧。"},
+            {"speaker": "灿灿", "line": "喝啊，听我的！"},
+            {"speaker": "昭昭", "line": "我喝我喝，别瞪我吧。"},
+            {"speaker": "爸爸", "line": "我们吓唬都是假的，你姐是真打。"},
+            {"speaker": "昭昭", "line": "二十年后咱又是一条好汉，你等着啊。"},
+            {"speaker": "灿灿", "line": "哼，我说了算，你还敢顶嘴吧？"},
+            {"speaker": "昭昭", "line": "不敢了，我这就去写作业啊。"},
+        ],
+    }
+    assert dialogue_total_chars(baseline) == 241
+    assert max(len(row["line"]) for row in baseline["dialogue"]) <= 24
+
+    short = {**baseline, "dialogue": [dict(x) for x in baseline["dialogue"]]}
+    # 模拟 align/LLM 把若干中段信息压掉，精确退到 226。
+    for idx, remove in ((1, 5), (2, 5), (6, 5)):
+        line = short["dialogue"][idx]["line"]
+        core = line.rstrip("。！？!?")
+        mark = line[len(core):]
+        short["dialogue"][idx]["line"] = core[:-remove] + mark
+    assert dialogue_total_chars(short) == 226
+
+    monkeypatch.setattr(grf, "collect_align_issues", lambda *args, **kwargs: [])
+    prepare_calls = {"n": 0}
+
+    def prepare(chat, **_kwargs):
+        prepare_calls["n"] += 1
+        if prepare_calls["n"] == 1:
+            raise ValueError("模拟需要一次 align_validate 修稿")
+        assert dialogue_total_chars(chat) >= 240
+        return dict(chat)
+
+    monkeypatch.setattr(
+        grf,
+        "_prepare_chat_for_validate_after_local_length_close",
+        prepare,
+    )
+    monkeypatch.setattr(gc, "_fix_chat_with_llm", lambda *args, **kwargs: short)
+    budget = GoldChatRepairBudget(max_repairs=2)
+
+    out = grf.refine_gold_chat_align(
+        baseline,
+        structure_type="J",
+        mechanism="M8",
+        align_block="",
+        mom_lines_max=2,
+        repair_budget=budget,
+        max_rounds=2,
+    )
+
+    assert budget.used == 1
+    assert dialogue_total_chars(out) >= 240
+
+
 def test_refine_align_validate_repair_restores_rule_opening_without_second_budget(monkeypatch):
     from app.services.gold_story.gold_chat import convert as gc
     from app.services.gold_story.gold_chat import refine as grf

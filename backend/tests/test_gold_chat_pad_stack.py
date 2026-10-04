@@ -175,6 +175,60 @@ def test_reject_repair_that_adds_mom_lines():
     assert "句数" in reason or "speaker" in reason
 
 
+def test_reject_repair_that_drops_valid_body_below_240():
+    baseline = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "甲" * 120},
+            {"speaker": "灿灿", "line": "乙" * 120},
+        ],
+        "quality": {"structure_score": 80, "score": 80, "cons": []},
+    }
+    draft = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "甲" * 113},
+            {"speaker": "灿灿", "line": "乙" * 113},
+        ],
+        "quality": {"structure_score": 80, "score": 80, "cons": []},
+    }
+
+    accepted, reason = evaluate_repair_candidate_acceptance(
+        baseline,
+        draft,
+        row={"id": 102},
+        mom_lines_max=2,
+    )
+
+    assert accepted is None
+    assert "已达标正文压短" in reason
+
+
+def test_reject_repair_that_makes_short_body_even_shorter():
+    baseline = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "甲" * 118},
+            {"speaker": "灿灿", "line": "乙" * 117},
+        ],
+        "quality": {"structure_score": 80, "score": 80, "cons": []},
+    }
+    draft = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "甲" * 113},
+            {"speaker": "灿灿", "line": "乙" * 113},
+        ],
+        "quality": {"structure_score": 80, "score": 80, "cons": []},
+    }
+
+    accepted, reason = evaluate_repair_candidate_acceptance(
+        baseline,
+        draft,
+        row={"id": 102},
+        mom_lines_max=2,
+    )
+
+    assert accepted is None
+    assert "继续变短" in reason
+
+
 def test_collect_errors_sanitize_then_validate():
     story = {
         "story_type": "N",

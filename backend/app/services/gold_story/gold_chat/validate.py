@@ -1756,6 +1756,7 @@ _RE_INTENT_REBUTTAL = re.compile(r"质疑|反驳|嘴硬|否认|纠正")
 _RE_INTENT_STALL = re.compile(
     r"耍赖|嬉皮笑脸|东拉西扯|转移话题|拖延|磨蹭|打哈哈|插科打诨"
 )
+_RE_INTENT_DIRECTIVE = re.compile(r"(?:让|叫|喊|催|要求)(?:昭昭|灿灿)")
 _RE_STALL_LINE = re.compile(
     r"真好看|真漂亮|漂亮|好帅|真帅|真可爱|"
     r"先(?:歇|休息|等会|等等)|等会|待会|一会儿|"
@@ -1841,6 +1842,8 @@ def _opening_authority_intent_kind(intent: str) -> str:
         return "rule"
     if _RE_INTENT_ACCOUNTABILITY.search(tag):
         return "accountability"
+    if _RE_INTENT_DIRECTIVE.search(text):
+        return "directive"
     if _RE_INTENT_TRIGGER.search(tag):
         return "trigger"
     return ""
@@ -2036,6 +2039,11 @@ def _line_fulfills_beat(
                 _RE_ACCOUNTABILITY_LINE.search(line)
                 or _RE_BLAME_LINE.search(line)
             )
+        if authority_kind == "directive":
+            # 契约常把“家长发出指令 + 孩子随后动作”写在同一 beat intent，
+            # 但 beat.speaker 仍是家长。此处只要求家长可说出口的指令部分落地，
+            # 不要求家长台词复述孩子动作结果。
+            return _opening_rule_semantic_matches(intent, line)
         return bool(_RE_PARENT_TRIGGER_LINE.search(line))
     if (
         "trigger" in acts

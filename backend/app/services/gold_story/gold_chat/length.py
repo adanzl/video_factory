@@ -514,6 +514,19 @@ _J_ZHAO_FORBIDDEN_EXPAND: frozenset[str] = frozenset(
 _J_CAN_FORBIDDEN_EXPAND: frozenset[str] = frozenset(
     {"你试试看", "少跟我吵", "我才不怕", "你凭什么"}
 )
+_J_ZHAO_NATURAL_EXPAND: tuple[str, ...] = (
+    "，我照做",
+    "，这次听你的",
+    "，我不敢再拖",
+)
+_J_CAN_NATURAL_EXPAND: tuple[str, ...] = (
+    "，听我的",
+    "，现在照做",
+    "，别再找借口",
+)
+_J_GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = (
+    _J_ZHAO_NATURAL_EXPAND + _J_CAN_NATURAL_EXPAND
+)
 # I：禁语义错位/审稿点名凑字尾巴（抽象禁表，不绑单篇）
 _I_FORBIDDEN_EXPAND: frozenset[str] = frozenset(
     {
@@ -1380,6 +1393,8 @@ def _expand_short_gold_chat_lines(
     st = str(story.get("story_type") or "").strip().upper()
     if st == "O":
         expand_src = _O_SAFE_NATURAL_EXPAND
+    elif st == "J":
+        expand_src = _J_GOLD_CHAT_NATURAL_EXPAND
     elif st == "K":
         expand_src = _K_GOLD_CHAT_NATURAL_EXPAND
     elif st == "I":
@@ -1410,7 +1425,7 @@ def _expand_short_gold_chat_lines(
             if isinstance(item, dict)
             and expand_count.get(i, 0) < 1
             and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
-            and 4 <= len(str(item.get("line") or "").strip()) < 20
+            and (2 if st == "J" else 4) <= len(str(item.get("line") or "").strip()) < 20
             and i >= 2
             and i < len(dialogue) - 2  # 首尾句不垫尾巴，保开场/收场干净
             and (o_punch < 0 or i < o_punch)
@@ -1451,7 +1466,15 @@ def _expand_short_gold_chat_lines(
                 expand_count[idx] = 1
                 continue
             sp = str(item.get("speaker") or "").strip()
-            if st == "K":
+            if st == "J":
+                if sp == "昭昭":
+                    src = _J_ZHAO_NATURAL_EXPAND
+                elif sp == "灿灿":
+                    src = _J_CAN_NATURAL_EXPAND
+                else:
+                    expand_count[idx] = 1
+                    continue
+            elif st == "K":
                 if sp == "昭昭":
                     src = _K_ZHAO_NATURAL_EXPAND
                 elif sp == "灿灿":

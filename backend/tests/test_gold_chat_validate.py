@@ -961,6 +961,28 @@ def test_opening_causality_patch_uses_seed_for_missing_middle_beat():
     assert fixed["dialogue"][3]["speaker"] == "妈妈"
 
 
+def test_opening_causality_accepts_111_parent_directive_contract_shape():
+    """#111：beat1 可把家长指令和孩子动作写在同一 intent；家长台词只需落地自己的指令部分。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "让昭昭收玩具，昭昭踢散积木"},
+        {"beat": 2, "speaker": "灿灿", "intent": "边捡边搬出妈妈的话：用过的东西放回原位"},
+        {"beat": 3, "speaker": "昭昭", "intent": "嘴硬说还没玩完"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭，把地上的玩具收好，别摊一客厅。"},
+            {"speaker": "昭昭", "line": "我还没玩完呢！你别管我！"},
+            {"speaker": "灿灿", "line": "你踢积木干嘛？踢散了还得我捡。"},
+            {"speaker": "灿灿", "line": "用过的东西放回原位，这是习惯。"},
+            {"speaker": "昭昭", "line": "我还没玩完，不收！你少拿妈妈压我。"},
+        ]
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=2)
+
+
 def test_opening_causality_patch_uses_tagged_same_slot_seed_for_102_teasing_beat():
     """#102：一锤已出现但 beat2 缺失时，用同槽 H3b 的现场调侃对白补在一锤之前。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch

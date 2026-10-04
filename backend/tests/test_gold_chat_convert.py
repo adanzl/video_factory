@@ -368,6 +368,44 @@ def test_102_action_narration_is_locally_rewritten_without_structure_repair():
     ]
 
 
+def test_j_m8_237_near_miss_closes_in_place_like_102():
+    from app.services.daily_story.prompts import dialogue_total_chars
+    from app.services.gold_story.gold_chat.length import _stabilize_local_length_candidate
+
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "昭昭，坐好，我辅导你写作业，别耍赖啊。"},
+            {"speaker": "昭昭", "line": "姐你今天真好看，头发像动画片里的公主吧。"},
+            {"speaker": "灿灿", "line": "少扯，写作业，先写三行再喝药，规矩今天就这么定。"},
+            {"speaker": "昭昭", "line": "三行太多，我写一行就喝，行不行啊姐啊。"},
+            {"speaker": "昭昭", "line": "我手疼笔都握不住，明天写也一样对啊。"},
+            {"speaker": "灿灿", "line": "手疼就换左手，本子摊平，别装可怜吧。"},
+            {"speaker": "昭昭", "line": "那我先喝药，喝完药手更抖写不了字啊。"},
+            {"speaker": "妈妈", "line": "昭昭乖，把药喝了，病才能好。"},
+            {"speaker": "昭昭", "line": "太苦了，我不喝，闻着就想吐吧。"},
+            {"speaker": "灿灿", "line": "喝啊！"},
+            {"speaker": "昭昭", "line": "我喝我喝，别瞪我吧。"},
+            {"speaker": "爸爸", "line": "我们吓唬都是假的，你姐是真打。"},
+            {"speaker": "昭昭", "line": "二十年后咱又是一条好汉，你等着啊。"},
+            {"speaker": "灿灿", "line": "哼，我说了算，你还敢顶嘴吧？"},
+            {"speaker": "昭昭", "line": "不敢了，我这就去写作业啊。"},
+        ],
+    }
+    assert dialogue_total_chars(story) == 237
+
+    out, changed = _stabilize_local_length_candidate(
+        story,
+        structure_type="J",
+        mechanism="M8",
+    )
+
+    assert changed
+    assert dialogue_total_chars(out) >= 240
+    assert len(out["dialogue"]) == len(story["dialogue"])
+    assert out["dialogue"][9]["line"] == "喝啊，听我的！"
+
+
 def test_n_local_semantic_mid_pair_recovers_clean_q96_shape():
     from app.services.daily_story.story_types.n.validate import append_n_body_errors
     from app.services.gold_story.gold_chat.length import (

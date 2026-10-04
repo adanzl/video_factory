@@ -395,6 +395,21 @@ def evaluate_repair_candidate_acceptance(
 
     base_dialogue = baseline.get("dialogue") or []
     draft_dialogue = draft.get("dialogue") or []
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MIN,
+        dialogue_total_chars,
+    )
+
+    base_chars = dialogue_total_chars(baseline)
+    draft_chars = dialogue_total_chars(draft)
+    if base_chars >= DAILY_STORY_BODY_CHARS_MIN and draft_chars < DAILY_STORY_BODY_CHARS_MIN:
+        return None, (
+            f"修稿把已达标正文压短（{base_chars}→{draft_chars}，"
+            f"下限{DAILY_STORY_BODY_CHARS_MIN}）"
+        )
+    if base_chars < DAILY_STORY_BODY_CHARS_MIN and draft_chars < base_chars:
+        return None, f"修稿正文继续变短（{base_chars}→{draft_chars}）"
+
     if strict_dialogue_shape:
         if len(draft_dialogue) != len(base_dialogue):
             return None, "修稿改变了对白句数"

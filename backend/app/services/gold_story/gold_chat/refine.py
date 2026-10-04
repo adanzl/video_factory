@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from typing import Any, cast
@@ -228,6 +229,62 @@ def _stabilize_refine_candidate(
             logger.info("gold_chat refine local seed speaker realign after contract patch")
     return _normalize_chat_speakers(data)
 
+def _stabilize_refine_repair_candidate(
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    structure_type: str,
+    beat_chain: list[Any] | None,
+    mom_lines_max: int,
+    dialogue_seed: list[Any] | None = None,
+    mechanism: str = "",
+) -> dict[str, Any]:
+    """LLM 修稿不得让正文长度倒退；可本地补回则保留修稿，否则回退 baseline。"""
+    base_chars = dialogue_total_chars(baseline)
+    floor = (
+        DAILY_STORY_BODY_CHARS_MIN
+        if base_chars >= DAILY_STORY_BODY_CHARS_MIN
+        else base_chars
+    )
+    data = _stabilize_refine_candidate(
+        copy.deepcopy(candidate),
+        structure_type=structure_type,
+        beat_chain=beat_chain,
+        mom_lines_max=mom_lines_max,
+        dialogue_seed=dialogue_seed,
+        mechanism=mechanism,
+    )
+    draft_chars = dialogue_total_chars(data)
+    if draft_chars >= floor:
+        return data
+
+    closed = _close_align_length_without_repair_budget(
+        data,
+        structure_type=structure_type,
+        mechanism=mechanism,
+        beat_chain=beat_chain,
+        mom_lines_max=mom_lines_max,
+        dialogue_seed=dialogue_seed,
+    )
+    closed_chars = dialogue_total_chars(closed)
+    if closed_chars >= floor:
+        logger.info(
+            "gold_chat refine repair length restored chars=%s->%s floor=%s",
+            draft_chars,
+            closed_chars,
+            floor,
+        )
+        return closed
+
+    logger.info(
+        "gold_chat refine repair rejected length regression chars=%s->%s floor=%s",
+        base_chars,
+        closed_chars,
+        floor,
+    )
+    return _normalize_chat_speakers(copy.deepcopy(baseline))
+
+
 def _align_refine_with_llm(
     story: dict[str, Any],
     issues: list[dict[str, Any]],
@@ -301,6 +358,7 @@ def refine_gold_chat_align(
             data["closing_mode"] = mode
 
     for _round in range(max(1, int(max_rounds))):
+        round_baseline = copy.deepcopy(data)
         # 先闭合所有可确定的本地契约，再收集 align issue；seed/opening/N 槽位
         # 不应进入 LLM repair budget。
         data = _stabilize_refine_candidate(
@@ -344,6 +402,17 @@ def refine_gold_chat_align(
         )
 
         patch_dialogue_narration_to_speech(data)
+        # 本轮入口若已达到 hard min，本地 normalize/type/narration patch 也不得
+        # 先把它压短，再让后续 LLM repair 以短稿为新 baseline。
+        data = _stabilize_refine_repair_candidate(
+            round_baseline,
+            data,
+            structure_type=st,
+            beat_chain=beat_chain,
+            mom_lines_max=mom_max,
+            dialogue_seed=dialogue_seed,
+            mechanism=mech,
+        )
 
         issues = collect_align_issues(
             data,
@@ -412,10 +481,12 @@ def refine_gold_chat_align(
                     ) from exc
                 from app.services.gold_story.gold_chat.convert import _fix_chat_with_llm
 
-                data = _stabilize_refine_candidate(
+                baseline_before_fix = copy.deepcopy(data)
+                data = _stabilize_refine_repair_candidate(
+                    baseline_before_fix,
                     _fix_chat_with_llm(
-                        data, build_candidate_repair_feedback(
-                            data, validation_errors=[str(exc)], align_issues=warn,
+                        baseline_before_fix, build_candidate_repair_feedback(
+                            baseline_before_fix, validation_errors=[str(exc)], align_issues=warn,
                             mom_lines_max=mom_max,
                         ), banned_literals=banned, mom_lines_max=mom_max,
                     ),
@@ -463,7 +534,8 @@ def refine_gold_chat_align(
             mom_lines_max=mom_max,
             rejection_reasons=rejected,
         )
-        candidate_base = _stabilize_refine_candidate(
+        candidate_base = _stabilize_refine_repair_candidate(
+            data,
             polish_result.candidate,
             structure_type=st,
             beat_chain=beat_chain,
@@ -575,9 +647,11 @@ def refine_gold_chat_align(
                     align_issues=blocking_now,
                     mom_lines_max=mom_max,
                 )
-                candidate_base = _stabilize_refine_candidate(
+                baseline_before_fix = copy.deepcopy(candidate_base)
+                candidate_base = _stabilize_refine_repair_candidate(
+                    baseline_before_fix,
                     _fix_chat_with_llm(
-                        candidate_base,
+                        baseline_before_fix,
                         prompt,
                         banned_literals=banned,
                         mom_lines_max=mom_max,
@@ -634,11 +708,13 @@ def refine_gold_chat_align(
                     _fix_chat_with_llm,
                 )
 
-                data = _stabilize_refine_candidate(
+                baseline_before_fix = copy.deepcopy(candidate_base)
+                data = _stabilize_refine_repair_candidate(
+                    baseline_before_fix,
                     _fix_chat_with_llm(
-                        candidate_base,
+                        baseline_before_fix,
                         build_candidate_repair_feedback(
-                            candidate_base,
+                            baseline_before_fix,
                             validation_errors=[val_err],
                             align_issues=blocking_now,
                             mom_lines_max=mom_max,
