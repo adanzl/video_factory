@@ -149,6 +149,14 @@ def prepare_candidate_for_acceptance(
         cleaned,
         mom_lines_max=mom_lines_max,
     )
+    from app.services.gold_story.gold_chat.patch import (
+        patch_replace_banned_kinship,
+    )
+
+    cleaned, _ = patch_replace_banned_kinship(
+        cleaned,
+        banned_literals=banned_literals,
+    )
     errors = collect_candidate_repair_errors(
         cleaned,
         mom_lines_max=mom_lines_max,
@@ -179,6 +187,14 @@ def prepare_candidate_for_acceptance_after_local_length_close(
     cleaned, _ = apply_opening_causality_local_patch(
         cleaned,
         mom_lines_max=mom_lines_max,
+    )
+    from app.services.gold_story.gold_chat.patch import (
+        patch_replace_banned_kinship,
+    )
+
+    cleaned, _ = patch_replace_banned_kinship(
+        cleaned,
+        banned_literals=banned_literals,
     )
     cleaned, _ = _stabilize_local_length_candidate(
         cleaned,

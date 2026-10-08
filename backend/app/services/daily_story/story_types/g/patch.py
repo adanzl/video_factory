@@ -96,7 +96,11 @@ def patch_g_body(story: dict) -> list[str]:
             break
 
     used = {_compact(item.get("line")) for item in dialogue if isinstance(item, dict)}
-    for speaker, line in pair:
+    pair_list = list(pair)
+    last_sp = str(dialogue[-1].get("speaker") or "").strip()
+    if len(pair_list) > 1 and pair_list[0][0] == last_sp:
+        pair_list = [pair_list[1], pair_list[0]]
+    for speaker, line in pair_list:
         core = _compact(line)
         if core in used:
             continue

@@ -575,6 +575,44 @@ def patch_dedupe_ne_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bool]
     return (out, True) if changed else (story, False)
 
 
+_KINSHIP_REPLACEMENTS = {
+    "姐姐": "灿灿",
+    "哥哥": "灿灿",
+    "妹妹": "昭昭",
+    "弟弟": "昭昭",
+}
+
+
+def patch_replace_banned_kinship(
+    story: dict[str, Any],
+    *,
+    banned_literals: list[str] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """禁词含亲属称谓时，落回站内角色名，避免整稿重抽。"""
+    import copy
+
+    terms = [
+        str(item).strip()
+        for item in (banned_literals or [])
+        if str(item).strip() in _KINSHIP_REPLACEMENTS
+    ]
+    if not terms:
+        return story, False
+    out = copy.deepcopy(story)
+    changed = False
+    for item in out.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        new_line = line
+        for term in terms:
+            new_line = new_line.replace(term, _KINSHIP_REPLACEMENTS[term])
+        if new_line != line:
+            item["line"] = new_line
+            changed = True
+    return (out, True) if changed else (story, False)
+
+
 def patch_fix_role_pronouns(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     """妈妈台词：推他/推她 → 推姐姐；避免性别称谓错位。"""
     import copy

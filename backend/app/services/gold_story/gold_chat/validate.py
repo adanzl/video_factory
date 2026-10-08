@@ -2107,14 +2107,19 @@ def _line_fulfills_beat(
         # 摆好了，咱们玩猜食物游戏！"），没有家长式命令口气也应按
         # beat intent 的多段语义落地；要求所有语义分句都有对应。
         clauses = _opening_semantic_clauses(intent)
-        if len(clauses) < 2:
+        if not clauses:
             return False
         line_han = "".join(re.findall(r"[\u4e00-\u9fff]", line))
         hits = sum(
             1 for clause in clauses
             if _opening_clause_matches_line(clause, line_han)
         )
-        return hits >= len(clauses)
+        required = len(clauses) if len(clauses) >= 2 else 1
+        if hits < required:
+            return False
+        from app.services.gold_story.scene import looks_like_narration_line
+
+        return not looks_like_narration_line(line)
     if "defend" in acts and speaker in {"昭昭", "灿灿"}:
         return bool(_RE_DEFEND_LINE.search(line))
     if "interrupt" in acts and speaker in {"昭昭", "灿灿"}:
