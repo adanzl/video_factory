@@ -255,6 +255,11 @@ _DIALOGUE_META_LABEL_SUFFIX_RE = re.compile(
     r"(?:一锤定音|镇住话题|嘴硬收场|旁观感叹|一招制敌|语塞收场|愣住收束)"
     r"[。！？!?]*$"
 )
+_DIALOGUE_META_LABEL_STRIP_RE = re.compile(
+    r"[，,；;]?\s*"
+    r"(?:一锤定音|镇住话题|嘴硬收场|旁观感叹|一招制敌|语塞收场|愣住收束)"
+    r"[。！？!?]*"
+)
 
 
 def has_dialogue_meta_label(line: str) -> bool:
@@ -262,19 +267,33 @@ def has_dialogue_meta_label(line: str) -> bool:
     return bool(_DIALOGUE_META_LABEL_RE.search(str(line or "")))
 
 
+def _strip_dialogue_meta_label(match: re.Match[str]) -> str:
+    return "，" if match.start() > 0 else ""
+
+
 def sanitize_dialogue_meta_label_suffix(line: str) -> str:
-    """只剥句尾结构标签；整句都是标签时保留给 hard gate/LLM 修稿。"""
+    """剥句尾或句中的结构标签；整句只有标签时留给 hard gate/LLM 修稿。"""
     text = str(line or "").strip()
     if not text:
         return text
+    without_labels = _DIALOGUE_META_LABEL_RE.sub("", text)
+    if not re.sub(r"[，,；;。！？!?\s]", "", without_labels):
+        return text
     match = _DIALOGUE_META_LABEL_SUFFIX_RE.search(text)
-    if not match:
+    if match:
+        prefix = text[: match.start()].rstrip("，,；;。！？!? ")
+        if prefix:
+            tail = text[-1] if text[-1] in "。！？!?" else "。"
+            return f"{prefix}{tail}"
+    cleaned = _DIALOGUE_META_LABEL_STRIP_RE.sub(_strip_dialogue_meta_label, text)
+    cleaned = re.sub(r"[，,；;]{2,}", "，", cleaned)
+    cleaned = re.sub(r"^[，,；;]+", "", cleaned)
+    cleaned = re.sub(r"[，,；;]+$", "", cleaned).strip()
+    if not cleaned:
         return text
-    prefix = text[: match.start()].rstrip("，,；;。！？!? ")
-    if not prefix:
-        return text
-    tail = text[-1] if text[-1] in "。！？!?" else "。"
-    return f"{prefix}{tail}"
+    if cleaned[-1] not in "。！？!?":
+        cleaned += "。"
+    return cleaned
 
 
 def format_beat_chain(chain: list[Any]) -> str:

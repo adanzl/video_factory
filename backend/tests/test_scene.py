@@ -261,6 +261,14 @@ def test_dialogue_meta_label_suffix_is_removed_but_plain_line_is_kept():
     assert sanitize_dialogue_meta_label_suffix("我就是会挑地方落。") == "我就是会挑地方落。"
     # 整句只有元标签时不机械删成空句，交 hard gate/LLM 修稿。
     assert sanitize_dialogue_meta_label_suffix("一锤定音。") == "一锤定音。"
+    assert (
+        sanitize_dialogue_meta_label_suffix("哼，一招制敌！撂倒你，听我的！")
+        == "哼，撂倒你，听我的！"
+    )
+    assert (
+        sanitize_dialogue_meta_label_suffix("一招制敌！撂倒你，听我的！")
+        == "撂倒你，听我的！"
+    )
 
 
 def test_build_dialogue_seed_filters_terminal_silence_and_history_prop(monkeypatch):
