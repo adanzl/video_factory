@@ -2083,7 +2083,20 @@ def _line_fulfills_beat(
         and speaker in {"昭昭", "灿灿"}
         and _opening_authority_intent_kind(intent) == "rule"
     ):
-        return _opening_rule_semantic_matches(intent, line)
+        if _opening_rule_semantic_matches(intent, line):
+            return True
+        # 孩子发起的规则/游戏设置常是自然口语（如 #117 "炸鸡和烤冷面
+        # 摆好了，咱们玩猜食物游戏！"），没有家长式命令口气也应按
+        # beat intent 的多段语义落地；要求所有语义分句都有对应。
+        clauses = _opening_semantic_clauses(intent)
+        if len(clauses) < 2:
+            return False
+        line_han = "".join(re.findall(r"[\u4e00-\u9fff]", line))
+        hits = sum(
+            1 for clause in clauses
+            if _opening_clause_matches_line(clause, line_han)
+        )
+        return hits >= len(clauses)
     if "defend" in acts and speaker in {"昭昭", "灿灿"}:
         return bool(_RE_DEFEND_LINE.search(line))
     if "interrupt" in acts and speaker in {"昭昭", "灿灿"}:

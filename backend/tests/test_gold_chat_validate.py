@@ -1094,6 +1094,24 @@ def test_opening_causality_patch_never_synthesizes_directive_question():
     assert fixed == story
 
 
+def test_opening_causality_accepts_117_child_rule_setup():
+    """#117：孩子发起的游戏首句按多段语义落地，不要求家长式命令口气。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "昭昭", "intent": "立规：端出炸鸡和烤冷面，和灿灿玩猜食物游戏"},
+        {"beat": 2, "speaker": "灿灿", "intent": "占物：猜中披萨"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "炸鸡和烤冷面摆好了，咱们玩猜食物游戏！"},
+            {"speaker": "灿灿", "line": "我猜中披萨了！"},
+        ]
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=2)
+
+
 def test_opening_causality_patch_uses_tagged_same_slot_seed_for_102_teasing_beat():
     """#102：一锤已出现但 beat2 缺失时，用同槽 H3b 的现场调侃对白补在一锤之前。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
