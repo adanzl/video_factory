@@ -1438,38 +1438,42 @@ def _trim_gold_chat_mom_lines(
         dialogue.pop(i)
         changed = True
 
-    mom_idxs = [
+    parent_idxs = [
         idx
         for idx, item in enumerate(dialogue)
         if isinstance(item, dict)
-        and str(item.get("speaker") or "").strip() == "妈妈"
+        and str(item.get("speaker") or "").strip() in {"妈妈", "爸爸"}
     ]
-    if len(mom_idxs) <= mom_max:
+    if len(parent_idxs) <= mom_max:
         return (out, changed) if changed else (story, False)
 
-    # 超限：默认保留最后 mom_max 句（收束常在末段）。
-    # N 类额外保护「为什么/为啥」追问妈妈句；否则机械裁最前一句会直接拆掉
-    # 「追问→因果回答」契约，后续本地实义补位也失去锚点。
+    # 超限：家长句一起计入上限。优先保末段收束与开场触发，再保 N 追问。
     protected: list[int] = []
     if str(structure_type or "").strip().upper() == "N":
         from app.services.daily_story.story_types.n.validate import RE_WHY
 
         protected = [
             idx
-            for idx in mom_idxs
+            for idx in parent_idxs
             if isinstance(dialogue[idx], dict)
+            and str(dialogue[idx].get("speaker") or "").strip() == "妈妈"
             and RE_WHY.search(str(dialogue[idx].get("line") or ""))
         ][:1]
 
-    keep: list[int] = list(protected)
-    for idx in reversed(mom_idxs):
-        if idx in keep:
-            continue
-        if len(keep) >= mom_max:
-            break
-        keep.append(idx)
-    keep_set = set(keep[:mom_max])
-    drop = set(mom_idxs) - keep_set
+    keep_order: list[int] = []
+    if parent_idxs:
+        keep_order.append(parent_idxs[-1])
+        keep_order.append(parent_idxs[0])
+    for idx in [*protected, *reversed(parent_idxs)]:
+        if idx not in keep_order:
+            keep_order.append(idx)
+    keep_set = set(keep_order[:mom_max])
+    if len(keep_set) < min(mom_max, len(parent_idxs)):
+        for idx in reversed(parent_idxs):
+            if len(keep_set) >= mom_max:
+                break
+            keep_set.add(idx)
+    drop = set(parent_idxs) - keep_set
     out["dialogue"] = [
         item for idx, item in enumerate(dialogue) if idx not in drop
     ]

@@ -637,3 +637,32 @@ def test_true_g_relational_not_authority_mode():
     fixed, notes = resolve_structure_row(row)
     assert fixed["payload"].get("closing_mode") in (None, "", False)
     assert not any("authority_punchline" in n for n in notes)
+
+
+def test_m5_h_self_harm_warm_reclassifies_to_m4_g():
+    from app.services.gold_story.structure_resolve import (
+        resolve_h3_structure,
+        should_reclassify_m5_h_to_m4_g,
+    )
+
+    raw = (
+        "双胞胎抢布娃娃，灿灿没抢到，抓起硬壳绘本砸在自己头上大哭。"
+        "昭昭愣住，赶紧把娃娃塞回妹妹手里，灿灿立刻不哭，抱着娃娃咯咯笑。"
+        "妈妈哭笑不得问：你俩这是演哪出？"
+    )
+    assert should_reclassify_m5_h_to_m4_g(
+        mechanism="M5",
+        structure_type="H",
+        blob=raw + "自砸头 自伤",
+    )
+    h3 = {
+        "mechanism": "M5",
+        "structure_type": "H",
+        "conflict_core": "抢娃娃后自伤让物",
+        "closing_intent": "妈妈哭笑不得问演哪出",
+        "beat": ["抢布娃娃", "自砸头", "塞回娃娃"],
+    }
+    fixed, notes = resolve_h3_structure(h3, story_raw=raw)
+    assert fixed["mechanism"] == "M4"
+    assert fixed["structure_type"] == "G"
+    assert any("self-harm-warm-not-fight" in n for n in notes)

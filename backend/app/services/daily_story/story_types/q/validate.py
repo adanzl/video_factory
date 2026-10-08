@@ -12,11 +12,14 @@ RE_CHEAT = re.compile(
 )
 # 第一人称耍赖/借口功能句：须归耍赖方（抽象槽位，非单篇词表）
 RE_CHEAT_OWN = re.compile(
-    r"重抽|再抽|太少|胃小|剩的给你|推给你|我还能|我才不怕|"
+    r"重抽|再抽|加码|重新猜|分你一半|咱重新|太少|胃小|剩的给你|推给你|我还能|我才不怕|"
     r"不算偷|就一根|急着吃|装不下|这次满意|才够"
 )
 RE_EXPOSE = re.compile(
     r"看穿|拆穿|揭穿|心思|你昨天|偷|别装|露馅|明明|还装"
+)
+RE_Q_ACCUSE_OTHER = re.compile(
+    r"你(?:耍赖|加码|骗|偷|装|不认|摔筷子)|谁跟你玩|你先把"
 )
 RE_BACKFIRE = re.compile(
     r"洗碗|刷碗|洗盘子|加活|罚|活该|自己收拾|你去|翻车|自己.*吧"
@@ -125,10 +128,8 @@ def append_q_body_errors(story: dict, errors: list[str]) -> None:
             continue
         if not RE_CHEAT_OWN.search(ln):
             continue
-        # 纯拆穿留给拆穿方；第一人称耍赖槽位不可抢
-        if RE_EXPOSE.search(ln) and not RE_CHEAT_OWN.search(
-            re.sub(r"看穿|拆穿|揭穿|心思|偷|别装|露馅|明明|还装", "", ln)
-        ):
+        # 拆穿/指责方句子里也会出现耍赖词，不能算抢说第一人称耍赖槽。
+        if RE_EXPOSE.search(ln) or RE_Q_ACCUSE_OTHER.search(ln):
             continue
         stolen += 1
     if stolen:

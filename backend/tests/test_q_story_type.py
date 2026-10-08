@@ -72,3 +72,43 @@ def test_q_quality_four_layers_when_rule_setup_present():
     assert any("冲突推进4层" in r or "冲突推进5层" in r for r in reasons) or (
         int(q.get("structure_score") or 0) >= 78
     )
+
+
+def test_q_117_patch_reassigns_cheat_and_expose_speakers():
+    from app.services.daily_story.quality import score_daily_story
+    from app.services.daily_story.story_types.q.patch import patch_q_body
+    from app.services.daily_story.story_types.q.validate import append_q_body_errors
+    from app.services.gold_story.gold_chat.convert import (
+        patch_gold_chat_consecutive_siblings,
+    )
+
+    story = {
+        "story_type": "Q",
+        "conflict_core": "昭昭猜错食物后耍赖不认，灿灿拆穿后摔筷子不玩了",
+        "punchline_explain": "Q类耍赖翻车，昭昭猜错食物后耍赖不认，灿灿拆穿后摔筷子不玩了",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "咱俩玩猜食物，猜中得分，猜错加码！"},
+            {"speaker": "灿灿", "line": "行，我猜披萨，这盒归我，先得一分！"},
+            {"speaker": "昭昭", "line": "冷面我都没动，不敢吃不敢喝，披萨呢！"},
+            {"speaker": "灿灿", "line": "你骗过没有啊？你刚那两回车都跑里面是吧！"},
+            {"speaker": "昭昭", "line": "你管我呢！我说没动就是没动！"},
+            {"speaker": "灿灿", "line": "那炸鸡呢？你手指头油光锃亮，别装傻！"},
+            {"speaker": "昭昭", "line": "炸鸡？不对，爱咋样啊，反正我不认！"},
+            {"speaker": "灿灿", "line": "可乐！我猜对了，这罐归我，又得一分！"},
+            {"speaker": "昭昭", "line": "我去你咋开的了啊？来呀，再来一轮！"},
+            {"speaker": "灿灿", "line": "胃小吃不下就推给我？看穿了，去洗碗。"},
+            {"speaker": "妈妈", "line": "妈，我猜错想加码，灿灿不让，我就摔了筷子！"},
+            {"speaker": "昭昭", "line": "你加码就是耍赖，摔筷子更没理，我不玩了！"},
+            {"speaker": "灿灿", "line": "那我把炸鸡分你一半，咱重新猜，行不行？"},
+            {"speaker": "昭昭", "line": "不行，你先把摔筷子的毛病改了再说！"},
+            {"speaker": "灿灿", "line": "不玩了！你耍赖还摔筷子，谁跟你玩！"},
+        ],
+    }
+    patch_q_body(story)
+    story, _ = patch_gold_chat_consecutive_siblings(story)
+    errors: list[str] = []
+    append_q_body_errors(story, errors)
+    assert errors == []
+    assert score_daily_story(
+        story, skip_relevancy=True
+    )["structure_score"] >= 75

@@ -2060,7 +2060,25 @@ def _line_fulfills_beat(
             # 裸“怎么/为什么”只能说明是疑问，不能证明它在落地本 beat。
             return bool(_RE_BLAME_LINE.search(line))
         if authority_kind == "rule":
-            return _opening_rule_semantic_matches(intent, line)
+            if _opening_rule_semantic_matches(intent, line):
+                return True
+            # 家长立规/游戏设置常是自然口语，没有命令口气也应按 beat
+            # intent 的多段语义落地；至少命中除一段外的其余分句。
+            clauses = _opening_semantic_clauses(intent)
+            if len(clauses) < 2:
+                return False
+            line_han = "".join(re.findall(r"[\u4e00-\u9fff]", line))
+            hits = sum(
+                1 for clause in clauses
+                if _opening_clause_matches_line(clause, line_han)
+            )
+            if hits < max(1, len(clauses) - 1):
+                return False
+            if not re.search(r"[我你]|别|把|谁|怎么|为什么", line):
+                return False
+            from app.services.gold_story.scene import looks_like_narration_line
+
+            return not looks_like_narration_line(line)
         if authority_kind == "accountability":
             if _RE_STUN_REACT_LINE.search(line) and not (
                 _RE_BLAME_LINE.search(line) or _RE_ACCOUNTABILITY_LINE.search(line)

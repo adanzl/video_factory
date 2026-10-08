@@ -74,7 +74,102 @@ def patch_f_punchline_prefix(story: dict) -> list[str]:
     return ["F punchline→F类"]
 
 
+_F_RETORT_POOL = (
+    "你再说一遍！",
+    "谁怕谁啊！",
+    "我才不信！",
+    "哼，少来！",
+)
+
+
+def patch_f_break_consecutive(story: dict) -> list[str]:
+    """F 同人连说时插入对方短接话，恢复互呛交替。"""
+    notes: list[str] = []
+    if not _is_f(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
+        return notes
+    used = {
+        re.sub(r"[，,。！!？?\s]+", "", str(item.get("line") or ""))
+        for item in dialogue
+        if isinstance(item, dict)
+    }
+    inserted = 0
+    i = 1
+    while i < len(dialogue) and inserted < 2:
+        a, b = dialogue[i - 1], dialogue[i]
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            i += 1
+            continue
+        sa = str(a.get("speaker") or "").strip()
+        sb = str(b.get("speaker") or "").strip()
+        if sa not in {"昭昭", "灿灿"} or sa != sb:
+            i += 1
+            continue
+        other = "灿灿" if sa == "昭昭" else "昭昭"
+        for retort in _F_RETORT_POOL:
+            core = re.sub(r"[，,。！!？?\s]+", "", retort)
+            if core in used:
+                continue
+            dialogue.insert(i, {"speaker": other, "line": retort})
+            used.add(core)
+            notes.append(f"F插接话断连说[{i + 1}]")
+            inserted += 1
+            i += 1
+            break
+        else:
+            i += 1
+        i += 1
+    return notes
+
+
+def patch_f_append_stale_close(story: dict) -> list[str]:
+    """末段缺僵持/露怯/外部打断时，补一句对方短收束。"""
+    notes: list[str] = []
+    if not _is_f(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+    from app.services.daily_story.story_types.f.validate import (
+        RE_EXTERNAL_PIVOT,
+        RE_STALE_OR_YIELD,
+    )
+
+    tail = "".join(str(item.get("line") or "") for item in dialogue[-3:])
+    if RE_STALE_OR_YIELD.search(tail) or RE_EXTERNAL_PIVOT.search(tail):
+        return notes
+    last_sp = str(dialogue[-1].get("speaker") or "").strip()
+    other = "灿灿" if last_sp == "昭昭" else "昭昭"
+    close = "不跟你玩了！"
+    if len(dialogue) < 24:
+        dialogue.append({"speaker": other, "line": close})
+        notes.append("F补僵持收束")
+        return notes
+    last = dialogue[-1]
+    if isinstance(last, dict):
+        last["speaker"] = other
+        last["line"] = close
+        notes.append("F末句改僵持收束")
+    return notes
+
+
+def patch_f_narration_to_speech(story: dict) -> list[str]:
+    """F 类正文里的分镜/旁白句改成可说出口的话。"""
+    if not _is_f(story):
+        return []
+    from app.services.gold_story.scene import (
+        patch_dialogue_narration_to_speech,
+    )
+
+    return patch_dialogue_narration_to_speech(story)
+
+
 def patch_f_body(story: dict) -> list[str]:
     notes = patch_f_strip_filler(story)
     notes.extend(patch_f_punchline_prefix(story))
+    notes.extend(patch_f_narration_to_speech(story))
+    notes.extend(patch_f_break_consecutive(story))
+    notes.extend(patch_f_append_stale_close(story))
     return notes

@@ -129,6 +129,15 @@ _RE_TRUE_G_PIVOT = re.compile(
 _RE_TRUE_G_SOFT = re.compile(
     r"擦|药|说好了|行了|过来|撑腰|识相|饶|原谅|一起走|一起去|拉手"
 )
+_RE_SELF_HARM = re.compile(
+    r"自砸|砸自己|砸在自己|自伤|打自己|扇自己|撞自己"
+)
+_RE_H_WARM_RESOLVE = re.compile(
+    r"哭笑不得|抱.*笑|咯咯笑|塞回|让出|不哭了|笑着摇头"
+)
+_RE_H_FIGHT_CHAIN = re.compile(
+    r"对不起|道歉|不原谅|谁先动手|别打了|先动手"
+)
 
 
 def classification_blob(
@@ -450,6 +459,32 @@ def should_reclassify_m7_d_to_m4_g(
     return suggests_m4_g_warm_close(blob)
 
 
+def suggests_m5_h_warm_g(blob: str) -> bool:
+    """M5+H 误标：自伤/让物后的暖收，并不是抢东西对战道歉链。"""
+    text = str(blob or "")
+    if not _RE_SELF_HARM.search(text):
+        return False
+    if not (_RE_WARM_CLOSE.search(text) or _RE_H_WARM_RESOLVE.search(text)):
+        return False
+    if _RE_H_FIGHT_CHAIN.search(text):
+        return False
+    return True
+
+
+def should_reclassify_m5_h_to_m4_g(
+    *,
+    mechanism: str,
+    structure_type: str,
+    blob: str,
+) -> bool:
+    """M5+H 但实际是自伤让物暖收 → M4+G，避免硬套打架道歉链。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech != "M5" or st != "H":
+        return False
+    return suggests_m5_h_warm_g(blob)
+
+
 def should_reclassify_m2_c_to_m8_j(
     *,
     mechanism: str,
@@ -607,6 +642,22 @@ def resolve_h3_structure(
                 target_st="G",
                 note_extra="立规后暖心收束，非 D 字面破规回旋镖",
                 note_tag="warm-close-not-literal",
+            )
+        )
+        return out, notes
+
+    if should_reclassify_m5_h_to_m4_g(
+        mechanism=str(out.get("mechanism") or ""),
+        structure_type=str(out.get("structure_type") or ""),
+        blob=blob,
+    ):
+        notes.extend(
+            _apply_reclass(
+                out,
+                target_mech="M4",
+                target_st="G",
+                note_extra="自伤让物暖收，非 M5+H 打架道歉链",
+                note_tag="self-harm-warm-not-fight",
             )
         )
         return out, notes
@@ -787,6 +838,13 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     ):
         target_mech, target_st = "M4", "G"
         extra = "立规后暖心收束，非 D 字面破规回旋镖"
+    elif should_reclassify_m5_h_to_m4_g(
+        mechanism=mechanism,
+        structure_type=current,
+        blob=blob,
+    ):
+        target_mech, target_st = "M4", "G"
+        extra = "自伤让物暖收，非 M5+H 打架道歉链"
     elif should_reclassify_m2_c_to_m8_j(
         mechanism=mechanism,
         structure_type=current,

@@ -56,29 +56,44 @@ def patch_q_fix_punchline_prefix(story: dict) -> list[str]:
     return notes
 
 
+_RE_Q_ACCUSE_OTHER = re.compile(
+    r"你(?:耍赖|加码|骗|偷|装|不认|摔筷子)|谁跟你玩|你先把"
+)
+_RE_MOM_PREFIX = re.compile(r"^(?:妈|妈妈)[，,]\s*")
+
+
 def patch_q_bind_cheat_speaker(story: dict) -> list[str]:
-    """第一人称耍赖/借口句归位到耍赖方（防姐弟抢戏）。"""
+    """第一人称耍赖句归位耍赖方；拆穿/指责句归位另一方。"""
     notes: list[str] = []
     rows = _dialogue_rows(story)
     if not rows:
         return notes
     cheater = resolve_q_cheat_speaker(story)
+    other = "灿灿" if cheater == "昭昭" else "昭昭"
     fixed = 0
     for item in rows:
         sp = str(item.get("speaker") or "").strip()
         line = str(item.get("line") or "")
-        if sp not in {"昭昭", "灿灿"} or sp == cheater:
+        if not line.strip():
             continue
-        if not RE_CHEAT_OWN.search(line):
+        # 拆穿/指责句不能由耍赖方自说；非耍赖方的拆穿句保持原样。
+        if _RE_Q_ACCUSE_OTHER.search(line) or RE_EXPOSE.search(line):
+            if sp == cheater:
+                item["speaker"] = other
+                fixed += 1
             continue
-        if RE_EXPOSE.search(line) and not RE_CHEAT_OWN.search(
-            re.sub(r"看穿|拆穿|揭穿|心思|偷|别装|露馅|明明|还装", "", line)
+        # 第一人称耍赖/借口句只能由耍赖方说。
+        if (
+            sp in {"昭昭", "灿灿", "妈妈", "爸爸"}
+            and sp != cheater
+            and RE_CHEAT_OWN.search(line)
         ):
-            continue
-        item["speaker"] = cheater
-        fixed += 1
+            item["speaker"] = cheater
+            if sp in {"妈妈", "爸爸"}:
+                item["line"] = _RE_MOM_PREFIX.sub("", line)
+            fixed += 1
     if fixed:
-        notes.append(f"Q耍赖句归位→{cheater}×{fixed}")
+        notes.append(f"Q耍赖/拆穿句归位×{fixed}")
     return notes
 
 
@@ -206,7 +221,7 @@ def patch_q_strengthen_mom_backfire(story: dict) -> list[str]:
 
 
 def patch_q_ensure_backfire_close(story: dict) -> list[str]:
-    """末段缺反噬对白时，补妈妈回指借口的洗碗收束（抽象模板）。"""
+    """末 4 句内缺反噬对白时，补妈妈回指借口的洗碗收束。"""
     notes: list[str] = []
     rows = _dialogue_rows(story)
     if len(rows) < 8:
@@ -221,8 +236,8 @@ def patch_q_ensure_backfire_close(story: dict) -> list[str]:
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return notes
-    # 优先改写末段妈妈句；勿在已满句时追加导致超限
-    for item in reversed(dialogue[-5:]):
+    # 优先改写末 4 句内的妈妈句。
+    for item in reversed(dialogue[-4:]):
         if not isinstance(item, dict):
             continue
         if str(item.get("speaker") or "").strip() != "妈妈":

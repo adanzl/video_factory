@@ -224,3 +224,42 @@ def test_quality_f_marker_and_body_only_opening():
     q = score_daily_story(story, theme="文明吵架急刹车")
     assert "缺发现开场" not in str(q.get("reasons"))
     assert "笑点解析缺类型" not in str(q.get("reasons"))
+
+
+def test_f_patch_repairs_123_shape_alternation_and_close():
+    from app.services.daily_story.quality import score_daily_story
+    from app.services.daily_story.story_types.f.patch import patch_f_body
+    from app.services.daily_story.story_types.f.validate import append_f_body_errors
+    from app.services.gold_story.scene import collect_narration_dialogue_errors
+
+    story = {
+        "story_type": "F",
+        "conflict_core": "灿灿自怜没人爱，昭昭憋笑学舌把伤感变笑料",
+        "punchline_explain": "F类：灿灿自怜，昭昭憋笑学舌，追打收束",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我想我会一直孤单。"},
+            {"speaker": "昭昭", "line": "姐，你看着窗外叹啥气？"},
+            {"speaker": "灿灿", "line": "望着窗外这黑漆漆的天，我觉得没人会爱我了。"},
+            {"speaker": "昭昭", "line": "嗯嗯嗯……呜呜啊呜呀呜……"},
+            {"speaker": "灿灿", "line": "昭昭你趴地上干嘛？发什么怪声？"},
+            {"speaker": "灿灿", "line": "我也感觉没人会爱我了，你？"},
+            {"speaker": "灿灿", "line": "你还学我说话？你再说一遍试试看！"},
+            {"speaker": "昭昭", "line": "噗嗤……我也很孤单，啊啊啊……"},
+            {"speaker": "灿灿", "line": "你再说一句，我就拿抱枕砸你信不信？"},
+            {"speaker": "昭昭", "line": "你砸呀你砸呀，我也很孤单，啊。"},
+            {"speaker": "灿灿", "line": "好，你等着！看我不砸你才怪！"},
+            {"speaker": "昭昭", "line": "别打了别打了，我笑岔气了。"},
+            {"speaker": "灿灿", "line": "你还学不学？再学我可不跟你玩了嘛。"},
+            {"speaker": "昭昭", "line": "不学了不学了，姐姐你孤单得好好笑啊。"},
+            {"speaker": "灿灿", "line": "你还笑！我今天非抓住你不可啊！"},
+            {"speaker": "昭昭", "line": "我躲沙发后面了，你抓不到我，嘿嘿呀。"},
+        ],
+    }
+    patch_f_body(story)
+    errors: list[str] = []
+    append_f_body_errors(story, errors)
+    assert errors == []
+    assert collect_narration_dialogue_errors(story["dialogue"]) == []
+    assert score_daily_story(
+        story, skip_relevancy=True
+    )["structure_score"] >= 75
