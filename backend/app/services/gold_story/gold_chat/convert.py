@@ -1061,6 +1061,18 @@ def validate_gold_chat(
 ) -> None:
     """gold_chat 校验：字段/字数/speaker 对齐日常故事常量，再追加金稿独有项。"""
     errors: list[str] = []
+    from app.services.gold_story.gold_chat.patch import (
+        patch_replace_banned_kinship,
+    )
+
+    cleaned, kinship_changed = patch_replace_banned_kinship(
+        story,
+        banned_literals=banned_literals,
+    )
+    if kinship_changed:
+        story["dialogue"] = cleaned["dialogue"]
+        if "discovery_opening" in cleaned:
+            story["discovery_opening"] = cleaned["discovery_opening"]
     required = (
         "scene_title",
         "setting",

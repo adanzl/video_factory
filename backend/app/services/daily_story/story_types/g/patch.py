@@ -60,6 +60,44 @@ def _patch_g_min_chars(story: dict) -> list[str]:
     return notes
 
 
+_G_RETORT_POOL = ("你别抢！", "我就不给！", "那是我先拿到的！", "你快松手！")
+
+
+def _patch_g_break_consecutive(story: dict) -> list[str]:
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
+        return notes
+    used = {_compact(item.get("line")) for item in dialogue if isinstance(item, dict)}
+    i = 1
+    inserted = 0
+    while i < len(dialogue) and inserted < 2:
+        a, b = dialogue[i - 1], dialogue[i]
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            i += 1
+            continue
+        sa = str(a.get("speaker") or "").strip()
+        sb = str(b.get("speaker") or "").strip()
+        if sa not in {"昭昭", "灿灿"} or sa != sb:
+            i += 1
+            continue
+        other = "灿灿" if sa == "昭昭" else "昭昭"
+        for retort in _G_RETORT_POOL:
+            core = _compact(retort)
+            if core in used:
+                continue
+            dialogue.insert(i, {"speaker": other, "line": retort})
+            used.add(core)
+            notes.append(f"G插接话断连说[{i + 1}]")
+            inserted += 1
+            i += 1
+            break
+        else:
+            i += 1
+        i += 1
+    return notes
+
+
 def patch_g_body(story: dict) -> list[str]:
     """G 缺 pivot/愣住/暖收时，补一对行动跟随短句兜底。"""
     notes: list[str] = []
@@ -110,4 +148,5 @@ def patch_g_body(story: dict) -> list[str]:
     if len(dialogue) > 24:
         dialogue[:] = dialogue[:24]
     notes.extend(_patch_g_min_chars(story))
+    notes.extend(_patch_g_break_consecutive(story))
     return notes
