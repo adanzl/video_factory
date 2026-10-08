@@ -114,6 +114,9 @@ def patch_f_break_consecutive(story: dict) -> list[str]:
             notes.append(f"F学舌句归位[{i + 1}]")
             i += 1
             continue
+        if str(a.get("line") or "").rstrip().endswith(("？", "?")):
+            i += 1
+            continue
         for retort in _F_RETORT_POOL:
             core = re.sub(r"[，,。！!？?\s]+", "", retort)
             if core in used:
@@ -138,13 +141,10 @@ def patch_f_append_stale_close(story: dict) -> list[str]:
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 4:
         return notes
-    from app.services.daily_story.story_types.f.validate import (
-        RE_EXTERNAL_PIVOT,
-        RE_STALE_OR_YIELD,
-    )
+    from app.services.daily_story.story_types.f import humor as f_humor
 
-    tail = "".join(str(item.get("line") or "") for item in dialogue[-3:])
-    if RE_STALE_OR_YIELD.search(tail) or RE_EXTERNAL_PIVOT.search(tail):
+    lines = [str(item.get("line") or "") for item in dialogue]
+    if f_humor.has_close_markers(lines):
         return notes
     last_sp = str(dialogue[-1].get("speaker") or "").strip()
     other = "灿灿" if last_sp == "昭昭" else "昭昭"
@@ -214,11 +214,40 @@ def patch_f_ensure_min_chars(story: dict) -> list[str]:
     return notes
 
 
+def patch_f_ensure_escalation(story: dict) -> list[str]:
+    """F 层数不足 3 时补一句加码互呛，避免推进分被扣 12。"""
+    notes: list[str] = []
+    if not _is_f(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 6:
+        return notes
+    from app.services.daily_story.quality import _score_escalation
+    from app.services.daily_story.story_types.f.line import LINE_F
+
+    lines = [str(item.get("line") or "") for item in dialogue]
+    bonus, _ = _score_escalation(lines, layer_patterns=LINE_F.layer_patterns)
+    if bonus >= 10:
+        return notes
+    line = "你还来劲了呢！"
+    core = re.sub(r"[，,。！!？?\s]+", "", line)
+    if any(core == re.sub(r"[，,。！!？?\s]+", "", x) for x in lines):
+        return notes
+    idx = max(1, min(len(dialogue) - 1, len(dialogue) * 3 // 5))
+    prev_sp = str(dialogue[idx - 1].get("speaker") or "").strip()
+    next_sp = str(dialogue[idx].get("speaker") or "").strip()
+    speaker = "昭昭" if prev_sp != "昭昭" and next_sp != "昭昭" else "灿灿"
+    dialogue.insert(idx, {"speaker": speaker, "line": line})
+    notes.append("F补加码层")
+    return notes
+
+
 def patch_f_body(story: dict) -> list[str]:
     notes = patch_f_strip_filler(story)
     notes.extend(patch_f_punchline_prefix(story))
     notes.extend(patch_f_narration_to_speech(story))
     notes.extend(patch_f_break_consecutive(story))
     notes.extend(patch_f_append_stale_close(story))
+    notes.extend(patch_f_ensure_escalation(story))
     notes.extend(patch_f_ensure_min_chars(story))
     return notes

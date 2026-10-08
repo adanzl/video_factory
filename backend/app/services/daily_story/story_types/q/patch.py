@@ -287,6 +287,43 @@ def patch_q_trim_over_lines(story: dict, *, max_lines: int = 24) -> list[str]:
     return notes
 
 
+_Q1_RE = re.compile(
+    r"约定|规则|玩法|轮到|说好|按.+算|谁.+谁|抽签|猜拳|轮流|"
+    r"(?:\d+|[一二三四五六七八九十两]+|几)(?:口|下|次)"
+)
+_Q3_RE = re.compile(r"看穿|拆穿|揭穿|心思|你昨天|偷|别装|露馅")
+
+
+def patch_q_ensure_quality_layers(story: dict) -> list[str]:
+    """Q 结构分需要立约定 + 拆穿两层；缺则补短句，不新增剧情。"""
+    notes: list[str] = []
+    rows = _dialogue_rows(story)
+    if len(rows) < 8:
+        return notes
+    body = "".join(str(row.get("line") or "") for row in rows)
+    cheater = resolve_q_cheat_speaker(story)
+    other = "灿灿" if cheater == "昭昭" else "昭昭"
+    used = {re.sub(r"[，,。！!？?\s]+", "", str(row.get("line") or "")) for row in rows}
+    if not _Q1_RE.search(body):
+        line = "咱可说好了，猜中得分，猜错认账！"
+        core = re.sub(r"[，,。！!？?\s]+", "", line)
+        if core not in used:
+            dialogue = story.get("dialogue")
+            if isinstance(dialogue, list):
+                dialogue.insert(1, {"speaker": cheater, "line": line})
+                used.add(core)
+                notes.append("Q补立约定")
+    if not _Q3_RE.search(body):
+        line = "我早看穿你的小心思了！"
+        core = re.sub(r"[，,。！!？?\s]+", "", line)
+        if core not in used:
+            dialogue = story.get("dialogue")
+            if isinstance(dialogue, list):
+                dialogue.insert(max(1, len(dialogue) - 3), {"speaker": other, "line": line})
+                notes.append("Q补拆穿")
+    return notes
+
+
 def patch_q_body(story: dict) -> list[str]:
     notes: list[str] = []
     code = parse_story_type_code(
@@ -299,6 +336,7 @@ def patch_q_body(story: dict) -> list[str]:
     notes.extend(patch_q_bind_cheat_speaker(story))
     notes.extend(patch_q_strip_pad_tails(story))
     notes.extend(patch_q_dedupe_bridges(story))
+    notes.extend(patch_q_ensure_quality_layers(story))
     notes.extend(patch_q_strengthen_mom_backfire(story))
     notes.extend(patch_q_ensure_backfire_close(story))
     notes.extend(patch_q_trim_over_lines(story))

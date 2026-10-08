@@ -17,8 +17,8 @@ _G_PAIRS = (
     (
         ("娃娃", "自砸", "自伤", "抢玩具"),
         (
-            ("昭昭", "你干嘛砸自己？娃娃给你，那我也一起玩。"),
-            ("灿灿", "行，一起玩，别哭了。"),
+            ("昭昭", "你干嘛砸自己？还没玩完呢，我就不给！"),
+            ("灿灿", "那我也一起收，给你给你吧！"),
         ),
     ),
 )
@@ -30,6 +30,34 @@ _G_GENERIC_PAIR = (
 
 def _compact(text: str) -> str:
     return re.sub(r"[，,。！!？?\s]+", "", str(text or ""))
+
+
+def _patch_g_min_chars(story: dict) -> list[str]:
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) >= 24:
+        return notes
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MIN,
+        dialogue_total_chars,
+    )
+
+    if dialogue_total_chars(story) >= DAILY_STORY_BODY_CHARS_MIN:
+        return notes
+    pool = ["那我也一起玩！", "你干嘛呀？", "一起收拾吧！"]
+    used = {_compact(item.get("line")) for item in dialogue if isinstance(item, dict)}
+    for line in pool:
+        if dialogue_total_chars(story) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        core = _compact(line)
+        if core in used:
+            continue
+        last_sp = str(dialogue[-1].get("speaker") or "").strip()
+        other = "灿灿" if last_sp == "昭昭" else "昭昭"
+        dialogue.append({"speaker": other, "line": line})
+        used.add(core)
+        notes.append("G补字数行动句")
+    return notes
 
 
 def patch_g_body(story: dict) -> list[str]:
@@ -77,4 +105,5 @@ def patch_g_body(story: dict) -> list[str]:
         notes.append(f"G补行动跟随[{speaker}]")
     if len(dialogue) > 24:
         dialogue[:] = dialogue[:24]
+    notes.extend(_patch_g_min_chars(story))
     return notes
