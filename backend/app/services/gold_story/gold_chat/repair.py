@@ -425,8 +425,6 @@ def evaluate_repair_candidate_acceptance(
     draft_mom = _count_parent_lines(draft_scored)
     if draft_mom > mom_max:
         return None, f"修稿后妈妈/家长句 {draft_mom} 句，超过上限 {mom_max}"
-    if draft_mom > base_mom:
-        return None, f"修稿增加了家长句（{base_mom}→{draft_mom}）"
 
     base_struct = int(structure_score_of(baseline.get("quality") or {}) or 0)
     try:

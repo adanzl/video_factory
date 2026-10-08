@@ -108,6 +108,12 @@ def patch_f_break_consecutive(story: dict) -> list[str]:
             i += 1
             continue
         other = "灿灿" if sa == "昭昭" else "昭昭"
+        # 后句是 我也/我还 学舌时，翻给另一人比硬插接话更贴语义。
+        if re.search(r"^(?:我也|那我也|我还|你才|你也)", str(b.get("line") or "")):
+            b["speaker"] = other
+            notes.append(f"F学舌句归位[{i + 1}]")
+            i += 1
+            continue
         for retort in _F_RETORT_POOL:
             core = re.sub(r"[，,。！!？?\s]+", "", retort)
             if core in used:
