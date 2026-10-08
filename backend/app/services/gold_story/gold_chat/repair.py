@@ -157,6 +157,11 @@ def prepare_candidate_for_acceptance(
         cleaned,
         banned_literals=banned_literals,
     )
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+
+    st = str(cleaned.get("story_type") or "").strip().upper()
+    if st:
+        cleaned, _ = apply_gold_chat_type_patch(cleaned, structure_type=st)
     errors = collect_candidate_repair_errors(
         cleaned,
         mom_lines_max=mom_lines_max,
@@ -196,6 +201,11 @@ def prepare_candidate_for_acceptance_after_local_length_close(
         cleaned,
         banned_literals=banned_literals,
     )
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+
+    st = str(cleaned.get("story_type") or "").strip().upper()
+    if st:
+        cleaned, _ = apply_gold_chat_type_patch(cleaned, structure_type=st)
     cleaned, _ = _stabilize_local_length_candidate(
         cleaned,
         structure_type=structure_type,
