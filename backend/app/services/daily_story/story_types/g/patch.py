@@ -115,6 +115,11 @@ def patch_g_body(story: dict) -> list[str]:
     if not isinstance(dialogue, list) or len(dialogue) < 4:
         return notes
 
+    from app.services.gold_story.scene import (
+        patch_dialogue_narration_to_speech,
+    )
+
+    notes.extend(patch_dialogue_narration_to_speech(story))
     # 先断同人连说、补 near-miss；再做 pivot/stun/soft 判定。
     notes.extend(_patch_g_break_consecutive(story))
     notes.extend(_patch_g_min_chars(story))
@@ -139,27 +144,24 @@ def patch_g_body(story: dict) -> list[str]:
     if has_pivot and has_stun and has_soft:
         return notes
 
-    conflict = f"{story.get('conflict_core') or ''}{story.get('setting') or ''}"
-    pair = _G_GENERIC_PAIR
-    for keys, candidate in _G_PAIRS:
-        if any(key in conflict for key in keys):
-            pair = candidate
-            break
+    parts: list[str] = []
+    if not has_stun:
+        parts.append("你干嘛呀？")
+    if not has_pivot:
+        parts.append("还没玩完呢，")
+    if not has_soft or not has_pivot:
+        parts.append("那我也一起玩！")
+    line = "".join(parts).strip()
+    if not line:
+        return notes
 
     used = {_compact(item.get("line")) for item in dialogue if isinstance(item, dict)}
-    pair_list = list(pair)
-    last_sp = str(dialogue[-1].get("speaker") or "").strip()
-    if len(pair_list) > 1 and pair_list[0][0] == last_sp:
-        pair_list = [pair_list[1], pair_list[0]]
-    for speaker, line in pair_list:
-        core = _compact(line)
-        if core in used:
-            continue
-        dialogue.append({"speaker": speaker, "line": line})
-        used.add(core)
-        notes.append(f"G补行动跟随[{speaker}]")
-    if len(dialogue) > 24:
-        dialogue[:] = dialogue[:24]
+    core = _compact(line)
+    if core not in used:
+        last_sp = str(dialogue[-1].get("speaker") or "").strip()
+        other = "灿灿" if last_sp == "昭昭" else "昭昭"
+        dialogue.append({"speaker": other, "line": line})
+        notes.append("G补行动跟随句")
     notes.extend(_patch_g_break_consecutive(story))
     notes.extend(_patch_g_min_chars(story))
     return notes
