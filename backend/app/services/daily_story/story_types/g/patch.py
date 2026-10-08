@@ -60,7 +60,16 @@ def _patch_g_min_chars(story: dict) -> list[str]:
     return notes
 
 
-_G_RETORT_POOL = ("你别抢！", "我就不给！", "那是我先拿到的！", "你快松手！")
+_G_RETORT_POOL = (
+    "你别抢！",
+    "我就不给！",
+    "那是我先拿到的！",
+    "你快松手！",
+    "你放手！",
+    "还给我！",
+    "别抢了！",
+    "这是我先拿的！",
+)
 
 
 def _patch_g_break_consecutive(story: dict) -> list[str]:
@@ -69,43 +78,47 @@ def _patch_g_break_consecutive(story: dict) -> list[str]:
     if not isinstance(dialogue, list) or len(dialogue) < 2:
         return notes
     used = {_compact(item.get("line")) for item in dialogue if isinstance(item, dict)}
-    i = 1
-    inserted = 0
-    while i < len(dialogue) and inserted < 2:
-        a, b = dialogue[i - 1], dialogue[i]
-        if not isinstance(a, dict) or not isinstance(b, dict):
-            i += 1
-            continue
-        sa = str(a.get("speaker") or "").strip()
-        sb = str(b.get("speaker") or "").strip()
-        if sa not in {"昭昭", "灿灿"} or sa != sb:
-            i += 1
-            continue
-        other = "灿灿" if sa == "昭昭" else "昭昭"
+    for _ in range(6):
+        hit = -1
+        for i in range(1, len(dialogue)):
+            a, b = dialogue[i - 1], dialogue[i]
+            if not isinstance(a, dict) or not isinstance(b, dict):
+                continue
+            sa = str(a.get("speaker") or "").strip()
+            sb = str(b.get("speaker") or "").strip()
+            if sa in {"昭昭", "灿灿"} and sa == sb:
+                hit = i
+                break
+        if hit < 0:
+            break
+        other = "灿灿" if str(dialogue[hit - 1].get("speaker") or "").strip() == "昭昭" else "昭昭"
+        picked = ""
         for retort in _G_RETORT_POOL:
             core = _compact(retort)
-            if core in used:
-                continue
-            dialogue.insert(i, {"speaker": other, "line": retort})
-            used.add(core)
-            notes.append(f"G插接话断连说[{i + 1}]")
-            inserted += 1
-            i += 1
+            if core not in used:
+                picked = retort
+                used.add(core)
+                break
+        if not picked:
             break
-        else:
-            i += 1
-        i += 1
+        dialogue.insert(hit, {"speaker": other, "line": picked})
+        notes.append(f"G插接话断连说[{hit + 1}]")
     return notes
 
 
 def patch_g_body(story: dict) -> list[str]:
-    """G 缺 pivot/愣住/暖收时，补一对行动跟随短句兜底。"""
+    """G 缺 pivot/愣住/暖收时补行动跟随；连说与 near-miss 每次都收口。"""
     notes: list[str] = []
     if str(story.get("story_type") or "").strip().upper() != "G":
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 4:
         return notes
+
+    # 先断同人连说、补 near-miss；再做 pivot/stun/soft 判定。
+    notes.extend(_patch_g_break_consecutive(story))
+    notes.extend(_patch_g_min_chars(story))
+
     lines = [
         str(item.get("line") or "")
         for item in dialogue
@@ -147,6 +160,6 @@ def patch_g_body(story: dict) -> list[str]:
         notes.append(f"G补行动跟随[{speaker}]")
     if len(dialogue) > 24:
         dialogue[:] = dialogue[:24]
-    notes.extend(_patch_g_min_chars(story))
     notes.extend(_patch_g_break_consecutive(story))
+    notes.extend(_patch_g_min_chars(story))
     return notes

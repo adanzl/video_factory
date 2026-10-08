@@ -228,7 +228,7 @@ def patch_q_ensure_backfire_close(story: dict) -> list[str]:
         return notes
     body = "".join(str(r.get("line") or "") for r in rows)
     tail = "".join(str(r.get("line") or "") for r in rows[-4:])
-    if RE_BACKFIRE.search(tail):
+    if re.search(r"洗碗|刷碗|洗盘子|加活|活该|翻车", tail):
         return notes
     if not re.search(r"胃小|推给|剩的|吃不下|耍赖", body):
         return notes
