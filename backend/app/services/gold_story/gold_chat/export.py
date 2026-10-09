@@ -82,6 +82,12 @@ def _backfill_gold_story_after_export(
 
         payload_patch["gold_chat_structure_score"] = structure_score_of(quality)
         payload_patch["gold_chat_quality_summary"] = quality.get("summary")
+        humor = quality.get("humor")
+        if isinstance(humor, dict) and humor.get("funny_score") is not None:
+            try:
+                payload_patch["gold_chat_humor_score"] = int(humor["funny_score"])
+            except (TypeError, ValueError):
+                pass
     repo_gold_story.patch_story_payload(gid, payload_patch)
     clear_gold_chat_failure(gid, source_id=sid)
 
@@ -213,6 +219,47 @@ def load_gold_chat_for_row(
 
 
 
+def _gold_chat_quality_scores(
+    daily: dict[str, Any] | None,
+    *,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, int | None]:
+    """列表用：结构分 + 幽默分（funny_score）。"""
+    from app.services.daily_story.quality import structure_score_of
+
+    quality = (
+        daily.get("quality")
+        if isinstance(daily, dict) and isinstance(daily.get("quality"), dict)
+        else None
+    )
+    structure_score: int | None = None
+    humor_score: int | None = None
+    if quality:
+        raw_struct = structure_score_of(quality)
+        structure_score = raw_struct if raw_struct else None
+        humor = quality.get("humor")
+        if isinstance(humor, dict) and humor.get("funny_score") is not None:
+            try:
+                humor_score = int(humor["funny_score"])
+            except (TypeError, ValueError):
+                pass
+    if payload:
+        if structure_score is None and payload.get("gold_chat_structure_score") is not None:
+            try:
+                structure_score = int(payload["gold_chat_structure_score"])
+            except (TypeError, ValueError):
+                pass
+        if humor_score is None and payload.get("gold_chat_humor_score") is not None:
+            try:
+                humor_score = int(payload["gold_chat_humor_score"])
+            except (TypeError, ValueError):
+                pass
+    return {
+        "structure_score": structure_score,
+        "humor_score": humor_score,
+    }
+
+
 def _summary_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     if not payload.get("gold_chat_exported_at"):
         return None
@@ -223,6 +270,7 @@ def _summary_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
         "scene_title": payload.get("gold_chat_scene_title"),
         "exported_at": payload.get("gold_chat_exported_at"),
         "bili_title": payload.get("bili_title"),
+        **_gold_chat_quality_scores(None, payload=payload),
     }
 
 
@@ -242,12 +290,21 @@ def gold_chat_summary(
         chat_lines = data.get("chat_lines")
         if chat_lines is None and daily:
             chat_lines = len(daily.get("dialogue") or [])
+        payload = (
+            cast(dict[str, Any], row.get("payload") or {})
+            if row is not None
+            else None
+        )
         return {
             "has_gold_chat": True,
             "chat_chars": chat_chars,
             "chat_lines": chat_lines,
             "scene_title": daily.get("scene_title") or data.get("scene_title"),  # type: ignore[union-attr]
             "exported_at": data.get("exported_at"),
+            **_gold_chat_quality_scores(
+                daily if isinstance(daily, dict) else None,
+                payload=payload,
+            ),
         }
 
     if row is None:

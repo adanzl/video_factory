@@ -61,7 +61,7 @@
           {{ formatAutoScore(row.auto_score) }}
         </template>
       </el-table-column>
-      <el-table-column label="对话稿" width="70" align="center">
+      <el-table-column label="对话稿" width="76" align="center">
         <template #default="{ row }">
           <el-tag v-if="isGoldChatConverting(row)" type="warning" size="small">
             <span class="inline-flex items-center gap-1">
@@ -80,7 +80,16 @@
             </template>
             <el-tag type="warning" size="small" class="cursor-default">待审核</el-tag>
           </el-tooltip>
-          <el-tag v-else-if="row.has_gold_chat" type="success" size="small">已导出</el-tag>
+          <el-tooltip
+            v-else-if="row.has_gold_chat"
+            content="结构分|好笑分"
+            placement="top"
+            :show-after="300"
+          >
+            <el-tag type="success" size="small" class="cursor-default font-mono tabular-nums">
+              {{ formatGoldChatQualityScores(row.structure_score, row.humor_score) }}
+            </el-tag>
+          </el-tooltip>
           <el-tooltip
             v-else-if="row.gold_chat_error?.error"
             placement="top"
@@ -179,6 +188,7 @@ import {
   deleteGoldStories,
   formatAutoScore,
   formatDailyStoryType,
+  formatGoldChatQualityScores,
   getGoldStoryCollectStatus,
   getGoldStoryReimportStatus,
   listGoldChats,

@@ -19,6 +19,8 @@ export interface GoldChatListItem {
   chat_lines?: number;
   scene_title?: string;
   exported_at?: string;
+  structure_score?: number | null;
+  humor_score?: number | null;
   gold_chat_daily_story_id?: number | null;
   gold_chat_error?: GoldChatErrorInfo | null;
   updated_at?: string;
@@ -240,6 +242,16 @@ export { formatDailyStoryType };
 export function formatAutoScore(score?: number | null): string {
   if (score == null || Number.isNaN(score)) return "-";
   return score.toFixed(2);
+}
+
+/** 列表「对话稿」列：已导出时显示 结构分|好笑分 */
+export function formatGoldChatQualityScores(
+  structureScore?: number | null,
+  humorScore?: number | null,
+): string {
+  const fmt = (v?: number | null) =>
+    v == null || Number.isNaN(v) ? "-" : String(Math.round(v));
+  return `${fmt(structureScore)}|${fmt(humorScore)}`;
 }
 
 export async function listGoldChats(params: {

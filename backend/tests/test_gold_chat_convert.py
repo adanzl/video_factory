@@ -1414,6 +1414,8 @@ def test_gold_chat_summary_from_payload():
                 "gold_chat_scene_title": "嘴硬心软",
                 "gold_chat_lines": 18,
                 "gold_chat_chars": 260,
+                "gold_chat_structure_score": 82,
+                "gold_chat_humor_score": 14,
                 "bili_title": "东北弟弟打架被姐姐骂",
             },
         },
@@ -1422,6 +1424,8 @@ def test_gold_chat_summary_from_payload():
     assert summary["scene_title"] == "嘴硬心软"
     assert summary["chat_lines"] == 18
     assert summary["bili_title"] == "东北弟弟打架被姐姐骂"
+    assert summary["structure_score"] == 82
+    assert summary["humor_score"] == 14
 
 
 def test_import_gold_chat_daily_story_insert_and_reimport(

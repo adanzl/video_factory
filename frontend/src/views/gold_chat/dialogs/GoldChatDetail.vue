@@ -231,7 +231,7 @@
         </div>
         <div
           v-if="chatStory.quality?.score != null"
-          class="flex flex-wrap gap-1 border-b border-gray-100 px-4 py-2"
+          class="flex flex-wrap items-center gap-1 border-b border-gray-100 px-4 py-2"
         >
           <el-tag
             v-for="(tag, ti) in chatQualityAcceptanceTags"
@@ -241,8 +241,9 @@
           >
             {{ tag }}
           </el-tag>
-          <span class="ml-auto text-xs text-gray-500">
-            结构分 {{ chatStory.quality?.structure_score ?? chatStory.quality?.score }}
+          <span class="ml-auto text-xs text-gray-500 tabular-nums">
+            好笑分 {{ chatHumorScoreText }} · 结构分
+            {{ chatStory.quality?.structure_score ?? chatStory.quality?.score }}
           </span>
         </div>
 
@@ -416,6 +417,15 @@ const chatStory = computed<StoryContent>(
 const chatQualityAcceptanceTags = computed(() =>
   acceptanceTags(chatStory.value.quality),
 );
+
+const chatHumorScoreText = computed(() => {
+  const q = chatStory.value.quality;
+  if (!q) return "-";
+  if (q.humor_pending) return "待评";
+  const score = q.humor?.funny_score;
+  if (score == null || Number.isNaN(score)) return "-";
+  return String(Math.round(score));
+});
 
 const titleText = computed(() => {
   const id = detail.value?.id ?? props.goldStoryId;
