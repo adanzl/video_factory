@@ -436,6 +436,19 @@ def run_prepare_route():
     return _accept_stage(job_id, lambda: job_mgr.run_prepare(job_id, to_end=to_end))
 
 
+@bp.post("/resume")
+def resume_job_route():
+    """续跑当前 stage，**不清理**已有产物（只补缺口）。
+
+    与 ``/segment/*`` 等重跑入口的区别：重跑会 prepare（清空该 stage
+    产物再重建），中途失败续跑时会把已完成的片段一并删掉重做。
+    本入口走 ``continue_job(prepare=False)``，即服务重启自动恢复用的那条路径。
+    """
+    data = get_json_body()
+    job_id = parse_id(data)
+    return _accept_stage(job_id, lambda: job_mgr.resume_job(job_id))
+
+
 @bp.post("/merge")
 def run_merge_route():
     data = get_json_body()

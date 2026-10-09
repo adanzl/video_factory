@@ -476,6 +476,32 @@ class MediaMgr:
             return [(text or f"segment {index}", float(duration))]
         return []
 
+    def _prioritize_non_i2v(self, targets: list[dict], *, job: dict | None) -> list[dict]:
+        """把非 i2v 段排到前面（相对顺序保持不变）。
+
+        i2v 撞上游队列满时会冷却等待（分钟级），若它先占住并发槽，
+        秒级完成的 ffmpeg 段要一起等；先做 ffmpeg 段能让页面尽快看到片段。
+        """
+        if len(targets) < 2:
+            return targets
+        late: list[dict] = []
+        early: list[dict] = []
+        for seg in targets:
+            provider = self._resolve_clip_provider(
+                visual_mode=seg.get("visual_mode") or "static_motion",
+                job=job,
+                segment=seg,
+            )
+            (late if provider in _I2V_PROVIDERS else early).append(seg)
+        if not early or not late:
+            return targets
+        logger.info(
+            "clip batch: 非 i2v 段优先构建 segments=%s，i2v 段随后=%s",
+            [seg["segment_index"] for seg in early],
+            [seg["segment_index"] for seg in late],
+        )
+        return early + late
+
     def build_segment_clips(
         self,
         *,
@@ -508,6 +534,9 @@ class MediaMgr:
             if only_segment_indices is not None
             else segments
         )
+        # 非 i2v 段（ffmpeg 动效）先建：i2v 遇上游队列满要冷却等待，
+        # 若排在前面会占满并发槽，把秒级的 ffmpeg 段一起拖住。
+        targets = self._prioritize_non_i2v(targets, job=job)
         total = len(targets)
         t_start = time.time()
         target_indices = [seg["segment_index"] for seg in targets]

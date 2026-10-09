@@ -1337,3 +1337,61 @@ def test_upstream_backpressure_flag_feeds_media_mgr() -> None:
             AgnesClipProvider()._note_upstream_failure(queue_full=True)  # noqa: SLF001
         # 冷却期内（1000 < retry_at=1120）应报背压
         assert _agnes_i2v_backpressure_active() is True
+
+
+def test_prioritize_non_i2v_keeps_ffmpeg_first() -> None:
+    """i2v 会冷却等待，非 i2v 段应先建，免被占槽拖住。"""
+    from app.services.media.media_mgr import MediaMgr
+
+    mgr = MediaMgr.__new__(MediaMgr)  # 不跑 __init__，只测纯排序逻辑
+    segs = [
+        {"segment_index": 1, "visual_mode": "static_motion"},
+        {"segment_index": 2, "visual_mode": "static_motion"},
+        {"segment_index": 3, "visual_mode": "static_motion"},
+        {"segment_index": 4, "visual_mode": "static_motion"},
+    ]
+    providers = {1: "agnes_i2v", 2: "ffmpeg", 3: "agnes_i2v", 4: "ffmpeg"}
+
+    def _resolve(*, visual_mode, job=None, segment=None):
+        return providers[segment["segment_index"]]
+
+    mgr._resolve_clip_provider = _resolve  # type: ignore[method-assign]  # noqa: SLF001
+    ordered = mgr._prioritize_non_i2v(segs, job=None)  # noqa: SLF001
+    assert [s["segment_index"] for s in ordered] == [2, 4, 1, 3]
+
+    # 全是 i2v 或全是 ffmpeg 时保持原序（不做无谓重排）
+    providers.clear()
+    providers.update({1: "agnes_i2v", 2: "agnes_i2v", 3: "agnes_i2v", 4: "agnes_i2v"})
+    assert [s["segment_index"] for s in mgr._prioritize_non_i2v(segs, job=None)] == [  # noqa: SLF001
+        1, 2, 3, 4
+    ]
+    providers.clear()
+    providers.update({1: "ffmpeg", 2: "ffmpeg", 3: "ffmpeg", 4: "ffmpeg"})
+    assert [s["segment_index"] for s in mgr._prioritize_non_i2v(segs, job=None)] == [  # noqa: SLF001
+        1, 2, 3, 4
+    ]
+
+
+def test_resume_job_does_not_prepare() -> None:
+    """续跑入口必须 prepare=False（否则会清空已完成产物）。"""
+    from app.services.job.job_mgr import JobMgr
+
+    calls: dict = {}
+
+    def _fake_submit(self, job_id, action, run, **kwargs):  # noqa: ANN001
+        calls["job_id"] = job_id
+        calls["action"] = action
+        calls.update(kwargs)
+        return {"id": job_id, "stage": action, "status": "running"}
+
+    with (
+        patch.object(JobMgr, "get_job", return_value={"id": 7, "stage": "segment"}),
+        patch.object(JobMgr, "submit_action", _fake_submit),
+    ):
+        JobMgr().resume_job(7)
+
+    assert calls["job_id"] == 7
+    assert calls["action"] == "segment"
+    assert calls["prepare"] is False, "续跑不能清产物"
+    assert calls["sync"] is False
+    assert calls["resume_after_abort"] is False

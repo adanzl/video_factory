@@ -740,6 +740,28 @@ class JobMgr:
             resume_after_abort=False,
         )
 
+    def resume_job(self, job_id: int, *, sync: bool=False) -> dict:
+        """续跑当前 stage 且**不清理**已有产物（只补缺口）。
+
+        与 ``run_segment_*`` 等重跑入口的区别：重跑会 ``prepare``（先清空该
+        stage 产物再重建），中途失败续跑时会把已完成的片段一并删掉重做。
+        本入口等价于服务重启后的自动恢复路径（``prepare=False``）。
+        """
+        from worker.loop import run_job
+        job = self.get_job(job_id)
+        if job_abort_hold(job):
+            logger.warning('resume skipped job %s: abort_hold', job_id)
+            return job
+        return self.submit_action(
+            job_id,
+            str(job.get('stage') or 'script'),
+            lambda: run_job(job_id),  # type: ignore[arg-type]
+            prepare=False,
+            sync=sync,
+            allow_running=False,
+            resume_after_abort=False,
+        )
+
     def _persist_image_provider(self, job_id: int, image_provider: str | None) -> None:
         if image_provider is None:
             return
