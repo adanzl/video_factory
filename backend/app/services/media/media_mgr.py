@@ -57,6 +57,35 @@ def _greenlet_app_context():
         return nullcontext()
 
 
+def _agnes_i2v_backpressure_active() -> bool:
+    """Agnes 视频侧是否有未消散的上游冷却（队列满/5xx）。
+
+    延迟导入 + 兜底：并发层不该因 provider 导入失败而中断。
+    """
+    try:
+        from app.services.segment.clip.video_agnes import AgnesClipProvider
+
+        return AgnesClipProvider.upstream_backpressure_active()
+    except Exception:  # pragma: no cover - 导入/探测异常时不降速
+        return False
+
+
+def _clip_batch_workers(*, uses_i2v: bool, mock: bool) -> int:
+    """本批 clip 的并发数；i2v 上游背压时退回串行。"""
+    settings = get_settings()
+    if mock or not uses_i2v:
+        return 1
+    workers = max(1, settings.video_max_workers)
+    if workers > 1 and _agnes_i2v_backpressure_active():
+        logger.warning(
+            "i2v upstream backpressure active (queue full / 5xx cooling): "
+            "workers %s -> 1 for this batch",
+            workers,
+        )
+        return 1
+    return workers
+
+
 def _ensure_i2v_semaphore() -> Semaphore:
     global _i2v_semaphore, _i2v_max_workers
     settings = get_settings()
@@ -492,10 +521,9 @@ class MediaMgr:
             in _I2V_PROVIDERS
             for seg in targets
         )
-        max_workers = (
-            1
-            if settings.mock_mode or not uses_i2v
-            else max(1, settings.video_max_workers)
+        max_workers = _clip_batch_workers(
+            uses_i2v=uses_i2v,
+            mock=settings.mock_mode,
         )
 
         logger.info(

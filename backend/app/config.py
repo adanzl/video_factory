@@ -191,6 +191,11 @@ class Config:
         self.agnes_video_upstream_cooldown_max_sec: float = float(
             os.getenv("AGNES_VIDEO_UPSTREAM_COOLDOWN_MAX_SEC", "300")
         )
+        # 视频队列满（503 video_queue_full，全平台共享容量）：基准更长，
+        # 排空是分钟级；期间并发退回串行以减少无效提交。
+        self.agnes_video_queue_full_cooldown_base_sec: float = float(
+            os.getenv("AGNES_VIDEO_QUEUE_FULL_COOLDOWN_BASE_SEC", "120")
+        )
         self.wan_i2v_model: str = os.getenv("WAN_I2V_MODEL", "wanx2.1-i2v-turbo")  # cSpell: disable-line
         self.wan_i2v_resolution: str = os.getenv("WAN_I2V_RESOLUTION", "720P")
         self.wan_i2v_prompt_extend: bool = _bool("WAN_I2V_PROMPT_EXTEND", True)

@@ -1220,3 +1220,120 @@ def test_upstream_streak_backs_off_and_resets_on_success() -> None:
         provider._note_upstream_success()  # noqa: SLF001
     assert AgnesClipProvider._upstream_fail_streak == 0  # noqa: SLF001
     assert provider._upstream_cooldown_left() >= 0.0  # noqa: SLF001
+
+
+def test_queue_full_body_recognized() -> None:
+    """503 body 是 video_queue_full 时要识别出来（此前完全没记 body）。"""
+    from app.services.segment.clip.video_agnes import (
+        _body_summary_for_log,
+        _is_queue_full_body,
+    )
+
+    body = {
+        "code": "video_queue_full",
+        "message": "video queue is full, please retry later",
+        "data": None,
+    }
+    assert _is_queue_full_body(body)
+    assert "video_queue_full" in _body_summary_for_log(body)
+    # 网关故障、配额类报文不应误判
+    assert not _is_queue_full_body({"code": "invalid_request", "message": "prompt is required"})
+    assert not _is_queue_full_body(None)
+    assert not _is_queue_full_body("<html>520 unknown error</html>")
+
+
+def test_submit_queue_full_stops_immediately_without_host_failover() -> None:
+    """队列满：不换域名（同后端）、不在原地重试，直接进冷却。"""
+    provider = AgnesClipProvider()
+    provider._submit_max_retries = 4  # noqa: SLF001
+    provider._queue_full_cooldown_base_sec = 120.0  # noqa: SLF001
+    provider._upstream_cooldown_max_sec = 300.0  # noqa: SLF001
+    _upstream_reset()
+
+    limited = MagicMock()
+    limited.status_code = 503
+    limited.ok = False
+    limited.json.return_value = {
+        "code": "video_queue_full",
+        "message": "video queue is full, please retry later",
+    }
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.requests.request",
+            side_effect=[limited, limited, limited, limited],
+        ) as mock_req,
+        patch("app.services.segment.clip.video_agnes.time.sleep"),
+        pytest.raises(AgnesUpstreamUnavailable) as excinfo,
+    ):
+        provider._request(  # noqa: SLF001
+            "POST",
+            "https://apihub.agnes-ai.com/v1/videos",
+            label="submit",
+            key_label="primary",
+        )
+
+    assert excinfo.value.queue_full is True
+    assert "video_queue_full" in str(excinfo.value)
+    assert mock_req.call_count == 1, "队列满不该再换域名重试"
+
+
+def test_queue_full_uses_longer_cooldown_base() -> None:
+    """队列满冷却基准更长（默认 120s），排空是分钟级。"""
+    provider = AgnesClipProvider()
+    provider._upstream_cooldown_base_sec = 20.0  # noqa: SLF001
+    provider._queue_full_cooldown_base_sec = 120.0  # noqa: SLF001
+    provider._upstream_cooldown_max_sec = 300.0  # noqa: SLF001
+    _upstream_reset()
+
+    with (
+        patch("app.services.segment.clip.video_agnes.time.monotonic", return_value=1000.0),
+        patch("app.services.segment.clip.video_agnes.random.uniform", return_value=1.0),
+    ):
+        first = provider._note_upstream_failure(queue_full=True)  # noqa: SLF001
+        second = provider._note_upstream_failure(queue_full=True)  # noqa: SLF001
+        assert provider.upstream_queue_full_active() is True
+        provider._note_upstream_success()  # noqa: SLF001
+        third = provider._note_upstream_failure(queue_full=False)  # noqa: SLF001
+
+    assert first == 120.0
+    assert second == 240.0
+    assert third == 20.0, "普通 5xx 仍用 20s 基准"
+    assert provider.upstream_queue_full_active() is False
+
+
+def test_clip_batch_workers_backs_off_on_backpressure() -> None:
+    """i2v 上游背压时本批并发退回 1（队列满时提交越多越糟）。"""
+    from app.services.media.media_mgr import _clip_batch_workers
+
+    with (
+        patch("app.services.media.media_mgr._agnes_i2v_backpressure_active", return_value=True),
+        patch("app.services.media.media_mgr.get_settings") as mock_settings,
+    ):
+        mock_settings.return_value.video_max_workers = 2
+        assert _clip_batch_workers(uses_i2v=True, mock=False) == 1
+
+    with (
+        patch("app.services.media.media_mgr._agnes_i2v_backpressure_active", return_value=False),
+        patch("app.services.media.media_mgr.get_settings") as mock_settings,
+    ):
+        mock_settings.return_value.video_max_workers = 2
+        assert _clip_batch_workers(uses_i2v=True, mock=False) == 2
+        # 非 i2v / mock 恒为 1
+        assert _clip_batch_workers(uses_i2v=False, mock=False) == 1
+        assert _clip_batch_workers(uses_i2v=True, mock=True) == 1
+
+
+def test_upstream_backpressure_flag_feeds_media_mgr() -> None:
+    """真实 provider 的背压标志能传到并发层判定。"""
+    from app.services.media.media_mgr import _agnes_i2v_backpressure_active
+
+    _upstream_reset()
+    with patch(
+        "app.services.segment.clip.video_agnes.time.monotonic", return_value=1000.0
+    ):
+        assert _agnes_i2v_backpressure_active() is False
+        with patch("app.services.segment.clip.video_agnes.random.uniform", return_value=1.0):
+            AgnesClipProvider()._note_upstream_failure(queue_full=True)  # noqa: SLF001
+        # 冷却期内（1000 < retry_at=1120）应报背压
+        assert _agnes_i2v_backpressure_active() is True

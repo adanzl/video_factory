@@ -36,6 +36,7 @@
 | `AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC` | `3600` | 上游 5xx 单段最长等待 |
 | `AGNES_VIDEO_UPSTREAM_COOLDOWN_BASE_SEC` | `20` | 上游 5xx 首次冷却 |
 | `AGNES_VIDEO_UPSTREAM_COOLDOWN_MAX_SEC` | `300` | 上游 5xx 冷却上限 |
+| `AGNES_VIDEO_QUEUE_FULL_COOLDOWN_BASE_SEC` | `120` | 队列满首次冷却 |
 
 Agnes 校验清单（出图 VL）固定 `max_tokens=256`。
 
@@ -84,6 +85,27 @@ TokenPlan 另受**每日 500 秒**视频时长配额约束（RPM 与配额同时
 - **有界自愈**：单段 clip 最多等 `AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC`
   （默认 60 分钟）；期间任务保持 running、日志每轮一条、可随时中止；
   超预算才失败并提示「稍后重跑 segment 可续跑」。
+
+### 视频队列满（503 `video_queue_full`）
+
+2026-10-10 用真实参数探针证实：503 的响应体是
+
+```text
+{"code": "video_queue_full",
+ "message": "video queue is full, please retry later"}
+```
+
+即**上游视频队列排满**（Flash 限时免费、全平台共享容量），
+不是参数错误——同轮错误参数探针均返回带 `param` 的精确 400。
+针对它：
+
+- `_request` 对 5xx **必须记 body**（`code`/`message`）；此前只记状态码，
+  导致把「队列满」误判为「网关故障」；
+- 队列满**不换域名**（同后端，换域名只会加重队列），首次即停手；
+- 冷却基准单独设 `AGNES_VIDEO_QUEUE_FULL_COOLDOWN_BASE_SEC`（默认 120s，
+  仍按 streak 指数放大、300s 封顶）；
+- **并发退回串行**：`AgnesClipProvider.upstream_backpressure_active()` 为真时，
+  `media_mgr` 把本批 clip 的 workers 降为 1，减少无效提交。
 
 ## max_tokens 约定
 

@@ -26,7 +26,13 @@ class AgnesUpstreamUnavailable(AgnesI2VError):
 
     官方网关（Cloudflare 后）偶发长时间 503，实测只打在 /v1/videos：
     同 Key 换域名（.com↔.cn）是同一后端，换 Key 也不产生新额度。
+    其中 ``queue_full=True`` 表示响应体为 ``video_queue_full``
+    （视频队列排满，官方建议稍后重试），属容量型限流而非故障。
     """
+
+    def __init__(self, message: str, *, queue_full: bool = False) -> None:
+        super().__init__(message)
+        self.queue_full = queue_full
 
 
 class AgnesImageError(RuntimeError, JobStageFailureError):

@@ -680,6 +680,35 @@ def _response_body(resp: requests.Response) -> dict | str | None:
         return resp.text[:500]
 
 
+def _body_summary_for_log(body: dict | str | None) -> str:
+    """5xx body 摘要：优先 code/message（如 video_queue_full）。"""
+    if isinstance(body, dict):
+        code = str(body.get("code") or "").strip()
+        message = str(body.get("message") or "").strip()
+        detail = str(body.get("detail") or "").strip()
+        parts = [p for p in (code, message or detail) if p]
+        if parts:
+            return " | ".join(parts)[:200]
+        return str(body)[:200]
+    if isinstance(body, str):
+        return body[:200]
+    return "-"
+
+
+def _is_queue_full_body(body: dict | str | None) -> bool:
+    """识别 ``video_queue_full``：容量型限流，官方建议稍后重试。"""
+    if isinstance(body, dict):
+        code = str(body.get("code") or "").lower()
+        message = str(body.get("message") or "").lower()
+        detail = str(body.get("detail") or "").lower()
+        if code == "video_queue_full":
+            return True
+        return "queue is full" in message or "queue is full" in detail
+    if isinstance(body, str):
+        return "video_queue_full" in body.lower() or "queue is full" in body.lower()
+    return False
+
+
 def _raise_i2v_api_error(phase: str, err: object, *, body: dict | None = None) -> None:
     raise_if_agnes_quota(body=body, message=str(err))
     if isinstance(err, dict):
@@ -738,6 +767,7 @@ class AgnesClipProvider(ClipProvider):
     _upstream_lock = Semaphore(value=1)
     _upstream_retry_at: float = 0.0
     _upstream_fail_streak: int = 0
+    _upstream_queue_full: bool = False
     # 状态查询全局错峰，避免多路并发把 poll RPM 打爆
     _poll_lock = Semaphore(value=1)
     _last_poll_at = 0.0
@@ -756,6 +786,7 @@ class AgnesClipProvider(ClipProvider):
         self._upstream_wait_budget_sec = settings.agnes_video_upstream_wait_budget_sec
         self._upstream_cooldown_base_sec = settings.agnes_video_upstream_cooldown_base_sec
         self._upstream_cooldown_max_sec = settings.agnes_video_upstream_cooldown_max_sec
+        self._queue_full_cooldown_base_sec = settings.agnes_video_queue_full_cooldown_base_sec
         self._http_max_retries = settings.agnes_http_max_retries
         self._connect_timeout = settings.agnes_http_connect_timeout_sec
         self._submit_read_timeout = settings.agnes_http_submit_read_timeout_sec
@@ -810,20 +841,30 @@ class AgnesClipProvider(ClipProvider):
     def _upstream_cooldown_left(self) -> float:
         return max(0.0, type(self)._upstream_retry_at - time.monotonic())
 
-    def _note_upstream_failure(self) -> float:
-        """上游 5xx：全局冷却指数退避（带抖动），返回本次冷却秒数。"""
+    def _note_upstream_failure(self, *, queue_full: bool = False) -> float:
+        """上游 5xx：全局冷却指数退避（带抖动），返回本次冷却秒数。
+
+        ``queue_full`` 走更长的基准（队列排空是分钟级，且全平台共享）。
+        """
+        base = (
+            self._queue_full_cooldown_base_sec
+            if queue_full
+            else self._upstream_cooldown_base_sec
+        )
         with self._upstream_lock:
             cls = type(self)
             cls._upstream_fail_streak += 1
+            cls._upstream_queue_full = queue_full
             delay = min(
-                self._upstream_cooldown_base_sec * (2 ** (cls._upstream_fail_streak - 1)),
+                base * (2 ** (cls._upstream_fail_streak - 1)),
                 self._upstream_cooldown_max_sec,
             )
             delay *= random.uniform(0.8, 1.2)
             cls._upstream_retry_at = max(cls._upstream_retry_at, time.monotonic() + delay)
             streak = cls._upstream_fail_streak
         logger.warning(
-            "agnes upstream unavailable: streak=%s, cooldown %.0fs (no key switch)",
+            "agnes upstream unavailable (%s): streak=%s, cooldown %.0fs (no key switch)",
+            "queue full" if queue_full else "5xx",
             streak,
             delay,
         )
@@ -838,6 +879,20 @@ class AgnesClipProvider(ClipProvider):
                 )
             cls._upstream_fail_streak = 0
             cls._upstream_retry_at = 0.0
+            cls._upstream_queue_full = False
+
+    @classmethod
+    def upstream_backpressure_active(cls) -> bool:
+        """是否有未消散的上游冷却（队列满/5xx）。
+
+        供并发层降速：队列满时提交越多越糟，批量应退回串行。
+        """
+        return time.monotonic() < cls._upstream_retry_at
+
+    @classmethod
+    def upstream_queue_full_active(cls) -> bool:
+        """当前冷却是否由「视频队列满」引起。"""
+        return cls.upstream_backpressure_active() and cls._upstream_queue_full
 
     def _wait_for_upstream(self, deadline: float) -> None:
         """冷却期内等待上游恢复；超出预算则抛 AgnesUpstreamUnavailable。"""
@@ -847,10 +902,12 @@ class AgnesClipProvider(ClipProvider):
             if left <= 0:
                 return
             if time.monotonic() + left > deadline:
+                reason = "视频队列满" if type(self)._upstream_queue_full else "上游 5xx"
                 raise AgnesUpstreamUnavailable(
-                    "agnes upstream unavailable: 等待超过 "
+                    f"agnes upstream unavailable: {reason}，等待超过 "
                     f"{self._upstream_wait_budget_sec / 60:.0f} 分钟预算，"
-                    f"已重试 {type(self)._upstream_fail_streak} 次"
+                    f"已重试 {type(self)._upstream_fail_streak} 次",
+                    queue_full=type(self)._upstream_queue_full,
                 )
             logger.warning("agnes upstream cooling: wait %.0fs before retry", left)
             time.sleep(left)
@@ -927,8 +984,23 @@ class AgnesClipProvider(ClipProvider):
                 )
                 if resp.status_code in _RETRYABLE_HTTP:
                     retryable_hits += 1
+                    body = _response_body(resp)
+                    body_txt = _body_summary_for_log(body)
+                    queue_full = _is_queue_full_body(body)
+                    # 5xx 的 body 必须留痕：503 的真身是 video_queue_full，
+                    # 只记状态码会把「队列满」误判成「网关故障」。
+                    logger.warning(
+                        "agnes %s %s %s, body=%s, retry %s/%s",
+                        label,
+                        resp.status_code,
+                        url,
+                        body_txt,
+                        attempt + 1,
+                        retries,
+                    )
                     alt = None
-                    if resp.status_code == 503:
+                    # 队列满与域名无关（同后端），且换域名只会加重队列
+                    if resp.status_code == 503 and not queue_full:
                         alt = agnes_apply_host_failover(
                             url,
                             host_failover_tried,
@@ -936,26 +1008,19 @@ class AgnesClipProvider(ClipProvider):
                             tag=f"i2v {label}",
                             on_switch=self._sync_endpoints_from_api_url,
                         )
-                    # 提交：两个域名都 5xx 即视为上游不可用，停止连打（交冷却层）
-                    if label == "submit" and retryable_hits >= 2:
+                    # 提交：队列满立刻停手，或两个域名都 5xx 即视为上游不可用
+                    if label == "submit" and (queue_full or retryable_hits >= 2):
+                        detail = "queue full" if queue_full else "both domains 5xx"
                         raise AgnesUpstreamUnavailable(
                             "agnes upstream unavailable: HTTP "
-                            f"{resp.status_code} on both domains "
-                            f"(tries={attempt + 1}, url={url})"
+                            f"{resp.status_code} ({detail}, body={body_txt}, "
+                            f"tries={attempt + 1}, url={url})",
+                            queue_full=queue_full,
                         )
                     if alt:
                         url = alt
                         continue
                     wait = _backoff_seconds(attempt)
-                    logger.warning(
-                        "agnes %s %s %s, retry %s/%s in %ss",
-                        label,
-                        resp.status_code,
-                        url,
-                        attempt + 1,
-                        retries,
-                        wait,
-                    )
                     time.sleep(wait)
                     continue
                 if resp.status_code == 429:
@@ -1123,7 +1188,7 @@ class AgnesClipProvider(ClipProvider):
                 except AgnesUpstreamUnavailable as exc:
                     # 上游整体不可用：不换 key，回 while 顶部等冷却后重试
                     last_exc = exc
-                    self._note_upstream_failure()
+                    self._note_upstream_failure(queue_full=exc.queue_full)
                     break
                 except Exception as exc:
                     last_exc = exc
