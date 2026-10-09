@@ -44,17 +44,20 @@ def _generate_cover_subject_from_narration(title: str, narration: str) -> str:
     """用 LLM 根据标题和口播内容生成封面画面描述。"""
     import logging
     from app.config import get_settings
-    from app.services.llm.llm_deepseek import DeepSeekClient
+    from app.services.llm.llm_mgr import llm_mgr
+
     logger = logging.getLogger(__name__)
     settings = get_settings()
-    if not settings.deepseek_api_key:
-        logger.warning('no deepseek_api_key, fallback to title for cover subject')
+    if not settings.text_llm_configured():
+        logger.warning('text LLM not configured, fallback to title for cover subject')
         return title
     system = '你是一个视频封面画面设计师。根据视频标题和口播内容，用一段话描述封面底图应该呈现的画面。\n要求：\n1. 描述具体的视觉场景：主体、环境、光照、色调、构图\n2. 不要出现文字、标题、字幕等元素\n3. 画面要有冲击力，适合作为视频封面吸引点击\n4. 风格为写实插画或电影质感\n5. 80-150字以内\n仅输出画面描述，不要额外解释。'
     user = f'标题：{title}\n口播内容：{narration}'
     try:
-        client = DeepSeekClient()
-        result, _ = client._chat(system, user, json_mode=False, thinking_enabled=False, temperature=0.5)
+        client = llm_mgr._get_client()
+        result, _ = client._chat(  # type: ignore[attr-defined]
+            system, user, json_mode=False, thinking_enabled=False, temperature=0.5,
+        )
         desc = result.strip()
         if desc and len(desc) >= 20:
             logger.info("cover subject generated from narration: '%s'", desc[:80])

@@ -56,12 +56,14 @@ def _resolve_cover_subject(subject: str) -> str:
     import logging
 
     from app.config import get_settings
-    from app.services.llm.llm_deepseek import DeepSeekClient
+    from app.services.llm.llm_mgr import llm_mgr
 
     logger = logging.getLogger(__name__)
     settings = get_settings()
-    if not settings.deepseek_api_key:
-        logger.warning("cover subject contains '%s' but no LLM key, using as-is", subject[:60])
+    if not settings.text_llm_configured():
+        logger.warning(
+            "cover subject contains map keyword but text LLM not configured, using as-is",
+        )
         return subject
 
     system = (
@@ -73,8 +75,8 @@ def _resolve_cover_subject(subject: str) -> str:
         "仅输出改写后的文本，不要额外解释。"
     )
     try:
-        client = DeepSeekClient()
-        rewritten, _ = client._chat(
+        client = llm_mgr._get_client()
+        rewritten, _ = client._chat(  # type: ignore[attr-defined]
             system,
             subject,
             json_mode=False,

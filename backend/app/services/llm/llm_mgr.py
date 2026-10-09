@@ -226,7 +226,14 @@ class LLMMgr:
             from app.services.llm.llm_agnes import AgnesClient
 
             return AgnesClient()
-        raise ValueError(f"unsupported LLM_PROVIDER: {provider!r} (use deepseek or agnes)")
+        if provider == "opencode_go":
+            from app.services.llm.llm_opencode_go import OpenCodeGoClient
+
+            return OpenCodeGoClient()
+        raise ValueError(
+            f"unsupported LLM_PROVIDER: {provider!r} "
+            "(use deepseek, agnes, or opencode_go)"
+        )
 
     def generate_script(
         self,

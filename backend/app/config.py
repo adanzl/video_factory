@@ -72,6 +72,7 @@ class Config:
         cover_w, cover_h = _size("COVER", 1280, 720)
         wan_image_size = os.getenv("WAN_IMAGE_SIZE", "720*1280")
         deepseek_key = _opt("DEEPSEEK_API_KEY")
+        opencode_go_key = _opt("OPENCODE_GO_API_KEY")
         dashscope_key = _opt("DASHSCOPE_API_KEY")
         tts_key = dashscope_key or _opt("TTS_API_KEY")
         final_strict = _bool("FINAL_DURATION_STRICT")
@@ -252,6 +253,15 @@ class Config:
         self.deepseek_pro_model: str = os.getenv("DEEPSEEK_PRO_MODEL", "deepseek-v4-pro")
         self.deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768"))
         self.deepseek_thinking_enabled: bool = _bool("DEEPSEEK_THINKING", default=True)
+        self.opencode_go_api_key: str | None = opencode_go_key
+        self.opencode_go_base_url: str = os.getenv(
+            "OPENCODE_GO_BASE_URL",
+            "https://opencode.ai/zen/go/v1",
+        ).rstrip("/")
+        self.opencode_go_user_agent: str = os.getenv(
+            "OPENCODE_GO_USER_AGENT",
+            "video-factory/1.0",
+        ).strip() or "video-factory/1.0"
         self.agnes_llm_model: str = os.getenv("AGNES_LLM_MODEL", "agnes-3.0-flash")
         self.agnes_llm_max_tokens: int = int(os.getenv("AGNES_LLM_MAX_TOKENS", "32768"))
         self.agnes_vl_model: str = os.getenv("AGNES_VL_MODEL", "agnes-3.0-flash")
@@ -470,16 +480,41 @@ class Config:
             return ["*"]
         return [origin.strip() for origin in self.cors_origins.split(",")]
 
+    def text_llm_configured(self) -> bool:
+        """当前 LLM_PROVIDER 是否已配置可用 Key（mock 视为已配置）。"""
+        if self.mock_mode:
+            return True
+        provider = self.llm_provider
+        if provider == "deepseek":
+            return bool(self.deepseek_api_key)
+        if provider == "agnes":
+            return bool(
+                self.agnes_api_key
+                or self.agnes_free_api_key
+                or self.agnes_cn_free_api_key
+            )
+        if provider == "opencode_go":
+            return bool(self.opencode_go_api_key)
+        return False
+
     def missing_provider_keys(self) -> list[str]:
         """非 mock 时可能影响流水线的常见 Key（仅提示，不强制）。"""
         missing: list[str] = []
-        has_agnes = bool(
+        if self.mock_mode:
+            return missing
+        provider = self.llm_provider
+        if provider == "deepseek" and not self.deepseek_api_key:
+            missing.append("DEEPSEEK_API_KEY")
+        elif provider == "agnes" and not (
             self.agnes_api_key
             or self.agnes_free_api_key
             or self.agnes_cn_free_api_key
-        )
-        if not self.deepseek_api_key and not has_agnes:
-            missing.append("DEEPSEEK_API_KEY 或任一 AGNES_*_API_KEY")
+        ):
+            missing.append("AGNES_API_KEY / AGNES_FREE_API_KEY / AGNES_CN_FREE_API_KEY")
+        elif provider == "opencode_go" and not self.opencode_go_api_key:
+            missing.append("OPENCODE_GO_API_KEY")
+        elif provider not in ("deepseek", "agnes", "opencode_go"):
+            missing.append(f"未知 LLM_PROVIDER: {provider!r}")
         if not self.dashscope_api_key and not self.tts_api_key:
             missing.append("DASHSCOPE_API_KEY 或 TTS_API_KEY")
         return missing

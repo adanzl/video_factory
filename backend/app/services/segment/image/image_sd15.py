@@ -1026,7 +1026,7 @@ def _prepare_sd15_prompt(
 
     llm_result: dict[str, str] | None = None
 
-    if settings.deepseek_api_key:
+    if settings.text_llm_configured():
         try:
             llm_result = llm_mgr.prepare_sd15_image_prompt(
                 cleaned,

@@ -280,9 +280,23 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
         id="llm",
         label="LLM",
         items=(
-            _f("llm_provider", "LLM_PROVIDER", "提供商", "select", options=("deepseek", "agnes")),
+            _f(
+                "llm_provider",
+                "LLM_PROVIDER",
+                "提供商",
+                "select",
+                options=("deepseek", "agnes", "opencode_go"),
+            ),
             _f("llm_image_prompt_batch_size", "LLM_IMAGE_PROMPT_BATCH_SIZE", "文生图提示词批大小", "number", min_value=1, max_value=20),
-            _f("deepseek_api_key", "DEEPSEEK_API_KEY", "API Key", "secret"),
+            _f("deepseek_api_key", "DEEPSEEK_API_KEY", "DeepSeek API Key", "secret"),
+            _f("opencode_go_api_key", "OPENCODE_GO_API_KEY", "OpenCode Go API Key", "secret"),
+            _f("opencode_go_base_url", "OPENCODE_GO_BASE_URL", "OpenCode Go 地址"),
+            _f(
+                "opencode_go_user_agent",
+                "OPENCODE_GO_USER_AGENT",
+                "OpenCode Go User-Agent",
+                description="建议 video-factory/版本",
+            ),
             _f("deepseek_base_url", "DEEPSEEK_BASE_URL", "API 地址"),
             _f("deepseek_model", "DEEPSEEK_MODEL", "模型"),
             _f(
