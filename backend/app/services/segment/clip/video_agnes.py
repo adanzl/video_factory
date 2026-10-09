@@ -6,6 +6,7 @@ import base64
 import logging
 import math
 import mimetypes
+import random
 import re
 import time
 from collections.abc import Callable
@@ -25,6 +26,7 @@ from app.services.llm.llm_agnes import (
     AgnesContentPolicyError,
     AgnesI2VError,
     AgnesQuotaExceeded,
+    AgnesUpstreamUnavailable,
     agnes_api_base_from_url,
     agnes_api_keys,
     agnes_apply_host_failover,
@@ -732,6 +734,10 @@ class AgnesClipProvider(ClipProvider):
     _last_submit_at_by_pool: dict[str, float] = {}
     # 429 后该池冷却，冷却期内换下一把 key；全部冷却才整批等待
     _cooldown_until_by_pool: dict[str, float] = {}
+    # 上游 5xx 冷却：跨 key / 池 / 任务共享（换 key 对上游故障无效）
+    _upstream_lock = Semaphore(value=1)
+    _upstream_retry_at: float = 0.0
+    _upstream_fail_streak: int = 0
     # 状态查询全局错峰，避免多路并发把 poll RPM 打爆
     _poll_lock = Semaphore(value=1)
     _last_poll_at = 0.0
@@ -747,6 +753,9 @@ class AgnesClipProvider(ClipProvider):
         self._free_pool_shared = settings.agnes_free_pool_shared
         self._rate_limit_cooldown_sec = settings.agnes_video_rate_limit_cooldown_sec
         self._key_wait_budget_sec = settings.agnes_video_key_wait_budget_sec
+        self._upstream_wait_budget_sec = settings.agnes_video_upstream_wait_budget_sec
+        self._upstream_cooldown_base_sec = settings.agnes_video_upstream_cooldown_base_sec
+        self._upstream_cooldown_max_sec = settings.agnes_video_upstream_cooldown_max_sec
         self._http_max_retries = settings.agnes_http_max_retries
         self._connect_timeout = settings.agnes_http_connect_timeout_sec
         self._submit_read_timeout = settings.agnes_http_submit_read_timeout_sec
@@ -797,6 +806,55 @@ class AgnesClipProvider(ClipProvider):
     def _pool_cooldown_left(self, key_label: str) -> float:
         pool = self._pool_for_key(key_label)
         return max(0.0, self._cooldown_until_by_pool.get(pool, 0.0) - time.monotonic())
+
+    def _upstream_cooldown_left(self) -> float:
+        return max(0.0, type(self)._upstream_retry_at - time.monotonic())
+
+    def _note_upstream_failure(self) -> float:
+        """上游 5xx：全局冷却指数退避（带抖动），返回本次冷却秒数。"""
+        with self._upstream_lock:
+            cls = type(self)
+            cls._upstream_fail_streak += 1
+            delay = min(
+                self._upstream_cooldown_base_sec * (2 ** (cls._upstream_fail_streak - 1)),
+                self._upstream_cooldown_max_sec,
+            )
+            delay *= random.uniform(0.8, 1.2)
+            cls._upstream_retry_at = max(cls._upstream_retry_at, time.monotonic() + delay)
+            streak = cls._upstream_fail_streak
+        logger.warning(
+            "agnes upstream unavailable: streak=%s, cooldown %.0fs (no key switch)",
+            streak,
+            delay,
+        )
+        return delay
+
+    def _note_upstream_success(self) -> None:
+        with self._upstream_lock:
+            cls = type(self)
+            if cls._upstream_fail_streak or cls._upstream_retry_at:
+                logger.info(
+                    "agnes upstream recovered after %s failure(s)", cls._upstream_fail_streak
+                )
+            cls._upstream_fail_streak = 0
+            cls._upstream_retry_at = 0.0
+
+    def _wait_for_upstream(self, deadline: float) -> None:
+        """冷却期内等待上游恢复；超出预算则抛 AgnesUpstreamUnavailable。"""
+        while True:
+            self._raise_if_job_cancelled()
+            left = self._upstream_cooldown_left()
+            if left <= 0:
+                return
+            if time.monotonic() + left > deadline:
+                raise AgnesUpstreamUnavailable(
+                    "agnes upstream unavailable: 等待超过 "
+                    f"{self._upstream_wait_budget_sec / 60:.0f} 分钟预算，"
+                    f"已重试 {type(self)._upstream_fail_streak} 次"
+                )
+            logger.warning("agnes upstream cooling: wait %.0fs before retry", left)
+            time.sleep(left)
+            self._raise_if_job_cancelled()
 
     def _throttle_submit(self, key_label: str = "primary") -> None:
         """提交闸门：按池记账，首次提交、重试、换域名重试都要过这里。"""
@@ -857,6 +915,7 @@ class AgnesClipProvider(ClipProvider):
         req_timeout = timeout if timeout is not None else (self._connect_timeout, read_timeout)
         last_exc: Exception | None = None
         host_failover_tried: set[str] = {url}
+        retryable_hits = 0
 
         for attempt in range(retries):
             try:
@@ -866,18 +925,27 @@ class AgnesClipProvider(ClipProvider):
                 resp = requests.request(
                     method, url, headers=headers or {}, json=json, timeout=req_timeout
                 )
-                if resp.status_code == 503:
-                    alt = agnes_apply_host_failover(
-                        url,
-                        host_failover_tried,
-                        reason="503",
-                        tag=f"i2v {label}",
-                        on_switch=self._sync_endpoints_from_api_url,
-                    )
+                if resp.status_code in _RETRYABLE_HTTP:
+                    retryable_hits += 1
+                    alt = None
+                    if resp.status_code == 503:
+                        alt = agnes_apply_host_failover(
+                            url,
+                            host_failover_tried,
+                            reason="503",
+                            tag=f"i2v {label}",
+                            on_switch=self._sync_endpoints_from_api_url,
+                        )
+                    # 提交：两个域名都 5xx 即视为上游不可用，停止连打（交冷却层）
+                    if label == "submit" and retryable_hits >= 2:
+                        raise AgnesUpstreamUnavailable(
+                            "agnes upstream unavailable: HTTP "
+                            f"{resp.status_code} on both domains "
+                            f"(tries={attempt + 1}, url={url})"
+                        )
                     if alt:
                         url = alt
                         continue
-                if resp.status_code in _RETRYABLE_HTTP:
                     wait = _backoff_seconds(attempt)
                     logger.warning(
                         "agnes %s %s %s, retry %s/%s in %ss",
@@ -962,6 +1030,13 @@ class AgnesClipProvider(ClipProvider):
                 )
                 time.sleep(wait)
 
+        if last_status in _RETRYABLE_HTTP or isinstance(
+            last_exc, requests.ConnectionError
+        ):
+            raise AgnesUpstreamUnavailable(
+                "agnes upstream unavailable: "
+                f"last_status={last_status} after {retries} tries: {url}"
+            ) from last_exc
         if last_exc:
             if isinstance(last_exc, JobStageFailureError):
                 raise last_exc
@@ -1007,8 +1082,14 @@ class AgnesClipProvider(ClipProvider):
     def _with_api_key_fallback(self, operation: Callable[[AgnesApiKey], Path]) -> Path:
         """按 key 链依次尝试：跳过冷却中的池；全部冷却则等最早恢复再试。
 
-        429 已在 ``_request`` 标好该池冷却，这里只管换 key 与整体等待，
-        等待总时长受 ``AGNES_VIDEO_KEY_WAIT_BUDGET_SEC`` 约束（超预算才失败）。
+        两类等待分开计时：
+
+        - **429（配额/限流）**：冻结该池并换下一把 key，等待受
+          ``AGNES_VIDEO_KEY_WAIT_BUDGET_SEC`` 约束；
+        - **上游 5xx（AgnesUpstreamUnavailable）**：不换 key（换 key 无效），
+          走全局上游冷却后重试，等待受
+          ``AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC`` 约束（默认 60 分钟），
+          超预算才失败。上游抖动期间请求量降到每轮一次。
         """
         keys = agnes_api_keys()
         if not keys:
@@ -1017,9 +1098,12 @@ class AgnesClipProvider(ClipProvider):
                 "未配置，无法调用 Agnes 图生视频"
             )
 
-        deadline = time.monotonic() + max(0.0, self._key_wait_budget_sec)
+        quota_deadline = time.monotonic() + max(0.0, self._key_wait_budget_sec)
+        upstream_deadline = time.monotonic() + max(0.0, self._upstream_wait_budget_sec)
         last_exc: Exception | None = None
         while True:
+            # 别的分镜/任务刚撞过 5xx：先等冷却，别拿本次提交去试探
+            self._wait_for_upstream(upstream_deadline)
             for idx, key in enumerate(keys):
                 cooling = self._pool_cooldown_left(key.label)
                 if cooling > 0:
@@ -1031,9 +1115,16 @@ class AgnesClipProvider(ClipProvider):
                     )
                     continue
                 try:
-                    return operation(key)
+                    result = operation(key)
+                    self._note_upstream_success()
+                    return result
                 except AgnesContentPolicyError:
                     raise
+                except AgnesUpstreamUnavailable as exc:
+                    # 上游整体不可用：不换 key，回 while 顶部等冷却后重试
+                    last_exc = exc
+                    self._note_upstream_failure()
+                    break
                 except Exception as exc:
                     last_exc = exc
                     if not agnes_should_switch_key(exc):
@@ -1044,27 +1135,28 @@ class AgnesClipProvider(ClipProvider):
                             key.label,
                             type(exc).__name__,
                         )
-
-            cooldowns = [
-                left
-                for left in (self._pool_cooldown_left(k.label) for k in keys)
-                if left > 0
-            ]
-            if not cooldowns:
-                break
-            sleep_for = min(cooldowns)
-            if time.monotonic() + sleep_for > deadline:
+            else:
+                # key 链走完（无 break）：处理 429 池冷却或收尾退出
+                cooldowns = [
+                    left
+                    for left in (self._pool_cooldown_left(k.label) for k in keys)
+                    if left > 0
+                ]
+                if not cooldowns:
+                    break
+                sleep_for = min(cooldowns)
+                if time.monotonic() + sleep_for > quota_deadline:
+                    logger.warning(
+                        "agnes video keys busy: %.1fs wait exceeds budget, giving up",
+                        sleep_for,
+                    )
+                    break
                 logger.warning(
-                    "agnes video keys busy: %.1fs wait exceeds budget, giving up",
+                    "agnes video keys busy: all pools cooling, wait %.1fs then retry",
                     sleep_for,
                 )
-                break
-            logger.warning(
-                "agnes video keys busy: all pools cooling, wait %.1fs then retry",
-                sleep_for,
-            )
-            time.sleep(sleep_for)
-            self._raise_if_job_cancelled()
+                time.sleep(sleep_for)
+                self._raise_if_job_cancelled()
 
         if last_exc is not None:
             raise last_exc

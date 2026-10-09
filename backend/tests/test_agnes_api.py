@@ -9,6 +9,7 @@ import requests
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
     AgnesContentPolicyError,
+    AgnesI2VError,
     AgnesQuotaExceeded,
     agnes_alternate_host_url,
     agnes_api_keys,
@@ -142,3 +143,12 @@ def test_agnes_quota_exceeded_from_http_error() -> None:
     response.json.return_value = {"error": {"message": "quota exceeded"}}
     exc = requests.HTTPError(response=response)
     assert agnes_quota_exceeded_from_exception(exc)
+
+
+def test_agnes_upstream_unavailable_does_not_switch_key() -> None:
+    """上游 5xx 与密钥无关：换 Key 无效，交给上游冷却等待。"""
+    from app.services.llm.llm_agnes import AgnesUpstreamUnavailable
+
+    assert agnes_should_switch_key(AgnesUpstreamUnavailable("503")) is False
+    # 其它 I2V 错误仍旧切 Key
+    assert agnes_should_switch_key(AgnesI2VError("submit failed")) is True

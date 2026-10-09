@@ -21,6 +21,14 @@ class AgnesI2VError(RuntimeError, JobStageFailureError):
     """图生视频 API 调用失败（重试耗尽、任务失败等），消息即原因。"""
 
 
+class AgnesUpstreamUnavailable(AgnesI2VError):
+    """上游 5xx / 连接错误：与密钥、请求内容无关，应冷却等待而非换 key。
+
+    官方网关（Cloudflare 后）偶发长时间 503，实测只打在 /v1/videos：
+    同 Key 换域名（.com↔.cn）是同一后端，换 Key 也不产生新额度。
+    """
+
+
 class AgnesImageError(RuntimeError, JobStageFailureError):
     """文生图 API 调用失败（超时、重试耗尽等），消息即原因。"""
 
@@ -93,8 +101,14 @@ def agnes_should_switch_key(
     body: dict | str | None = None,
     message: str | None = None,
 ) -> bool:
-    """4xx/5xx/配额/限流/超时 → 换下一把 Key。提示词违规不换（上层重生）。"""
+    """4xx/5xx/配额/限流/超时 → 换下一把 Key。提示词违规不换（上层重生）。
+
+    例外：``AgnesUpstreamUnavailable``（5xx/连接错误）不换 Key ——
+    上游整体不可用时换 Key 无效，交给调用方的上游冷却等待处理。
+    """
     if isinstance(exc, AgnesContentPolicyError):
+        return False
+    if isinstance(exc, AgnesUpstreamUnavailable):
         return False
     code = status_code
     if code is None and isinstance(exc, requests.HTTPError) and exc.response is not None:

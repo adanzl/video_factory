@@ -33,6 +33,9 @@
 | `AGNES_FREE_POOL_SHARED` | `1` | 两把免费 key 是否同池 |
 | `AGNES_VIDEO_RATE_LIMIT_COOLDOWN_SEC` | `60` | 429 后该池冷却时长 |
 | `AGNES_VIDEO_KEY_WAIT_BUDGET_SEC` | `300` | 全池冷却时单次等待预算 |
+| `AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC` | `3600` | 上游 5xx 单段最长等待 |
+| `AGNES_VIDEO_UPSTREAM_COOLDOWN_BASE_SEC` | `20` | 上游 5xx 首次冷却 |
+| `AGNES_VIDEO_UPSTREAM_COOLDOWN_MAX_SEC` | `300` | 上游 5xx 冷却上限 |
 
 Agnes 校验清单（出图 VL）固定 `max_tokens=256`。
 
@@ -65,6 +68,22 @@ TokenPlan 另受**每日 500 秒**视频时长配额约束（RPM 与配额同时
 
 `AGNES_SUBMIT_INTERVAL_SEC`（秒）= `60 / 该池实际 RPM`；换套餐或
 实测限速不同时改这里，勿改代码。
+
+### 上游 5xx（网关抖动）容错
+
+实测 Agnes 网关偶发长时间 503，**只打在 `/v1/videos`**（2026-10-10 事故：
+持续 >70 分钟；同期 `images/generations`、轮询、`/v1/models` 全 200）。
+此时换 key、换域名都无效（`.com`/`.cn` 同一后端，额度按账号算），
+故单独归为 ``AgnesUpstreamUnavailable`` 走**等待-恢复**：
+
+- **不换 key、不烧密钥**：503 不计入 key 故障，密钥链保持可用；
+- **全局冷却**：跨 key / 池 / 任务共享，指数退避
+  `20s→40s→80s→160s→300s`（±20% 抖动），任一次提交成功即清零；
+- **不连打**：提交里两个域名都 5xx 即停手进冷却，请求量从
+  每 30 秒 4 次降到每轮 1 次；
+- **有界自愈**：单段 clip 最多等 `AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC`
+  （默认 60 分钟）；期间任务保持 running、日志每轮一条、可随时中止；
+  超预算才失败并提示「稍后重跑 segment 可续跑」。
 
 ## max_tokens 约定
 

@@ -180,6 +180,17 @@ class Config:
         self.agnes_video_key_wait_budget_sec: float = float(
             os.getenv("AGNES_VIDEO_KEY_WAIT_BUDGET_SEC", "300")
         )
+        # 上游 5xx（网关 503 等）：全局冷却指数退避 + 有界等待，
+        # 与密钥无关，故不换 key、不消耗密钥预算。
+        self.agnes_video_upstream_wait_budget_sec: float = float(
+            os.getenv("AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC", "3600")
+        )
+        self.agnes_video_upstream_cooldown_base_sec: float = float(
+            os.getenv("AGNES_VIDEO_UPSTREAM_COOLDOWN_BASE_SEC", "20")
+        )
+        self.agnes_video_upstream_cooldown_max_sec: float = float(
+            os.getenv("AGNES_VIDEO_UPSTREAM_COOLDOWN_MAX_SEC", "300")
+        )
         self.wan_i2v_model: str = os.getenv("WAN_I2V_MODEL", "wanx2.1-i2v-turbo")  # cSpell: disable-line
         self.wan_i2v_resolution: str = os.getenv("WAN_I2V_RESOLUTION", "720P")
         self.wan_i2v_prompt_extend: bool = _bool("WAN_I2V_PROMPT_EXTEND", True)

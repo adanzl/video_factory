@@ -20,7 +20,12 @@ from app.services.segment.clip.video_agnes import (
     _resolve_i2v_image,
     _stabilize_motion_prompt,
 )
-from app.services.llm.llm_agnes import AgnesApiKey, AgnesI2VError, AgnesQuotaExceeded
+from app.services.llm.llm_agnes import (
+    AgnesApiKey,
+    AgnesI2VError,
+    AgnesQuotaExceeded,
+    AgnesUpstreamUnavailable,
+)
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
 from app.utils.media_path import resolve_media_public_base_url
 
@@ -1079,3 +1084,139 @@ def test_agnes_poll_request_not_gated_by_submit_throttle() -> None:
         provider._request("GET", "https://example.com/poll", label="poll")  # noqa: SLF001
 
     mock_gate.assert_not_called()
+
+
+def _upstream_reset() -> None:
+    AgnesClipProvider._upstream_retry_at = 0.0  # noqa: SLF001
+    AgnesClipProvider._upstream_fail_streak = 0  # noqa: SLF001
+    AgnesClipProvider._last_submit_at_by_pool.clear()
+    AgnesClipProvider._cooldown_until_by_pool.clear()
+
+
+def test_submit_two_5xx_raises_upstream_unavailable() -> None:
+    """提交遇到两个域名都 5xx：立刻判为上游不可用，不再连打 4 次。"""
+    provider = AgnesClipProvider()
+    provider._submit_max_retries = 4  # noqa: SLF001
+    _upstream_reset()
+
+    first = MagicMock()
+    first.status_code = 503
+    first.ok = False
+    first.json.return_value = {}
+    second = MagicMock()
+    second.status_code = 503
+    second.ok = False
+    second.json.return_value = {}
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.ok = True
+    ok.raise_for_status = MagicMock()
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.requests.request",
+            side_effect=[first, second, ok],
+        ) as mock_req,
+        patch("app.services.segment.clip.video_agnes.time.sleep"),
+        pytest.raises(AgnesUpstreamUnavailable),
+    ):
+        provider._request(  # noqa: SLF001
+            "POST",
+            "https://apihub.agnes-ai.com/v1/videos",
+            label="submit",
+            key_label="primary",
+        )
+
+    # 第一次 503 换域名，第二次 503 即停：只打 2 次
+    assert mock_req.call_count == 2
+
+
+def test_upstream_unavailable_does_not_burn_keys() -> None:
+    """503 不该被当成「这把 key 坏了」：不换 key，冷却后原 key 重试。"""
+    provider = AgnesClipProvider()
+    provider._upstream_cooldown_base_sec = 20.0  # noqa: SLF001
+    provider._upstream_cooldown_max_sec = 300.0  # noqa: SLF001
+    provider._upstream_wait_budget_sec = 3600.0  # noqa: SLF001
+    _upstream_reset()
+    keys = [
+        AgnesApiKey("primary", "k-paid", "https://apihub.agnes-ai.com/v1"),
+        AgnesApiKey("free", "k-free", "https://apihub.agnes-ai.com/v1"),
+    ]
+    calls: list[str] = []
+    sleeps: list[float] = []
+    clock = {"now": 1000.0}
+
+    def _fake_sleep(sec: float) -> None:
+        sleeps.append(sec)
+        clock["now"] += sec
+
+    def operation(key: AgnesApiKey) -> str:
+        calls.append(key.label)
+        if len(calls) == 1:
+            raise AgnesUpstreamUnavailable("agnes upstream unavailable: HTTP 503")
+        return "ok"
+
+    with (
+        patch("app.services.segment.clip.video_agnes.agnes_api_keys", return_value=keys),
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
+        patch("app.services.segment.clip.video_agnes.random.uniform", return_value=1.0),
+    ):
+        assert provider._with_api_key_fallback(operation) == "ok"  # noqa: SLF001
+
+    # 只用回 key 链第一把（没被烧掉），且中途等过一次冷却
+    assert calls == ["primary", "primary"]
+    assert len(sleeps) == 1
+    assert sleeps[0] >= 20.0
+    assert provider._upstream_cooldown_left() == 0.0  # noqa: SLF001  # 成功后清零
+
+
+def test_upstream_wait_budget_exceeded_raises() -> None:
+    """上游长期不可用：等待超出预算后失败，不无限挂住 worker。"""
+    provider = AgnesClipProvider()
+    provider._upstream_cooldown_base_sec = 300.0  # noqa: SLF001
+    provider._upstream_cooldown_max_sec = 300.0  # noqa: SLF001
+    provider._upstream_wait_budget_sec = 60.0  # noqa: SLF001
+    _upstream_reset()
+    keys = [AgnesApiKey("primary", "k-paid", "https://apihub.agnes-ai.com/v1")]
+    clock = {"now": 1000.0}
+
+    def operation(_key: AgnesApiKey) -> str:
+        raise AgnesUpstreamUnavailable("agnes upstream unavailable: HTTP 503")
+
+    with (
+        patch("app.services.segment.clip.video_agnes.agnes_api_keys", return_value=keys),
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep") as mock_sleep,
+        patch("app.services.segment.clip.video_agnes.random.uniform", return_value=1.0),
+        pytest.raises(AgnesUpstreamUnavailable),
+    ):
+        provider._with_api_key_fallback(operation)  # noqa: SLF001
+
+    mock_sleep.assert_not_called()
+
+
+def test_upstream_streak_backs_off_and_resets_on_success() -> None:
+    """冷却指数退避（20→40→80…封顶），成功一次即清零。"""
+    provider = AgnesClipProvider()
+    provider._upstream_cooldown_base_sec = 20.0  # noqa: SLF001
+    provider._upstream_cooldown_max_sec = 300.0  # noqa: SLF001
+    _upstream_reset()
+
+    with (
+        patch("app.services.segment.clip.video_agnes.time.monotonic", return_value=1000.0),
+        patch("app.services.segment.clip.video_agnes.random.uniform", return_value=1.0),
+    ):
+        delays = [provider._note_upstream_failure() for _ in range(6)]  # noqa: SLF001
+
+    assert delays == [20.0, 40.0, 80.0, 160.0, 300.0, 300.0]
+    with patch("app.services.segment.clip.video_agnes.time.monotonic", return_value=1000.0):
+        provider._note_upstream_success()  # noqa: SLF001
+    assert AgnesClipProvider._upstream_fail_streak == 0  # noqa: SLF001
+    assert provider._upstream_cooldown_left() >= 0.0  # noqa: SLF001
