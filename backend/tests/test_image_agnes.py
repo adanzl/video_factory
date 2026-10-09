@@ -992,18 +992,18 @@ def test_concurrent_submit_staggered() -> None:
 
     settings = get_settings()
     workers = max(2, settings.image_max_workers)
-    stagger = max(0.5, settings.image_submit_interval_sec)
+    stagger = max(0.5, settings.agnes_image_submit_interval_sec)
 
     AgnesImageProvider._inflight = None  # noqa: SLF001
     with (
         patch.object(get_settings(), "image_max_workers", workers),
-        patch.object(get_settings(), "image_submit_interval_sec", stagger),
+        patch.object(get_settings(), "agnes_image_submit_interval_sec", stagger),
     ):
         provider = AgnesImageProvider()
         starts: list[float] = []
 
         def worker() -> None:
-            provider._acquire_submit_slot()  # noqa: SLF001
+            provider._acquire_submit_slot("primary")  # noqa: SLF001
             starts.append(time.monotonic())
             gevent.sleep(0.05)
             provider._release_submit_slot()  # noqa: SLF001
@@ -1016,3 +1016,84 @@ def test_concurrent_submit_staggered() -> None:
     for i in range(1, workers):
         gap = starts[i] - starts[i - 1]
         assert gap >= stagger * 0.8, f"expected stagger ~{stagger}s, got {gap:.2f}s"
+
+
+def test_image_submit_gate_is_pool_aware() -> None:
+    """图片按密钥池计时：付费池 1s、免费池 6s，各算各的。"""
+    provider = AgnesImageProvider()
+    provider._paid_interval_sec = 1.0  # noqa: SLF001
+    provider._free_interval_sec = 6.0  # noqa: SLF001
+    provider._free_pool_shared = True  # noqa: SLF001
+    AgnesImageProvider._next_submit_at_by_pool = {}
+
+    assert provider._pool_for_key("primary") == "paid"  # noqa: SLF001
+    assert provider._pool_for_key("free") == "free"  # noqa: SLF001
+    # 默认同池：两把免费 key 合用一个池
+    assert provider._pool_for_key("cn_free") == "free"  # noqa: SLF001
+    assert provider._interval_for_pool("paid") == 1.0  # noqa: SLF001
+    assert provider._interval_for_pool("free") == 6.0  # noqa: SLF001
+
+    clock = {"now": 1000.0}
+    sleeps: list[float] = []
+
+    def _fake_sleep(sec: float) -> None:
+        sleeps.append(sec)
+
+    with (
+        patch(
+            "app.services.segment.image.image_agnes.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ),
+        patch(
+            "app.services.segment.image.image_agnes.time.sleep",
+            side_effect=_fake_sleep,
+        ),
+    ):
+        # 付费池首次不等
+        assert provider._submit_gate_wait("primary") == 0.0  # noqa: SLF001
+        provider._advance_submit_gate("primary")  # noqa: SLF001
+        # 免费池首次也不等（两个池互相独立）
+        assert provider._submit_gate_wait("free") == 0.0  # noqa: SLF001
+        provider._advance_submit_gate("free")  # noqa: SLF001
+
+        clock["now"] = 1000.5
+        # 付费池还需 0.5s
+        assert abs(provider._submit_gate_wait("primary") - 0.5) < 0.01  # noqa: SLF001
+        # 免费池还需 5.5s
+        assert abs(provider._submit_gate_wait("cn_free") - 5.5) < 0.01  # noqa: SLF001
+    assert sleeps == []
+
+
+def test_image_free_pools_can_split() -> None:
+    """两把免费 key 若确属不同账号，可设 AGNES_FREE_POOL_SHARED=0 拆成两个池。"""
+    provider = AgnesImageProvider()
+    provider._free_pool_shared = False  # noqa: SLF001
+    assert provider._pool_for_key("free") == "free"  # noqa: SLF001
+    assert provider._pool_for_key("cn_free") == "cn_free"  # noqa: SLF001
+
+
+def test_generate_acquires_slot_with_its_key_pool() -> None:
+    """出图走闸门时须带本次 key，才能按该 key 所属池计时。"""
+    import gevent
+
+    provider = AgnesImageProvider()
+    seen: list[str] = []
+
+    def _fake_acquire(key_label: str = "primary") -> None:
+        seen.append(key_label)
+
+    with (
+        patch.object(provider, "_acquire_submit_slot", side_effect=_fake_acquire),
+        patch.object(provider, "_release_submit_slot"),
+        patch.object(provider, "_request", side_effect=RuntimeError("stop")),
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[AgnesApiKey("cn_free", "k-cn")],
+        ),
+    ):
+        import pytest as _pytest
+
+        with _pytest.raises(RuntimeError, match="stop"):
+            provider.generate("测试", Path("/tmp/never.png"))
+    del gevent
+    assert seen == ["cn_free"]

@@ -237,6 +237,22 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
                     ),
             _f("image_max_workers", "IMAGE_MAX_WORKERS", "并发数 (仅云端 provider，sd15_t2i 恒为 1)", "number", min_value=1, max_value=8),
             _f("image_submit_interval_sec", "IMAGE_SUBMIT_INTERVAL_SEC", "提交间隔 (秒)", "number", min_value=0, max_value=120),
+            _f(
+                "agnes_image_submit_interval_sec",
+                "AGNES_IMAGE_SUBMIT_INTERVAL_SEC",
+                "Agnes 图片付费池间隔 (秒，TokenPlan 1K 100 RPM→1)",
+                "number",
+                min_value=0,
+                max_value=120,
+            ),
+            _f(
+                "agnes_free_image_submit_interval_sec",
+                "AGNES_FREE_IMAGE_SUBMIT_INTERVAL_SEC",
+                "Agnes 图片免费池间隔 (秒，1K 10 RPM→6)",
+                "number",
+                min_value=0,
+                max_value=120,
+            ),
             _f("agnes_api_key", "AGNES_API_KEY", "付费 Key", "secret"),
             _f("agnes_free_api_key", "AGNES_FREE_API_KEY", "免费 Key（备用）", "secret"),
             _f(

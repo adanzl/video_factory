@@ -31,6 +31,7 @@ from app.services.llm.llm_agnes import (
     agnes_apply_host_failover,
     agnes_auth_header,
     agnes_key_base_url,
+    agnes_key_pool,
     agnes_quota_exceeded_from_exception,
     agnes_should_switch_key,
     raise_if_agnes_content_policy,
@@ -262,14 +263,20 @@ def _verify_upstream_media_url_fetch_error(resp: requests.Response) -> bool:
 
 
 class AgnesImageProvider(ImageProvider):
-    """Agnes 文生图：IMAGE_MAX_WORKERS 路并发 + IMAGE_SUBMIT_INTERVAL_SEC 错峰发起。"""
+    """Agnes 文生图：IMAGE_MAX_WORKERS 路并发 + 按密钥池错峰发起。
+
+    图片 RPM 按分辨率与密钥类型分档（官方 wiki tokenplan，1K 档）：
+    TokenPlan 实际 100 RPM → 1s；免费/默认 10 RPM → 6s。
+    限制池按密钥类型共享，故按池计时而非按 key 计时。
+    """
 
     _concurrency_lock = Semaphore(value=1)
     _schedule_lock = Semaphore(value=1)
     _inflight: Semaphore | None = None
     _max_concurrent: int = 1
-    _stagger_sec: float = 20.0
-    _next_submit_at: float = 0.0
+    _paid_interval_sec: float = 1.0
+    _free_interval_sec: float = 6.0
+    _next_submit_at_by_pool: dict[str, float] = {}
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -279,6 +286,7 @@ class AgnesImageProvider(ImageProvider):
         self._default_size = settings.agnes_image_size
         self._fallback = MockImageProvider()
         self._http_max_retries = settings.agnes_http_max_retries
+        self._free_pool_shared = settings.agnes_free_pool_shared
         self._active_job_id: int | None = None
         self._ensure_concurrency()
 
@@ -314,37 +322,66 @@ class AgnesImageProvider(ImageProvider):
     def _ensure_concurrency(cls) -> None:
         settings = get_settings()
         max_concurrent = max(1, settings.image_max_workers)
-        stagger_sec = max(0.0, settings.image_submit_interval_sec)
+        paid_interval = max(0.0, settings.agnes_image_submit_interval_sec)
+        free_interval = max(0.0, settings.agnes_free_image_submit_interval_sec)
         with cls._concurrency_lock:
             if (
                 cls._inflight is None
                 or cls._max_concurrent != max_concurrent
-                or cls._stagger_sec != stagger_sec
+                or cls._paid_interval_sec != paid_interval
+                or cls._free_interval_sec != free_interval
             ):
                 cls._max_concurrent = max_concurrent
-                cls._stagger_sec = stagger_sec
+                cls._paid_interval_sec = paid_interval
+                cls._free_interval_sec = free_interval
                 cls._inflight = Semaphore(max_concurrent)
-                cls._next_submit_at = 0.0
+                cls._next_submit_at_by_pool = {}
+
+    def _pool_for_key(self, key_label: str) -> str:
+        return agnes_key_pool(key_label, free_shared=self._free_pool_shared)
+
+    def _interval_for_pool(self, pool: str) -> float:
+        if pool == "paid":
+            return self._paid_interval_sec
+        return self._free_interval_sec
 
     def describe_params(self, *, size: str | None = None) -> str:
         size = size or self._default_size
         return (
             f"provider=agnes_t2i, model={self._model}, size={size}, "
-            f"workers={self._max_concurrent}, stagger={self._stagger_sec}s, "
+            f"workers={self._max_concurrent}, "
+            f"stagger=paid {self._paid_interval_sec}s / free {self._free_interval_sec}s, "
             f"api={self._generation_url}"
         )
 
-    def _acquire_submit_slot(self) -> None:
+    def _submit_gate_wait(self, key_label: str) -> float:
+        """按池记账：返回还需等待的秒数（不改状态，调用方在锁内统一推进）。"""
+        pool = self._pool_for_key(key_label)
+        interval = self._interval_for_pool(pool)
+        now = time.monotonic()
+        return max(0.0, self._next_submit_at_by_pool.get(pool, 0.0) - now)
+
+    def _advance_submit_gate(self, key_label: str) -> None:
+        pool = self._pool_for_key(key_label)
+        interval = self._interval_for_pool(pool)
+        now = time.monotonic()
+        base = max(now, self._next_submit_at_by_pool.get(pool, 0.0))
+        self._next_submit_at_by_pool[pool] = base + interval
+
+    def _wait_submit_gate(self, key_label: str) -> None:
+        """按池等待下一次可提交时刻（重试路径复用；不占并发额度）。"""
+        with self._schedule_lock:
+            wait = self._submit_gate_wait(key_label)
+            self._advance_submit_gate(key_label)
+        if wait:
+            self._sleep_cancellable(wait)
+
+    def _acquire_submit_slot(self, key_label: str = "primary") -> None:
         self._ensure_concurrency()
         assert self._inflight is not None
         self._inflight.acquire()
         try:
-            with self._schedule_lock:
-                now = time.monotonic()
-                wait = max(0.0, self._next_submit_at - now)
-                self._next_submit_at = max(now, self._next_submit_at) + self._stagger_sec
-            if wait:
-                self._sleep_cancellable(wait)
+            self._wait_submit_gate(key_label)
         except Exception:
             self._inflight.release()
             raise
@@ -363,6 +400,7 @@ class AgnesImageProvider(ImageProvider):
         max_retries: int | None = None,
         timeout: int | None = None,
         log_tag: str = "",
+        key_label: str | None = None,
     ) -> requests.Response:
         retries = max_retries if max_retries is not None else self._http_max_retries
         timeout = int(get_settings().agnes_image_timeout_sec) if timeout is None else int(timeout)  # type: ignore[arg-type]
@@ -374,6 +412,9 @@ class AgnesImageProvider(ImageProvider):
         host_failover_tried = set()  # type: ignore[var-annotated]
         for attempt in range(retries):
             self._raise_if_job_cancelled()
+            if attempt > 0 and key_label:
+                # 5xx 重试也要按池记账，不能在窗口内连打
+                self._wait_submit_gate(key_label)
             t0 = time.monotonic()
             try:
                 resp = self._run_blocking_cancellable(
@@ -551,7 +592,7 @@ class AgnesImageProvider(ImageProvider):
             ratio = ""
         log_tag = f"[out={output_path.name}]"
         t0 = time.monotonic()
-        self._acquire_submit_slot()
+        self._acquire_submit_slot(api_key.label)
         try:
             extra_body: dict = {"response_format": "url"}
             ref_names: list[str] = []
@@ -621,6 +662,7 @@ class AgnesImageProvider(ImageProvider):
                 json=payload,
                 max_retries=max_retries,
                 log_tag=log_tag,
+                key_label=api_key.label,
             )
             image_url, image_bytes = self._extract_image(resp.json())  # type: ignore[attr-defined,assignment]
             output_path.parent.mkdir(parents=True, exist_ok=True)

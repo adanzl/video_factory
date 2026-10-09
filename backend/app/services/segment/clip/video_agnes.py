@@ -30,6 +30,7 @@ from app.services.llm.llm_agnes import (
     agnes_apply_host_failover,
     agnes_auth_header,
     agnes_key_base_url,
+    agnes_key_pool,
     agnes_quota_exceeded_from_exception,
     agnes_should_switch_key,
     raise_if_agnes_quota,
@@ -772,12 +773,7 @@ class AgnesClipProvider(ClipProvider):
 
     def _pool_for_key(self, key_label: str) -> str:
         """key → 视频限制池；官方按密钥类型共享额度，同型多 key 只算一个池。"""
-        label = str(key_label or "").strip()
-        if label == "primary":
-            return _POOL_PAID
-        if label in ("free", "cn_free") and self._free_pool_shared:
-            return _POOL_FREE
-        return label or _POOL_FREE
+        return agnes_key_pool(key_label, free_shared=self._free_pool_shared)
 
     def _interval_for_pool(self, pool: str) -> float:
         """池内最小请求间隔：TokenPlan 5 RPM→12s；免费 1 RPM→60s。"""

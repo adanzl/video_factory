@@ -57,6 +57,20 @@ def agnes_api_keys(settings: Settings | None = None) -> list[AgnesApiKey]:
     return keys
 
 
+def agnes_key_pool(key_label: str, *, free_shared: bool = True) -> str:
+    """Key → 限制池：付费池 / 免费池。
+
+    官方按「密钥类型」共享额度：同类型多把 key 合起来只有一个池。
+    ``free_shared=False`` 时两把免费 key 视为不同账号，各自成池。
+    """
+    label = str(key_label or "").strip()
+    if label == "primary":
+        return "paid"
+    if label in ("free", "cn_free") and free_shared:
+        return "free"
+    return label or "free"
+
+
 def agnes_key_base_url(api_key: AgnesApiKey, settings: Settings | None = None) -> str:
     """取 Key 绑定地址；缺省回落国际 base_url。"""
     if api_key.base_url:

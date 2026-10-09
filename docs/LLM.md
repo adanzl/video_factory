@@ -28,11 +28,25 @@
 | `AGNES_LLM_MAX_TOKENS` | `32768` | Agnes 文本/多模态上限 |
 | `AGNES_SUBMIT_INTERVAL_SEC` | `12` | 视频提交间隔（付费池 5 RPM） |
 | `AGNES_FREE_SUBMIT_INTERVAL_SEC` | `60` | 视频提交间隔（免费池 1 RPM） |
+| `AGNES_IMAGE_SUBMIT_INTERVAL_SEC` | `1` | 图片提交间隔（付费池 1K 100 RPM） |
+| `AGNES_FREE_IMAGE_SUBMIT_INTERVAL_SEC` | `6` | 图片提交间隔（免费池 1K 10 RPM） |
 | `AGNES_FREE_POOL_SHARED` | `1` | 两把免费 key 是否同池 |
 | `AGNES_VIDEO_RATE_LIMIT_COOLDOWN_SEC` | `60` | 429 后该池冷却时长 |
 | `AGNES_VIDEO_KEY_WAIT_BUDGET_SEC` | `300` | 全池冷却时单次等待预算 |
 
 Agnes 校验清单（出图 VL）固定 `max_tokens=256`。
+
+### 图片 RPM 与限制池（t2i）
+
+官方 1K 档实际 RPM：免费/默认 **10**、企业认证 40、TokenPlan **100**
+（2K 档免费 5 / TokenPlan 80；3K、4K 各档均 1）。
+
+图片提交同样**按池计时**（付费池 `AGNES_IMAGE_SUBMIT_INTERVAL_SEC`、
+免费池 `AGNES_FREE_IMAGE_SUBMIT_INTERVAL_SEC`）：
+
+- 出图与 5xx 重试都过闸门，不在窗口内连打；
+- 并发度由 `IMAGE_MAX_WORKERS` 控制，与池间隔互不替代；
+- `IMAGE_SUBMIT_INTERVAL_SEC` 现仅供 wan / z_image provider 使用。
 
 ### 视频 RPM 与限制池（i2v）
 

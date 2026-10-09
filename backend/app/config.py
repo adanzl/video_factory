@@ -199,6 +199,15 @@ class Config:
         self.image_provider: str = os.getenv("IMAGE_PROVIDER", "agnes_t2i")
         self.image_max_workers: int = int(os.getenv("IMAGE_MAX_WORKERS", "3"))
         self.image_submit_interval_sec: float = float(os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "20"))
+        # Agnes 图片 RPM 按分辨率与密钥类型分档（官方 wiki，1K 档）：
+        # TokenPlan 实际 100 RPM → 1s；免费/默认 10 RPM → 6s。
+        # 限制池按「密钥类型」共享，同类型多把 key 共用一个池。
+        self.agnes_image_submit_interval_sec: float = float(
+            os.getenv("AGNES_IMAGE_SUBMIT_INTERVAL_SEC", "1")
+        )
+        self.agnes_free_image_submit_interval_sec: float = float(
+            os.getenv("AGNES_FREE_IMAGE_SUBMIT_INTERVAL_SEC", "6")
+        )
         self.wan_model: str = os.getenv("WAN_MODEL", "wanx2.1-t2i-turbo")  # cSpell: disable-line
         self.wan_image_size: str = wan_image_size
         self.wan_cover_size: str = os.getenv("WAN_COVER_SIZE", _size_str(cover_w, cover_h))
