@@ -40,8 +40,10 @@ logger = logging.getLogger(__name__)
 
 # 含 Cloudflare 源站错误 52x（如 520 unknown error）
 _RETRYABLE_HTTP = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
-# Agnes 视频提交限额：allows 1 requests per 1 minute(s)
-_RATE_LIMIT_WAIT_SEC = 60.0
+# Agnes 视频 RPM（官方 wiki tokenplan）：default 实际 1 RPM；TokenPlan 实际 5 RPM。
+# 限制池按「密钥类型」共享（同类型多 key 共用一个池），故按池计时而非按 key 计时。
+_POOL_PAID = "paid"
+_POOL_FREE = "free"
 _TASK_RETRY_TOKENS = ("failed", "timeout", "429", "rate limit", "too many")
 _TERMINAL_POLL_STATES = frozenset({"completed", "failed"})
 # Video 2.5 Flash：图生视频用 keyframe + first_frame（保持成片真实首帧）
@@ -291,11 +293,6 @@ def _backoff_seconds(attempt: int, *, is_timeout: bool = False) -> float:
     if is_timeout:
         return min(45.0 + attempt * 30.0, 180.0)
     return min(2**attempt * 2, 60.0)
-
-
-def _rate_limit_wait_seconds(attempt: int) -> float:
-    """提交 429：按 1 RPM 等满一分钟，后续加倍，上限 3 分钟。"""
-    return min(_RATE_LIMIT_WAIT_SEC * (attempt + 1), 180.0)
 
 
 def _inject_mouth_motion(prompt: str, subtitle_cues: list[tuple[str, float]]) -> str:
@@ -728,9 +725,12 @@ def _loop_video_to_duration(
 
 
 class AgnesClipProvider(ClipProvider):
-    # 按 Key 池分别限流：付费(enterprise≈2 RPM)与免费(≈1 RPM)互不影响
+    # 视频 RPM 按「限制池」计时：付费池（TokenPlan 5 RPM→12s）与免费池（1 RPM→60s）。
+    # 官方：限制池按密钥类型共享，同类型多把 key 合起来只有一个池的额度。
     _submit_lock = Semaphore(value=1)
-    _last_submit_at_by_key: dict[str, float] = {}
+    _last_submit_at_by_pool: dict[str, float] = {}
+    # 429 后该池冷却，冷却期内换下一把 key；全部冷却才整批等待
+    _cooldown_until_by_pool: dict[str, float] = {}
     # 状态查询全局错峰，避免多路并发把 poll RPM 打爆
     _poll_lock = Semaphore(value=1)
     _last_poll_at = 0.0
@@ -743,6 +743,9 @@ class AgnesClipProvider(ClipProvider):
         self._model = settings.agnes_video_model
         self._submit_interval = settings.agnes_submit_interval_sec
         self._free_submit_interval = settings.agnes_free_submit_interval_sec
+        self._free_pool_shared = settings.agnes_free_pool_shared
+        self._rate_limit_cooldown_sec = settings.agnes_video_rate_limit_cooldown_sec
+        self._key_wait_budget_sec = settings.agnes_video_key_wait_budget_sec
         self._http_max_retries = settings.agnes_http_max_retries
         self._connect_timeout = settings.agnes_http_connect_timeout_sec
         self._submit_read_timeout = settings.agnes_http_submit_read_timeout_sec
@@ -767,29 +770,60 @@ class AgnesClipProvider(ClipProvider):
         if self._active_job_id is not None:
             job_cancel.raise_if_cancelled(self._active_job_id)
 
-    def _submit_interval_for_key(self, key_label: str) -> float:
-        """Agnes 视频提交间隔：接口现为 1 RPM，付费/免费默认都按 60s（可配）。"""
-        if key_label in ("free", "cn_free"):
-            return max(0.0, self._free_submit_interval)
-        return max(0.0, self._submit_interval)
+    def _pool_for_key(self, key_label: str) -> str:
+        """key → 视频限制池；官方按密钥类型共享额度，同型多 key 只算一个池。"""
+        label = str(key_label or "").strip()
+        if label == "primary":
+            return _POOL_PAID
+        if label in ("free", "cn_free") and self._free_pool_shared:
+            return _POOL_FREE
+        return label or _POOL_FREE
+
+    def _interval_for_pool(self, pool: str) -> float:
+        """池内最小请求间隔：TokenPlan 5 RPM→12s；免费 1 RPM→60s。"""
+        if pool == _POOL_PAID:
+            return max(0.0, self._submit_interval)
+        return max(0.0, self._free_submit_interval)
+
+    def _mark_pool_cooldown(
+        self,
+        key_label: str,
+        *,
+        seconds: float | None = None,
+    ) -> None:
+        """429 后冻结该池一个窗口，期间请求换下一把 key。"""
+        pool = self._pool_for_key(key_label)
+        secs = self._rate_limit_cooldown_sec if seconds is None else float(seconds)
+        until = time.monotonic() + max(0.0, secs)
+        if until > self._cooldown_until_by_pool.get(pool, 0.0):
+            self._cooldown_until_by_pool[pool] = until
+
+    def _pool_cooldown_left(self, key_label: str) -> float:
+        pool = self._pool_for_key(key_label)
+        return max(0.0, self._cooldown_until_by_pool.get(pool, 0.0) - time.monotonic())
 
     def _throttle_submit(self, key_label: str = "primary") -> None:
+        """提交闸门：按池记账，首次提交、重试、换域名重试都要过这里。"""
         self._raise_if_job_cancelled()
-        interval = self._submit_interval_for_key(key_label)
+        pool = self._pool_for_key(key_label)
+        interval = self._interval_for_pool(pool)
         with self._submit_lock:
-            last = self._last_submit_at_by_key.get(key_label, 0.0)
-            elapsed = time.monotonic() - last
-            if elapsed < interval:
-                wait = interval - elapsed
+            now = time.monotonic()
+            wait = max(
+                self._cooldown_until_by_pool.get(pool, 0.0) - now,
+                interval - (now - self._last_submit_at_by_pool.get(pool, 0.0)),
+                0.0,
+            )
+            if wait > 0:
                 logger.info(
-                    "agnes i2v throttle (%s key): wait %.1fs (interval=%.1fs)",
-                    key_label,
+                    "agnes i2v throttle (%s pool): wait %.1fs (interval=%.1fs)",
+                    pool,
                     wait,
                     interval,
                 )
                 time.sleep(wait)
                 self._raise_if_job_cancelled()
-            self._last_submit_at_by_key[key_label] = time.monotonic()
+            self._last_submit_at_by_pool[pool] = time.monotonic()
 
     def _throttle_poll(self) -> None:
         """多路 i2v 共用同一状态查询节奏，避免 status query 429。"""
@@ -818,6 +852,7 @@ class AgnesClipProvider(ClipProvider):
         max_retries: int | None = None,
         timeout: float | tuple[float, float] | None = None,
         label: str = "request",
+        key_label: str | None = None,
     ) -> requests.Response:
         retries = self._submit_max_retries if label == "submit" and max_retries is None else (
             max_retries if max_retries is not None else self._http_max_retries
@@ -829,6 +864,9 @@ class AgnesClipProvider(ClipProvider):
 
         for attempt in range(retries):
             try:
+                if key_label:
+                    # 每一次请求（含重试与换域名）都按池记账，勿只挡首次提交
+                    self._throttle_submit(key_label)
                 resp = requests.request(
                     method, url, headers=headers or {}, json=json, timeout=req_timeout
                 )
@@ -858,19 +896,16 @@ class AgnesClipProvider(ClipProvider):
                     continue
                 if resp.status_code == 429:
                     body = _response_body(resp)
-                    # 提交 RPM 限流：等满窗口再试；轮询 429 仍抛给 poll 循环退避
-                    if label == "submit" and attempt + 1 < retries:
-                        wait = _rate_limit_wait_seconds(attempt)
+                    # 429=RPM 窗口：冻结该池并立刻换下一把 key，不在同 key 上睡满窗口
+                    if key_label:
+                        self._mark_pool_cooldown(key_label)
                         logger.warning(
-                            "agnes %s %s rate limited, retry %s/%s in %ss",
+                            "agnes %s %s rate limited (%s pool): cooldown %.0fs, switch key",
                             label,
                             url,
-                            attempt + 1,
-                            retries,
-                            wait,
+                            self._pool_for_key(key_label),
+                            self._rate_limit_cooldown_sec,
                         )
-                        time.sleep(wait)
-                        continue
                     raise_if_agnes_quota(status_code=resp.status_code, body=body)
                 if not resp.ok:
                     raise_if_agnes_quota(
@@ -974,6 +1009,11 @@ class AgnesClipProvider(ClipProvider):
         }
 
     def _with_api_key_fallback(self, operation: Callable[[AgnesApiKey], Path]) -> Path:
+        """按 key 链依次尝试：跳过冷却中的池；全部冷却则等最早恢复再试。
+
+        429 已在 ``_request`` 标好该池冷却，这里只管换 key 与整体等待，
+        等待总时长受 ``AGNES_VIDEO_KEY_WAIT_BUDGET_SEC`` 约束（超预算才失败）。
+        """
         keys = agnes_api_keys()
         if not keys:
             raise AgnesI2VError(
@@ -981,23 +1021,58 @@ class AgnesClipProvider(ClipProvider):
                 "未配置，无法调用 Agnes 图生视频"
             )
 
+        deadline = time.monotonic() + max(0.0, self._key_wait_budget_sec)
         last_exc: Exception | None = None
-        for idx, key in enumerate(keys):
-            try:
-                return operation(key)
-            except AgnesContentPolicyError:
-                raise
-            except Exception as exc:
-                last_exc = exc
-                if idx >= len(keys) - 1 or not agnes_should_switch_key(exc):
+        while True:
+            for idx, key in enumerate(keys):
+                cooling = self._pool_cooldown_left(key.label)
+                if cooling > 0:
+                    logger.info(
+                        "agnes %s key skipped (%s pool cooling %.1fs)",
+                        key.label,
+                        self._pool_for_key(key.label),
+                        cooling,
+                    )
+                    continue
+                try:
+                    return operation(key)
+                except AgnesContentPolicyError:
                     raise
-                logger.warning(
-                    "agnes %s key failed (%s), switching to backup",
-                    key.label,
-                    type(exc).__name__,
-                )
+                except Exception as exc:
+                    last_exc = exc
+                    if not agnes_should_switch_key(exc):
+                        raise
+                    if idx < len(keys) - 1:
+                        logger.warning(
+                            "agnes %s key failed (%s), switching to backup",
+                            key.label,
+                            type(exc).__name__,
+                        )
 
-        raise AgnesI2VError("agnes i2v failed without exception")
+            cooldowns = [
+                left
+                for left in (self._pool_cooldown_left(k.label) for k in keys)
+                if left > 0
+            ]
+            if not cooldowns:
+                break
+            sleep_for = min(cooldowns)
+            if time.monotonic() + sleep_for > deadline:
+                logger.warning(
+                    "agnes video keys busy: %.1fs wait exceeds budget, giving up",
+                    sleep_for,
+                )
+                break
+            logger.warning(
+                "agnes video keys busy: all pools cooling, wait %.1fs then retry",
+                sleep_for,
+            )
+            time.sleep(sleep_for)
+            self._raise_if_job_cancelled()
+
+        if last_exc is not None:
+            raise last_exc
+        raise AgnesI2VError("agnes i2v failed: all keys rate limited")
 
     def _generate_raw_with_key(
         self,
@@ -1034,7 +1109,6 @@ class AgnesClipProvider(ClipProvider):
             len(prompt),
         )
 
-        self._throttle_submit(api_key.label)
         max_attempts = max(1, self._task_max_retries)
         last_exc: Exception | None = None
         for attempt in range(max_attempts):
@@ -1044,6 +1118,7 @@ class AgnesClipProvider(ClipProvider):
                     payload=payload,
                     output_path=output_path,
                     segment_index=segment_index,
+                    key_label=api_key.label,
                 )
             except AgnesQuotaExceeded:
                 raise
@@ -1095,9 +1170,15 @@ class AgnesClipProvider(ClipProvider):
         *,
         headers: dict,
         payload: dict,
+        key_label: str | None = None,
     ) -> tuple[str | None, str | None, str, dict]:
         resp = self._request(
-            "POST", self._create_url, headers=headers, json=payload, label="submit"
+            "POST",
+            self._create_url,
+            headers=headers,
+            json=payload,
+            label="submit",
+            key_label=key_label,
         )
         body = resp.json()
         if body.get("error"):
@@ -1417,8 +1498,13 @@ class AgnesClipProvider(ClipProvider):
         payload: dict,
         output_path: Path,
         segment_index: int | None = None,
+        key_label: str | None = None,
     ) -> Path:
-        video_id, task_id, state, body = self._submit_task(headers=headers, payload=payload)
+        video_id, task_id, state, body = self._submit_task(
+            headers=headers,
+            payload=payload,
+            key_label=key_label,
+        )
         agnes_id = video_id or task_id or "unknown"
         if state == "completed":
             return self._download_video(body, output_path, agnes_id)

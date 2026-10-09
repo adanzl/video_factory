@@ -184,7 +184,7 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f(
                 "agnes_submit_interval_sec",
                 "AGNES_SUBMIT_INTERVAL_SEC",
-                "Agnes 付费 Key 提交间隔 (秒，视频 1 RPM→60)",
+                "Agnes 付费 Key 提交间隔 (秒，TokenPlan 视频 5 RPM→12)",
                 "number",
                 min_value=0,
                 max_value=120,
@@ -192,7 +192,7 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f(
                 "agnes_free_submit_interval_sec",
                 "AGNES_FREE_SUBMIT_INTERVAL_SEC",
-                "Agnes 免费 Key 提交间隔 (秒，≈1 RPM)",
+                "Agnes 免费 Key 提交间隔 (秒，视频 1 RPM→60)",
                 "number",
                 min_value=0,
                 max_value=120,

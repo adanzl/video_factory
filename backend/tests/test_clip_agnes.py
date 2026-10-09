@@ -20,7 +20,7 @@ from app.services.segment.clip.video_agnes import (
     _resolve_i2v_image,
     _stabilize_motion_prompt,
 )
-from app.services.llm.llm_agnes import AgnesApiKey, AgnesQuotaExceeded
+from app.services.llm.llm_agnes import AgnesApiKey, AgnesI2VError, AgnesQuotaExceeded
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
 from app.utils.media_path import resolve_media_public_base_url
 
@@ -421,15 +421,20 @@ def test_agnes_i2v_poll_throttle_is_global() -> None:
     assert abs(sleeps[0] - 10.0) < 0.01
 
 
-def test_agnes_i2v_submit_interval_by_key() -> None:
-    """付费 enterprise≈2 RPM(30s)，免费≈1 RPM(60s)；按 key 分开记时。"""
+def test_agnes_i2v_submit_interval_by_pool() -> None:
+    """限制池计时：付费池（TokenPlan 5 RPM）与免费池（1 RPM）各算各的。"""
     provider = AgnesClipProvider()
-    provider._submit_interval = 30.0  # noqa: SLF001
+    provider._submit_interval = 12.0  # noqa: SLF001
     provider._free_submit_interval = 60.0  # noqa: SLF001
-    AgnesClipProvider._last_submit_at_by_key.clear()
+    AgnesClipProvider._last_submit_at_by_pool.clear()
+    AgnesClipProvider._cooldown_until_by_pool.clear()
 
-    assert provider._submit_interval_for_key("primary") == 30.0  # noqa: SLF001
-    assert provider._submit_interval_for_key("free") == 60.0  # noqa: SLF001
+    assert provider._pool_for_key("primary") == "paid"  # noqa: SLF001
+    assert provider._pool_for_key("free") == "free"  # noqa: SLF001
+    # 官方按密钥类型共享额度：免费 + 国内免费默认同一个池
+    assert provider._pool_for_key("cn_free") == "free"  # noqa: SLF001
+    assert provider._interval_for_pool("paid") == 12.0  # noqa: SLF001
+    assert provider._interval_for_pool("free") == 60.0  # noqa: SLF001
 
     sleeps: list[float] = []
 
@@ -439,36 +444,46 @@ def test_agnes_i2v_submit_interval_by_key() -> None:
     with (
         patch(
             "app.services.segment.clip.video_agnes.time.monotonic",
-            side_effect=[100.0, 100.0, 130.0, 130.0],
+            side_effect=[100.0, 100.0, 100.0, 100.0],
         ),
         patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
     ):
         provider._throttle_submit("primary")  # noqa: SLF001
         provider._throttle_submit("free")  # noqa: SLF001
 
-    # primary 首次、free 首次都不 sleep
+    # 两个池首次都不 sleep
     assert sleeps == []
 
     with (
         patch(
             "app.services.segment.clip.video_agnes.time.monotonic",
-            side_effect=[145.0, 145.0, 160.0, 160.0],
+            side_effect=[115.0, 115.0, 115.0, 115.0],
         ),
         patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
     ):
-        # free 上次在 130，间隔 60 → 还需等 45s
-        provider._throttle_submit("free")  # noqa: SLF001
-        # primary 上次在 100，间隔 30 → 145 已够，不等
+        # 付费池上次在 100，间隔 12 → 115 已够，不等
         provider._throttle_submit("primary")  # noqa: SLF001
+        # 免费池上次在 100，间隔 60 → 还需等 45s
+        provider._throttle_submit("cn_free")  # noqa: SLF001
 
     assert len(sleeps) == 1
     assert abs(sleeps[0] - 45.0) < 0.01
 
 
-def test_agnes_i2v_submit_retries_http_429() -> None:
-    """提交 429 是 RPM 窗口，应等满 1 分钟再试，不能当配额立刻失败。"""
+def test_agnes_i2v_free_pools_can_split() -> None:
+    """两把免费 key 若确属不同账号，可用 AGNES_FREE_POOL_SHARED=0 拆成两个池。"""
     provider = AgnesClipProvider()
-    provider._submit_max_retries = 2  # noqa: SLF001
+    provider._free_pool_shared = False  # noqa: SLF001
+    assert provider._pool_for_key("free") == "free"  # noqa: SLF001
+    assert provider._pool_for_key("cn_free") == "cn_free"  # noqa: SLF001
+
+
+def test_agnes_i2v_submit_retries_http_429() -> None:
+    """提交 429 应立刻冻结该池抛配额错误（交给 key 链换 key），不再原地睡窗口。"""
+    provider = AgnesClipProvider()
+    provider._submit_max_retries = 4  # noqa: SLF001
+    AgnesClipProvider._last_submit_at_by_pool.clear()
+    AgnesClipProvider._cooldown_until_by_pool.clear()
 
     limited = MagicMock()
     limited.status_code = 429
@@ -483,30 +498,78 @@ def test_agnes_i2v_submit_retries_http_429() -> None:
         }
     }
 
-    ok = MagicMock()
-    ok.status_code = 200
-    ok.ok = True
-    ok.raise_for_status = MagicMock()
-
     sleeps: list[float] = []
 
     with (
         patch(
             "app.services.segment.clip.video_agnes.requests.request",
-            side_effect=[limited, ok],
+            side_effect=[limited, limited, limited, limited],
         ) as mock_req,
         patch(
             "app.services.segment.clip.video_agnes.time.sleep",
             side_effect=lambda sec: sleeps.append(sec),
         ),
+        pytest.raises(AgnesQuotaExceeded),
+    ):
+        provider._request(  # noqa: SLF001
+            "POST",
+            "https://example.com/videos",
+            label="submit",
+            key_label="free",
+        )
+
+    assert mock_req.call_count == 1, "429 不该在原地重试整轮"
+    assert not [s for s in sleeps if s >= 60.0]
+    assert provider._pool_cooldown_left("free") > 0  # noqa: SLF001
+
+
+def test_agnes_i2v_retry_gate_respects_pool_interval() -> None:
+    """503 重试也要过闸门：付费池两次请求之间至少隔一个间隔。"""
+    provider = AgnesClipProvider()
+    provider._submit_interval = 12.0  # noqa: SLF001
+    provider._submit_max_retries = 3  # noqa: SLF001
+    AgnesClipProvider._last_submit_at_by_pool.clear()
+    AgnesClipProvider._cooldown_until_by_pool.clear()
+
+    bad = MagicMock()
+    bad.status_code = 503
+    bad.ok = False
+    bad.json.return_value = {}
+
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.ok = True
+    ok.raise_for_status = MagicMock()
+
+    clock = {"now": 1000.0}
+    sleeps: list[float] = []
+
+    def _fake_sleep(sec: float) -> None:
+        sleeps.append(sec)
+        clock["now"] += sec
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.requests.request",
+            side_effect=[bad, ok],
+        ),
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
     ):
         resp = provider._request(  # noqa: SLF001
-            "POST", "https://example.com/videos", label="submit"
+            "POST",
+            "https://example.com/videos",
+            label="submit",
+            key_label="primary",
         )
 
     assert resp is ok
-    assert mock_req.call_count == 2
-    assert sleeps and sleeps[0] >= 60.0
+    # 第一次请求无等待；503 退避 2s 后，第二次请求前闸门补到 12s
+    assert sleeps[0] == 2.0
+    assert abs(sleeps[1] - 10.0) < 0.01
 
 
 def test_agnes_i2v_submit_429_exhausted_raises_quota() -> None:
@@ -897,3 +960,122 @@ def test_agnes_i2v_poll_stops_on_job_abort(tmp_path: Path) -> None:
 
     # 第 1 次 poll 后设置 abort，下一轮循环开头应立刻退出
     assert poll_calls["n"] == 1
+
+
+def test_agnes_key_chain_switches_on_429_without_waiting() -> None:
+    """429（含免费档报文）应立刻换下一把 key，不在被限的池上等满窗口。"""
+    provider = AgnesClipProvider()
+    provider._rate_limit_cooldown_sec = 60.0  # noqa: SLF001
+    AgnesClipProvider._last_submit_at_by_pool.clear()
+    AgnesClipProvider._cooldown_until_by_pool.clear()
+    keys = [
+        AgnesApiKey("primary", "k-paid", "https://apihub.agnes-ai.com/v1"),
+        AgnesApiKey("free", "k-free", "https://apihub.agnes-ai.com/v1"),
+    ]
+    calls: list[str] = []
+    sleeps: list[float] = []
+
+    def operation(key: AgnesApiKey) -> str:
+        calls.append(key.label)
+        if key.label == "primary":
+            provider._mark_pool_cooldown("primary", seconds=60.0)  # noqa: SLF001
+            raise AgnesQuotaExceeded("429 rate_limit_exceeded")
+        return "ok"
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.agnes_api_keys",
+            return_value=keys,
+        ),
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=lambda: 1000.0,
+        ),
+        patch(
+            "app.services.segment.clip.video_agnes.time.sleep",
+            side_effect=lambda sec: sleeps.append(sec),
+        ),
+    ):
+        assert provider._with_api_key_fallback(operation) == "ok"  # noqa: SLF001
+
+    assert calls == ["primary", "free"]
+    assert sleeps == [], "换 key 前不该先睡一个 RPM 窗口"
+
+
+def test_agnes_key_chain_waits_when_all_pools_cooling() -> None:
+    """所有池都在冷却时整批等待最早恢复，而不是把 stage 判失败。"""
+    provider = AgnesClipProvider()
+    provider._key_wait_budget_sec = 300.0  # noqa: SLF001
+    AgnesClipProvider._cooldown_until_by_pool.clear()
+    AgnesClipProvider._last_submit_at_by_pool.clear()
+    keys = [AgnesApiKey("primary", "k-paid", "https://apihub.agnes-ai.com/v1")]
+    clock = {"now": 1000.0}
+    sleeps: list[float] = []
+    attempts = {"n": 0}
+
+    def _fake_sleep(sec: float) -> None:
+        sleeps.append(sec)
+        clock["now"] += sec
+
+    def operation(_key: AgnesApiKey) -> str:
+        attempts["n"] += 1
+        return "ok"
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.agnes_api_keys",
+            return_value=keys,
+        ),
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
+    ):
+        provider._mark_pool_cooldown("primary", seconds=30.0)  # noqa: SLF001
+        assert provider._with_api_key_fallback(operation) == "ok"  # noqa: SLF001
+
+    assert sleeps == [30.0]
+    assert attempts["n"] == 1
+
+
+def test_agnes_key_chain_gives_up_after_wait_budget() -> None:
+    """冷却窗口超过等待预算时放弃（有界等待，避免无限挂住 worker）。"""
+    provider = AgnesClipProvider()
+    provider._key_wait_budget_sec = 5.0  # noqa: SLF001
+    AgnesClipProvider._cooldown_until_by_pool.clear()
+    keys = [AgnesApiKey("primary", "k-paid", "https://apihub.agnes-ai.com/v1")]
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.agnes_api_keys",
+            return_value=keys,
+        ),
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=lambda: 1000.0,
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep") as mock_sleep,
+        pytest.raises(AgnesI2VError),
+    ):
+        provider._mark_pool_cooldown("primary", seconds=60.0)  # noqa: SLF001
+        provider._with_api_key_fallback(lambda key: "ok")  # noqa: SLF001
+
+    mock_sleep.assert_not_called()
+
+
+def test_agnes_poll_request_not_gated_by_submit_throttle() -> None:
+    """轮询请求不带 key_label，不应触发提交闸门。"""
+    provider = AgnesClipProvider()
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.ok = True
+    ok.raise_for_status = MagicMock()
+
+    with (
+        patch("app.services.segment.clip.video_agnes.requests.request", return_value=ok),
+        patch.object(provider, "_throttle_submit") as mock_gate,
+    ):
+        provider._request("GET", "https://example.com/poll", label="poll")  # noqa: SLF001
+
+    mock_gate.assert_not_called()

@@ -26,8 +26,31 @@
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `AGNES_LLM_MAX_TOKENS` | `32768` | Agnes 文本/多模态上限 |
+| `AGNES_SUBMIT_INTERVAL_SEC` | `12` | 视频提交间隔（付费池 5 RPM） |
+| `AGNES_FREE_SUBMIT_INTERVAL_SEC` | `60` | 视频提交间隔（免费池 1 RPM） |
+| `AGNES_FREE_POOL_SHARED` | `1` | 两把免费 key 是否同池 |
+| `AGNES_VIDEO_RATE_LIMIT_COOLDOWN_SEC` | `60` | 429 后该池冷却时长 |
+| `AGNES_VIDEO_KEY_WAIT_BUDGET_SEC` | `300` | 全池冷却时单次等待预算 |
 
 Agnes 校验清单（出图 VL）固定 `max_tokens=256`。
+
+### 视频 RPM 与限制池（i2v）
+
+官方数字见 <https://wiki.agnes-ai.com/zh-Hans/docs/tokenplan>：
+视频模型免费/默认实际 **1 RPM**、企业认证 2 RPM、TokenPlan **5 RPM**；
+TokenPlan 另受**每日 500 秒**视频时长配额约束（RPM 与配额同时生效）。
+
+**限制池按「密钥类型」共享**：同类型多把 key 合起来只有一个池的额度，
+故视频提交按池计时（付费池 / 免费池），不是按 key 计时。实现约束：
+
+- 首次提交、503 重试、换域名重试**都过同一个闸门**，任一路径都算次数；
+- 429 视为 RPM 窗口：冻结该池一个冷却窗口并**立刻换下一把 key**，
+  不在被限的池上原地睡满窗口；
+- 全部池冷却时才整批等待最早恢复，等待上限 `AGNES_VIDEO_KEY_WAIT_BUDGET_SEC`；
+- 轮询请求不计入提交闸门（另有全局 poll 错峰）。
+
+`AGNES_SUBMIT_INTERVAL_SEC`（秒）= `60 / 该池实际 RPM`；换套餐或
+实测限速不同时改这里，勿改代码。
 
 ## max_tokens 约定
 

@@ -162,11 +162,23 @@ class Config:
         self.clip_submit_interval_sec: float = float(
             os.getenv("CLIP_SUBMIT_INTERVAL_SEC", os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3"))
         )
-        # 视频提交限额 1 RPM（付费/免费都按 60s；更高套餐可改更短）
-        self.agnes_submit_interval_sec: float = float(os.getenv("AGNES_SUBMIT_INTERVAL_SEC", "60"))
+        # Agnes 视频 RPM（wiki.agnes-ai.com/zh-Hans/docs/tokenplan）：
+        # TokenPlan 实际 5 RPM → 12s；企业认证 2 RPM；免费/默认 1 RPM → 60s。
+        # 限制池按「密钥类型」共享，同类型多把 key 共用一个池。
+        self.agnes_submit_interval_sec: float = float(os.getenv("AGNES_SUBMIT_INTERVAL_SEC", "12"))
         # Free / default Key：视频有效 RPM=1 → 默认 60s
         self.agnes_free_submit_interval_sec: float = float(
             os.getenv("AGNES_FREE_SUBMIT_INTERVAL_SEC", "60")
+        )
+        # 两把免费 key 是否同一账号（同池）：官方同类型 key 共享额度，默认共享
+        self.agnes_free_pool_shared: bool = _bool("AGNES_FREE_POOL_SHARED", True)
+        # 429 后该池冷却时长（一个 RPM 窗口）
+        self.agnes_video_rate_limit_cooldown_sec: float = float(
+            os.getenv("AGNES_VIDEO_RATE_LIMIT_COOLDOWN_SEC", "60")
+        )
+        # 所有池都冷却时，单次调用最多等待多久再放弃（秒）
+        self.agnes_video_key_wait_budget_sec: float = float(
+            os.getenv("AGNES_VIDEO_KEY_WAIT_BUDGET_SEC", "300")
         )
         self.wan_i2v_model: str = os.getenv("WAN_I2V_MODEL", "wanx2.1-i2v-turbo")  # cSpell: disable-line
         self.wan_i2v_resolution: str = os.getenv("WAN_I2V_RESOLUTION", "720P")
