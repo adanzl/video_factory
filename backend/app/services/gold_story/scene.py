@@ -1207,6 +1207,12 @@ _BANNED_LITERAL_NEVER: frozenset[str] = frozenset(
     },
 )
 
+# 站内姐弟体系下对白可用的合法称呼：产品要求昭昭称灿灿为「姐姐」
+# （见 gold_chat/prompts.py「昭昭口中禁止直呼灿灿，一律称姐姐」）。
+# 这类称呼是目标用语而非源稿称谓，不得因 H3 误列而进禁词表——否则
+# 「昭昭：姐姐…」会被自己的禁词表拦下，甚至被反向改写成直呼其名。
+_IN_PRODUCT_KINSHIP_ALLOWED: frozenset[str] = frozenset({"姐姐"})
+
 _SURNAME_HINT = re.compile(r"[贾赵李王张刘陈杨黄周吴徐孙马朱胡郭何高林罗郑梁]")
 
 
@@ -1241,6 +1247,69 @@ def _is_source_proper_name(word: str) -> bool:
     return bool(_SURNAME_HINT.search(w))
 
 
+# 站内姐弟体系的长幼约定（产品固定）：灿灿=姐姐=年长，昭昭=弟弟=年幼。
+IN_PRODUCT_SENIOR_NAME = "灿灿"
+IN_PRODUCT_JUNIOR_NAME = "昭昭"
+
+# 源标题里的长幼称谓
+_RE_TITLE_SENIOR_TERM = re.compile(r"哥哥|姐姐")
+_RE_TITLE_JUNIOR_TERM = re.compile(r"弟弟|妹妹")
+_RE_DIRECT_MAPPING_NOTE = re.compile(r"直接映射|原样映射|一对一映射")
+
+# 源称谓体系 → (年长性别, 年幼性别)；站内固定为女长男幼
+_SOURCE_SENIORITY_SYSTEMS: dict[frozenset[str], str] = {
+    frozenset({"哥哥", "妹妹"}): "兄妹",
+    frozenset({"姐姐", "弟弟"}): "姐弟",
+    frozenset({"哥哥", "弟弟"}): "兄弟",
+    frozenset({"姐姐", "妹妹"}): "姐妹",
+}
+_IN_PRODUCT_SYSTEM = "姐弟"
+
+
+def source_sibling_seniority(bili_title: str) -> str:
+    """从源标题识别兄弟姐妹体系（兄妹/姐弟/兄弟/姐妹）；识别不出返回空。"""
+    text = str(bili_title or "")
+    senior = _RE_TITLE_SENIOR_TERM.findall(text)
+    junior = _RE_TITLE_JUNIOR_TERM.findall(text)
+    if not senior or not junior:
+        return ""
+    # 同一性别或跨性别各取一个代表词，拼成可识别组合
+    pair = frozenset({senior[0], junior[0]})
+    return _SOURCE_SENIORITY_SYSTEMS.get(pair, "")
+
+
+def sibling_seniority_warnings(
+    *,
+    bili_title: str = "",
+    remap_note: str = "",
+    speaker_map_note: str = "",
+) -> list[str]:
+    """源兄弟姐妹体系与站内姐弟约定不同构时，提示核对长幼方向。
+
+    站内固定「灿灿=姐姐=年长，昭昭=弟弟=年幼」。若源是兄妹/兄弟/姐妹，
+    长幼方向与站内不同构，「直接映射」不可能成立，须逐人确认谁对应灿灿。
+    """
+    system = source_sibling_seniority(bili_title)
+    if not system or system == _IN_PRODUCT_SYSTEM:
+        return []
+    note = f"{remap_note or ''}{speaker_map_note or ''}"
+    if _RE_DIRECT_MAPPING_NOTE.search(note):
+        return [
+            f"源兄弟姐妹体系为「{system}」，与站内「{_IN_PRODUCT_SYSTEM}」"
+            f"（{IN_PRODUCT_SENIOR_NAME}=姐姐=年长，"
+            f"{IN_PRODUCT_JUNIOR_NAME}=弟弟=年幼）不同构，"
+            "不能声明「直接映射」；须逐人核对长幼方向，"
+            "避免源中年长者被映射成站内年幼者"
+        ]
+    if not re.search(r"年长|长幼|姐姐|弟弟|妹妹|哥哥", note):
+        return [
+            f"源兄弟姐妹体系为「{system}」，与站内「{_IN_PRODUCT_SYSTEM}」不同构，"
+            "remap/speaker_map 未说明长幼方向；须补明谁对应"
+            f"{IN_PRODUCT_SENIOR_NAME}（年长）"
+        ]
+    return []
+
+
 def sanitize_banned_literals(
     banned: list[Any] | None,
     *,
@@ -1256,6 +1325,8 @@ def sanitize_banned_literals(
         if not w or w in seen:
             continue
         if w in _BANNED_LITERAL_NEVER:
+            continue
+        if w in _IN_PRODUCT_KINSHIP_ALLOWED:
             continue
         if w in core:
             continue

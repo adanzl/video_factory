@@ -575,8 +575,11 @@ def patch_dedupe_ne_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bool]
     return (out, True) if changed else (story, False)
 
 
+# 源稿站外称谓 → 站内角色名。
+# 注意：站内「姐姐」是产品要求的合法称呼（见 gold_chat/prompts.py
+# 「昭昭口中禁止直呼灿灿，一律称姐姐」），不得反向替换成「灿灿」，
+# 否则会抹掉姐弟关系。这里只处理源稿称谓。
 _KINSHIP_REPLACEMENTS = {
-    "姐姐": "灿灿",
     "哥哥": "灿灿",
     "妹妹": "昭昭",
     "弟弟": "昭昭",

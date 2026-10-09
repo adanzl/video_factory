@@ -2387,3 +2387,36 @@ def test_expand_stops_when_alignment_budget_exhausted(monkeypatch):
     assert caught.value.candidate["revision"] == "latest_align"
     assert len(generations) == 1
     assert budget.used == 2
+
+
+def test_replace_banned_kinship_keeps_in_product_jiejie():
+    """站内「姐姐」是目标称呼，禁词含它也不得反向替换成「灿灿」。"""
+    from app.services.gold_story.gold_chat.patch import (
+        patch_replace_banned_kinship,
+    )
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐姐，炸鸡摆好了！"},
+            {"speaker": "昭昭", "line": "别走啊姐姐，我这次不赖了！"},
+        ]
+    }
+    out, changed = patch_replace_banned_kinship(
+        story,
+        banned_literals=["姐姐", "哥哥"],
+    )
+    assert not changed
+    assert out["dialogue"][0]["line"] == "姐姐，炸鸡摆好了！"
+    assert out["dialogue"][1]["line"] == "别走啊姐姐，我这次不赖了！"
+
+
+def test_replace_banned_kinship_still_maps_source_terms():
+    """源稿称谓哥哥/妹妹仍须 remap 到站内角色名。"""
+    from app.services.gold_story.gold_chat.patch import (
+        patch_replace_banned_kinship,
+    )
+
+    story = {"dialogue": [{"speaker": "昭昭", "line": "哥哥你别抢！"}]}
+    out, changed = patch_replace_banned_kinship(story, banned_literals=["哥哥"])
+    assert changed
+    assert out["dialogue"][0]["line"] == "灿灿你别抢！"

@@ -483,3 +483,49 @@ def test_validate_chat_hard_allows_mom_last():
 
 def lines_to_story(lines: list[dict[str, str]]) -> dict:
     return {"dialogue": lines}
+
+
+def test_banned_literals_allow_in_product_jiejie():
+    """站内「姐姐」是产品要求的合法称呼，不得进禁词表。"""
+    from app.services.gold_story.scene import sanitize_banned_literals
+
+    out = sanitize_banned_literals(
+        ["妹妹", "姐姐", "哥哥", "弟弟"],
+        scene_contract={"conflict": "抢玩具", "object": "布娃娃"},
+    )
+    assert "姐姐" not in out
+    assert "哥哥" in out and "妹妹" in out and "弟弟" in out
+
+
+def test_source_sibling_seniority_detection():
+    from app.services.gold_story.scene import source_sibling_seniority
+
+    assert source_sibling_seniority("逐渐暴躁的妹妹和八百个心眼的哥哥") == "兄妹"
+    assert source_sibling_seniority("姐姐和弟弟抢玩具") == "姐弟"
+    assert source_sibling_seniority("两个小孩抢玩具") == ""
+
+
+def test_sibling_seniority_warns_on_direct_mapping_of_xiongmei():
+    """#117：源「兄妹」与站内「姐弟」不同构，声明直接映射须告警。"""
+    from app.services.gold_story.scene import sibling_seniority_warnings
+
+    warns = sibling_seniority_warnings(
+        bili_title="逐渐暴躁的妹妹和八百个心眼的哥哥",
+        remap_note="昭昭为弟弟，灿灿为姐姐，直接映射。",
+    )
+    assert warns
+    assert "直接映射" in warns[0]
+    assert "长幼" in warns[0]
+
+
+def test_sibling_seniority_silent_for_same_system_and_explained():
+    from app.services.gold_story.scene import sibling_seniority_warnings
+
+    assert not sibling_seniority_warnings(
+        bili_title="姐姐和弟弟抢玩具",
+        remap_note="姐姐灿灿，弟弟昭昭",
+    )
+    assert not sibling_seniority_warnings(
+        bili_title="哥哥和妹妹",
+        remap_note="源哥哥年长→灿灿(姐姐)，源妹妹→昭昭(弟弟)",
+    )
