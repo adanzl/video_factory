@@ -263,3 +263,70 @@ def test_f_patch_repairs_123_shape_alternation_and_close():
     assert score_daily_story(
         story, skip_relevancy=True
     )["structure_score"] >= 75
+
+
+def test_f_stale_and_yield_beat_are_two_layers():
+    """僵持（试试就试试/你等着）与中止收束（回屋/找妈妈评理）是两个节拍。
+
+    收束走「僵持 + 退场」的合规稿此前与「僵持」共层，只测到 3 层（-4）；
+    拆拍后应与「互呛/加码/僵持/中止收束」四拍对齐，结构分满分。
+    """
+    from app.services.daily_story.quality import (
+        _score_escalation,
+        score_daily_story,
+    )
+    from app.services.daily_story.story_types.f.line import LINE_F
+
+    story = {
+        "story_type": "F",
+        "punchline_explain": "F类：姐弟互呛加码抢鸡爪，僵持后各自退场",
+        "conflict_core": "昭昭抢走最大鸡爪还顺走灿灿碗里的鸡腿肉，灿灿追着抢。",
+        "setting": "阳台小桌，妈妈端着一盘鸡爪当裁判",
+        "_gold_chat_mom_lines_max": 2,
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐姐，咱在阳台搞抢食赛，妈妈端鸡爪当裁判！"},
+            {"speaker": "妈妈", "line": "行，我端鸡爪，你们抢，我看着，谁哭谁输。"},
+            {"speaker": "昭昭", "line": "看准了！最大这根归我，你手跟螃蟹一样慢！"},
+            {"speaker": "灿灿", "line": "给我留一个！你啃得满嘴油，还笑我手慢！"},
+            {"speaker": "昭昭", "line": "你再说一遍试试！我啃得比你快，你还敢吼我？"},
+            {"speaker": "灿灿", "line": "好不容易抢到一块，嚼半天咬不动，难嚼死了！"},
+            {"speaker": "昭昭", "line": "你咬不动就慢慢嚼，我碗里这块鸡腿肉先替你尝尝！"},
+            {"speaker": "灿灿", "line": "你敢动我碗里的肉！放下，那是我留的，我跟你没完！"},
+            {"speaker": "昭昭", "line": "来抢呀，跑得慢可连半根都捞不着。"},
+            {"speaker": "灿灿", "line": "你再说一遍，我扑上去连你手里鸡爪一起抢！"},
+            {"speaker": "昭昭", "line": "试试就试试，我边跑边啃，你追得上算你赢！"},
+            {"speaker": "灿灿", "line": "你等着，我绕桌子转圈也要把你堵在阳台角！"},
+            {"speaker": "妈妈", "line": "你们闹吧，我看着！"},
+            {"speaker": "灿灿", "line": "只抢到半根，我下次要买软糖，不买鸡爪了，哼！"},
+            {"speaker": "昭昭", "line": "还打不打架？你追不上我，我可要回屋了。"},
+            {"speaker": "灿灿", "line": "不跟你玩了，你偷我肉还笑我，我找妈妈评理去！"},
+        ],
+    }
+    lines = [str(row["line"]) for row in story["dialogue"]]
+    bonus, details = _score_escalation(lines, layer_patterns=LINE_F.layer_patterns)
+    assert bonus == 14, details
+    quality = score_daily_story(story, skip_relevancy=True)
+    assert quality["structure_score"] == 80
+    assert not any("冲突推进不足" in c for c in quality["structure_cons"])
+
+
+def test_f_missing_stale_beat_keeps_three_layers():
+    """缺「僵持」节拍（只有互呛→加码→中止）仍按 3 层扣 4 分，防层定义虚高。"""
+    from app.services.daily_story.quality import _score_escalation
+    from app.services.daily_story.story_types.f.line import LINE_F
+
+    lines = [
+        "看准了！这根最大的归我，你手跟螃蟹一样慢！",
+        "给我留一个！你啃得满嘴油，还笑我手慢！",
+        "你再说一遍试试！我啃得比你快，你还敢吼我？",
+        "好不容易抢到一块，嚼半天咬不动，难嚼死了！",
+        "你咬不动就慢慢嚼，我碗里这块鸡腿肉先替你尝尝！",
+        "你敢动我碗里的肉！放下，那是我留的，我跟你没完！",
+        "来抢呀，跑得慢可连半根都捞不着。",
+        "你再说一遍，我扑上去连你手里鸡爪一起抢！",
+        "啊呜啊呜！我啃得比你快，你追不上！",
+        "只抢到半根，我下次要买软糖，不买鸡爪了，哼！",
+        "不跟你玩了，你偷我肉还笑我，我找妈妈评理去！",
+    ]
+    bonus, details = _score_escalation(lines, layer_patterns=LINE_F.layer_patterns)
+    assert bonus == 10, details

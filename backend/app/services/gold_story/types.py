@@ -121,7 +121,7 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
     {
         "code": "F",
         "name": "互呛加码",
-        "formula": "互相顶嘴→加码→僵持/露怯",
+        "formula": "互相顶嘴→加码→僵持→中止收束（露怯/退场/外部打断）",
         "closing": "无 A–E 标准收束（暂不入 A–E 任务注入）",
     },
     {

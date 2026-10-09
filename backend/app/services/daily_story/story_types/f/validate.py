@@ -14,7 +14,8 @@ RE_ESCALATION = re.compile(
     r"还.{0,4}呢|吼|啊{2,}|更|再来| louder",
 )
 RE_STALE_OR_YIELD = re.compile(
-    r"不跟你|不理你|谁也不|爱咋|算了|怂|不敢|露怯",
+    r"不跟你|不理你|谁也不|爱咋|算了|怂|不敢|露怯|"
+    r"回屋|回房间|找妈妈|评理|别追|服了|认输|快走",
 )
 RE_EXTERNAL_PIVOT = re.compile(
     r"拍|镜头|偷拍|闭嘴|尴尬|茄子|闹着玩|丢人",

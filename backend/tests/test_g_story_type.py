@@ -157,7 +157,9 @@ def test_g_validate_accepts_behavioral_follow_warm_branch_like_111():
         lines,
         layer_patterns=QUALITY_PROFILE.layer_patterns(),
     )
-    assert esc_points == 14
+    # 行动分支五拍（拒绝/数落→行动示范→愣住→主动跟随/暖收）都命中；
+    # 推进分 14 封顶，>= 14 即满分。
+    assert esc_points >= 14
 
 
 def test_g_behavioral_follow_real_111_shape_scores_80_not_72():
@@ -244,3 +246,75 @@ def test_g_validate_without_mode_still_requires_pivot():
     append_g_body_errors(story, errors)
     assert any("pivot" in e for e in errors)
     assert any("暖收" in e for e in errors)
+
+
+def test_g_action_branch_resist_demo_stun_follow_four_layers():
+    """M4 行动分支（争物→心软）：拒绝 → 行动示范 → 愣住 → 主动跟随/暖收。
+
+    该形态没有「数落」，此前只测到 3 层（-4）；补行动分支拍点后应与四拍对齐。
+    """
+    from app.services.daily_story.quality import (
+        _score_escalation,
+        score_daily_story,
+    )
+    from app.services.daily_story.story_types.g.line import LINE_G
+
+    story = {
+        "story_type": "G",
+        "punchline_explain": "G类嘴硬心软：昭昭嘴硬说不道歉也能原谅，却先拿纸巾擦泪",
+        "conflict_core": "灿灿抢昭昭手里的拼图，昭昭不肯给，哭后心软和好",
+        "_gold_chat_mom_lines_max": 3,
+        "dialogue": [
+            {"speaker": "妈妈", "line": "快看你们小时候抢拼图，昭昭抓得可紧了。"},
+            {"speaker": "灿灿", "line": "那我也要拼，昭昭你手里这块给我呀。"},
+            {"speaker": "昭昭", "line": "不要抢，这是我先拿到的，你松手吧。"},
+            {"speaker": "灿灿", "line": "我抢不过他，妈妈你看他都不松手呢。"},
+            {"speaker": "妈妈", "line": "你为什么要抢姐姐的东西？要跟姐姐商量。"},
+            {"speaker": "灿灿", "line": "昭昭，求你了，就给我拼一下嘛。"},
+            {"speaker": "昭昭", "line": "不行，我拼到一半，你等一等嘛。"},
+            {"speaker": "灿灿", "line": "那我拿我的小熊跟你换，成不成？"},
+            {"speaker": "昭昭", "line": "不要小熊，我就要这块，你松手啦。"},
+            {"speaker": "灿灿", "line": "你攥得那么紧，我都快哭了。"},
+            {"speaker": "昭昭", "line": "姐姐不跟我说对不起，我也可以原谅她啊。"},
+            {"speaker": "灿灿", "line": "你嘴上说原谅，手里还攥着拼图呢。"},
+            {"speaker": "昭昭", "line": "你干嘛？脸伸过来，我帮你擦眼泪。"},
+            {"speaker": "灿灿", "line": "对不起，我不该抢你的拼图。"},
+            {"speaker": "妈妈", "line": "拥抱一下还是好朋友，拼图一起拼。"},
+            {"speaker": "昭昭", "line": "姐，那块拼图还你，一起拼吧。"},
+            {"speaker": "灿灿", "line": "行，算你识相，别哭了。"},
+            {"speaker": "昭昭", "line": "我还留了最后一块，你来按上去，咱俩的拼图就齐了。"},
+        ],
+    }
+    lines = [str(row["line"]) for row in story["dialogue"]]
+    bonus, details = _score_escalation(lines, layer_patterns=LINE_G.layer_patterns)
+    assert bonus >= 14, details
+    quality = score_daily_story(story, skip_relevancy=True)
+    assert quality["structure_score"] == 80
+    assert not any("冲突推进不足" in c for c in quality["structure_cons"])
+
+
+def test_g_missing_soft_close_keeps_three_layers():
+    """缺暖收/主动跟随（只有数落→pivot→愣住）仍按 3 层扣 4 分，防层定义虚高。"""
+    from app.services.daily_story.quality import _score_escalation
+    from app.services.daily_story.story_types.g.line import LINE_G
+
+    lines = [
+        "你手咋了？又跟人闹了？",
+        "没……没有。",
+        "还嘴硬！手都肿成馒头了，还充大侠呢！",
+        "我……我不是。",
+        "不是啥？十个人围你一个，你弄成这样，丢不丢人？",
+        "我……我跑了。",
+        "跑？你跑啥？怂包！下次再这样，别叫我姐！",
+        "我错了。",
+        "错错错，就知道认错！你倒是长点记性啊！",
+        "我不怕。",
+        "你不怕？我怕！我怕你哪天让人欺负得爬不起来！",
+        "谁敢动你，我跟他拼命！",
+        "你……你说啥？",
+        "我说，谁欺负你，我就跟谁拼命。",
+        "就你这样？还拼命？你先把你自己管好吧！",
+        "管好自己，也管你。",
+    ]
+    bonus, details = _score_escalation(lines, layer_patterns=LINE_G.layer_patterns)
+    assert bonus == 10, details

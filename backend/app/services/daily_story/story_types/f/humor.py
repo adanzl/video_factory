@@ -6,7 +6,11 @@ import re
 
 RE_THREAT = re.compile(r"再说|试试|你敢|讨厌|哼|吼什么")
 RE_ESCALATE = re.compile(r"还.{0,4}呢|吼|啊{2,}")
-RE_STALE = re.compile(r"不跟你|不理你|谁也不|怂|算了|谁稀罕")
+# 中止收束：僵持不下的退让/退场求援（与「僵持」节拍分开计层）
+RE_STALE = re.compile(
+    r"不跟你|不理你|谁也不|怂|算了|谁稀罕|"
+    r"回屋|回房间|找妈妈|评理|别追|服了|认输|快走",
+)
 RE_EXTERNAL = re.compile(
     r"拍|镜头|偷拍|尴尬|茄子|闭嘴|闹着玩|干笑|丢人",
 )
