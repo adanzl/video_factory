@@ -14,6 +14,7 @@ from app.services.gold_story.types import (
     align_mechanism_structure,
 )
 from app.services.gold_story.scene import (
+    PARENT_SPEAKER_LABELS,
     SEED_MIN,
     age_remap_contract_errors,
     apply_parent_role_budget,
@@ -23,6 +24,7 @@ from app.services.gold_story.scene import (
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
     normalize_scene_dialogue_beats,
+    realign_parent_identity_rows,
     remap_story_raw_scores_for_prompt,
     sanitize_banned_literals,
     seed_from_beat_chain,
@@ -117,9 +119,13 @@ _H0C_SYSTEM = (
     "你是短视频口播逐字稿修复师。输入为 faster-whisper 自动转写："
     "有错字、断句乱、分不清说话人。\n"
     "结合标题/简介推断角色，修正同音错字，按对话拆行并标注说话人。\n"
+    "**不要假设说话人严格交替**：ASR 没有可靠说话人标签，须按语义归属判定，"
+    "同一角色可以连说多行；判不定就写「未知」，不得为凑交替硬拆。\n"
     "不要编造视频中未出现的情节；听不清处用 [听不清]。\n"
     "不许把听不懂的碎片改写成通顺台词：无法在不编造信息的前提下恢复语义时，"
     "保留 [听不清] 标记；整行都不可恢复时只输出「角色：[听不清]」。\n"
+    "每句还要做指称自洽：当前说话人不得自称对方身份；"
+    "复述/回旋镖他人原话时须按当前说话人重算「我/你」。\n"
     "只输出 JSON。"
 )
 
@@ -144,7 +150,16 @@ _H0C_USER = """视频标题：{title}
 
 规则：
 - speaker 用简短称谓：妈妈、爸爸、宝宝、女孩、男孩、哥哥、妹妹等；
-  无法判断时用 角色1/角色2，并在 repair_notes 说明
+  判不定时写「未知」（并照常标注 status），在 repair_notes 说明
+- **归属按语义，不按行序**，判据优先级：
+  ①身份自称/关系自称（「我是你妈/我是你爸」等）只能归对应家长，
+  除非处于引述、反问回声、扮演框架；
+  ②第一人称承认/辩解/自曝自己做过某事的句子，归做过那件事的人，
+  但引述、反问、回旋镖句除外；判「谁做过」以标题/简介与上下文为准
+  （标题点明是谁的糗事就按标题），不要只按句式猜；
+  ③指认、质问、要求、命令句看对象与冲突推进方向
+- **允许同一 speaker 连说多行**：相邻句语义/语气接续像同一人（如把话补完、
+  连说两句压人）时写成同一 speaker 的连续行，禁止为凑交替硬拆成两人
 - 合并 ASR 误切的碎句；修正明显同音错字（结合语境，勿脑补新剧情）
 - **每行必须带 status**：`ok`（语义可判）| `vague`（部分可判）| `unusable`（整行不可判）
 - **不可恢复判据**：①只剩语气词/拟声/重复音节；②同音碎片拼起来仍无稳定交际意图；
@@ -152,9 +167,11 @@ _H0C_USER = """视频标题：{title}
 - 整行不可恢复时：`text` 写 `[听不清]`，`status` 写 `unusable`；
   **禁止把听不懂的 ASR 原文抄进 text**，也禁止补词改写成通顺台词
 - 只有局部不可恢复时：保留可确定部分，碎片处写 `[听不清]`，`status` 写 `vague`
+- **人称自洽**：当前说话人不得自称对方身份；复述对方原话时，
+  原话里的「我」指原说话人的要改成「你」，「你」指当前说话人的要改成「我」；
+  转换后不通则改成概括说法，不得照抄错误指称
 - repair_confidence 只表示说话人/断句把握，不表示句子通顺
 - **合并连续重复的同一短语**，只保留 1–2 次
-- 相邻同一 speaker 可合并为一条 line
 - lines 至少 2 条；repair_confidence<0.35 视为失败
 - ASR 再差也要尽力修复；confidence 表示角色/断句把握（≥0.5 为佳，≥0.35 可接受）
 - text 字段不要重复 speaker 前缀
@@ -202,6 +219,16 @@ _H2_USER = """视频标题：{title}
 - **引号只给有效对白**：语义完整、说话人与目的可判定的才可加引号；
   逐字稿里 [听不清] 或语义不通、听不明白的碎片 **禁止**写进引号，
   也禁止补词把它改成台词
+- **归属自洽（硬）**：引号对白必须是「这个角色说得出口」的话——
+  孩子不得自称家长身份（「我是你妈/我是你爸」），
+  也不得承认只有家长做过的事；被指认方与指认方要分清。
+- **标题是事实层的最强线索**：标题/简介写明某人抱怨、揭发另一方做过某事时，
+  该事归 **被抱怨/被揭发那一方**；标题里出现「都背着我」「不告诉我」这类
+  被排除表达时，说这话的人是抱怨方，另一方才是做过那件事的人。
+  逐字稿推断与标题冲突的，以标题为准改正归属。
+  H0c 归错的和句子本身冲突的，按标题/简介/语义重新归属，
+  仍判不定的写成非引语概括（如「有人用把柄反将一军」「家长心虚否认」），
+  不得把错位原话写进引号
 - 结尾碎念只作氛围：写成非引语概括（如「嘟囔了一句听不清的话」），不加引号；
   若尾部只剩听不清碎片，按已发生的收束事件收尾；
   删掉后不足 80 字用动作/环境/心理补足，不新增事件
@@ -295,7 +322,10 @@ _H3A_SYSTEM = (
     "只输出 JSON。"
 )
 
-_H3A_USER = """H3 结构化：
+_H3A_USER = """视频标题（角色分工的最强线索，须据此还原谁做了/谁被揭发）：
+{video_title}
+
+H3 结构化：
 {h3_json}
 
 story_raw：
@@ -371,6 +401,13 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
   → 7 妈妈问谁先动手+定责劝和 → 8 仪式性和好/碘伏/收场
   M5+H 时 object 须是 story_raw 争物（如画作），勿改成「抢秘密」替代互毁
 - **正例只允许上方金稿原文**；本稿须按 story_raw 写，禁止把金稿场景套到本稿
+- **归属自洽（硬）**：beat_chain 每拍写「谁对谁做什么、谁说哪类话」；
+  身份主张、承认/否认、指认/反指认三类拍，
+  归属必须与视频标题/冲突推进方向一致（标题点明谁被揭发、
+  谁的糗事，就按标题分工），不得把被揭发方的自曝/辩解写成揭发方的话；
+  孩子不自称家长身份、不承认家长做过的事。
+  逐字稿归属可疑或标「未知」时，只写功能不写原话
+  （如「孩子用家长把柄反将一军」「家长心虚否认」）
 - mom_lines_max：H 类 2–3；K 类 1–2（旁观叹气）；
   源稿/beat 含家长戏核拍（责备/反问/定责/破功/旁观）时 **至少 2**（I/E/Q 等同类）；
   纯姐弟无家长戏才可 0；最多 3；禁止为压两人强行写 0
@@ -385,10 +422,15 @@ _H3B_SYSTEM = (
     "纯沉默/低头/不再接话不能单独成为 seed。\n"
     "intent 只能来自可判定的有效对白或 beat_chain 的拍："
     "听不清碎片、[听不清] 占位、纯语气词、语义不通的短句一律不得成为 intent。\n"
+    "每条 intent 还要 speaker 自洽：孩子不得自称家长身份（「我是你妈/我是你爸」），"
+    "也不得把家长的自曝/辩解写成孩子的话。\n"
     "dialogue_seed 至少 4 条，建议 12–20 条短 intent；只输出 JSON。"
 )
 
-_H3B_USER = """scene_contract：
+_H3B_USER = """视频标题（角色分工的最强线索，须据此还原谁做了/谁被揭发）：
+{video_title}
+
+scene_contract：
 {scene_contract_json}
 
 H3：
@@ -420,6 +462,15 @@ story_raw（背景，勿照抄）：
   story_raw 里 **可判定** 的对白
 - **来源排除**：story_raw 里的 [听不清]、语义不通碎片、以及
   「嘟囔/含糊/听不清」一类无具体信息的概括，禁止展开成 intent
+- **speaker 自洽（硬）**：身份主张、承认/否认、指认/反指认三类拍，
+  归属必须与 beat_chain 的角色分工一致；孩子不得自称家长身份，
+  也不得说「我偷吃/我做过」这类只有家长做过的事。
+  与 speaker 冲突的 intent 按语义归位；归不了就换一句身份自洽的现场对白，
+  不得照抄错位原话
+- **回声/回旋镖人称转换**：复述、反问、扣原话时保留对方原话的关键词与攻击点，
+  但「我/你」要按当前说话人重算（对方原话的「我」→「你」，
+  对方原话的「你」→「我」）；不得让当前说话人自称对方身份。
+  转换不自然就改成等价反问或概括，不得保留错误自称
 - 过滤后若 seed 不足 4 条，用 beat_chain 里还没被覆盖的拍补足，
   只服务该拍冲突或收束；禁止复述逐字稿乱码，
   禁止引入新事件/地点/道具/人物
@@ -509,6 +560,13 @@ def repair_transcript(
     speakers = data.get("speakers") or []
     if not isinstance(speakers, list):
         speakers = []
+    # 身份自洽兜底：孩子标签的家长身份句归位家长 / 回声句转换人称
+    cleaned, identity_notes = realign_parent_identity_rows(
+        cleaned,
+        parent_labels=PARENT_SPEAKER_LABELS,
+    )
+    if identity_notes:
+        logger.info("H0c parent identity realign=%s", identity_notes[:4])
     return {
         "lines": cleaned,
         "speakers": [str(s).strip() for s in speakers if str(s).strip()],
@@ -626,12 +684,14 @@ def build_scene_contract(
     story_raw: str,
     h3: dict[str, Any],
     source_type: str = "field",
+    video_title: str = "",
 ) -> dict[str, Any]:
     """H3a：story_raw → 可拍场景契约。"""
     from app.services.gold_story.scene import remap_story_raw_sibling_roles
 
     story_raw = remap_story_raw_sibling_roles(story_raw)
     base_user = _H3A_USER.format(
+        video_title=str(video_title or "").strip() or "（未知）",
         h3_json=json.dumps(h3, ensure_ascii=False, indent=2),
         story_raw=story_raw[:4000],
         source_type=source_type or "field",
@@ -711,10 +771,12 @@ def build_dialogue_seed(
     story_raw: str,
     h3: dict[str, Any],
     scene_contract: dict[str, Any] | None = None,
+    video_title: str = "",
 ) -> dict[str, Any]:
     """H3b：scene_contract → dialogue_seed。"""
     contract = scene_contract or {}
     user = _H3B_USER.format(
+        video_title=str(video_title or "").strip() or "（未知）",
         scene_contract_json=json.dumps(contract, ensure_ascii=False, indent=2),
         h3_json=json.dumps(h3, ensure_ascii=False, indent=2),
         story_raw=story_raw[:4000],
@@ -732,6 +794,9 @@ def build_dialogue_seed(
             len(unintelligible_notes),
             unintelligible_notes[:3],
         )
+    seed, identity_notes = _realign_seed_parent_identity(seed, contract)
+    if identity_notes:
+        logger.info("H3b parent identity realign=%s", identity_notes[:4])
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])
         data["dialogue_seed"] = seed
@@ -771,6 +836,24 @@ def build_dialogue_seed(
     if normalized_setting:
         data["setting"] = normalized_setting
     return data
+
+
+def _seed_parent_labels(contract: dict[str, Any]) -> tuple[str, ...]:
+    """在场家长（妈妈优先）；无家长则空，裸身份自称将无处归位。"""
+    raw = contract.get("characters")
+    chars = [str(c).strip() for c in raw] if isinstance(raw, list) else []
+    return tuple(p for p in PARENT_SPEAKER_LABELS if p in chars)
+
+
+def _realign_seed_parent_identity(
+    seed: list[Any],
+    contract: dict[str, Any],
+) -> tuple[list[Any], list[str]]:
+    """裸身份自称归位家长、回声句转换人称（确定性兜底）。"""
+    return realign_parent_identity_rows(
+        seed,
+        parent_labels=_seed_parent_labels(contract),
+    )
 
 
 def drop_unintelligible_seed_rows(seed: list[Any]) -> tuple[list[Any], list[str]]:

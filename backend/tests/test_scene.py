@@ -16,6 +16,8 @@ from app.services.gold_story.scene import (
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
     normalize_scene_dialogue_beats,
+    parent_identity_claim_target,
+    realign_parent_identity_rows,
     remap_story_raw_sibling_roles,
     seed_from_beat_chain,
     sanitize_dialogue_meta_label_suffix,
@@ -529,3 +531,53 @@ def test_sibling_seniority_silent_for_same_system_and_explained():
         bili_title="哥哥和妹妹",
         remap_note="源哥哥年长→灿灿(姐姐)，源妹妹→昭昭(弟弟)",
     )
+
+
+def test_parent_identity_claim_target_reads_relation():
+    assert parent_identity_claim_target("我是你妈，你得听我的") == "妈妈"
+    assert parent_identity_claim_target("我是你爸") == "爸爸"
+    assert parent_identity_claim_target("你去把灯关了") is None
+    # 引号内是引述，不算当前说话人自称
+    assert parent_identity_claim_target("你说“我是你妈”") is None
+
+
+def test_realign_parent_identity_bare_claim_moves_to_parent():
+    """孩子裸自称家长身份 → 归位家长（#132 妈妈台词被挂到孩子）。"""
+    rows = [
+        {"speaker": "昭昭", "intent": "我是你妈，你得听我的"},
+        {"speaker": "昭昭", "intent": "你去把灯关了"},
+        {"speaker": "妈妈", "intent": "我是你妈"},
+    ]
+    out, notes = realign_parent_identity_rows(rows, parent_labels=("妈妈",))
+    assert [r["speaker"] for r in out] == ["妈妈", "昭昭", "妈妈"]
+    assert out[0]["intent"] == "我是你妈，你得听我的"
+    assert notes == ["身份自称归位:昭昭→妈妈"]
+
+
+def test_realign_parent_identity_echo_converts_deixis():
+    """回声明称句保留归属，只把人称换过来：我是你妈 → 你是我妈。"""
+    rows = [{"speaker": "昭昭", "intent": "你还知道我是你妈呀"}]
+    out, notes = realign_parent_identity_rows(rows, parent_labels=("妈妈",))
+    assert out[0]["speaker"] == "昭昭"
+    assert out[0]["intent"] == "你还知道你是我妈呀"
+    assert notes and "人称转换" in notes[0]
+
+
+def test_realign_parent_identity_keeps_quotes_and_roleplay():
+    """真引述与扮演里的身份自称不归位、不改写。"""
+    rows = [
+        {"speaker": "昭昭", "intent": "你不是说过“我是你妈，你得听我的”吗"},
+        {"speaker": "灿灿", "intent": "假装我是妈妈，你当宝宝"},
+        {"speaker": "昭昭", "intent": "我不是你妈，你别乱叫"},
+    ]
+    out, notes = realign_parent_identity_rows(rows, parent_labels=("妈妈",))
+    assert [r["intent"] for r in out] == [r["intent"] for r in rows]
+    assert notes == []
+
+
+def test_realign_parent_identity_drops_claim_without_parent_in_cast():
+    """本稿角色表没有家长时，裸自称不硬塞给不存在的角色。"""
+    rows = [{"speaker": "昭昭", "intent": "我是你妈"}]
+    out, notes = realign_parent_identity_rows(rows, parent_labels=())
+    assert out == []
+    assert notes and "丢弃" in notes[0]

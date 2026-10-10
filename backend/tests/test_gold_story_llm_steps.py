@@ -84,6 +84,43 @@ def test_gold_story_prompts_carry_unintelligible_marker_rule():
     assert marker in llm_steps._H3B_USER
 
 
+def test_gold_story_prompts_forbid_speaker_alternation_assumption():
+    """#132：说话人须按语义归属，禁按行序交替；孩子不得自称家长身份。"""
+    assert "不要假设说话人严格交替" in llm_steps._H0C_SYSTEM
+    assert "归属按语义，不按行序" in llm_steps._H0C_USER
+    assert "允许同一 speaker 连说多行" in llm_steps._H0C_USER
+    assert "孩子不得自称家长身份" in llm_steps._H2_USER
+    assert "孩子不得自称家长身份" in llm_steps._H3B_SYSTEM
+    assert "回声/回旋镖人称转换" in llm_steps._H3B_USER
+    assert "归属自洽（硬）" in llm_steps._H3A_USER
+
+
+def test_repair_transcript_realigns_child_parent_identity(monkeypatch):
+    """H0c：孩子行的家长身份自称归位妈妈，回声句转换人称。"""
+
+    def fake_chat(_system: str, _user: str) -> dict:
+        return {
+            "speakers": ["妈妈", "宝宝"],
+            "lines": [
+                {"speaker": "妈妈", "text": "你去关灯", "status": "ok"},
+                {
+                    "speaker": "宝宝",
+                    "text": "我是你妈，你得听我的",
+                    "status": "ok",
+                },
+                {"speaker": "宝宝", "text": "你还知道我是你妈呀？", "status": "ok"},
+            ],
+            "repair_confidence": 0.6,
+            "repair_notes": "交替不可靠，按语义归属",
+        }
+
+    monkeypatch.setattr(llm_steps, "_chat_json", fake_chat)
+    out = llm_steps.repair_transcript(title="关灯", transcript="去关灯 我是你妈")
+    assert [line["speaker"] for line in out["lines"]] == ["妈妈", "妈妈", "宝宝"]
+    assert out["lines"][1]["text"] == "我是你妈，你得听我的"
+    assert out["lines"][2]["text"] == "你还知道你是我妈呀？"
+
+
 def test_repair_transcript_replaces_unusable_line_with_marker(monkeypatch):
     """整行 unusable 只留 [听不清]，ASR 乱码不得留在逐字稿里。"""
 

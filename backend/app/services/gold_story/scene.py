@@ -33,6 +33,37 @@ TUTORIAL_RESIDUE = (
     "教会",
 )
 MOM_BANNED_IN_LINE = ("应该", "告诉", "记住", "教")
+
+# 身份自称归属：孩子标签（逐字稿/seed 都可能用）与家长标签。
+# 只认「身份自称」这一强排他谓词，不碰任何剧情/行为词。
+CHILD_SPEAKER_LABELS = frozenset(
+    {"宝宝", "孩子", "儿子", "女儿", "女孩", "男孩", "弟弟", "妹妹", "昭昭", "灿灿"}
+)
+PARENT_SPEAKER_LABELS = ("妈妈", "爸爸")
+_PARENT_IDENTITY_SELF_CLAIM = re.compile(
+    r"我是(?:你|你们)?(?:妈|妈妈|爸|爸爸|家长|母亲|父亲)"
+)
+# 回声（扣原话/反问）：孩子复述家长身份主张时须转换人称，而非换归属
+_PARENT_IDENTITY_ECHO_FRAME = re.compile(
+    r"你还知道|你不是说|你说过|说我是|学我|学你"
+)
+_ROLEPLAY_FRAME = re.compile(r"假装|扮演|演一下|过家家")
+_QUOTE_PAIRS = (("“", "”"), ("「", "」"), ("『", "』"))
+
+
+def _inside_quotes(text: str, pos: int) -> bool:
+    """match 起点是否落在引号内（真引述照原样保留）。"""
+    head = text[:pos]
+    for opener, closer in _QUOTE_PAIRS:
+        if head.count(opener) > head.count(closer):
+            return True
+    return head.count('"') % 2 == 1
+
+
+def _swap_person_deixis(span: str) -> str:
+    """我/你 对调：孩子复述家长身份主张时用。"""
+    return span.translate(str.maketrans({"我": "你", "你": "我"}))
+
 _PAREN_IN_LINE = re.compile(r"（[^）]*）|\([^)]*\)")
 _RELAY_SPEECH = re.compile(
     r"(?:妈妈|爸爸)(?:说了|说，|教过|告诉我|说过)|"
@@ -1348,3 +1379,80 @@ def seed_from_beat_chain(chain: list[Any]) -> list[dict[str, str]]:
         if sp in ALLOWED_SPEAKERS and intent:
             out.append({"speaker": sp, "intent": intent})
     return out
+
+
+def parent_identity_claim_target(text: str) -> str | None:
+    """自称家长身份的目标角色（妈妈/爸爸）；非自称或非身份句返回 None。"""
+    raw = str(text or "")
+    match = _PARENT_IDENTITY_SELF_CLAIM.search(raw)
+    if not match or _ROLEPLAY_FRAME.search(raw):
+        return None
+    if _inside_quotes(raw, match.start()):
+        return None
+    span = match.group(0)
+    if "妈" in span:
+        return "妈妈"
+    if "爸" in span:
+        return "爸爸"
+    return None
+
+
+def realign_parent_identity_rows(
+    rows: list[Any] | None,
+    *,
+    parent_labels: tuple[str, ...] = (),
+) -> tuple[list[Any], list[str]]:
+    """孩子 speaker 的家长身份句：裸自称归位家长，回声句转换人称。
+
+    只认身份自称这一强排他谓词，不按剧情/行为词过滤，避免过拟合单篇；
+    裸自称的家长不在 ``parent_labels``（本稿角色表）内则丢弃该行，
+    不硬塞给不存在的角色。引号内真引述与扮演框架原样保留。
+    """
+    parents = tuple(str(p).strip() for p in parent_labels if str(p).strip())
+    out: list[Any] = []
+    notes: list[str] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        speaker = str(row.get("speaker") or "").strip()
+        if speaker not in CHILD_SPEAKER_LABELS:
+            out.append(row)
+            continue
+        field = next(
+            (
+                key
+                for key in ("intent", "text", "line")
+                if str(row.get(key) or "").strip()
+            ),
+            "",
+        )
+        text = str(row.get(field) or "") if field else ""
+        match = _PARENT_IDENTITY_SELF_CLAIM.search(text)
+        if not match or _ROLEPLAY_FRAME.search(text):
+            out.append(row)
+            continue
+        if _inside_quotes(text, match.start()):
+            out.append(row)
+            continue
+        if _PARENT_IDENTITY_ECHO_FRAME.search(text):
+            # 回声/扣原话：保留归属与关键词，只把错误自称换成对方身份
+            fixed = (
+                text[: match.start()]
+                + _swap_person_deixis(match.group(0))
+                + text[match.end():]
+            )
+            item = dict(row)
+            item[field] = fixed
+            out.append(item)
+            notes.append(f"身份回声人称转换:{speaker}:{text}→{fixed}")
+            continue
+        target = parent_identity_claim_target(text)
+        if target is None or target not in parents:
+            notes.append(f"身份自称家长不在本稿，丢弃:{speaker}:{text}")
+            continue
+        item = dict(row)
+        item["speaker"] = target
+        out.append(item)
+        notes.append(f"身份自称归位:{speaker}→{target}")
+    return out, notes

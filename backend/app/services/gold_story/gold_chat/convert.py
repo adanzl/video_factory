@@ -1289,11 +1289,16 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         "structure_confidence": float(payload.get("structure_confidence") or 0.8),
     }
     source_type = str(payload.get("source_type") or "field")
+    # 角色分工线索用站外原视频标题（payload 里由导出回写），其次库内标题
+    source_title = str(
+        payload.get("bili_title") or row.get("title") or ""
+    ).strip()
     try:
         h3a = build_scene_contract(
             story_raw=story_raw,
             h3=h3,
             source_type=source_type,
+            video_title=source_title,
         )
     except Exception as exc:
         logger.warning(
@@ -1319,6 +1324,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             story_raw=story_raw_for_seed,
             h3=h3,
             scene_contract=h3a,
+            video_title=source_title,
         )
     except Exception as exc:
         # H3a 已含迁龄/家长预算；H3b 失败时用 beat_chain 兜底 seed，勿整段回退
