@@ -125,6 +125,7 @@ def process_candidate(
                 "transcript_repair_confidence": h0c.get("repair_confidence"),
                 "transcript_speakers": h0c.get("speakers") or [],
                 "transcript_repair_notes": h0c.get("repair_notes") or "",
+                "transcript_unusable_lines": h0c.get("unusable_lines") or 0,
             }
         except Exception as exc:
             logger.warning(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from typing import Any
 
 from app.services.gold_story.types import (
@@ -98,11 +100,26 @@ def resolve_gold_chat_snippet(source_id: str) -> str:
         return GOLD_CHAT_LINES_SNIPPET_SAME_SOURCE
     return GOLD_CHAT_LINES_SNIPPET
 
+logger = logging.getLogger(__name__)
+
+# 逐字稿「听不懂」占位标记：H0c 产出，H2/H3b 都不得把它展开成对白。
+UNINTELLIGIBLE_MARKER = "[听不清]"
+
+# story_raw 里带占位标记的引语 → 非引语概括（动作/氛围，不给下游对白来源）
+_UNINTELLIGIBLE_SUMMARY = "嘟囔了一句听不清的话"
+_QUOTED_UNINTELLIGIBLE_RE = re.compile(
+    r"[“\"「『][^”\"」』]*"
+    + re.escape(UNINTELLIGIBLE_MARKER)
+    + r"[^”\"」』]*[”\"」』]"
+)
+
 _H0C_SYSTEM = (
     "你是短视频口播逐字稿修复师。输入为 faster-whisper 自动转写："
     "有错字、断句乱、分不清说话人。\n"
     "结合标题/简介推断角色，修正同音错字，按对话拆行并标注说话人。\n"
     "不要编造视频中未出现的情节；听不清处用 [听不清]。\n"
+    "不许把听不懂的碎片改写成通顺台词：无法在不编造信息的前提下恢复语义时，"
+    "保留 [听不清] 标记；整行都不可恢复时只输出「角色：[听不清]」。\n"
     "只输出 JSON。"
 )
 
@@ -118,8 +135,8 @@ _H0C_USER = """视频标题：{title}
 {{
   "speakers": ["妈妈", "宝宝"],
   "lines": [
-    {{"speaker": "妈妈", "text": "修正后的这一句"}},
-    {{"speaker": "宝宝", "text": "…"}}
+    {{"speaker": "妈妈", "text": "修正后的这一句", "status": "ok"}},
+    {{"speaker": "宝宝", "text": "…", "status": "ok"}}
   ],
   "repair_confidence": 0.0,
   "repair_notes": "一句说明推断依据"
@@ -129,6 +146,13 @@ _H0C_USER = """视频标题：{title}
 - speaker 用简短称谓：妈妈、爸爸、宝宝、女孩、男孩、哥哥、妹妹等；
   无法判断时用 角色1/角色2，并在 repair_notes 说明
 - 合并 ASR 误切的碎句；修正明显同音错字（结合语境，勿脑补新剧情）
+- **每行必须带 status**：`ok`（语义可判）| `vague`（部分可判）| `unusable`（整行不可判）
+- **不可恢复判据**：①只剩语气词/拟声/重复音节；②同音碎片拼起来仍无稳定交际意图；
+  ③要靠视频里没有的信息才讲得通；④只能猜大意，定不了说话对象或目的
+- 整行不可恢复时：`text` 写 `[听不清]`，`status` 写 `unusable`；
+  **禁止把听不懂的 ASR 原文抄进 text**，也禁止补词改写成通顺台词
+- 只有局部不可恢复时：保留可确定部分，碎片处写 `[听不清]`，`status` 写 `vague`
+- repair_confidence 只表示说话人/断句把握，不表示句子通顺
 - **合并连续重复的同一短语**，只保留 1–2 次
 - 相邻同一 speaker 可合并为一条 line
 - lines 至少 2 条；repair_confidence<0.35 视为失败
@@ -175,6 +199,12 @@ _H2_USER = """视频标题：{title}
   不得保留站外真名/小男孩/对方等在 story_raw
 - 优先选热评里 **整段复述**（有然后/最后/被问/嘴硬）的完整微型故事
 - has_complete_arc=false 或 extract_confidence<0.5 即失败
+- **引号只给有效对白**：语义完整、说话人与目的可判定的才可加引号；
+  逐字稿里 [听不清] 或语义不通、听不明白的碎片 **禁止**写进引号，
+  也禁止补词把它改成台词
+- 结尾碎念只作氛围：写成非引语概括（如「嘟囔了一句听不清的话」），不加引号；
+  若尾部只剩听不清碎片，按已发生的收束事件收尾；
+  删掉后不足 80 字用动作/环境/心理补足，不新增事件
 - 不要输出 quote 字段；引号对白保留在 story_raw 内
 """
 
@@ -353,6 +383,8 @@ _H3B_SYSTEM = (
     "你是金故事对话化师。根据 scene_contract.beat_chain 展开 dialogue_seed。\n"
     "intent 必须能转成一句角色可说出口的现场对白；动作只能伴随对白，"
     "纯沉默/低头/不再接话不能单独成为 seed。\n"
+    "intent 只能来自可判定的有效对白或 beat_chain 的拍："
+    "听不清碎片、[听不清] 占位、纯语气词、语义不通的短句一律不得成为 intent。\n"
     "dialogue_seed 至少 4 条，建议 12–20 条短 intent；只输出 JSON。"
 )
 
@@ -384,7 +416,13 @@ story_raw（背景，勿照抄）：
 - 严格按 beat_chain 顺序展开；每拍 1–3 条 seed
 - punchline 后若契约效果是“沉默/不再接话/不再顶”，直接结束；这种纯无声结果不得生成 dialogue_seed
 - M5+H：seed 须含「双向互毁」「拒和/不原谅」「妈妈问谁先动手」分拍，勿合并
-- intent 须来自 scene_contract + story_raw
+- intent 须来自 scene_contract（beat_chain/conflict/object）+
+  story_raw 里 **可判定** 的对白
+- **来源排除**：story_raw 里的 [听不清]、语义不通碎片、以及
+  「嘟囔/含糊/听不清」一类无具体信息的概括，禁止展开成 intent
+- 过滤后若 seed 不足 4 条，用 beat_chain 里还没被覆盖的拍补足，
+  只服务该拍冲突或收束；禁止复述逐字稿乱码，
+  禁止引入新事件/地点/道具/人物
 - **正例只允许上方金稿原文**；本稿禁止照抄金稿 intent 到不同场景
 - speaker 允许昭昭/灿灿/妈妈/爸爸；妈妈 seed 条数 ≤ scene_contract.mom_lines_max
 - 若 mom_lines_max≥2 或 beat_chain 含妈妈/爸爸：seed **必须**保留对应家长 intent，
@@ -448,13 +486,21 @@ def repair_transcript(
     if not isinstance(lines, list) or len(lines) < 2:
         raise ValueError("H0c lines must have at least 2 entries")
     cleaned: list[dict[str, str]] = []
+    unusable_lines = 0
     for row in lines:
         if not isinstance(row, dict):
             continue
         speaker = str(row.get("speaker") or "").strip() or "未知"
         text = str(row.get("text") or "").strip()
+        status = str(row.get("status") or "").strip().lower()
+        if status == "unusable" and text:
+            # 整行不可恢复：只留占位标记，禁止把 ASR 乱码留在逐字稿里
+            text = UNINTELLIGIBLE_MARKER
+            unusable_lines += 1
         if text:
-            cleaned.append({"speaker": speaker, "text": text})
+            cleaned.append(
+                {"speaker": speaker, "text": text, "status": status or "ok"}
+            )
     if len(cleaned) < 2:
         raise ValueError("H0c cleaned lines too short")
     confidence = float(data.get("repair_confidence") or 0.0)
@@ -468,7 +514,24 @@ def repair_transcript(
         "speakers": [str(s).strip() for s in speakers if str(s).strip()],
         "repair_confidence": confidence,
         "repair_notes": str(data.get("repair_notes") or "").strip(),
+        "unusable_lines": unusable_lines,
     }
+
+
+def scrub_unintelligible_quotes(story_raw: str) -> tuple[str, int]:
+    """story_raw 里含 [听不清] 的引语改成非引语概括。
+
+    下游 H3b 会把引号内容当对白来源，故不允许带占位符的引语留在叙述里；
+    只认标记与引号，不按剧情词过滤。
+    """
+    text = str(story_raw or "")
+    if UNINTELLIGIBLE_MARKER not in text:
+        return text, 0
+    out, count = _QUOTED_UNINTELLIGIBLE_RE.subn(
+        _UNINTELLIGIBLE_SUMMARY,
+        text,
+    )
+    return out, count
 
 
 def extract_story_raw(
@@ -491,6 +554,9 @@ def extract_story_raw(
     story_raw = str(data.get("story_raw") or "").strip()
     if not story_raw:
         raise ValueError("H2 missing story_raw")
+    story_raw, scrubbed_quotes = scrub_unintelligible_quotes(story_raw)
+    if scrubbed_quotes:
+        logger.info("H2 scrubbed unintelligible quotes=%s", scrubbed_quotes)
     confidence = float(data.get("extract_confidence") or 0.0)
     has_arc = bool(data.get("has_complete_arc"))
     if not has_arc or confidence < 0.5:
@@ -659,6 +725,13 @@ def build_dialogue_seed(
     if not isinstance(seed, list):
         seed = []
     seed, _silent_seed_notes = trim_terminal_no_reply_rows(seed)
+    seed, unintelligible_notes = drop_unintelligible_seed_rows(seed)
+    if unintelligible_notes:
+        logger.info(
+            "H3b dropped unintelligible seed rows=%s sample=%s",
+            len(unintelligible_notes),
+            unintelligible_notes[:3],
+        )
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])
         data["dialogue_seed"] = seed
@@ -698,6 +771,33 @@ def build_dialogue_seed(
     if normalized_setting:
         data["setting"] = normalized_setting
     return data
+
+
+def drop_unintelligible_seed_rows(seed: list[Any]) -> tuple[list[Any], list[str]]:
+    """H3b 后置硬卡：带 [听不清] 占位的种子不得进对话骨架。
+
+    只认 H0c 的标记与括号变体，不按单篇剧情词过滤；丢弃后 seed 不足时
+    由 ``seed_from_beat_chain`` 兜底，不新造剧情。
+    """
+    kept: list[Any] = []
+    dropped: list[str] = []
+    for row in seed:
+        if not isinstance(row, dict):
+            kept.append(row)
+            continue
+        intent = str(row.get("intent") or "")
+        normalized = (
+            intent.replace("［", "[")
+            .replace("］", "]")
+            .replace("【", "[")
+            .replace("】", "]")
+            .replace(" ", "")
+        )
+        if UNINTELLIGIBLE_MARKER in normalized:
+            dropped.append(intent.strip())
+            continue
+        kept.append(row)
+    return kept, dropped
 
 
 def _trim_mom_dialogue_seed(
