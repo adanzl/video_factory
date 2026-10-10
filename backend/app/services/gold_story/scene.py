@@ -1615,3 +1615,39 @@ def fact_attribution_review_required(facts: list[Any] | None) -> bool:
         if status != "resolved":
             return True
     return False
+
+
+def fact_claim_alignment_notes(
+    facts: list[Any] | None,
+    rows: list[Any] | None,
+) -> list[str]:
+    """facts 声明了讨要方，却没有任何讨要/补偿拍时给出提示。
+
+    facts 与 beat/seed 必须自洽：填了 ``claimant`` 就意味着源稿确有讨要动作，
+    收束拍不得被省略；若源稿其实没有讨要，应把 ``claimant`` 写成 unknown，
+    而不是留下悬空角色。``beneficiary`` 只标注得利方，不强制讨要拍。
+    """
+    claimants: list[tuple[str, str]] = []
+    for item in facts or []:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("claimant") or "").strip()
+        if value:
+            fact_id = str(item.get("fact_id") or "").strip() or "?"
+            claimants.append((fact_id, value))
+    if not claimants:
+        return []
+    has_claim_row = False
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        act = str(row.get("speech_act") or "").strip().lower()
+        if act in FACT_CLAIM_ACTS:
+            has_claim_row = True
+            break
+    if has_claim_row:
+        return []
+    return [
+        f"{fact_id} 声明 claimant={value}，但没有任何讨要/补偿拍"
+        for fact_id, value in claimants[:2]
+    ]

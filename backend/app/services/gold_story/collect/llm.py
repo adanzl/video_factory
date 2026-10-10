@@ -19,6 +19,7 @@ from app.services.gold_story.scene import (
     age_remap_contract_errors,
     apply_parent_role_budget,
     fact_attribution_review_required,
+    fact_claim_alignment_notes,
     filter_fact_bound_rows,
     force_age_score_remap,
     normalize_dialogue_setting_for_contract,
@@ -398,6 +399,10 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
   标题里抱怨方是 accuser/discoverer，被背着/被揭发的那一方才是 secret_holder
 - 判不出 secret_holder 时 `attribution_status=ambiguous`，
   **禁止**为了故事完整硬指定
+- **facts 与 beat_chain 必须自洽**：填了 `claimant` 就说明源稿
+  确有讨要/补偿动作，beat_chain 必须含该讨要拍（标
+  `speech_act=claim_compensation`、`claim_role=claimant`），不得漏拍；
+  源稿确无讨要则 `claimant` 写 `unknown`（`beneficiary` 只标得利方）
 - 引述家长原话、过家家扮演的事件标 `quotation_frame`/`role_play=true`
 - 与事实相关的拍必须带 `fact_ref` + `speech_act` + `claim_role`；
   与事实无关的拍可不标
@@ -510,6 +515,9 @@ story_raw（背景，勿照抄）：
   speaker 必须等于 `claimant`/`beneficiary`；回声、回旋镖句（echo/retort）
   按当前说话人重标 `claim_role`，不得沿用对方角色。
   与 facts 冲突时**不要输出该条**，改用 beat_chain 里身份自洽的拍补足
+- **收束拍不得漏**：`facts` 里 `claimant` 非空时，
+  seed 必须含该方的讨要/补偿句（`speech_act=claim_compensation`、
+  `claim_role=claimant`），speaker 须等于 `claimant`
 - `facts` 为空或未标注时按 beat_chain 与会话常识展开
 - punchline 后若契约效果是“沉默/不再接话/不再顶”，直接结束；这种纯无声结果不得生成 dialogue_seed
 - M5+H：seed 须含「双向互毁」「拒和/不原谅」「妈妈问谁先动手」分拍，勿合并
@@ -779,6 +787,12 @@ def build_scene_contract(
                 "H3a fact attribution not resolved: %s",
                 [f.get("fact_id") for f in data["facts"]],
             )
+        claim_notes = fact_claim_alignment_notes(
+            data["facts"],
+            data.get("beat_chain") if isinstance(data.get("beat_chain"), list) else [],
+        )
+        if claim_notes:
+            logger.info("H3a fact claim missing beats=%s", claim_notes)
         data, _loc_notes = normalize_scene_contract_location(
             data,
             activity_context=story_raw[:800],
@@ -858,6 +872,11 @@ def build_dialogue_seed(
         logger.info("H3b parent identity realign=%s", identity_notes[:4])
     facts = normalize_fact_attributions(contract.get("facts"))
     seed, fact_conflicts = filter_fact_bound_rows(seed, facts)
+    claim_notes = fact_claim_alignment_notes(facts, seed)
+    if claim_notes:
+        # facts 声明了讨要方却没有讨要拍 → 与角色绑定冲突同路重抽
+        logger.info("H3b fact claim missing seeds=%s", claim_notes)
+        fact_conflicts = [*fact_conflicts, *claim_notes]
     if fact_conflicts:
         logger.info(
             "H3b fact role conflicts=%s sample=%s",
@@ -946,6 +965,8 @@ def _fact_binding_constraint_block(
             "指认/揭发句（accuse/expose）只能由 accuser/discoverer 说；"
             "索赔/讨要句（claim_compensation/demand/bargain）只能由 claimant 说；"
             "回声/回旋镖句按当前说话人重标 claim_role。",
+            "facts 里 claimant 非空时，seed 必须含该方的讨要/补偿句"
+            "（speech_act=claim_compensation、claim_role=claimant），不得漏收束拍。",
             "请重新输出完整 dialogue_seed（≥4 条），每条带 "
             "fact_ref/speech_act/claim_role/addressee。",
         ]
@@ -977,10 +998,14 @@ def _retry_seed_with_fact_constraints(
     retry_seed, _unintelligible = drop_unintelligible_seed_rows(retry_seed)
     retry_seed, _identity = _realign_seed_parent_identity(retry_seed, contract)
     retry_seed, retry_conflicts = filter_fact_bound_rows(retry_seed, facts)
-    if retry_conflicts or len(retry_seed) < max(SEED_MIN, len(fallback)):
+    retry_claim_notes = fact_claim_alignment_notes(facts, retry_seed)
+    if retry_conflicts or retry_claim_notes or len(retry_seed) < max(
+        SEED_MIN, len(fallback)
+    ):
         logger.info(
-            "H3b fact binding retry kept first pass: conflicts=%s rows=%s",
+            "H3b fact binding retry kept first pass: conflicts=%s claim=%s rows=%s",
             len(retry_conflicts),
+            retry_claim_notes[:2],
             len(retry_seed),
         )
         return None

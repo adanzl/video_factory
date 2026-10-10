@@ -683,6 +683,55 @@ def test_filter_fact_bound_rows_skips_unannotated_and_roleplay():
     assert kept == rows and conflicts == []
 
 
+def test_fact_claim_alignment_notes_detects_missing_claim_beat():
+    """facts 声明讨要方，却没有讨要/补偿拍 → 提示（facts 与拍不自洽）。"""
+    from app.services.gold_story.scene import fact_claim_alignment_notes
+
+    facts = _sample_facts()  # claimant=灿灿
+    assert fact_claim_alignment_notes(facts, []) != []
+    assert fact_claim_alignment_notes(
+        facts,
+        [{"speaker": "灿灿", "intent": "指认"}],
+    ) != []
+    assert (
+        fact_claim_alignment_notes(
+            facts,
+            [
+                {
+                    "speaker": "灿灿",
+                    "intent": "把明天补给我",
+                    "speech_act": "claim_compensation",
+                    "claim_role": "claimant",
+                }
+            ],
+        )
+        == []
+    )
+    # 未声明讨要方时不拦
+    no_claim = normalize_fact_attributions(
+        [
+            {
+                "fact_id": "F1",
+                "secret_holder": "妈妈",
+                "attribution_status": "resolved",
+            }
+        ]
+    )
+    assert fact_claim_alignment_notes(no_claim, []) == []
+    # beneficiary 只标得利方，不强制讨要拍
+    beneficiary_only = normalize_fact_attributions(
+        [
+            {
+                "fact_id": "F1",
+                "secret_holder": "妈妈",
+                "beneficiary": "妈妈",
+                "attribution_status": "resolved",
+            }
+        ]
+    )
+    assert fact_claim_alignment_notes(beneficiary_only, []) == []
+
+
 def test_fact_attribution_review_required_for_unresolved():
     assert not fact_attribution_review_required(_sample_facts())
     assert fact_attribution_review_required(
