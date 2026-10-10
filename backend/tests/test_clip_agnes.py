@@ -1099,6 +1099,33 @@ def _upstream_reset() -> None:
     AgnesClipProvider._pool_cooldown_reason.clear()
 
 
+def test_request_retry_exhaustion_raises_upstream_unavailable() -> None:
+    """重试耗尽且全程 5xx：须抛上游不可用，而不是 NameError（last_status 未定义）。"""
+    provider = AgnesClipProvider()
+    provider._http_max_retries = 2  # noqa: SLF001
+    provider._submit_max_retries = 2  # noqa: SLF001
+    _upstream_reset()
+
+    limited = MagicMock()
+    limited.status_code = 503
+    limited.ok = False
+    limited.json.return_value = {"code": "video_queue_unavailable", "message": "队列暂不可用"}
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.requests.request",
+            return_value=limited,
+        ) as mock_req,
+        patch("app.services.segment.clip.video_agnes.time.sleep"),
+        pytest.raises(AgnesUpstreamUnavailable) as excinfo,
+    ):
+        # poll 走 http_max_retries 路径：不带 key_label，不会提前 raise
+        provider._request("GET", "https://apihub.agnes-ai.com/v1/agnesapi?video_id=x")  # noqa: SLF001
+
+    assert "last_status=503" in str(excinfo.value)
+    assert mock_req.call_count == 2
+
+
 def test_submit_two_5xx_raises_upstream_unavailable() -> None:
     """提交遇到两个域名都 5xx：立刻判为上游不可用，不再连打 4 次。"""
     provider = AgnesClipProvider()
@@ -1228,24 +1255,32 @@ def test_upstream_streak_backs_off_and_resets_on_success() -> None:
     assert provider._upstream_cooldown_left() >= 0.0  # noqa: SLF001
 
 
-def test_queue_full_body_recognized() -> None:
-    """503 body 是 video_queue_full 时要识别出来（此前完全没记 body）。"""
+def test_queue_pressure_body_recognized() -> None:
+    """两种容量型 503（国际 video_queue_full、国内 video_queue_unavailable）都要识别。"""
     from app.services.segment.clip.video_agnes import (
         _body_summary_for_log,
-        _is_queue_full_body,
+        _is_queue_pressure_body,
     )
 
-    body = {
+    intl = {
         "code": "video_queue_full",
         "message": "video queue is full, please retry later",
         "data": None,
     }
-    assert _is_queue_full_body(body)
-    assert "video_queue_full" in _body_summary_for_log(body)
-    # 网关故障、配额类报文不应误判
-    assert not _is_queue_full_body({"code": "invalid_request", "message": "prompt is required"})
-    assert not _is_queue_full_body(None)
-    assert not _is_queue_full_body("<html>520 unknown error</html>")
+    cn = {
+        "code": "video_queue_unavailable",
+        "message": "视频队列暂不可用，请稍后重试",
+        "data": None,
+    }
+    assert _is_queue_pressure_body(intl)
+    assert _is_queue_pressure_body(cn)
+    # 国内站曾以纯文本 body 返回，同样要认
+    assert _is_queue_pressure_body("video_queue_unavailable")
+    assert "video_queue_unavailable" in _body_summary_for_log(cn)
+    # 网关故障、参数错误不应误判成容量型
+    assert not _is_queue_pressure_body({"code": "invalid_request", "message": "prompt is required"})
+    assert not _is_queue_pressure_body(None)
+    assert not _is_queue_pressure_body("<html>520 unknown error</html>")
 
 
 def test_submit_queue_full_stops_immediately_without_host_failover() -> None:

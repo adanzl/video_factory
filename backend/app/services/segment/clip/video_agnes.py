@@ -48,6 +48,9 @@ _RETRYABLE_HTTP = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 5
 # 限制池按「密钥档位 × 站点」分池（付费/免费 × 国际/国内，共 4 池），
 # 同池内多把 key 共享额度与队列，故按池计时/冷却而非按 key。
 _TASK_RETRY_TOKENS = ("failed", "timeout", "429", "rate limit", "too many")
+# 容量型 503 的 code：国际站 video_queue_full、国内站 video_queue_unavailable。
+# 两者都是「本池此刻收不了」，按池冻结后轮换下一池，不等于网关故障。
+_QUEUE_PRESSURE_CODES = ("video_queue_full", "video_queue_unavailable")
 _TERMINAL_POLL_STATES = frozenset({"completed", "failed"})
 # Video 2.5 Flash：图生视频用 keyframe + first_frame（保持成片真实首帧）
 _I2V_MODE = "keyframe"
@@ -695,17 +698,27 @@ def _body_summary_for_log(body: dict | str | None) -> str:
     return "-"
 
 
-def _is_queue_full_body(body: dict | str | None) -> bool:
-    """识别 ``video_queue_full``：容量型限流，官方建议稍后重试。"""
+def _is_queue_pressure_body(body: dict | str | None) -> bool:
+    """识别「队列压力」型 503：容量受限，稍后可重试，应按池轮换。
+
+    已观测到两种 code（都属于容量型限流，而非网关故障）：
+
+    - ``video_queue_full``（国际站）：``video queue is full, please retry later``
+    - ``video_queue_unavailable``（国内站）：``视频队列暂不可用，请稍后重试``
+    """
     if isinstance(body, dict):
         code = str(body.get("code") or "").lower()
         message = str(body.get("message") or "").lower()
         detail = str(body.get("detail") or "").lower()
-        if code == "video_queue_full":
+        if code in _QUEUE_PRESSURE_CODES:
             return True
-        return "queue is full" in message or "queue is full" in detail
+        text = f"{message} {detail}"
+        return "queue is full" in text or "queue is not available" in text
     if isinstance(body, str):
-        return "video_queue_full" in body.lower() or "queue is full" in body.lower()
+        lowered = body.lower()
+        return any(code in lowered for code in _QUEUE_PRESSURE_CODES) or (
+            "queue is full" in lowered
+        )
     return False
 
 
@@ -763,7 +776,7 @@ class AgnesClipProvider(ClipProvider):
     _last_submit_at_by_pool: dict[str, float] = {}
     # 池冷却（429 或队列满）期内轮换到下一池；全部冷却才整批等待
     _cooldown_until_by_pool: dict[str, float] = {}
-    # 池冷却成因：rate_limit（429）/ queue_full（503 video_queue_full）
+    # 池冷却成因：rate_limit（429）/ queue_full（503 容量型限流）
     _pool_cooldown_reason: dict[str, str] = {}
     # 上游 5xx 冷却：跨 key / 池 / 任务共享（换 key 对上游故障无效）
     _upstream_lock = Semaphore(value=1)
@@ -992,6 +1005,8 @@ class AgnesClipProvider(ClipProvider):
         read_timeout = self._submit_read_timeout if label == "submit" else self._poll_read_timeout
         req_timeout = timeout if timeout is not None else (self._connect_timeout, read_timeout)
         last_exc: Exception | None = None
+        # 末次响应状态码：重试耗尽时用它判断是否算「上游不可用」
+        last_status: int | None = None
         host_failover_tried: set[str] = {url}
         retryable_hits = 0
 
@@ -1003,13 +1018,15 @@ class AgnesClipProvider(ClipProvider):
                 resp = requests.request(
                     method, url, headers=headers or {}, json=json, timeout=req_timeout
                 )
+                last_status = resp.status_code
                 if resp.status_code in _RETRYABLE_HTTP:
                     retryable_hits += 1
                     body = _response_body(resp)
                     body_txt = _body_summary_for_log(body)
-                    queue_full = _is_queue_full_body(body)
-                    # 5xx 的 body 必须留痕：503 的真身是 video_queue_full，
-                    # 只记状态码会把「队列满」误判成「网关故障」。
+                    queue_full = _is_queue_pressure_body(body)
+                    # 5xx 的 body 必须留痕：503 的真身往往是容量型限流
+                    # （video_queue_full / video_queue_unavailable），
+                    # 只记状态码会把「本池不收」误判成「网关故障」。
                     logger.warning(
                         "agnes %s %s %s, body=%s, retry %s/%s",
                         label,
@@ -1031,7 +1048,7 @@ class AgnesClipProvider(ClipProvider):
                         )
                     # 提交：队列满立刻停手，或两个域名都 5xx 即视为上游不可用
                     if label == "submit" and (queue_full or retryable_hits >= 2):
-                        detail = "queue full" if queue_full else "both domains 5xx"
+                        detail = "queue pressure" if queue_full else "both domains 5xx"
                         raise AgnesUpstreamUnavailable(
                             "agnes upstream unavailable: HTTP "
                             f"{resp.status_code} ({detail}, body={body_txt}, "
@@ -1172,10 +1189,11 @@ class AgnesClipProvider(ClipProvider):
 
         - **429（配额/限流）**：冻结该池并换下一把 key，等待受
           ``AGNES_VIDEO_KEY_WAIT_BUDGET_SEC`` 约束；
-        - **队列满（503 video_queue_full）**：按池计，冻结该池后轮换到
-          下一池（两个站点、付费/免费四池队列彼此独立）；四池都满才进
-          全局冷却，等待受 ``AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC`` 约束
-          （默认 60 分钟），超预算才失败；
+        - **队列压力（503 video_queue_full / video_queue_unavailable）**：
+          按池计，冻结该池后轮换到下一池（两个站点、付费/免费四池队列
+          彼此独立）；四池都不收才进全局冷却，等待受
+          ``AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC`` 约束（默认 60 分钟），
+          超预算才失败；
         - **其它上游 5xx（网关故障）**：换 key、换站点皆无效，直接进全局
           冷却，同样受上游等待预算约束。
         """

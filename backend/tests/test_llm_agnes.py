@@ -89,11 +89,13 @@ def test_post_chat_failover_on_timeout(monkeypatch) -> None:
 def test_chat_requires_api_key(monkeypatch) -> None:
     monkeypatch.delenv("AGNES_FREE_API_KEY", raising=False)
     monkeypatch.delenv("AGNES_API_KEY", raising=False)
+    monkeypatch.delenv("AGNES_CN_API_KEY", raising=False)
     monkeypatch.delenv("AGNES_CN_FREE_API_KEY", raising=False)
     from app.config import config
 
     monkeypatch.setattr(config, "agnes_free_api_key", None, raising=False)
     monkeypatch.setattr(config, "agnes_api_key", None, raising=False)
+    monkeypatch.setattr(config, "agnes_cn_api_key", None, raising=False)
     monkeypatch.setattr(config, "agnes_cn_free_api_key", None, raising=False)
     with pytest.raises(RuntimeError, match="AGNES_API_KEY"):
         _chat_with_key_fallback(system="sys", user="usr")

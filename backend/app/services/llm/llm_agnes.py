@@ -390,7 +390,8 @@ def _chat_with_key_fallback(*, system: str, user: str, max_tokens: int | None=No
     keys = agnes_api_keys(settings)
     if not keys:
         raise RuntimeError(
-            'AGNES_API_KEY / AGNES_FREE_API_KEY / AGNES_CN_FREE_API_KEY 未配置，无法使用 Agnes LLM'
+            'AGNES_API_KEY / AGNES_CN_API_KEY / AGNES_FREE_API_KEY / '
+            'AGNES_CN_FREE_API_KEY 未配置，无法使用 Agnes LLM'
         )
     limit = settings.agnes_llm_max_tokens if max_tokens is None else max_tokens
     payload = _build_chat_payload(model=settings.agnes_llm_model, system=system, user=user, max_tokens=limit)
