@@ -732,6 +732,68 @@ def test_fact_claim_alignment_notes_detects_missing_claim_beat():
     assert fact_claim_alignment_notes(beneficiary_only, []) == []
 
 
+def test_title_complaint_direction_reads_roles_not_plot():
+    from app.services.gold_story.scene import title_complaint_direction
+
+    assert (
+        title_complaint_direction(
+            "【妈妈指挥女儿关灯，当女儿说吃烤串都背着我那一刻，笑死我了！】"
+        )
+        == "child_accuses_parent"
+    )
+    assert title_complaint_direction("姐弟抢玩具") == ""
+    # 无抱怨标记 / 无家长角色时不判定
+    assert title_complaint_direction("女儿和妈妈一起收拾房间") == ""
+    assert title_complaint_direction("宝宝偷偷把饭倒了") == ""
+
+
+def test_fact_title_conflict_notes_flags_child_as_secret_holder():
+    from app.services.gold_story.scene import fact_title_conflict_notes
+
+    title = "【妈妈指挥女儿关灯，当女儿说吃烤串都背着我那一刻，笑死我了！】"
+    chars = ["妈妈", "昭昭"]
+    wrong = normalize_fact_attributions(
+        [
+            {
+                "fact_id": "F1",
+                "secret_holder": "昭昭",
+                "discoverer": "妈妈",
+                "accuser": "妈妈",
+                "denier": "昭昭",
+                "attribution_status": "resolved",
+            }
+        ]
+    )
+    notes = fact_title_conflict_notes(wrong, video_title=title, characters=chars)
+    assert len(notes) == 2 and "secret_holder" in notes[0]
+    right = normalize_fact_attributions(
+        [
+            {
+                "fact_id": "F1",
+                "secret_holder": "妈妈",
+                "discoverer": "昭昭",
+                "accuser": "昭昭",
+                "denier": "妈妈",
+                "attribution_status": "resolved",
+            }
+        ]
+    )
+    assert fact_title_conflict_notes(right, video_title=title, characters=chars) == []
+
+
+def test_mark_facts_ambiguous_blocks_auto_publish():
+    from app.services.gold_story.scene import mark_facts_ambiguous
+
+    facts = _sample_facts()
+    marked, changed = mark_facts_ambiguous(facts, reason="title_conflict")
+    assert changed
+    assert marked[0]["attribution_status"] == "ambiguous"
+    assert "title_conflict" in marked[0]["attribution_basis"]
+    assert fact_attribution_review_required(marked)
+    again, changed2 = mark_facts_ambiguous(marked, reason="title_conflict")
+    assert changed2 is False and again[0]["attribution_status"] == "ambiguous"
+
+
 def test_fact_attribution_review_required_for_unresolved():
     assert not fact_attribution_review_required(_sample_facts())
     assert fact_attribution_review_required(

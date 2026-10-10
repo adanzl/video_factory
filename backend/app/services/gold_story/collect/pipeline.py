@@ -233,6 +233,9 @@ def process_candidate(
         "perspective": h2.get("perspective"),
         "source_type": source_type,
         "story_raw": story_raw_text,
+        # 站外原视频标题：H3 会把库内 title 换成短标题，原题是角色分工/抱怨方向
+        # 的最强线索，重转（H3a/H3b rebuild）时必须还能拿到
+        "source_title": candidate.title,
         "scene_contract": h3a,
         "contract_confidence": h3a.get("contract_confidence"),
         "funny_why": h3.get("funny_why"),

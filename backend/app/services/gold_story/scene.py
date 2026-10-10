@@ -1651,3 +1651,90 @@ def fact_claim_alignment_notes(
         f"{fact_id} 声明 claimant={value}，但没有任何讨要/补偿拍"
         for fact_id, value in claimants[:2]
     ]
+
+
+# 标题里的「被背着我」式抱怨：说话方是抱怨者/发现者，被抱怨方才是做过那件事的人
+_TITLE_BACKSIDE_MARKER = re.compile(
+    r"背着|瞒着|不告诉|没告诉|没叫|没带|偷偷|不喊|趁我"
+)
+_TITLE_CHILD_ROLE = re.compile(r"女儿|儿子|闺女|宝宝|孩子|小娃|弟弟|妹妹")
+_TITLE_PARENT_ROLE = re.compile(r"妈妈|母亲|爸爸|父亲|家长|爹|娘")
+
+
+def title_complaint_direction(video_title: str) -> str:
+    """标题是否明示「孩子抱怨家长背着自己做事」。
+
+    只读角色称谓与抱怨标记（不读剧情词）；命中时事实层应以标题为准：
+    ``accuser/discoverer`` 是抱怨的孩子，``secret_holder`` 是家长。
+    返回 ``"child_accuses_parent"`` / ``""``（无法判定）。
+    """
+    title = str(video_title or "")
+    if not title:
+        return ""
+    if not _TITLE_BACKSIDE_MARKER.search(title):
+        return ""
+    if not _TITLE_CHILD_ROLE.search(title) or not _TITLE_PARENT_ROLE.search(title):
+        return ""
+    return "child_accuses_parent"
+
+
+def fact_title_conflict_notes(
+    facts: list[Any] | None,
+    *,
+    video_title: str,
+    characters: list[Any] | None = None,
+) -> list[str]:
+    """facts 与标题抱怨方向矛盾时给出提示（标题为准）。"""
+    if title_complaint_direction(video_title) != "child_accuses_parent":
+        return []
+    chars = {str(c).strip() for c in (characters or []) if str(c).strip()}
+    kids = {c for c in chars if c in CHILD_SPEAKER_LABELS}
+    parents = {
+        p for p in PARENT_SPEAKER_LABELS if not chars or p in chars
+    }
+    if not kids or not parents:
+        return []
+    notes: list[str] = []
+    for item in facts or []:
+        if not isinstance(item, dict):
+            continue
+        holder = str(item.get("secret_holder") or "").strip()
+        accuser = str(item.get("accuser") or "").strip()
+        discoverer = str(item.get("discoverer") or "").strip()
+        fact_id = str(item.get("fact_id") or "").strip() or "?"
+        if holder in kids:
+            notes.append(
+                f"{fact_id} 标题表明抱怨方是孩子，secret_holder 不应是 {holder}"
+            )
+        if (accuser and accuser not in kids) or (
+            discoverer and discoverer not in kids
+        ):
+            notes.append(
+                f"{fact_id} 标题表明抱怨方是孩子，accuser/discoverer 应是孩子"
+            )
+    return notes
+
+
+def mark_facts_ambiguous(
+    facts: list[Any] | None,
+    *,
+    reason: str,
+) -> tuple[list[Any], bool]:
+    """把未定稿事实标成 ambiguous，交由复核门控拦截，不硬改角色。"""
+    out: list[Any] = []
+    changed = False
+    for item in facts or []:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+        fact = dict(item)
+        if str(fact.get("attribution_status") or "").strip().lower() == "resolved":
+            fact["attribution_status"] = "ambiguous"
+            basis = fact.get("attribution_basis")
+            basis_list = [str(b) for b in basis] if isinstance(basis, list) else []
+            if reason and reason not in basis_list:
+                basis_list.append(reason)
+            fact["attribution_basis"] = basis_list
+            changed = True
+        out.append(fact)
+    return out, changed

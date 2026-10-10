@@ -1289,9 +1289,12 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         "structure_confidence": float(payload.get("structure_confidence") or 0.8),
     }
     source_type = str(payload.get("source_type") or "field")
-    # 角色分工线索用站外原视频标题（payload 里由导出回写），其次库内标题
+    # 角色分工线索用站外原视频标题（payload 优先），其次库内标题
     source_title = str(
-        payload.get("bili_title") or row.get("title") or ""
+        payload.get("bili_title")
+        or payload.get("source_title")
+        or row.get("title")
+        or ""
     ).strip()
     try:
         h3a = build_scene_contract(

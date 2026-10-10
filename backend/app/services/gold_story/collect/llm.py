@@ -20,8 +20,10 @@ from app.services.gold_story.scene import (
     apply_parent_role_budget,
     fact_attribution_review_required,
     fact_claim_alignment_notes,
+    fact_title_conflict_notes,
     filter_fact_bound_rows,
     force_age_score_remap,
+    mark_facts_ambiguous,
     normalize_dialogue_setting_for_contract,
     normalize_fact_attributions,
     normalize_k_parent_intervention_budget,
@@ -161,7 +163,10 @@ _H0C_USER = """视频标题：{title}
   ②第一人称承认/辩解/自曝自己做过某事的句子，归做过那件事的人，
   但引述、反问、回旋镖句除外；判「谁做过」以标题/简介与上下文为准
   （标题点明是谁的糗事就按标题），不要只按句式猜；
-  ③指认、质问、要求、命令句看对象与冲突推进方向
+  ③指认、质问、要求、命令句看对象与冲突推进方向；
+  ④**标题抱怨方向优先**：标题写明某人抱怨/揭发另一方「背着我/瞒着我/不告诉我」时，
+  该事的承认、自曝、辩解句归**被揭发方**，抱怨方只说指认、追问、讨要；
+  不得把被揭发方的自曝或辩解写成抱怨方的话
 - **允许同一 speaker 连说多行**：相邻句语义/语气接续像同一人（如把话补完、
   连说两句压人）时写成同一 speaker 的连续行，禁止为凑交替硬拆成两人
 - 合并 ASR 误切的碎句；修正明显同音错字（结合语境，勿脑补新剧情）
@@ -232,7 +237,8 @@ _H2_USER = """视频标题：{title}
 - **标题是事实层的最强线索**：标题/简介写明某人抱怨、揭发另一方做过某事时，
   该事归 **被抱怨/被揭发那一方**；标题里出现「都背着我」「不告诉我」这类
   被排除表达时，说这话的人是抱怨方，另一方才是做过那件事的人。
-  逐字稿推断与标题冲突的，以标题为准改正归属。
+  含引号对白里凡涉及该事的承认、自曝、辩解句，须归被揭发方；
+  抱怨方只写指认、追问、讨要。逐字稿推断与标题冲突的，以标题为准改正归属。
   H0c 归错的和句子本身冲突的，按标题/简介/语义重新归属，
   仍判不定的写成非引语概括（如「有人用把柄反将一军」「家长心虚否认」），
   不得把错位原话写进引号
@@ -767,10 +773,20 @@ def build_scene_contract(
         "也禁止原样带回 ≥300 的站外总分；须改成小学可拍量级"
         "（百分制或两三科合计），并保留高低分对比梗。"
     )
+    title_retry_hint = (
+        "\n\n【事实归属重试硬约束】上一稿 facts 与视频标题的抱怨方向矛盾："
+        "标题已表明是**孩子抱怨家长背着自己做事**，"
+        "因此 `accuser`/`discoverer` 必须是抱怨的孩子，"
+        "`secret_holder`/`denier` 必须是那位家长（偷吃/瞒着的是家长，不是孩子）。"
+        "请据此改正 facts，并让 beat_chain 的指认/辩解拍与之一致。"
+    )
     data: dict[str, Any] | None = None
     last_age_errs: list[str] = []
+    title_conflicts: list[str] = []
     for attempt in range(2):
         user = base_user + (age_retry_hint if attempt else "")
+        if attempt and title_conflicts:
+            user += title_retry_hint
         data = _chat_json(_H3A_SYSTEM, user)
         # 以库内 structure_type 为准，勿被 LLM 默认 C 带偏
         target_st = str(h3.get("structure_type") or "").strip().upper()
@@ -782,6 +798,19 @@ def build_scene_contract(
             data.get("source_type") or source_type or "field"
         ).lower()
         data["facts"] = normalize_fact_attributions(data.get("facts"))
+        title_conflicts = fact_title_conflict_notes(
+            data["facts"],
+            video_title=video_title,
+            characters=data.get("characters")
+            if isinstance(data.get("characters"), list)
+            else [],
+        )
+        if title_conflicts:
+            logger.info(
+                "H3a fact/title conflict attempt=%s notes=%s",
+                attempt,
+                title_conflicts[:2],
+            )
         if fact_attribution_review_required(data["facts"]):
             logger.info(
                 "H3a fact attribution not resolved: %s",
@@ -814,13 +843,32 @@ def build_scene_contract(
                 f"H3a scene_contract invalid: {'; '.join(errors[:5])}"
             )
         last_age_errs = age_remap_contract_errors(story_raw, data)
+        if not last_age_errs and not title_conflicts:
+            break
+        if not last_age_errs and title_conflicts and attempt == 0:
+            # 只重抽一次标题冲突；重抽结果留到下一轮或收尾处理
+            continue
         if not last_age_errs:
             break
         data, _forced = force_age_score_remap(data, story_raw=story_raw)
         last_age_errs = age_remap_contract_errors(story_raw, data)
+        if not last_age_errs and not title_conflicts:
+            break
         if not last_age_errs:
             break
     assert data is not None
+    if title_conflicts:
+        # 重抽仍与标题矛盾：标 ambiguous 交复核门控，不硬改角色
+        data = dict(data)
+        data["facts"], marked = mark_facts_ambiguous(
+            data.get("facts"),
+            reason="title_conflict",
+        )
+        if marked:
+            logger.warning(
+                "H3a fact/title conflict unresolved, marked ambiguous: %s",
+                title_conflicts[:2],
+            )
     if last_age_errs:
         data, _ = force_age_score_remap(data, story_raw=story_raw)
         last_age_errs = age_remap_contract_errors(story_raw, data)
