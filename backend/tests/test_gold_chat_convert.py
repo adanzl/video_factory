@@ -1429,7 +1429,7 @@ def test_gold_chat_summary_from_payload():
 
 
 def test_source_facts_gate_blocks_unresolved_attribution():
-    """facts 未 resolved 时不得自动发布（导入判定为 review_pending）。"""
+    """指定了行为人的 facts 未 resolved 时不得自动发布（判 review_pending）。"""
     from app.services.gold_story.gold_chat.import_story import (
         _source_facts_not_resolved,
     )
@@ -1450,13 +1450,33 @@ def test_source_facts_gate_blocks_unresolved_attribution():
             }
         }
     )
+    # 只复述事件、没指定行为人的条目不算归属，不拦
+    assert not _source_facts_not_resolved(
+        {
+            "payload": {
+                "scene_contract": {
+                    "facts": [
+                        {
+                            "fact_id": "F1",
+                            "discoverer": "妈妈",
+                            "attribution_status": "ambiguous",
+                        }
+                    ]
+                }
+            }
+        }
+    )
     for status in ("ambiguous", "review_pending", ""):
         assert _source_facts_not_resolved(
             {
                 "payload": {
                     "scene_contract": {
                         "facts": [
-                            {"fact_id": "F1", "attribution_status": status}
+                            {
+                                "fact_id": "F1",
+                                "secret_holder": "妈妈",
+                                "attribution_status": status,
+                            }
                         ]
                     }
                 }

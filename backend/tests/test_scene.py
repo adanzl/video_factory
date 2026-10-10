@@ -801,7 +801,20 @@ def test_fact_attribution_review_required_for_unresolved():
             [{"fact_id": "F1", "secret_holder": "妈妈"}]
         )
     )
-    # 缺 attribution_status 视为未定稿，不得放行
-    assert fact_attribution_review_required([{"fact_id": "F1"}])
+    # 指定了行为人却缺 attribution_status：视为未定稿，不得放行
+    assert fact_attribution_review_required(
+        normalize_fact_attributions([{"fact_id": "F1", "secret_holder": "妈妈"}])
+    )
     assert not fact_attribution_review_required([])
     assert not fact_attribution_review_required(None)
+    # 只复述事件、没指定行为人的条目不算归属，不拦（避免误伤正常稿）
+    assert not fact_attribution_review_required(
+        [
+            {
+                "fact_id": "F1",
+                "event": "妈妈买玩具，兄弟俩抢起来",
+                "discoverer": "妈妈",
+                "attribution_status": "ambiguous",
+            }
+        ]
+    )

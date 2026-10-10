@@ -1606,15 +1606,29 @@ def filter_fact_bound_rows(
 def fact_attribution_review_required(facts: list[Any] | None) -> bool:
     """事实归属未定稿即需复核：只有显式 ``resolved`` 才放行。
 
+    只拦**真的做了归属**的事实（有 secret_holder/accuser/denier）：
+    没有把柄、只是复述事件的空槽位条目不参与门控，避免误伤正常稿。
     无 facts 表示本稿不涉及「谁做过那件事」的角色槽位，不拦。
     """
     for item in facts or []:
         if not isinstance(item, dict):
             continue
+        if not is_attribution_relevant_fact(item):
+            continue
         status = str(item.get("attribution_status") or "").strip().lower()
         if status != "resolved":
             return True
     return False
+
+
+def is_attribution_relevant_fact(fact: dict[str, Any]) -> bool:
+    """该 fact 是否真的指定了行为人（否则只是事件复述，不参与门控）。"""
+    if not isinstance(fact, dict):
+        return False
+    return any(
+        str(fact.get(key) or "").strip()
+        for key in ("secret_holder", "accuser", "denier")
+    )
 
 
 def fact_claim_alignment_notes(

@@ -410,6 +410,8 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
   `speech_act=claim_compensation`、`claim_role=claimant`），不得漏拍；
   源稿确无讨要则 `claimant` 写 `unknown`（`beneficiary` 只标得利方）
 - 引述家长原话、过家家扮演的事件标 `quotation_frame`/`role_play=true`
+- **没有把柄/秘密/专属过错事件时，`facts` 输出空数组**：
+  只复述事件的空槽位条目不算 fact，别造
 - 与事实相关的拍必须带 `fact_ref` + `speech_act` + `claim_role`；
   与事实无关的拍可不标
 
