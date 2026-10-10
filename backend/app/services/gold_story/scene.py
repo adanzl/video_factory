@@ -229,17 +229,17 @@ def normalize_retrospective_n_opening_parent_beats(
         )
     ):
         new_chain = [first, *chain[2:]]
-        normalized: list[Any] = []
+        normalized_support: list[Any] = []
         for idx, row in enumerate(new_chain, 1):
             if isinstance(row, dict):
                 item = dict(row)
                 if "beat" in item:
                     item["beat"] = idx
-                normalized.append(item)
+                normalized_support.append(item)
             else:
-                normalized.append(row)
+                normalized_support.append(row)
         out = dict(contract)
-        out["beat_chain"] = normalized
+        out["beat_chain"] = normalized_support
         return out, [f"移除N回忆开场冗余附和拍:{speaker2}"]
 
     if speaker2 != speaker1:
@@ -250,17 +250,17 @@ def normalize_retrospective_n_opening_parent_beats(
     merged_first = dict(first)
     merged_first["intent"] = f"{intent1}；{intent2}".strip("；")
     new_chain: list[Any] = [merged_first, *chain[2:]]
-    normalized: list[Any] = []
+    normalized_merged: list[Any] = []
     for idx, row in enumerate(new_chain, 1):
         if isinstance(row, dict):
             item = dict(row)
             if "beat" in item:
                 item["beat"] = idx
-            normalized.append(item)
+            normalized_merged.append(item)
         else:
-            normalized.append(row)
+            normalized_merged.append(row)
     out = dict(contract)
-    out["beat_chain"] = normalized
+    out["beat_chain"] = normalized_merged
     return out, [f"合并N回忆开场连续家长拍:{speaker1}"]
 
 
