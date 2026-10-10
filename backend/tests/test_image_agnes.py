@@ -1019,19 +1019,21 @@ def test_concurrent_submit_staggered() -> None:
 
 
 def test_image_submit_gate_is_pool_aware() -> None:
-    """图片按密钥池计时：付费池 1s、免费池 6s，各算各的。"""
+    """图片按密钥池计时：付费池 1s、免费池 6s，四个池各算各的。"""
     provider = AgnesImageProvider()
     provider._paid_interval_sec = 1.0  # noqa: SLF001
     provider._free_interval_sec = 6.0  # noqa: SLF001
     provider._free_pool_shared = True  # noqa: SLF001
     AgnesImageProvider._next_submit_at_by_pool = {}
 
-    assert provider._pool_for_key("primary") == "paid"  # noqa: SLF001
-    assert provider._pool_for_key("free") == "free"  # noqa: SLF001
-    # 默认同池：两把免费 key 合用一个池
-    assert provider._pool_for_key("cn_free") == "free"  # noqa: SLF001
-    assert provider._interval_for_pool("paid") == 1.0  # noqa: SLF001
-    assert provider._interval_for_pool("free") == 6.0  # noqa: SLF001
+    assert provider._pool_for_key("primary") == "paid_intl"  # noqa: SLF001
+    assert provider._pool_for_key("cn_paid") == "paid_cn"  # noqa: SLF001
+    assert provider._pool_for_key("free") == "free_intl"  # noqa: SLF001
+    # 跨站点恒分池：国内免费不再与国际免费共用池
+    assert provider._pool_for_key("cn_free") == "free_cn"  # noqa: SLF001
+    assert provider._interval_for_pool("paid_intl") == 1.0  # noqa: SLF001
+    assert provider._interval_for_pool("paid_cn") == 1.0  # noqa: SLF001
+    assert provider._interval_for_pool("free_cn") == 6.0  # noqa: SLF001
 
     clock = {"now": 1000.0}
     sleeps: list[float] = []
@@ -1049,27 +1051,29 @@ def test_image_submit_gate_is_pool_aware() -> None:
             side_effect=_fake_sleep,
         ),
     ):
-        # 付费池首次不等
+        # 两个池首次都不等（池间互相独立）
         assert provider._submit_gate_wait("primary") == 0.0  # noqa: SLF001
         provider._advance_submit_gate("primary")  # noqa: SLF001
-        # 免费池首次也不等（两个池互相独立）
         assert provider._submit_gate_wait("free") == 0.0  # noqa: SLF001
         provider._advance_submit_gate("free")  # noqa: SLF001
+        # 国内池与国外池无关，仍是全新计时
+        assert provider._submit_gate_wait("cn_free") == 0.0  # noqa: SLF001
 
         clock["now"] = 1000.5
         # 付费池还需 0.5s
         assert abs(provider._submit_gate_wait("primary") - 0.5) < 0.01  # noqa: SLF001
         # 免费池还需 5.5s
-        assert abs(provider._submit_gate_wait("cn_free") - 5.5) < 0.01  # noqa: SLF001
+        assert abs(provider._submit_gate_wait("free") - 5.5) < 0.01  # noqa: SLF001
     assert sleeps == []
 
 
-def test_image_free_pools_can_split() -> None:
-    """两把免费 key 若确属不同账号，可设 AGNES_FREE_POOL_SHARED=0 拆成两个池。"""
+def test_image_free_pools_split_across_sites() -> None:
+    """跨站点两把免费 key 恒为两池（仅同站点多把才看 AGNES_FREE_POOL_SHARED）。"""
     provider = AgnesImageProvider()
-    provider._free_pool_shared = False  # noqa: SLF001
-    assert provider._pool_for_key("free") == "free"  # noqa: SLF001
-    assert provider._pool_for_key("cn_free") == "cn_free"  # noqa: SLF001
+    for shared in (False, True):
+        provider._free_pool_shared = shared  # noqa: SLF001
+        assert provider._pool_for_key("free") == "free_intl"  # noqa: SLF001
+        assert provider._pool_for_key("cn_free") == "free_cn"  # noqa: SLF001
 
 
 def test_generate_acquires_slot_with_its_key_pool() -> None:

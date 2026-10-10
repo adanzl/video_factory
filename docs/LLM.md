@@ -95,17 +95,40 @@ TokenPlan 另受**每日 500 秒**视频时长配额约束（RPM 与配额同时
  "message": "video queue is full, please retry later"}
 ```
 
-即**上游视频队列排满**（Flash 限时免费、全平台共享容量），
+即**上游视频队列排满**（Flash 限时免费、容量紧张），
 不是参数错误——同轮错误参数探针均返回带 `param` 的精确 400。
+
+**队列按限制池隔离**：2026-10-10 10:01 实测同一分钟内「国外付费池入队成功、
+国外免费池 503」，证明各池队列独立，故支持四池轮换（见下）。
 针对它：
 
 - `_request` 对 5xx **必须记 body**（`code`/`message`）；此前只记状态码，
   导致把「队列满」误判为「网关故障」；
 - 队列满**不换域名**（同后端，换域名只会加重队列），首次即停手；
-- 冷却基准单独设 `AGNES_VIDEO_QUEUE_FULL_COOLDOWN_BASE_SEC`（默认 120s，
-  仍按 streak 指数放大、300s 封顶）；
+- **按池冻结 + 轮换**：某池报满只降温该池
+  （`AGNES_VIDEO_QUEUE_FULL_COOLDOWN_BASE_SEC`，默认 120s），同轮换下一池；
+  四池皆满才升级为全局冷却（指数退避、300s 封顶）；
 - **并发退回串行**：`AgnesClipProvider.upstream_backpressure_active()` 为真时，
   `media_mgr` 把本批 clip 的 workers 降为 1，减少无效提交。
+
+### 四限制池轮换
+
+密钥限制池 = **档位 × 站点**，共 4 池，额度与视频队列都按池独立：
+
+| 池 | Key | 绑定地址 |
+| --- | --- | --- |
+| `paid_intl` | `AGNES_API_KEY` | `AGNES_API_BASE_URL` |
+| `paid_cn` | `AGNES_CN_API_KEY` | `AGNES_API_BASE_URL_CN` |
+| `free_intl` | `AGNES_FREE_API_KEY` | `AGNES_API_BASE_URL` |
+| `free_cn` | `AGNES_CN_FREE_API_KEY` | `AGNES_API_BASE_URL_CN` |
+
+- **轮询顺序**：国外付费 → 国内付费 → 国外免费 → 国内免费；
+  提交闸门、429 冷却、队列满冷却都按池记账，
+  某池不可用时立刻轮换到下一池，不整体等待；
+- **跨站点恒分池**：`AGNES_FREE_POOL_SHARED` 只在同一站点有多把免费 key
+  时才起作用（旧行为里国内免费会并进免费池，现已按站点拆开）；
+- **失败升级**：四池皆满才进全局冷却；网关 5xx（非队列满）不轮换，
+  直接全局冷却，因为换 key、换站点对网关故障无效。
 
 ## max_tokens 约定
 

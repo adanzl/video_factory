@@ -434,12 +434,15 @@ def test_agnes_i2v_submit_interval_by_pool() -> None:
     AgnesClipProvider._last_submit_at_by_pool.clear()
     AgnesClipProvider._cooldown_until_by_pool.clear()
 
-    assert provider._pool_for_key("primary") == "paid"  # noqa: SLF001
-    assert provider._pool_for_key("free") == "free"  # noqa: SLF001
-    # 官方按密钥类型共享额度：免费 + 国内免费默认同一个池
-    assert provider._pool_for_key("cn_free") == "free"  # noqa: SLF001
-    assert provider._interval_for_pool("paid") == 12.0  # noqa: SLF001
-    assert provider._interval_for_pool("free") == 60.0  # noqa: SLF001
+    assert provider._pool_for_key("primary") == "paid_intl"  # noqa: SLF001
+    assert provider._pool_for_key("cn_paid") == "paid_cn"  # noqa: SLF001
+    assert provider._pool_for_key("free") == "free_intl"  # noqa: SLF001
+    # 跨站点恒分池：国内免费与国际免费不再共用池
+    assert provider._pool_for_key("cn_free") == "free_cn"  # noqa: SLF001
+    assert provider._interval_for_pool("paid_intl") == 12.0  # noqa: SLF001
+    assert provider._interval_for_pool("paid_cn") == 12.0  # noqa: SLF001
+    assert provider._interval_for_pool("free_intl") == 60.0  # noqa: SLF001
+    assert provider._interval_for_pool("free_cn") == 60.0  # noqa: SLF001
 
     sleeps: list[float] = []
 
@@ -469,18 +472,19 @@ def test_agnes_i2v_submit_interval_by_pool() -> None:
         # 付费池上次在 100，间隔 12 → 115 已够，不等
         provider._throttle_submit("primary")  # noqa: SLF001
         # 免费池上次在 100，间隔 60 → 还需等 45s
-        provider._throttle_submit("cn_free")  # noqa: SLF001
+        provider._throttle_submit("free")  # noqa: SLF001
 
     assert len(sleeps) == 1
     assert abs(sleeps[0] - 45.0) < 0.01
 
 
-def test_agnes_i2v_free_pools_can_split() -> None:
-    """两把免费 key 若确属不同账号，可用 AGNES_FREE_POOL_SHARED=0 拆成两个池。"""
+def test_agnes_i2v_free_pools_split_across_sites() -> None:
+    """跨站点两把免费 key 恒为两池（仅同站点多把才看 AGNES_FREE_POOL_SHARED）。"""
     provider = AgnesClipProvider()
-    provider._free_pool_shared = False  # noqa: SLF001
-    assert provider._pool_for_key("free") == "free"  # noqa: SLF001
-    assert provider._pool_for_key("cn_free") == "cn_free"  # noqa: SLF001
+    for shared in (False, True):
+        provider._free_pool_shared = shared  # noqa: SLF001
+        assert provider._pool_for_key("free") == "free_intl"  # noqa: SLF001
+        assert provider._pool_for_key("cn_free") == "free_cn"  # noqa: SLF001
 
 
 def test_agnes_i2v_submit_retries_http_429() -> None:
@@ -1089,8 +1093,10 @@ def test_agnes_poll_request_not_gated_by_submit_throttle() -> None:
 def _upstream_reset() -> None:
     AgnesClipProvider._upstream_retry_at = 0.0  # noqa: SLF001
     AgnesClipProvider._upstream_fail_streak = 0  # noqa: SLF001
+    AgnesClipProvider._upstream_queue_full = False  # noqa: SLF001
     AgnesClipProvider._last_submit_at_by_pool.clear()
     AgnesClipProvider._cooldown_until_by_pool.clear()
+    AgnesClipProvider._pool_cooldown_reason.clear()
 
 
 def test_submit_two_5xx_raises_upstream_unavailable() -> None:
@@ -1276,6 +1282,92 @@ def test_submit_queue_full_stops_immediately_without_host_failover() -> None:
     assert excinfo.value.queue_full is True
     assert "video_queue_full" in str(excinfo.value)
     assert mock_req.call_count == 1, "队列满不该再换域名重试"
+
+
+def test_queue_full_rotates_to_next_pool_instead_of_global_cooldown() -> None:
+    """某池队列满只冻结该池，同轮轮换到下一池，不升级为全局冷却。"""
+    provider = AgnesClipProvider()
+    provider._queue_full_cooldown_base_sec = 120.0  # noqa: SLF001
+    _upstream_reset()
+    keys = [
+        AgnesApiKey("primary", "k-paid-intl", "https://apihub.agnes-ai.com/v1"),
+        AgnesApiKey("cn_paid", "k-paid-cn", "https://api.agnes-ai.cn/v1"),
+        AgnesApiKey("free", "k-free-intl", "https://apihub.agnes-ai.com/v1"),
+    ]
+    calls: list[str] = []
+    sleeps: list[float] = []
+
+    def operation(key: AgnesApiKey) -> str:
+        calls.append(key.label)
+        if key.label != "free":
+            raise AgnesUpstreamUnavailable(
+                "agnes upstream unavailable: HTTP 503 (queue full)",
+                queue_full=True,
+            )
+        return "ok"
+
+    with (
+        patch("app.services.segment.clip.video_agnes.agnes_api_keys", return_value=keys),
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=lambda: 1000.0,
+        ),
+        patch(
+            "app.services.segment.clip.video_agnes.time.sleep",
+            side_effect=lambda sec: sleeps.append(sec),
+        ),
+    ):
+        assert provider._with_api_key_fallback(operation) == "ok"  # noqa: SLF001
+
+    assert calls == ["primary", "cn_paid", "free"], "两个满池应依次轮换到可用池"
+    assert sleeps == [], "还有可用池时不该整体等待"
+    assert provider.upstream_backpressure_active() is False  # noqa: SLF001
+    assert (  # noqa: SLF001
+        AgnesClipProvider._pool_cooldown_reason["paid_intl"] == "queue_full"
+    )
+    assert (  # noqa: SLF001
+        AgnesClipProvider._pool_cooldown_reason["paid_cn"] == "queue_full"
+    )
+
+
+def test_all_pools_queue_full_escalates_to_global_cooldown() -> None:
+    """四个限制池全满：升级为全局冷却，并在超预算时以队列满原因失败。"""
+    provider = AgnesClipProvider()
+    provider._queue_full_cooldown_base_sec = 120.0  # noqa: SLF001
+    provider._upstream_cooldown_max_sec = 300.0  # noqa: SLF001
+    provider._upstream_wait_budget_sec = 60.0  # noqa: SLF001
+    _upstream_reset()
+    keys = [
+        AgnesApiKey("primary", "k-paid-intl", "https://apihub.agnes-ai.com/v1"),
+        AgnesApiKey("cn_paid", "k-paid-cn", "https://api.agnes-ai.cn/v1"),
+    ]
+    clock = {"now": 1000.0}
+    calls: list[str] = []
+
+    def _fake_sleep(sec: float) -> None:
+        clock["now"] += sec
+
+    def operation(key: AgnesApiKey) -> str:
+        calls.append(key.label)
+        raise AgnesUpstreamUnavailable(
+            "agnes upstream unavailable: HTTP 503 (queue full)",
+            queue_full=True,
+        )
+
+    with (
+        patch("app.services.segment.clip.video_agnes.agnes_api_keys", return_value=keys),
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
+        patch("app.services.segment.clip.video_agnes.random.uniform", return_value=1.0),
+        pytest.raises(AgnesUpstreamUnavailable) as excinfo,
+    ):
+        provider._with_api_key_fallback(operation)  # noqa: SLF001
+
+    assert excinfo.value.queue_full is True
+    assert calls == ["primary", "cn_paid"] * (len(calls) // 2), "每轮都该轮换两池"
 
 
 def test_queue_full_uses_longer_cooldown_base() -> None:

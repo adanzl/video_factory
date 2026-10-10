@@ -33,6 +33,7 @@ from app.services.llm.llm_agnes import (
     agnes_auth_header,
     agnes_key_base_url,
     agnes_key_pool,
+    agnes_pool_is_paid,
     agnes_quota_exceeded_from_exception,
     agnes_should_switch_key,
     raise_if_agnes_quota,
@@ -44,9 +45,8 @@ logger = logging.getLogger(__name__)
 # 含 Cloudflare 源站错误 52x（如 520 unknown error）
 _RETRYABLE_HTTP = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
 # Agnes 视频 RPM（官方 wiki tokenplan）：default 实际 1 RPM；TokenPlan 实际 5 RPM。
-# 限制池按「密钥类型」共享（同类型多 key 共用一个池），故按池计时而非按 key 计时。
-_POOL_PAID = "paid"
-_POOL_FREE = "free"
+# 限制池按「密钥档位 × 站点」分池（付费/免费 × 国际/国内，共 4 池），
+# 同池内多把 key 共享额度与队列，故按池计时/冷却而非按 key。
 _TASK_RETRY_TOKENS = ("failed", "timeout", "429", "rate limit", "too many")
 _TERMINAL_POLL_STATES = frozenset({"completed", "failed"})
 # Video 2.5 Flash：图生视频用 keyframe + first_frame（保持成片真实首帧）
@@ -758,11 +758,13 @@ def _loop_video_to_duration(
 
 class AgnesClipProvider(ClipProvider):
     # 视频 RPM 按「限制池」计时：付费池（TokenPlan 5 RPM→12s）与免费池（1 RPM→60s）。
-    # 官方：限制池按密钥类型共享，同类型多把 key 合起来只有一个池的额度。
+    # 官方：限制池按「密钥档位 × 站点」分池，同池多把 key 共用一个额度与队列。
     _submit_lock = Semaphore(value=1)
     _last_submit_at_by_pool: dict[str, float] = {}
-    # 429 后该池冷却，冷却期内换下一把 key；全部冷却才整批等待
+    # 池冷却（429 或队列满）期内轮换到下一池；全部冷却才整批等待
     _cooldown_until_by_pool: dict[str, float] = {}
+    # 池冷却成因：rate_limit（429）/ queue_full（503 video_queue_full）
+    _pool_cooldown_reason: dict[str, str] = {}
     # 上游 5xx 冷却：跨 key / 池 / 任务共享（换 key 对上游故障无效）
     _upstream_lock = Semaphore(value=1)
     _upstream_retry_at: float = 0.0
@@ -812,12 +814,12 @@ class AgnesClipProvider(ClipProvider):
             job_cancel.raise_if_cancelled(self._active_job_id)
 
     def _pool_for_key(self, key_label: str) -> str:
-        """key → 视频限制池；官方按密钥类型共享额度，同型多 key 只算一个池。"""
+        """key → 视频限制池（付费/免费 × 国际/国内）。"""
         return agnes_key_pool(key_label, free_shared=self._free_pool_shared)
 
     def _interval_for_pool(self, pool: str) -> float:
-        """池内最小请求间隔：TokenPlan 5 RPM→12s；免费 1 RPM→60s。"""
-        if pool == _POOL_PAID:
+        """池内最小请求间隔：付费 TokenPlan 5 RPM→12s；免费 1 RPM→60s。"""
+        if agnes_pool_is_paid(pool):
             return max(0.0, self._submit_interval)
         return max(0.0, self._free_submit_interval)
 
@@ -826,25 +828,44 @@ class AgnesClipProvider(ClipProvider):
         key_label: str,
         *,
         seconds: float | None = None,
-    ) -> None:
-        """429 后冻结该池一个窗口，期间请求换下一把 key。"""
+        reason: str = "rate_limit",
+    ) -> float:
+        """冻结该池一个窗口，期间请求轮换到下一池；返回该池剩余冷却秒数。
+
+        ``reason`` 区分 429（``rate_limit``，受密钥等待预算约束）与
+        队列满（``queue_full``，受上游等待预算约束），两者预算口径不同。
+        """
         pool = self._pool_for_key(key_label)
         secs = self._rate_limit_cooldown_sec if seconds is None else float(seconds)
         until = time.monotonic() + max(0.0, secs)
         if until > self._cooldown_until_by_pool.get(pool, 0.0):
             self._cooldown_until_by_pool[pool] = until
+            self._pool_cooldown_reason[pool] = reason
+        return max(0.0, until - time.monotonic())
 
     def _pool_cooldown_left(self, key_label: str) -> float:
         pool = self._pool_for_key(key_label)
         return max(0.0, self._cooldown_until_by_pool.get(pool, 0.0) - time.monotonic())
 
+    def _pool_queue_full_cooling(self, keys: list[AgnesApiKey]) -> bool:
+        """是否所有池都在「队列满」冷却中（决定按上游预算等待）。"""
+        cls = type(self)
+        for key in keys:
+            pool = self._pool_for_key(key.label)
+            if self._pool_cooldown_left(key.label) <= 0:
+                return False
+            if cls._pool_cooldown_reason.get(pool) != "queue_full":
+                return False
+        return True
+
     def _upstream_cooldown_left(self) -> float:
         return max(0.0, type(self)._upstream_retry_at - time.monotonic())
 
     def _note_upstream_failure(self, *, queue_full: bool = False) -> float:
-        """上游 5xx：全局冷却指数退避（带抖动），返回本次冷却秒数。
+        """上游全局冷却指数退避（带抖动），返回本次冷却秒数。
 
-        ``queue_full`` 走更长的基准（队列排空是分钟级，且全平台共享）。
+        ``queue_full`` 表示**四个限制池全部**报队列满，此时单池轮换已无出路，
+        才升级为全局冷却，基准取队列满专用值（排空是分钟级）。
         """
         base = (
             self._queue_full_cooldown_base_sec
@@ -863,8 +884,8 @@ class AgnesClipProvider(ClipProvider):
             cls._upstream_retry_at = max(cls._upstream_retry_at, time.monotonic() + delay)
             streak = cls._upstream_fail_streak
         logger.warning(
-            "agnes upstream unavailable (%s): streak=%s, cooldown %.0fs (no key switch)",
-            "queue full" if queue_full else "5xx",
+            "agnes upstream unavailable (%s): streak=%s, global cooldown %.0fs",
+            "all pools queue full" if queue_full else "gateway 5xx",
             streak,
             delay,
         )
@@ -1145,30 +1166,33 @@ class AgnesClipProvider(ClipProvider):
         }
 
     def _with_api_key_fallback(self, operation: Callable[[AgnesApiKey], Path]) -> Path:
-        """按 key 链依次尝试：跳过冷却中的池；全部冷却则等最早恢复再试。
+        """按 key 链轮询四池：跳过冷却中的池；四池皆冷却才整体等待。
 
-        两类等待分开计时：
+        三类等待分开计时：
 
         - **429（配额/限流）**：冻结该池并换下一把 key，等待受
           ``AGNES_VIDEO_KEY_WAIT_BUDGET_SEC`` 约束；
-        - **上游 5xx（AgnesUpstreamUnavailable）**：不换 key（换 key 无效），
-          走全局上游冷却后重试，等待受
-          ``AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC`` 约束（默认 60 分钟），
-          超预算才失败。上游抖动期间请求量降到每轮一次。
+        - **队列满（503 video_queue_full）**：按池计，冻结该池后轮换到
+          下一池（两个站点、付费/免费四池队列彼此独立）；四池都满才进
+          全局冷却，等待受 ``AGNES_VIDEO_UPSTREAM_WAIT_BUDGET_SEC`` 约束
+          （默认 60 分钟），超预算才失败；
+        - **其它上游 5xx（网关故障）**：换 key、换站点皆无效，直接进全局
+          冷却，同样受上游等待预算约束。
         """
         keys = agnes_api_keys()
         if not keys:
             raise AgnesI2VError(
-                "AGNES_API_KEY / AGNES_FREE_API_KEY / AGNES_CN_FREE_API_KEY "
-                "未配置，无法调用 Agnes 图生视频"
+                "AGNES_API_KEY / AGNES_CN_API_KEY / AGNES_FREE_API_KEY / "
+                "AGNES_CN_FREE_API_KEY 未配置，无法调用 Agnes 图生视频"
             )
 
         quota_deadline = time.monotonic() + max(0.0, self._key_wait_budget_sec)
         upstream_deadline = time.monotonic() + max(0.0, self._upstream_wait_budget_sec)
         last_exc: Exception | None = None
         while True:
-            # 别的分镜/任务刚撞过 5xx：先等冷却，别拿本次提交去试探
+            # 别的分镜/任务刚撞过网关 5xx：先等冷却，别拿本次提交去试探
             self._wait_for_upstream(upstream_deadline)
+            queue_full_seen = False
             for idx, key in enumerate(keys):
                 cooling = self._pool_cooldown_left(key.label)
                 if cooling > 0:
@@ -1186,10 +1210,25 @@ class AgnesClipProvider(ClipProvider):
                 except AgnesContentPolicyError:
                     raise
                 except AgnesUpstreamUnavailable as exc:
-                    # 上游整体不可用：不换 key，回 while 顶部等冷却后重试
                     last_exc = exc
-                    self._note_upstream_failure(queue_full=exc.queue_full)
-                    break
+                    if not exc.queue_full:
+                        # 网关 5xx：换 key 无效，进全局冷却后重试
+                        self._note_upstream_failure(queue_full=False)
+                        break
+                    # 队列满按池计：冻结该池、轮换到下一池，先别惊动全局冷却
+                    queue_full_seen = True
+                    cooled = self._mark_pool_cooldown(
+                        key.label,
+                        seconds=self._queue_full_pool_cooldown_sec(),
+                        reason="queue_full",
+                    )
+                    logger.warning(
+                        "agnes %s key queue full (%s pool), rotate to next pool "
+                        "(pool cooling %.0fs)",
+                        key.label,
+                        self._pool_for_key(key.label),
+                        cooled,
+                    )
                 except Exception as exc:
                     last_exc = exc
                     if not agnes_should_switch_key(exc):
@@ -1201,7 +1240,7 @@ class AgnesClipProvider(ClipProvider):
                             type(exc).__name__,
                         )
             else:
-                # key 链走完（无 break）：处理 429 池冷却或收尾退出
+                # key 链走完（无 break）：四池要么冷却、要么都满
                 cooldowns = [
                     left
                     for left in (self._pool_cooldown_left(k.label) for k in keys)
@@ -1209,15 +1248,26 @@ class AgnesClipProvider(ClipProvider):
                 ]
                 if not cooldowns:
                     break
+                all_queue_full = self._pool_queue_full_cooling(keys)
+                if all_queue_full:
+                    # 四池皆满：升级为全局冷却，让并发层也看到背压
+                    self._note_upstream_failure(queue_full=True)
                 sleep_for = min(cooldowns)
-                if time.monotonic() + sleep_for > quota_deadline:
+                # 有池因队列满而冷却时按上游预算等（60 分钟），
+                # 纯 429 冷却仍按密钥预算等
+                deadline = (
+                    upstream_deadline
+                    if queue_full_seen or all_queue_full
+                    else quota_deadline
+                )
+                if time.monotonic() + sleep_for > deadline:
                     logger.warning(
-                        "agnes video keys busy: %.1fs wait exceeds budget, giving up",
+                        "agnes video pools busy: %.1fs wait exceeds budget, giving up",
                         sleep_for,
                     )
                     break
                 logger.warning(
-                    "agnes video keys busy: all pools cooling, wait %.1fs then retry",
+                    "agnes video pools busy: all pools cooling, wait %.1fs then retry",
                     sleep_for,
                 )
                 time.sleep(sleep_for)
@@ -1226,6 +1276,10 @@ class AgnesClipProvider(ClipProvider):
         if last_exc is not None:
             raise last_exc
         raise AgnesI2VError("agnes i2v failed: all keys rate limited")
+
+    def _queue_full_pool_cooldown_sec(self) -> float:
+        """单池队列满后的冷却时长（比网关 5xx 基准长，排空是分钟级）。"""
+        return max(0.0, self._queue_full_cooldown_base_sec)
 
     def _generate_raw_with_key(
         self,

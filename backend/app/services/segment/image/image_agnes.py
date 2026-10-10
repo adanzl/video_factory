@@ -32,6 +32,7 @@ from app.services.llm.llm_agnes import (
     agnes_auth_header,
     agnes_key_base_url,
     agnes_key_pool,
+    agnes_pool_is_paid,
     agnes_quota_exceeded_from_exception,
     agnes_should_switch_key,
     raise_if_agnes_content_policy,
@@ -341,7 +342,8 @@ class AgnesImageProvider(ImageProvider):
         return agnes_key_pool(key_label, free_shared=self._free_pool_shared)
 
     def _interval_for_pool(self, pool: str) -> float:
-        if pool == "paid":
+        """池内最小请求间隔：付费池 5 RPM→1s；免费池 1 RPM→6s 起。"""
+        if agnes_pool_is_paid(pool):
             return self._paid_interval_sec
         return self._free_interval_sec
 

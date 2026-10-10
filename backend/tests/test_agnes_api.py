@@ -13,6 +13,8 @@ from app.services.llm.llm_agnes import (
     AgnesQuotaExceeded,
     agnes_alternate_host_url,
     agnes_api_keys,
+    agnes_key_pool,
+    agnes_pool_is_paid,
     agnes_quota_exceeded_from_exception,
     agnes_should_switch_key,
     is_agnes_content_policy,
@@ -76,6 +78,33 @@ def test_agnes_api_keys_includes_cn_free() -> None:
         AgnesApiKey("free", "free-key", "https://apihub.agnes-ai.com/v1"),
         AgnesApiKey("cn_free", "cn-key", "https://api.agnes-ai.cn/v1"),
     ]
+
+
+def test_agnes_api_keys_includes_cn_paid_second() -> None:
+    """四池齐全：国外收费 → 国内收费 → 国外免费 → 国内免费。"""
+    settings = SimpleNamespace(
+        agnes_api_key="intl-paid",
+        agnes_cn_api_key="cn-paid",
+        agnes_free_api_key="intl-free",
+        agnes_cn_free_api_key="cn-free",
+        agnes_api_base_url="https://apihub.agnes-ai.com/v1",
+        agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
+    )
+    keys = agnes_api_keys(settings)  # type: ignore[arg-type]
+    assert keys == [
+        AgnesApiKey("primary", "intl-paid", "https://apihub.agnes-ai.com/v1"),
+        AgnesApiKey("cn_paid", "cn-paid", "https://api.agnes-ai.cn/v1"),
+        AgnesApiKey("free", "intl-free", "https://apihub.agnes-ai.com/v1"),
+        AgnesApiKey("cn_free", "cn-free", "https://api.agnes-ai.cn/v1"),
+    ]
+    assert [agnes_key_pool(k.label) for k in keys] == [
+        "paid_intl",
+        "paid_cn",
+        "free_intl",
+        "free_cn",
+    ], "四把 key 必须落在四个独立限制池"
+    assert agnes_pool_is_paid("paid_cn") is True
+    assert agnes_pool_is_paid("free_cn") is False
 
 
 def test_agnes_api_keys_free_only() -> None:

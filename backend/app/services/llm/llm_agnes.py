@@ -50,39 +50,66 @@ class AgnesApiKey:
     base_url: str = ""
 
 
+# 限制池：付费/免费 × 国际/国内；额度与视频队列均按池独立
+_POOL_PAID_INTL = "paid_intl"
+_POOL_PAID_CN = "paid_cn"
+_POOL_FREE_INTL = "free_intl"
+_POOL_FREE_CN = "free_cn"
+_POOL_BY_LABEL: dict[str, str] = {
+    "primary": _POOL_PAID_INTL,
+    "cn_paid": _POOL_PAID_CN,
+    "free": _POOL_FREE_INTL,
+    "cn_free": _POOL_FREE_CN,
+}
+
+
 def agnes_api_keys(settings: Settings | None = None) -> list[AgnesApiKey]:
-    """Key 链：付费 → 国际免费 → 国内免费；各自绑定 base_url。"""
+    """Key 链：国际收费 → 国内收费 → 国际免费 → 国内免费；各自绑定 base_url。
+
+    四把 key 分属四个互相独立的限制池（付费/免费 × 国际/国内）：
+    额度按池共享，视频队列满（503 ``video_queue_full``）也按池计，
+    故某一池排满时可轮换到下一池，而不是直接进全局冷却。
+    """
     cfg = settings or get_settings()
     intl = (cfg.agnes_api_base_url or "").rstrip("/")
     cn = (getattr(cfg, "agnes_api_base_url_cn", None) or "").rstrip("/") or intl
+    candidates: tuple[tuple[str, str | None, str], ...] = (
+        ("primary", cfg.agnes_api_key, intl),
+        ("cn_paid", getattr(cfg, "agnes_cn_api_key", None), cn),
+        ("free", cfg.agnes_free_api_key, intl),
+        ("cn_free", getattr(cfg, "agnes_cn_free_api_key", None), cn),
+    )
     keys: list[AgnesApiKey] = []
-    primary = cfg.agnes_api_key
-    free = cfg.agnes_free_api_key
-    cn_free = getattr(cfg, "agnes_cn_free_api_key", None)
     seen: set[str] = set()
-    if primary:
-        keys.append(AgnesApiKey("primary", primary, intl))
-        seen.add(primary)
-    if free and free not in seen:
-        keys.append(AgnesApiKey("free", free, intl))
-        seen.add(free)
-    if cn_free and cn_free not in seen:
-        keys.append(AgnesApiKey("cn_free", cn_free, cn))
+    for label, raw_value, base in candidates:
+        value = (raw_value or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        keys.append(AgnesApiKey(label, value, base))
     return keys
 
 
 def agnes_key_pool(key_label: str, *, free_shared: bool = True) -> str:
-    """Key → 限制池：付费池 / 免费池。
+    """Key → 限制池：付费/免费 × 国际/国内，共 4 池。
 
-    官方按「密钥类型」共享额度：同类型多把 key 合起来只有一个池。
-    ``free_shared=False`` 时两把免费 key 视为不同账号，各自成池。
+    官方按「密钥类型」共享额度，且两个站点的队列彼此独立，故池按
+    （档位, 站点）二维划分：``paid_intl`` / ``paid_cn`` /
+    ``free_intl`` / ``free_cn``。
+
+    ``free_shared`` 只在同一站点有多把免费 key 时才影响分池（跨站点始终分池）。
     """
     label = str(key_label or "").strip()
-    if label == "primary":
-        return "paid"
-    if label in ("free", "cn_free") and free_shared:
-        return "free"
-    return label or "free"
+    pool = _POOL_BY_LABEL.get(label)
+    if pool:
+        return pool
+    # 未知 label（后续新增 key）：按 label 里的站点标识兜底
+    return _POOL_FREE_CN if "cn" in label else _POOL_FREE_INTL
+
+
+def agnes_pool_is_paid(pool: str) -> bool:
+    """池是否为付费池（RPM 更高：TokenPlan 5 RPM → 12s）。"""
+    return str(pool or "").startswith("paid")
 
 
 def agnes_key_base_url(api_key: AgnesApiKey, settings: Settings | None = None) -> str:

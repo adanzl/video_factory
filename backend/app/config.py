@@ -164,13 +164,14 @@ class Config:
         )
         # Agnes 视频 RPM（wiki.agnes-ai.com/zh-Hans/docs/tokenplan）：
         # TokenPlan 实际 5 RPM → 12s；企业认证 2 RPM；免费/默认 1 RPM → 60s。
-        # 限制池按「密钥类型」共享，同类型多把 key 共用一个池。
+        # 限制池按「密钥类型 × 站点」分池：付费/免费 × 国际/国内，共 4 池，
+        # 同池内多把 key 共享额度，跨池额度与队列互不影响（故可轮换）。
         self.agnes_submit_interval_sec: float = float(os.getenv("AGNES_SUBMIT_INTERVAL_SEC", "12"))
         # Free / default Key：视频有效 RPM=1 → 默认 60s
         self.agnes_free_submit_interval_sec: float = float(
             os.getenv("AGNES_FREE_SUBMIT_INTERVAL_SEC", "60")
         )
-        # 两把免费 key 是否同一账号（同池）：官方同类型 key 共享额度，默认共享
+        # 同站点内多把免费 key 是否同一账号（同池）；跨站点始终分池
         self.agnes_free_pool_shared: bool = _bool("AGNES_FREE_POOL_SHARED", True)
         # 429 后该池冷却时长（一个 RPM 窗口）
         self.agnes_video_rate_limit_cooldown_sec: float = float(
@@ -191,8 +192,8 @@ class Config:
         self.agnes_video_upstream_cooldown_max_sec: float = float(
             os.getenv("AGNES_VIDEO_UPSTREAM_COOLDOWN_MAX_SEC", "300")
         )
-        # 视频队列满（503 video_queue_full，全平台共享容量）：基准更长，
-        # 排空是分钟级；期间并发退回串行以减少无效提交。
+        # 视频队列满（503 video_queue_full）：按池判定并冻结该池，先换下一池；
+        # 四池皆满才进全局冷却（基准更长，排空是分钟级）。
         self.agnes_video_queue_full_cooldown_base_sec: float = float(
             os.getenv("AGNES_VIDEO_QUEUE_FULL_COOLDOWN_BASE_SEC", "120")
         )
@@ -232,6 +233,7 @@ class Config:
         self.z_image_size: str = os.getenv("Z_IMAGE_SIZE", wan_image_size)
         self.z_image_prompt_extend: bool = _bool("Z_IMAGE_PROMPT_EXTEND")
         self.agnes_api_key: str | None = _opt("AGNES_API_KEY")
+        self.agnes_cn_api_key: str | None = _opt("AGNES_CN_API_KEY")
         self.agnes_free_api_key: str | None = _opt("AGNES_FREE_API_KEY")
         self.agnes_cn_free_api_key: str | None = _opt("AGNES_CN_FREE_API_KEY")
         self.agnes_api_base_url: str = os.getenv("AGNES_API_BASE_URL", "https://apihub.agnes-ai.com/v1")
@@ -527,6 +529,7 @@ class Config:
         if provider == "agnes":
             return bool(
                 self.agnes_api_key
+                or self.agnes_cn_api_key
                 or self.agnes_free_api_key
                 or self.agnes_cn_free_api_key
             )
@@ -544,10 +547,14 @@ class Config:
             missing.append("DEEPSEEK_API_KEY")
         elif provider == "agnes" and not (
             self.agnes_api_key
+            or self.agnes_cn_api_key
             or self.agnes_free_api_key
             or self.agnes_cn_free_api_key
         ):
-            missing.append("AGNES_API_KEY / AGNES_FREE_API_KEY / AGNES_CN_FREE_API_KEY")
+            missing.append(
+                "AGNES_API_KEY / AGNES_CN_API_KEY / AGNES_FREE_API_KEY / "
+                "AGNES_CN_FREE_API_KEY"
+            )
         elif provider == "opencode_go" and not self.opencode_go_api_key:
             missing.append("OPENCODE_GO_API_KEY")
         elif provider not in ("deepseek", "agnes", "opencode_go"):
