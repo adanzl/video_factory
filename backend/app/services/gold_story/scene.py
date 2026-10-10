@@ -1456,3 +1456,162 @@ def realign_parent_identity_rows(
         out.append(item)
         notes.append(f"身份自称归位:{speaker}→{target}")
     return out, notes
+
+
+# ---- 事实角色（「谁做过那件事」）：H3a 出 facts，H3b seed 带角色标注 ----
+# 代码只校验 LLM 自己标好的结构化角色，不解析剧情词。
+FACT_ROLE_KEYS: tuple[str, ...] = (
+    "secret_holder",
+    "discoverer",
+    "accuser",
+    "denier",
+    "claimant",
+    "beneficiary",
+)
+FACT_ATTRIBUTION_STATUSES: frozenset[str] = frozenset(
+    {"resolved", "ambiguous", "review_pending"}
+)
+FACT_ADMIT_ACTS: frozenset[str] = frozenset(
+    {"admit", "confess", "self_report", "deny"}
+)
+FACT_ACCUSE_ACTS: frozenset[str] = frozenset({"accuse", "expose", "tease"})
+FACT_CLAIM_ACTS: frozenset[str] = frozenset(
+    {"claim_compensation", "demand", "bargain"}
+)
+FACT_ECHO_ACTS: frozenset[str] = frozenset({"echo", "retort"})
+_FACT_UNKNOWN_VALUES = frozenset({"unknown", "null", "none"})
+
+
+def normalize_fact_attributions(raw: Any) -> list[dict[str, Any]]:
+    """H3a facts 规范化：只留带 fact_id 的条目，未知角色清空。"""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        fact = dict(item)
+        fact_id = str(fact.get("fact_id") or fact.get("id") or "").strip()
+        if not fact_id:
+            continue
+        fact["fact_id"] = fact_id
+        for key in FACT_ROLE_KEYS:
+            value = str(fact.get(key) or "").strip()
+            fact[key] = "" if value.lower() in _FACT_UNKNOWN_VALUES else value
+        status = str(fact.get("attribution_status") or "").strip().lower()
+        fact["attribution_status"] = (
+            status if status in FACT_ATTRIBUTION_STATUSES else "ambiguous"
+        )
+        out.append(fact)
+    return out
+
+
+def fact_attribution_index(
+    facts: list[Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """fact_id → fact；无 fact_id 的条目忽略。"""
+    index: dict[str, dict[str, Any]] = {}
+    for item in facts or []:
+        if not isinstance(item, dict):
+            continue
+        fact_id = str(item.get("fact_id") or "").strip()
+        if fact_id:
+            index[fact_id] = item
+    return index
+
+
+def fact_role_conflict_reason(
+    row: dict[str, Any],
+    facts: dict[str, dict[str, Any]],
+) -> str | None:
+    """结构化角色绑定校验；无标注或与事实无关的行一律放行。"""
+    if not isinstance(row, dict):
+        return None
+    fact_ref = str(row.get("fact_ref") or "").strip()
+    if not fact_ref or fact_ref not in facts:
+        return None
+    fact = facts[fact_ref]
+    if fact.get("role_play") or fact.get("quotation_frame"):
+        return None
+    speaker = str(row.get("speaker") or "").strip()
+    speech_act = str(row.get("speech_act") or "").strip().lower()
+    claim_role = str(row.get("claim_role") or "").strip().lower()
+    holder = str(fact.get("secret_holder") or "")
+    if not speaker or not speech_act:
+        return None
+    if speech_act in FACT_ADMIT_ACTS:
+        if holder and speaker != holder:
+            return f"{speech_act} 应归 secret_holder={holder}，实为 {speaker}"
+        return None
+    if speech_act in FACT_ACCUSE_ACTS:
+        if claim_role not in {"accuser", "discoverer"}:
+            return (
+                f"{speech_act} 的 claim_role 应为 accuser/discoverer，"
+                f"实为 {claim_role or '空'}"
+            )
+        expected = str(fact.get(claim_role) or "")
+        if expected and speaker != expected:
+            return f"{speech_act} 应归 {claim_role}={expected}，实为 {speaker}"
+        if holder and speaker == holder:
+            return f"{speech_act} 不得由 secret_holder={holder} 说（除非自曝）"
+        return None
+    if speech_act in FACT_CLAIM_ACTS:
+        if claim_role not in {"claimant", "beneficiary"}:
+            return (
+                f"{speech_act} 的 claim_role 应为 claimant/beneficiary，"
+                f"实为 {claim_role or '空'}"
+            )
+        expected = str(fact.get(claim_role) or "")
+        if expected and speaker != expected:
+            return f"{speech_act} 应归 {claim_role}={expected}，实为 {speaker}"
+        if holder and speaker == holder:
+            return f"{speech_act} 不得由 secret_holder={holder} 说（除非自补偿）"
+        return None
+    if speech_act in FACT_ECHO_ACTS:
+        # 回声/回旋镖：claim_role 须按当前说话人重标，不得沿用对方角色
+        if claim_role:
+            expected = str(fact.get(claim_role) or "")
+            if expected and speaker != expected:
+                return (
+                    f"{speech_act} 的 claim_role={claim_role} 应归 {expected}，"
+                    f"实为 {speaker}"
+                )
+        return None
+    return None
+
+
+def filter_fact_bound_rows(
+    rows: list[Any] | None,
+    facts: list[Any] | None,
+) -> tuple[list[Any], list[str]]:
+    """丢弃与事实角色绑定冲突的行；facts 为空时原样返回。"""
+    index = fact_attribution_index(facts)
+    if not index:
+        return list(rows or []), []
+    kept: list[Any] = []
+    conflicts: list[str] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            kept.append(row)
+            continue
+        reason = fact_role_conflict_reason(row, index)
+        if reason:
+            label = str(row.get("intent") or row.get("line") or "")
+            conflicts.append(f"{row.get('speaker')}:{label}（{reason}）")
+            continue
+        kept.append(row)
+    return kept, conflicts
+
+
+def fact_attribution_review_required(facts: list[Any] | None) -> bool:
+    """事实归属未定稿即需复核：只有显式 ``resolved`` 才放行。
+
+    无 facts 表示本稿不涉及「谁做过那件事」的角色槽位，不拦。
+    """
+    for item in facts or []:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("attribution_status") or "").strip().lower()
+        if status != "resolved":
+            return True
+    return False

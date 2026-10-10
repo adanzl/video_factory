@@ -250,3 +250,117 @@ def test_build_dialogue_seed_keeps_valid_seed_without_fallback(monkeypatch):
     )
     assert len(out["dialogue_seed"]) == 5
     assert out["dialogue_seed"][-1]["intent"] == "那你明天补给我烤串"
+
+
+def _fact_contract() -> dict:
+    contract = dict(_seed_contract())
+    contract["facts"] = [
+        {
+            "fact_id": "F1",
+            "event": "晚上偷吃烤串",
+            "secret_holder": "妈妈",
+            "discoverer": "昭昭",
+            "accuser": "昭昭",
+            "denier": "妈妈",
+            "claimant": "昭昭",
+            "attribution_status": "resolved",
+        }
+    ]
+    return contract
+
+
+def test_build_dialogue_seed_retries_on_fact_role_conflict(monkeypatch):
+    """#132：孩子顶了妈妈的辩解句 → 带约束重抽一次并采纳合规稿。"""
+    calls: list[str] = []
+
+    def fake_chat(_system: str, user: str) -> dict:
+        calls.append(user)
+        if len(calls) == 1:
+            return {
+                "setting": "卧室",
+                "dialogue_seed": [
+                    {"speaker": "妈妈", "intent": "喊昭昭去关灯"},
+                    {"speaker": "昭昭", "intent": "你去你去，我正玩着呢"},
+                    {"speaker": "妈妈", "intent": "我是你妈，你得听我的"},
+                    {
+                        "speaker": "昭昭",
+                        "intent": "谁告诉你我晚上偷吃烤串儿啦",
+                        "fact_ref": "F1",
+                        "speech_act": "deny",
+                        "claim_role": "secret_holder",
+                    },
+                    {"speaker": "昭昭", "intent": "那你明天补给我烤串"},
+                ],
+                "dialogue_confidence": 0.9,
+            }
+        return {
+            "setting": "卧室",
+            "dialogue_seed": [
+                {"speaker": "妈妈", "intent": "喊昭昭去关灯"},
+                {"speaker": "昭昭", "intent": "你去你去，我正玩着呢"},
+                {"speaker": "妈妈", "intent": "我是你妈，你得听我的"},
+                {
+                    "speaker": "妈妈",
+                    "intent": "谁告诉你我晚上偷吃烤串儿啦",
+                    "fact_ref": "F1",
+                    "speech_act": "deny",
+                    "claim_role": "secret_holder",
+                },
+                {
+                    "speaker": "昭昭",
+                    "intent": "把明天补给我",
+                    "fact_ref": "F1",
+                    "speech_act": "claim_compensation",
+                    "claim_role": "claimant",
+                },
+            ],
+            "dialogue_confidence": 0.9,
+        }
+
+    monkeypatch.setattr(llm_steps, "_chat_json", fake_chat)
+    out = llm_steps.build_dialogue_seed(
+        story_raw="妈妈喊昭昭关灯，昭昭用偷吃烤串的把柄讨补偿。" * 3,
+        h3={"beat": ["a", "b", "c", "d"]},
+        scene_contract=_fact_contract(),
+    )
+    assert len(calls) == 2, "冲突后应带约束重抽一次"
+    assert "角色绑定硬约束" in calls[1]
+    rows = out["dialogue_seed"]
+    assert [r["speaker"] for r in rows if "偷吃烤串" in r["intent"]] == ["妈妈"]
+    assert rows[-1]["intent"] == "把明天补给我"
+
+
+def test_build_dialogue_seed_keeps_first_pass_when_retry_still_conflicts(
+    monkeypatch,
+):
+    """重抽仍冲突时，冲突行被剔除；剩余不足下限则由 beat_chain 兜底。"""
+    calls: list[str] = []
+
+    def fake_chat(_system: str, user: str) -> dict:
+        calls.append(user)
+        return {
+            "setting": "卧室",
+            "dialogue_seed": [
+                {"speaker": "妈妈", "intent": "喊昭昭去关灯"},
+                {"speaker": "昭昭", "intent": "你去你去，我正玩着呢"},
+                {
+                    "speaker": "昭昭",
+                    "intent": "谁告诉你我晚上偷吃烤串儿啦",
+                    "fact_ref": "F1",
+                    "speech_act": "deny",
+                    "claim_role": "secret_holder",
+                },
+            ],
+            "dialogue_confidence": 0.9,
+        }
+
+    monkeypatch.setattr(llm_steps, "_chat_json", fake_chat)
+    out = llm_steps.build_dialogue_seed(
+        story_raw="妈妈喊昭昭关灯，昭昭用偷吃烤串的把柄讨补偿。" * 3,
+        h3={"beat": ["a", "b", "c", "d"]},
+        scene_contract=_fact_contract(),
+    )
+    assert len(calls) == 2
+    intents = [row["intent"] for row in out["dialogue_seed"]]
+    assert "谁告诉你我晚上偷吃烤串儿啦" not in intents
+    assert intents == [row["intent"] for row in _seed_contract()["beat_chain"]]

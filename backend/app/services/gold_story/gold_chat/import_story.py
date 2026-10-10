@@ -62,6 +62,24 @@ def _exported_quality_is_final(
     )
 
 
+def _source_facts_not_resolved(row: dict[str, Any]) -> bool:
+    """来源金故事的事实归属是否未定稿（facts 未 resolved）。"""
+    from app.services.gold_story.scene import (
+        fact_attribution_review_required,
+    )
+
+    payload_raw = row.get("payload")
+    payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
+    scene_contract_raw = payload.get("scene_contract")
+    scene_contract: dict[str, Any] = (
+        scene_contract_raw if isinstance(scene_contract_raw, dict) else {}
+    )
+    facts = scene_contract.get("facts")
+    if not isinstance(facts, list):
+        return False
+    return fact_attribution_review_required(facts)
+
+
 def import_gold_chat_daily_story(
     row: dict[str, Any],
     *,
@@ -175,6 +193,12 @@ def import_gold_chat_daily_story(
         if not exported_final:
             eligibility["ok"] = False
             eligibility.setdefault("reasons", []).append("导出稿缺少当前正文终验摘要，需重新终验")
+        if _source_facts_not_resolved(row):
+            # 事实归属（谁做过那件事）未定稿：不得自动发布，须人工确认
+            eligibility["ok"] = False
+            eligibility.setdefault("reasons", []).append(
+                "金故事事实归属未定稿（facts 未 resolved），需人工确认"
+            )
         if duplicate_block:
             eligibility["ok"] = False
             ids = ",".join(str(item.get("story_id")) for item in duplicate_block[:5])

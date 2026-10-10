@@ -1428,6 +1428,42 @@ def test_gold_chat_summary_from_payload():
     assert summary["humor_score"] == 14
 
 
+def test_source_facts_gate_blocks_unresolved_attribution():
+    """facts 未 resolved 时不得自动发布（导入判定为 review_pending）。"""
+    from app.services.gold_story.gold_chat.import_story import (
+        _source_facts_not_resolved,
+    )
+
+    assert not _source_facts_not_resolved({})
+    assert not _source_facts_not_resolved({"payload": {}})
+    assert not _source_facts_not_resolved(
+        {"payload": {"scene_contract": {"facts": []}}}
+    )
+    assert not _source_facts_not_resolved(
+        {
+            "payload": {
+                "scene_contract": {
+                    "facts": [
+                        {"fact_id": "F1", "attribution_status": "resolved"}
+                    ]
+                }
+            }
+        }
+    )
+    for status in ("ambiguous", "review_pending", ""):
+        assert _source_facts_not_resolved(
+            {
+                "payload": {
+                    "scene_contract": {
+                        "facts": [
+                            {"fact_id": "F1", "attribution_status": status}
+                        ]
+                    }
+                }
+            }
+        )
+
+
 def test_import_gold_chat_daily_story_insert_and_reimport(
     app_ctx, tmp_path, monkeypatch,
 ):

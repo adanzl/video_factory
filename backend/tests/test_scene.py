@@ -9,9 +9,12 @@ from app.services.gold_story.gold_chat.validate import (
 )
 from app.services.gold_story.scene import (
     apply_parent_role_budget,
+    fact_attribution_review_required,
+    filter_fact_bound_rows,
     format_scene_block,
     has_dialogue_meta_label,
     normalize_dialogue_setting_for_contract,
+    normalize_fact_attributions,
     normalize_k_parent_intervention_budget,
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
@@ -581,3 +584,113 @@ def test_realign_parent_identity_drops_claim_without_parent_in_cast():
     out, notes = realign_parent_identity_rows(rows, parent_labels=())
     assert out == []
     assert notes and "丢弃" in notes[0]
+
+
+def _sample_facts() -> list[dict]:
+    return normalize_fact_attributions(
+        [
+            {
+                "fact_id": "F1",
+                "event": "晚上偷吃烤串",
+                "secret_holder": "妈妈",
+                "discoverer": "灿灿",
+                "accuser": "灿灿",
+                "denier": "妈妈",
+                "claimant": "灿灿",
+                "attribution_status": "resolved",
+            }
+        ]
+    )
+
+
+def test_filter_fact_bound_rows_flags_deny_on_wrong_speaker():
+    """#132：认领/辩解句必须归 secret_holder，孩子说了就被剔除。"""
+    rows = [
+        {"speaker": "灿灿", "intent": "你还知道你是我妈呀"},
+        {
+            "speaker": "灿灿",
+            "intent": "谁告诉你我晚上偷吃烤串儿啦",
+            "fact_ref": "F1",
+            "speech_act": "deny",
+            "claim_role": "secret_holder",
+        },
+        {"speaker": "妈妈", "intent": "我是你妈，你得听我的"},
+    ]
+    kept, conflicts = filter_fact_bound_rows(rows, _sample_facts())
+    assert [r["intent"] for r in kept] == [
+        "你还知道你是我妈呀",
+        "我是你妈，你得听我的",
+    ]
+    assert len(conflicts) == 1 and "secret_holder" in conflicts[0]
+
+
+def test_filter_fact_bound_rows_allows_role_matched_rows():
+    rows = [
+        {
+            "speaker": "妈妈",
+            "intent": "我晚上偷吃烤串儿了",
+            "fact_ref": "F1",
+            "speech_act": "admit",
+            "claim_role": "secret_holder",
+        },
+        {
+            "speaker": "灿灿",
+            "intent": "你晚上偷吃烤串儿",
+            "fact_ref": "F1",
+            "speech_act": "accuse",
+            "claim_role": "accuser",
+        },
+        {
+            "speaker": "灿灿",
+            "intent": "把明天补给我",
+            "fact_ref": "F1",
+            "speech_act": "claim_compensation",
+            "claim_role": "claimant",
+        },
+    ]
+    kept, conflicts = filter_fact_bound_rows(rows, _sample_facts())
+    assert kept == rows
+    assert conflicts == []
+
+
+def test_filter_fact_bound_rows_skips_unannotated_and_roleplay():
+    """无标注行、扮演/引述框架下的行一律放行。"""
+    facts = _sample_facts()
+    plain = [{"speaker": "灿灿", "intent": "我是你妈（学着玩）"}]
+    kept, conflicts = filter_fact_bound_rows(plain, facts)
+    assert kept == plain and conflicts == []
+
+    roleplay = normalize_fact_attributions(
+        [
+            {
+                "fact_id": "F1",
+                "secret_holder": "妈妈",
+                "attribution_status": "resolved",
+                "role_play": True,
+            }
+        ]
+    )
+    rows = [
+        {
+            "speaker": "灿灿",
+            "intent": "我当妈妈",
+            "fact_ref": "F1",
+            "speech_act": "deny",
+            "claim_role": "secret_holder",
+        }
+    ]
+    kept, conflicts = filter_fact_bound_rows(rows, roleplay)
+    assert kept == rows and conflicts == []
+
+
+def test_fact_attribution_review_required_for_unresolved():
+    assert not fact_attribution_review_required(_sample_facts())
+    assert fact_attribution_review_required(
+        normalize_fact_attributions(
+            [{"fact_id": "F1", "secret_holder": "妈妈"}]
+        )
+    )
+    # 缺 attribution_status 视为未定稿，不得放行
+    assert fact_attribution_review_required([{"fact_id": "F1"}])
+    assert not fact_attribution_review_required([])
+    assert not fact_attribution_review_required(None)

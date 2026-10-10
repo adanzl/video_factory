@@ -18,8 +18,11 @@ from app.services.gold_story.scene import (
     SEED_MIN,
     age_remap_contract_errors,
     apply_parent_role_budget,
+    fact_attribution_review_required,
+    filter_fact_bound_rows,
     force_age_score_remap,
     normalize_dialogue_setting_for_contract,
+    normalize_fact_attributions,
     normalize_k_parent_intervention_budget,
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
@@ -347,8 +350,33 @@ source_type：{source_type}
   "object": "争的具体物品或话题",
   "conflict": "姐弟当场冲突一句",
   "mechanism": "来自 story_raw 的可拍规则/机制一句",
+  "facts": [
+    {{
+      "fact_id": "F1",
+      "event": "把柄/秘密事件（只写发生了什么，不写谁）",
+      "secret_holder": "实际做过/拥有秘密的人",
+      "discoverer": "发现的人",
+      "accuser": "指认/揭发的人",
+      "denier": "否认/辩解的人",
+      "claimant": "索赔/讨要补偿的人",
+      "beneficiary": "从中得利的人",
+      "attribution_status": "resolved|ambiguous|review_pending",
+      "attribution_basis": ["title|claim_direction|defense_pattern|evidence_source"],
+      "attribution_confidence": 0.0,
+      "role_play": false,
+      "quotation_frame": false
+    }}
+  ],
   "beat_chain": [
-    {{"beat": 1, "speaker": "灿灿|昭昭|妈妈|爸爸", "intent": "立规/占物/…"}}
+    {{
+      "beat": 1,
+      "speaker": "灿灿|昭昭|妈妈|爸爸",
+      "intent": "立规/占物/…",
+      "addressee": "对谁说",
+      "speech_act": "accuse|deny|admit|claim_compensation|echo|other",
+      "claim_role": "accuser|secret_holder|claimant|…",
+      "fact_ref": "F1"
+    }}
   ],
   "closing_intent": "末句嘴硬/反转",
   "mom_lines_max": 0,
@@ -358,6 +386,18 @@ source_type：{source_type}
 }}
 
 banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘伏/朋友圈等场景与笑点词。
+
+事实角色（facts）规则：
+- 每个**把柄/秘密/专属过错**事件拆成角色槽位：谁做过（secret_holder）、
+  谁发现、谁指认、谁否认、谁讨要补偿；取值只能来自 characters；
+  不确定写 `unknown`，**禁止猜**
+- **标题/简介是事实层最强线索**：与逐字稿推断冲突时以标题/简介为准；
+  标题里抱怨方是 accuser/discoverer，被背着/被揭发的那一方才是 secret_holder
+- 判不出 secret_holder 时 `attribution_status=ambiguous`，
+  **禁止**为了故事完整硬指定
+- 引述家长原话、过家家扮演的事件标 `quotation_frame`/`role_play=true`
+- 与事实相关的拍必须带 `fact_ref` + `speech_act` + `claim_role`；
+  与事实无关的拍可不标
 
 规则：
 - object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
@@ -445,7 +485,11 @@ story_raw（背景，勿照抄）：
 {{
   "setting": "地点 + 谁面前/端着哪件冲突物",
   "dialogue_seed": [
-    {{"speaker": "昭昭|灿灿|妈妈|爸爸", "intent": "…"}}
+    {{"speaker": "昭昭|灿灿|妈妈|爸爸", "intent": "…",
+      "addressee": "对谁说",
+      "speech_act": "accuse|deny|admit|claim_compensation|echo|other",
+      "claim_role": "accuser|secret_holder|claimant|…",
+      "fact_ref": "F1"}}
   ],
   "closing_intent": "与 scene_contract 一致",
   "speaker_map_note": "映射说明",
@@ -456,6 +500,14 @@ story_raw（背景，勿照抄）：
 - setting 须含地点；当前场景确有实体冲突物时再写谁持有。若 object 是回忆/旧事/过去经历，
   只写“在该地点聊起旧事”，禁止凭空端出历史物件或替代道具
 - 严格按 beat_chain 顺序展开；每拍 1–3 条 seed
+- **事实角色绑定（硬）**：与 `facts` 相关的每条 seed 必须带 `fact_ref`/`speech_act`/`claim_role`：
+  承认、自曝、否认、辩解句（admit/confess/deny）的 speaker 必须等于该 fact 的
+  `secret_holder`；指认、揭发句（accuse/expose）的 speaker 必须等于
+  `accuser`/`discoverer`；索赔、讨要句（claim_compensation/demand/bargain）的
+  speaker 必须等于 `claimant`/`beneficiary`；回声、回旋镖句（echo/retort）
+  按当前说话人重标 `claim_role`，不得沿用对方角色。
+  与 facts 冲突时**不要输出该条**，改用 beat_chain 里身份自洽的拍补足
+- `facts` 为空或未标注时按 beat_chain 与会话常识展开
 - punchline 后若契约效果是“沉默/不再接话/不再顶”，直接结束；这种纯无声结果不得生成 dialogue_seed
 - M5+H：seed 须含「双向互毁」「拒和/不原谅」「妈妈问谁先动手」分拍，勿合并
 - intent 须来自 scene_contract（beat_chain/conflict/object）+
@@ -718,6 +770,12 @@ def build_scene_contract(
         data["source_type"] = str(
             data.get("source_type") or source_type or "field"
         ).lower()
+        data["facts"] = normalize_fact_attributions(data.get("facts"))
+        if fact_attribution_review_required(data["facts"]):
+            logger.info(
+                "H3a fact attribution not resolved: %s",
+                [f.get("fact_id") for f in data["facts"]],
+            )
         data, _loc_notes = normalize_scene_contract_location(
             data,
             activity_context=story_raw[:800],
@@ -783,9 +841,7 @@ def build_dialogue_seed(
         gold_seed_snippet=GOLD_H3B_SEED_SNIPPET,
     )
     data = _chat_json(_H3B_SYSTEM, user)
-    seed = data.get("dialogue_seed") or []
-    if not isinstance(seed, list):
-        seed = []
+    seed = _seed_rows(data)
     seed, _silent_seed_notes = trim_terminal_no_reply_rows(seed)
     seed, unintelligible_notes = drop_unintelligible_seed_rows(seed)
     if unintelligible_notes:
@@ -797,6 +853,24 @@ def build_dialogue_seed(
     seed, identity_notes = _realign_seed_parent_identity(seed, contract)
     if identity_notes:
         logger.info("H3b parent identity realign=%s", identity_notes[:4])
+    facts = normalize_fact_attributions(contract.get("facts"))
+    seed, fact_conflicts = filter_fact_bound_rows(seed, facts)
+    if fact_conflicts:
+        logger.info(
+            "H3b fact role conflicts=%s sample=%s",
+            len(fact_conflicts),
+            fact_conflicts[:3],
+        )
+        # 带角色硬约束重抽一次：成功则整体替换，否则留首轮合规稿
+        retry = _retry_seed_with_fact_constraints(
+            user=user,
+            contract=contract,
+            facts=facts,
+            conflicts=fact_conflicts,
+            fallback=seed,
+        )
+        if retry is not None:
+            data, seed = retry
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])
         data["dialogue_seed"] = seed
@@ -836,6 +910,79 @@ def build_dialogue_seed(
     if normalized_setting:
         data["setting"] = normalized_setting
     return data
+
+
+def _seed_rows(data: dict[str, Any]) -> list[Any]:
+    seed = data.get("dialogue_seed") or []
+    return seed if isinstance(seed, list) else []
+
+
+def _fact_binding_constraint_block(
+    facts: list[dict[str, Any]],
+    conflicts: list[str],
+) -> str:
+    """重抽用的角色硬约束块：只给结构槽位，不给剧情词。"""
+    lines = [
+        "",
+        "",
+        "【角色绑定硬约束 · 上一稿有冲突，必须改正】",
+        "上一稿这些 seed 与 facts 角色绑定冲突，已剔除：",
+    ]
+    lines.extend(f"- {item}" for item in conflicts[:6])
+    lines.append("facts 角色槽位：")
+    for fact in facts:
+        slots = [
+            f"{key}={fact.get(key)}"
+            for key in ("secret_holder", "accuser", "discoverer", "claimant")
+            if fact.get(key)
+        ]
+        lines.append(f"- {fact.get('fact_id')}: {', '.join(slots)}")
+    lines.extend(
+        [
+            "认领/自曝/否认/辩解句（admit/confess/deny）只能由 secret_holder 说；"
+            "指认/揭发句（accuse/expose）只能由 accuser/discoverer 说；"
+            "索赔/讨要句（claim_compensation/demand/bargain）只能由 claimant 说；"
+            "回声/回旋镖句按当前说话人重标 claim_role。",
+            "请重新输出完整 dialogue_seed（≥4 条），每条带 "
+            "fact_ref/speech_act/claim_role/addressee。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _retry_seed_with_fact_constraints(
+    *,
+    user: str,
+    contract: dict[str, Any],
+    facts: list[dict[str, Any]],
+    conflicts: list[str],
+    fallback: list[Any],
+) -> tuple[dict[str, Any], list[Any]] | None:
+    """冲突后带约束重抽一次；重抽稿合规且不短于首轮合规稿才采纳。"""
+    if not facts:
+        return None
+    try:
+        retry_data = _chat_json(
+            _H3B_SYSTEM,
+            user + _fact_binding_constraint_block(facts, conflicts),
+        )
+    except Exception as exc:
+        logger.info("H3b fact binding retry failed: %s", exc)
+        return None
+    retry_seed = _seed_rows(retry_data)
+    retry_seed, _silent = trim_terminal_no_reply_rows(retry_seed)
+    retry_seed, _unintelligible = drop_unintelligible_seed_rows(retry_seed)
+    retry_seed, _identity = _realign_seed_parent_identity(retry_seed, contract)
+    retry_seed, retry_conflicts = filter_fact_bound_rows(retry_seed, facts)
+    if retry_conflicts or len(retry_seed) < max(SEED_MIN, len(fallback)):
+        logger.info(
+            "H3b fact binding retry kept first pass: conflicts=%s rows=%s",
+            len(retry_conflicts),
+            len(retry_seed),
+        )
+        return None
+    logger.info("H3b fact binding retry accepted rows=%s", len(retry_seed))
+    return retry_data, retry_seed
 
 
 def _seed_parent_labels(contract: dict[str, Any]) -> tuple[str, ...]:
