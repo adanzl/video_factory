@@ -683,6 +683,125 @@ def test_filter_fact_bound_rows_skips_unannotated_and_roleplay():
     assert kept == rows and conflicts == []
 
 
+def test_format_fact_slots_block_injects_role_binding():
+    from app.services.gold_story.scene import format_fact_slots_block
+
+    facts = normalize_fact_attributions(
+        [
+            {
+                "fact_id": "F1",
+                "event": "晚上偷吃烤串",
+                "secret_holder": "妈妈",
+                "accuser": "灿灿",
+                "claimant": "灿灿",
+                "attribution_status": "resolved",
+            }
+        ]
+    )
+    block = format_fact_slots_block(facts)
+    assert "secret_holder=妈妈" in block
+    assert "claimant=灿灿" in block
+    assert "索要补偿只能由 claimant 说" in block
+    # 无 facts / 空槽位不注入
+    assert format_fact_slots_block([]) == ""
+    assert format_fact_slots_block(None) == ""
+    assert (
+        format_fact_slots_block(
+            [{"fact_id": "F1", "discoverer": "妈妈", "attribution_status": "ambiguous"}]
+        )
+        == ""
+    )
+
+
+def test_format_scene_block_carries_fact_slots():
+    from app.services.gold_story.scene import format_scene_block
+
+    contract = {
+        "location": "卧室",
+        "characters": ["妈妈", "灿灿"],
+        "beat_chain": [{"beat": 1, "speaker": "妈妈", "intent": "催关灯"}],
+        "facts": [
+            {
+                "fact_id": "F1",
+                "secret_holder": "妈妈",
+                "accuser": "灿灿",
+                "claimant": "灿灿",
+                "attribution_status": "resolved",
+            }
+        ],
+    }
+    block = format_scene_block(contract)
+    assert "claimant=灿灿" in block
+    assert "beat_chain:" in block
+
+
+def test_anchor_matches_line_tolerates_reversed_pair():
+    """「催关灯」对上「去把灯关了」：相邻二字倒装也算落地。"""
+    from app.services.gold_story.gold_chat.validate import _anchor_matches_line
+
+    assert _anchor_matches_line("关灯", "灿灿，别磨蹭了，去把灯关了。")
+    assert _anchor_matches_line("催关灯", "灿灿，别磨蹭了，去把灯关了。")
+    assert _anchor_matches_line("关灯", "把灯关了吧")
+    assert not _anchor_matches_line("关灯", "你快去睡觉")
+    assert _anchor_matches_line("洗袜子", "把袜子洗了")
+
+
+def test_a_closing_role_pair_follows_beat_speech_acts():
+    """家长当权威（M5/A 亲子稿）时，末四拍两方按契约角色判定。"""
+    from app.services.daily_story.story_types.a.validate import (
+        append_closing_structure_errors,
+        _closing_role_pair,
+    )
+
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "催关灯", "speech_act": "other"},
+        {"beat": 4, "speaker": "灿灿", "intent": "反问", "speech_act": "echo"},
+        {"beat": 6, "speaker": "妈妈", "intent": "追问谁说的", "speech_act": "deny"},
+        {"beat": 9, "speaker": "灿灿", "intent": "讨要补偿", "speech_act": "claim_compensation"},
+    ]
+    story = {"punchline_explain": "A类权威翻车", "gold_beat_chain": chain}
+    assert _closing_role_pair(story) == ("灿灿", "妈妈")
+
+    # 末四拍：灿灿引话 → 妈妈找例外 → 灿灿追问 → 妈妈软破功
+    dialogue = [
+        {"speaker": "妈妈", "line": "灿灿，去把灯关了。"},
+        {"speaker": "灿灿", "line": "我不去，你自己去。"},
+        {"speaker": "妈妈", "line": "你怎么还不去？"},
+        {"speaker": "灿灿", "line": "你刚才说去把灯关了，凭什么？"},
+        {"speaker": "妈妈", "line": "我这是检查，不算数。"},
+        {"speaker": "灿灿", "line": "检查凭什么不算？"},
+        {"speaker": "妈妈", "line": "行吧，我去关。"},
+    ]
+    errors: list[str] = []
+    append_closing_structure_errors(
+        {
+            "punchline_explain": "A类权威翻车",
+            "gold_beat_chain": chain,
+            "dialogue": dialogue,
+        },
+        errors,
+    )
+    assert not errors, errors
+
+    # 权威方缺席、两方顺序错（旧槽位口径）应判缺失
+    wrong_errors: list[str] = []
+    append_closing_structure_errors(
+        {
+            "punchline_explain": "A类权威翻车",
+            "gold_beat_chain": chain,
+            "dialogue": dialogue[:3]
+            + [
+                {"speaker": "妈妈", "line": "我这是检查，不算数。"},
+                {"speaker": "灿灿", "line": "检查凭什么不算？"},
+                {"speaker": "妈妈", "line": "行吧，我去关。"},
+                {"speaker": "灿灿", "line": "这还差不多。"},
+            ],
+        },
+        wrong_errors,
+    )
+    assert wrong_errors and "须灿灿→妈妈" in wrong_errors[0]
+
+
 def test_fact_claim_alignment_notes_detects_missing_claim_beat():
     """facts 声明讨要方，却没有讨要/补偿拍 → 提示（facts 与拍不自洽）。"""
     from app.services.gold_story.scene import fact_claim_alignment_notes

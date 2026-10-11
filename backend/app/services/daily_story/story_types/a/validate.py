@@ -344,11 +344,39 @@ def append_mid_restatement_errors(story: dict, errors: list[str]) -> None:
 
 
 
+def _closing_role_pair(story: dict) -> tuple[str, str]:
+    """末四拍两方：挑战方（引话/追问）与权威方（找例外/破功）。
+
+    优先按 beat 的语用角色判定（谁指认、谁辩解），使「家长当权威」的
+    M5/A 亲子稿也能满足 A 类收束；挑不出角色时回退姐弟默认槽位。
+    """
+    chain = story.get("gold_beat_chain")
+    if not isinstance(chain, list):
+        return "昭昭", "灿灿"
+    challenger = ""
+    authority = ""
+    for row in chain:
+        if not isinstance(row, dict):
+            continue
+        speaker = str(row.get("speaker") or "").strip()
+        if not speaker:
+            continue
+        act = str(row.get("speech_act") or "").strip().lower()
+        if not challenger and act in {"accuse", "expose", "echo", "retort"}:
+            challenger = speaker
+        if not authority and act in {"deny", "admit", "confess"}:
+            authority = speaker
+    if challenger and authority and challenger != authority:
+        return challenger, authority
+    return "昭昭", "灿灿"
+
+
 def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
     """A 类末四拍结构存在性硬卡。
 
     末 4 句只锁语义槽位：引原话 → 具体例外辩解 → 追问例外 → 软破功。
-    不锁「那不一样/哪里不一样」固定字面。
+    不锁「那不一样/哪里不一样」固定字面；挑战方/权威方按契约角色判定，
+    家长当权威（亲子稿）时同样成立。
     """
     punch = str(story.get("punchline_explain") or "")
     code = parse_story_type_code(punchline=punch)
@@ -371,9 +399,11 @@ def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
     sp3, ln3 = rows[1]
     sp2, ln2 = rows[2]
     sp1, ln1 = rows[3]
-    if not (sp4 == "昭昭" and sp3 == "灿灿" and sp2 == "昭昭" and sp1 == "灿灿"):
+    challenger, authority = _closing_role_pair(story)
+    if not (sp4 == challenger and sp3 == authority and sp2 == challenger and sp1 == authority):
         errors.append(
-            "A类末四拍缺失：末4句 speaker 须昭昭→灿灿→昭昭→灿灿"
+            f"A类末四拍缺失：末4句 speaker 须{challenger}→{authority}→"
+            f"{challenger}→{authority}"
             f"（实际{'→'.join([sp4, sp3, sp2, sp1])}）",
         )
         return
@@ -383,7 +413,7 @@ def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
         ln4,
     ):
         errors.append(
-            "A类末四拍缺失：倒数第4句（昭昭）须引前文灿灿原话"
+            f"A类末四拍缺失：倒数第4句（{challenger}）须引前文{authority}原话"
             "（你刚才说/你自己说/你不是说…），禁止只用反问顶替引话"
             f"（如「示范就能算错吗？」，实际：{ln4[:16]}）",
         )
@@ -393,12 +423,12 @@ def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
         ln3,
     ):
         errors.append(
-            "A类末四拍缺失：倒数第3句（灿灿）须给出针对当前动作的具体例外借口",
+            f"A类末四拍缺失：倒数第3句（{authority}）须给出针对当前动作的具体例外借口",
         )
         return
     if not re.search(r"？|吗|呢|凭什么|怎么|为何|哪", ln2):
         errors.append(
-            "A类末四拍缺失：倒数第2句（昭昭）须追问该例外为何成立",
+            f"A类末四拍缺失：倒数第2句（{challenger}）须追问该例外为何成立",
         )
         return
 

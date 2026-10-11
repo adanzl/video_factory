@@ -1909,6 +1909,29 @@ def _intent_anchor_tokens(intent: str) -> list[str]:
     return [p for p in parts if p not in _OPENING_INTENT_STOP][:6]
 
 
+def _anchor_matches_line(anchor: str, line: str) -> bool:
+    """锚词是否落地到对白；容忍口语对压缩 intent 的改写。
+
+    beat intent 常是压缩短语（如「催关灯」「洗袜子」），对白里说成
+    「去把灯关了」「把袜子洗了」——字面包含判定会漏，故再接受两种等价：
+    相邻二字倒装（关灯↔灯关）；三字以上锚词的字面全覆盖（把字句拆装）。
+    """
+    if not anchor or not line:
+        return False
+    if anchor in line:
+        return True
+    han = "".join(re.findall(r"[\u4e00-\u9fff]", line))
+    if not han:
+        return False
+    for i in range(len(anchor) - 1):
+        pair = anchor[i : i + 2]
+        if len(pair) == 2 and pair[1] + pair[0] in han:
+            return True
+    if len(anchor) >= 3 and all(ch in han for ch in anchor):
+        return True
+    return False
+
+
 _RE_OPENING_META_PREFIX = re.compile(
     r"^(?:(?:一本正经|继续|嘴硬|荒诞)?"
     r"(?:质疑|反驳|追问|设问|发问|回答|作答|解释|自洽|交代旧事|交代|讲述)"
@@ -2043,7 +2066,7 @@ def _line_fulfills_beat(
             # "收玩具/踢积木" 等 anchor，就把剧情描述判成对白。
             return _opening_directive_matches(intent, line)
     anchors = _intent_anchor_tokens(intent)
-    if anchors and any(token in line for token in anchors):
+    if anchors and any(_anchor_matches_line(token, line) for token in anchors):
         return True
     if "rebuttal" in acts and _opening_rebuttal_matches(intent, line):
         return True

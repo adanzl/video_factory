@@ -359,6 +359,9 @@ def format_scene_block(contract: dict[str, Any]) -> str:
     closing = str(contract.get("closing_intent") or "").strip()
     if closing:
         parts.append(f"closing_intent: {closing}")
+    facts_block = format_fact_slots_block(contract.get("facts"))
+    if facts_block:
+        parts.append(facts_block)
     banned = contract.get("banned_literals") or []
     if banned:
         parts.append(
@@ -366,6 +369,49 @@ def format_scene_block(contract: dict[str, Any]) -> str:
             + "、".join(str(x) for x in banned if str(x).strip())
         )
     return "\n".join(parts)
+
+
+def format_fact_slots_block(facts: list[Any] | None) -> str:
+    """把把柄事实的角色槽位写进 prompt：谁做过、谁指认、谁讨要。
+
+    下游扩写最容易犯的错是让「做过那件事的人」去索要补偿、或让孩子
+    认领家长的行为；注入槽位后由提示词约束，不靠剧情词正则。
+    """
+    lines: list[str] = []
+    for item in facts or []:
+        if not isinstance(item, dict):
+            continue
+        if not is_attribution_relevant_fact(item):
+            continue
+        fact_id = str(item.get("fact_id") or "").strip() or "F"
+        event = str(item.get("event") or "").strip()
+        slots = [
+            f"{key}={str(item.get(key)).strip()}"
+            for key in (
+                "secret_holder",
+                "accuser",
+                "discoverer",
+                "denier",
+                "claimant",
+            )
+            if str(item.get(key) or "").strip()
+        ]
+        if not slots:
+            continue
+        head = f"facts[{fact_id}]: " + "；".join(slots)
+        if event:
+            head += f"（事件：{event}）"
+        lines.append(head)
+    if not lines:
+        return ""
+    return "\n".join(
+        [
+            "把柄事实角色（认领/自曝/辩解只能由 secret_holder 说，",
+            "指认只能由 accuser 说，索要补偿只能由 claimant 说；",
+            "secret_holder 不得反过来向对方讨要）：",
+            *lines,
+        ]
+    )
 
 
 _PARENT_SPEAKERS = frozenset({"妈妈", "爸爸"})
