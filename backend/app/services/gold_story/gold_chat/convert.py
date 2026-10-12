@@ -259,7 +259,7 @@ def _retry_structure_pair(
     from app.services.gold_story.gold_chat.type_bridge import _parent_caught_wants_e
 
     payload = cast(dict[str, Any], row.get("payload") or {})
-    if attempt == 2 and _parent_caught_wants_e(payload):
+    if attempt >= 2 and _parent_caught_wants_e(payload):
         out = dict(row)
         out["mechanism"] = "M3"
         out["structure_type"] = "F"
