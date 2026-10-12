@@ -1834,8 +1834,9 @@ def test_contract_gap_not_downgraded_by_name_or_prop_substring():
 
 
 @pytest.mark.parametrize("recovered", [True, False])
-def test_export_review_corrects_invalid_evidence_once(monkeypatch, recovered):
+def test_export_review_corrects_invalid_evidence_bounded(monkeypatch, recovered):
     from app.services.llm import llm_mgr
+    from app.services.daily_story.review import EXPORT_REVIEW_MAX_CALLS
 
     invalid = {"issues": [{"kind": "语病", "lines": [1], "desc": "语句不通",
                            "evidence": [{"line": 1.9, "quote": "姐姐"}]}]}
@@ -1851,7 +1852,8 @@ def test_export_review_corrects_invalid_evidence_once(monkeypatch, recovered):
     monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
     story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
     result = run_export_semantic_review("测试", story)
-    assert len(calls) == 2
+    # 预算内纠正：改好即停；一直不合规则用满预算后判未完成
+    assert len(calls) == (2 if recovered else EXPORT_REVIEW_MAX_CALLS)
     assert "issues[0].evidence" in calls[1]
     assert "姐姐好。" in calls[0] and "姐姐好。" in calls[1]
     assert result.completed is recovered
@@ -1859,6 +1861,50 @@ def test_export_review_corrects_invalid_evidence_once(monkeypatch, recovered):
         assert len(filter_llm_export_blocking_issues(result.issues, story)) == 1
     else:
         assert "evidence" in result.error
+
+
+def test_export_review_normalizes_alias_shape(monkeypatch):
+    """顶层换键名时保守归一：问题内容不丢，仍走严格校验，不额外烧调用。"""
+    from app.services.llm import llm_mgr
+
+    payload = {
+        "problems": [
+            {
+                "kind": "语病",
+                "lines": [1],
+                "desc": "语句不通",
+                "evidence": [{"line": 1, "quote": "姐姐好"}],
+            }
+        ]
+    }
+    calls = []
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            calls.append(user)
+            return payload, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    result = run_export_semantic_review("测试", story)
+    assert len(calls) == 1, "别名键应一次归一成功，不该再纠错"
+    assert result.completed
+    assert result.issues and result.issues[0]["kind"] == "语病"
+
+
+def test_export_review_reports_actual_keys_for_unknown_shape(monkeypatch):
+    """真无法识别时必须判未完成，并在错误里给出实际键名便于定位。"""
+    from app.services.llm import llm_mgr
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            return {"verdict": "pass", "notes": []}, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    result = run_export_semantic_review("测试", story)
+    assert not result.completed
+    assert "issues" in result.error and "verdict" in result.error
 
 
 def _run_mock_reviewer(monkeypatch, story, payload):

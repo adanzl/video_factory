@@ -842,6 +842,28 @@ def test_a_closing_allows_two_kids_on_challenger_side():
     assert not errors, errors
 
 
+def test_f_mid_pairs_carry_escalation_markers():
+    """F 中段补位须带 F 硬卡的加码标记，否则插入后仍判「中段缺加码」。"""
+    from app.services.daily_story.story_types.f.validate import RE_ESCALATION
+    from app.services.gold_story.gold_chat.length import _f_natural_mid_pairs
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "快去把灯关了。"},
+        {"speaker": "灿灿", "line": "你先关你自己那屋的。"},
+        {"speaker": "昭昭", "line": "姐，你别跟妈顶了。"},
+        {"speaker": "灿灿", "line": "你再说一遍？"},
+        {"speaker": "妈妈", "line": "别磨蹭。"},
+        {"speaker": "昭昭", "line": "不跟你玩了！"},
+    ]
+    pairs, insert_at = _f_natural_mid_pairs(dialogue)
+    assert pairs, "F 要有补位对"
+    assert insert_at == len(dialogue) - 2
+    marked = [
+        pair for pair in pairs if RE_ESCALATION.search(pair[0][1])
+    ]
+    assert marked, f"补位对须含加码标记：{pairs[:1]}"
+
+
 def test_e_mid_pairs_support_single_kid_plus_parent():
     """E 单孩稿：中段补位须是「孩子追问+家长短反应」，且落在收束两拍之前。"""
     from app.services.gold_story.gold_chat.length import _e_natural_mid_pairs

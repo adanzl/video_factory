@@ -586,6 +586,24 @@ def _parse_issue_evidence_entries(
     return out
 
 
+_EVIDENCE_QUOTE_NORM = re.compile(r"[\s，。！？、；：,.!?;:\"'“”‘’（）()《》【】…—-]+")
+
+
+def _quote_matches_line(quote: str, line_text: str) -> bool:
+    """证据引文是否为该行连续子串；容忍标点/空白差异，不容忍改写。
+
+    只放宽标点与空白：内容仍须逐字连续出现，避免把「引错内容」当证据。
+    """
+    if not quote or not line_text:
+        return False
+    if quote in line_text:
+        return True
+    norm_q = _EVIDENCE_QUOTE_NORM.sub("", quote)
+    if len(norm_q) < 2:
+        return False
+    return norm_q in _EVIDENCE_QUOTE_NORM.sub("", line_text)
+
+
 def _issue_has_line_evidence(
     issue: dict[str, Any],
     rows: list[dict[str, Any]],
@@ -626,7 +644,7 @@ def _issue_has_line_evidence(
         if not (0 <= idx < len(rows)):
             return False
         line_text = str(rows[idx].get("line") or "")
-        if quote not in line_text:
+        if not _quote_matches_line(quote, line_text):
             return False
         covered.add(line_no)
 
@@ -807,6 +825,44 @@ def _normalize_issue_line_numbers(nos: Any) -> list[int] | None:
     return None
 
 
+_REVIEW_ISSUE_ALIAS_KEYS: tuple[str, ...] = (
+    "问题",
+    "problems",
+    "findings",
+    "checks",
+    "review_issues",
+    "records",
+    "列表",
+)
+
+# 语义审读最多调用次数（首发 + 最多 2 次格式纠正）：模型偶发连报形状漂移，
+# 纠错提示词会带上最小骨架；仍不合规即判未完成，绝不把格式失败当通过。
+EXPORT_REVIEW_MAX_CALLS = 3
+
+
+def normalize_review_raw_shape(raw: Any) -> dict[str, Any]:
+    """审读 JSON 常见形状漂移的保守归一：只换键名/包壳，不放松任何校验。
+
+    模型偶发把 issues 写成 problems/findings 等别名，或直接返回数组。
+    这些情形下问题内容仍在，只是键名不同，故归一后照常走严格校验；
+    归一不通过时依旧报格式无效，绝不把格式失败当审核通过。
+    """
+    if isinstance(raw, list):
+        return {"issues": raw, "_shape_alias": "list"}
+    if not isinstance(raw, dict):
+        return {}
+    if "issues" in raw:
+        return raw
+    for key in _REVIEW_ISSUE_ALIAS_KEYS:
+        value = raw.get(key)
+        if isinstance(value, list):
+            out = dict(raw)
+            out["issues"] = value
+            out["_shape_alias"] = key
+            return out
+    return raw
+
+
 def _validate_export_review_raw(
     raw: dict[str, Any],
     *,
@@ -933,7 +989,12 @@ def run_export_semantic_review(
     *,
     beat_chain: list[Any] | None = None,
 ) -> ExportSemanticReviewResult:
-    """审读格式无效时纠正一次；调用异常直接返回未完成。"""
+    """审读格式无效时纠正再试；调用异常直接返回未完成。
+
+    预算 ``EXPORT_REVIEW_MAX_CALLS``：首发 + 最多 ``-1`` 次格式纠正。
+    实测模型偶发连报两次形状漂移（缺 issues / 换键名），故留两次纠正；
+    纠正提示词带最小骨架，且每次都重申不得为过校验删问题。
+    """
     from app.services.llm import llm_mgr
 
     client = llm_mgr._get_client()
@@ -954,7 +1015,8 @@ def run_export_semantic_review(
     )
     n_lines = len(story.get("dialogue") or [])
     review_user = user
-    for attempt in range(2):
+    max_calls = EXPORT_REVIEW_MAX_CALLS
+    for attempt in range(max_calls):
         try:
             raw, _ = chat_json(
                 system,
@@ -985,8 +1047,21 @@ def run_export_semantic_review(
                     error=err,
                 )
         else:
+            raw = normalize_review_raw_shape(raw)
+            alias = str(raw.get("_shape_alias") or "") if isinstance(raw, dict) else ""
+            if alias:
+                logger.warning(
+                    "[GOLD_CHAT] review shape normalized alias=%s", alias
+                )
             if not isinstance(raw, dict) or "issues" not in raw:
-                shape_err = "审读 JSON 缺 issues 字段"
+                keys = sorted(raw.keys())[:12] if isinstance(raw, dict) else []
+                logger.warning(
+                    "[GOLD_CHAT] review JSON missing issues; keys=%s", keys
+                )
+                shape_err = (
+                    "审读 JSON 缺 issues 字段"
+                    + (f"（实际键：{'/'.join(keys)}）" if keys else "（返回非对象）")
+                )
             else:
                 shape_err = _validate_export_review_raw(raw, line_count=n_lines)
         parsed_issues: list[dict[str, Any]] = []
@@ -1011,26 +1086,35 @@ def run_export_semantic_review(
                 issues=parsed_issues,
                 humor=parse_humor(raw),
             )
-        if attempt == 1:
+        if attempt >= max_calls - 1:
             return ExportSemanticReviewResult(
                 completed=False,
                 error=f"审读 JSON 格式无效：{shape_err}",
             )
         logger.warning(
-            "[GOLD_CHAT] review format correction 1/1: %s", shape_err,
+            "[GOLD_CHAT] review format correction %s/%s: %s",
+            attempt + 1,
+            max_calls - 1,
+            shape_err,
         )
         review_user = (
             user
-            + "\n【审核格式纠正，仅一次】\n"
+            + f"\n【审核格式纠正 {attempt + 1}/{max_calls - 1}】\n"
             + f"上一份审核未通过格式校验：{shape_err}\n"
             + "稿件未改变。请纠正审核 JSON，保持审核标准，勿为通过校验删除问题。"
+            + '**顶层必须是对象且必须带 issues 数组**；没问题就是 `{"issues": []}`，'
+            + "不要省略 issues，也不要用 problems/findings/results 等别的键名或只返回数组。"
+            + "每个 issue 须有 kind/lines/desc；"
             + "evidence 的 line 必须为 issues.lines 内的整数，quote 必须从该行原样摘录至少两个字。"
             + "kind=缺前提 时必须说明 missing_relation；若对应 beat_chain 缺拍，再输出 missing_beat 对象"
             + '{"beat":1,"intent":"对应 beat_chain 的 intent 原文"}，'
             + "beat 必须是 beat_chain 的 1-based JSON 整数，不能是字符串、小数或 null；"
             + "其他 kind 不要输出 missing_beat；missing_relation 必须是简短字符串。"
             + "输出完整审核 JSON，不要改写稿件。\n上一份审核：\n"
-            + json.dumps(raw, ensure_ascii=False)
+            + json.dumps(
+                {k: v for k, v in raw.items() if not str(k).startswith("_")},
+                ensure_ascii=False,
+            )
         )
     return ExportSemanticReviewResult(completed=False, error="审核格式纠正未完成")
 
@@ -1355,22 +1439,24 @@ def build_review_prompts(
         "intent 直接复制该 beat 的 intent，不要改写；其他 kind 不要输出 missing_beat。\n"
         "重复类仍以本地检测为主，报重复时也请给 evidence 便于人读。\n"
         "缺前提示例见 missing_beat + evidence（勿伪造缺失句 quote）。\n\n"
-        "只输出 JSON：\n"
-        '{"facts":["3昭昭分工:自己藏车、灿灿藏零食","5锅里没米","6剩饭被倒掉"],'
-        '"chain":{"争议点":"妈妈承认没换鞋，辩「拿东西不算进屋」",'
-        '"标注":["4回应3的抓现行:辩拿钥匙","5回应4:帮腔不算",'
-        '"8回应不了7:在证明已承认的事→无效证据"]},'
-        '"checks":{"矛盾":"第5句锅里没米，第6句又倒剩饭","错位":"无",'
-        '"示范":"无","重复":"第5句与第8句都说碗干","塑料":"无","语病":"无",'
-        '"书面":"无","引用无据":"无","动作误说":"无",'
-        '"接不上":"无","无效证据":"第8句"},'
-        '"issues":[{"lines":[5,6],"kind":"矛盾",'
+        "只输出 JSON，**issues 必须放在最前**（facts/chain/checks 是思考过程，可省）：\n"
+        '{"issues":[{"lines":[5,6],"kind":"矛盾",'
         '"desc":"第5句说锅里一粒米都没有，第6句又说把剩饭倒掉了",'
         '"evidence":[{"line":5,"quote":"一粒米都没有"},'
         '{"line":6,"quote":"把剩饭倒掉了"}],'
         '"fix":"第6句改成…"}],'
         '"humor":{"funny_score":14,"best_moment":"我正看到关键处，你等会儿",'
-        '"humor_type":"natural"}}\n'
+        '"humor_type":"natural"},'
+        '"facts":["3昭昭分工:自己藏车、灿灿藏零食","5锅里没米"],'
+        '"chain":{"争议点":"妈妈承认没换鞋，辩「拿东西不算进屋」",'
+        '"标注":["4回应3的抓现行:辩拿钥匙","8回应不了7:在证明已承认的事→无效证据"]},'
+        '"checks":{"矛盾":"第5句锅里没米，第6句又倒剩饭","错位":"无",'
+        '"示范":"无","重复":"第5句与第8句都说碗干","塑料":"无","语病":"无",'
+        '"书面":"无","引用无据":"无","动作误说":"无",'
+        '"接不上":"无","无效证据":"第8句"}}\n'
+        "顶层必须是对象且**必须带 issues 数组**：没问题写 {\"issues\": []}，"
+        "绝不可以省略 issues，也不要用 problems/findings/results 等别的键名或只返回数组；"
+        "写不完也先保证 issues 完整。\n"
         f"lines 用左侧行号；最多报 {REVIEW_MAX_ISSUES} 条，按严重度排序；"
         "fix 写一句具体怎么改，别写空话。\n\n"
         "全部硬伤检查做完后，**换一种心态**，别再当挑错的审稿人，"
