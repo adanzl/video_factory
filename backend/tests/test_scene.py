@@ -864,6 +864,80 @@ def test_f_mid_pairs_carry_escalation_markers():
     assert marked, f"补位对须含加码标记：{pairs[:1]}"
 
 
+def test_f_parent_caught_pairs_target_the_parent():
+    """把柄在家长手上：中段互呛须是孩子↔家长，勿把孩子之间写成对立。"""
+    from app.services.gold_story.gold_chat.length import _f_natural_mid_pairs
+
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "催关灯", "claim_role": "unknown"},
+        {"beat": 5, "speaker": "灿灿", "intent": "讨要补偿", "claim_role": "claimant"},
+        {"beat": 6, "speaker": "妈妈", "intent": "含糊答应", "claim_role": "secret_holder"},
+    ]
+    dialogue = [
+        {"speaker": "妈妈", "line": "快去把灯关了。"},
+        {"speaker": "灿灿", "line": "你还知道你是我妈呀？"},
+        {"speaker": "灿灿", "line": "你晚上偷吃烤串，都背着我。"},
+        {"speaker": "妈妈", "line": "谁告诉你我偷吃了？"},
+        {"speaker": "灿灿", "line": "你自己说的。"},
+        {"speaker": "昭昭", "line": "姐，我也要吃。"},
+    ]
+    pairs, _insert_at = _f_natural_mid_pairs(dialogue, beat_chain=chain)
+    assert pairs, "把柄稿也要有补位对"
+    for kid_seg, parent_seg in pairs:
+        assert kid_seg[0] in {"昭昭", "灿灿"}
+        assert parent_seg[0] in {"妈妈", "爸爸"}, "对呛的接话方应为家长"
+        assert not any(
+            word in parent_seg[1] for word in ("行行行", "明天补", "算我错")
+        ), "家长那句应是挡/辩，不能是认输破功"
+
+
+def test_seed_gets_second_kid_on_same_side_for_parent_caught():
+    """单孩+家长稿：seed 补同侧第二孩，避免模型自编第二个孩子的立场。"""
+    from app.services.gold_story.scene import align_seed_two_kids_vs_parent
+
+    seed = [
+        {"speaker": "妈妈", "intent": "催灿灿去关灯", "speech_act": "other"},
+        {"speaker": "灿灿", "intent": "反问妈妈身份", "speech_act": "echo"},
+        {
+            "speaker": "灿灿",
+            "intent": "抛出妈妈偷吃烤串",
+            "speech_act": "accuse",
+            "claim_role": "accuser",
+        },
+        {"speaker": "妈妈", "intent": "追问谁说的", "speech_act": "deny"},
+    ]
+    out, notes = align_seed_two_kids_vs_parent(seed, characters=["妈妈", "灿灿"])
+    assert notes and "昭昭" in notes[0]
+    assert [r["speaker"] for r in out][:4] == ["妈妈", "灿灿", "灿灿", "昭昭"]
+    added = out[3]
+    assert added["claim_role"] == "accuser", "补的这拍须同侧（作证/帮腔）"
+    assert "勿替家长辩护" in added["intent"]
+
+    # 已含两个孩子时不改
+    two_kids = seed + [{"speaker": "昭昭", "intent": "跟着追问"}]
+    same, no_notes = align_seed_two_kids_vs_parent(
+        two_kids, characters=["妈妈", "灿灿", "昭昭"]
+    )
+    assert not no_notes and len(same) == len(two_kids)
+
+    # 角色表只列一个孩子：按「单孩源须拆双孩」补齐（与扩写系统提示同口径）
+    split, split_notes = align_seed_two_kids_vs_parent(
+        seed, characters=["妈妈", "灿灿"]
+    )
+    assert split_notes, "单孩源须补第二孩"
+    assert len(split) == len(seed) + 1
+
+    # 没有任何家长时不补（非亲子稿）
+    no_parent, _ = align_seed_two_kids_vs_parent(
+        [
+            {"speaker": "灿灿", "intent": "顶嘴", "speech_act": "accuse"},
+            {"speaker": "灿灿", "intent": "继续", "speech_act": "echo"},
+        ],
+        characters=["灿灿"],
+    )
+    assert len(no_parent) == 2
+
+
 def test_e_mid_pairs_support_single_kid_plus_parent():
     """E 单孩稿：中段补位须是「孩子追问+家长短反应」，且落在收束两拍之前。"""
     from app.services.gold_story.gold_chat.length import _e_natural_mid_pairs

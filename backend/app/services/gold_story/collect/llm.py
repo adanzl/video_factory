@@ -17,6 +17,7 @@ from app.services.gold_story.scene import (
     PARENT_SPEAKER_LABELS,
     SEED_MIN,
     age_remap_contract_errors,
+    align_seed_two_kids_vs_parent,
     apply_parent_role_budget,
     fact_attribution_review_required,
     fact_claim_alignment_notes,
@@ -963,6 +964,11 @@ def build_dialogue_seed(
         seed,
         mom_max,
         preserve_last=preserve_k_fail_tail,
+    )
+    # 单孩+家长稿：补齐同侧第二孩，免得模型自编第二个孩子的立场
+    seed, _kid_side_notes = align_seed_two_kids_vs_parent(
+        seed,
+        characters=contract.get("characters") or [],
     )
     seed, _silent_seed_notes2 = trim_terminal_no_reply_rows(seed)
     if len(seed) < SEED_MIN:

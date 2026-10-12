@@ -469,13 +469,59 @@ _E_NATURAL_MID_PARENT_TEMPLATES: tuple[tuple[str, str], ...] = (
     ("那你给我个准话。", "先别嚷，我这就说。"),
     ("这话是你自己讲的吧？", "是，我是这么说过。"),
 )
+def _parent_holds_secret(
+    beat_chain: list[Any] | None,
+    dialogue: list[Any],
+) -> bool:
+    """把柄是否在家长手上（把柄稿：孩子当面拆穿家长）。
+
+    读 beat_chain 的 claim_role=secret_holder（结构化槽位，不读剧情词）；
+    缺失时看对白里家长是否与孩子互为对手。把柄稿的中段互呛应发生在
+    孩子↔家长之间，而非两个孩子之间——否则模型会拉出第三个孩子当对手，
+    终检必报「对话对象乱跳 / 身份立场对不上」。
+    """
+    if isinstance(beat_chain, list):
+        for row in beat_chain:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("claim_role") or "").strip() != "secret_holder":
+                continue
+            holder = str(row.get("speaker") or "").strip()
+            if holder in {"妈妈", "爸爸"}:
+                return True
+    return False
+
+
 # F（互呛加码）：字数不够时补一组短接话互呛对，插在收场之前。
-# 两句须是**同一方向的孩子对呛**（前者挑、后者接），否则会被读成自问自答；
+# 两句须是**同一方向的对呛**（前者挑、后者接），否则会被读成自问自答；
 # 且须带 F 硬卡机读的加码标记（还…呢/再说/试试/更/再来），否则中段加码判不过。
+# 非把柄稿（姐弟互呛）用这两条。
 _F_NATURAL_MID_TEMPLATES: tuple[tuple[str, str], ...] = (
     ("你还敢再说一遍呢！", "说就说，我又不怕你！"),
     ("你再说，我可要吼了！", "吼啊，你试试看！"),
     ("你还来劲儿了呢！", "再来我也不认你这话！"),
+)
+def _kid_and_parent(dialogue: list[Any]) -> tuple[str, str]:
+    """对白里的孩子与家长（各取第一位出场者）。"""
+    kid = ""
+    parent = ""
+    for row in dialogue:
+        if not isinstance(row, dict):
+            continue
+        sp = str(row.get("speaker") or "").strip()
+        if sp in {"昭昭", "灿灿"} and not kid:
+            kid = sp
+        elif sp in {"妈妈", "爸爸"} and not parent:
+            parent = sp
+    return kid, parent
+
+
+# 把柄稿（孩子拆穿家长）的中段互呛对：孩子在顶、家长在挡。
+# 家长那句须是**挡/辩**而非认输破功，孩子那句须带加码标记。
+_F_PARENT_MID_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("你还敢再说一遍呢！", "我说了没有，你别再胡搅。"),
+    ("你再说，我可要吼了！", "吼也没用，这事就这么算。"),
+    ("你还来劲儿了呢！", "我什么时候骗过你，别乱说。"),
 )
 # E/F 句内实义尾巴：只能加在孩子的追问/顶回句上（家长句有额度与破功约束，
 # 不在此扩写）。禁记仇/威胁类空转，避免 E 中段不变量被判不合格。
@@ -661,20 +707,59 @@ def _e_natural_mid_pairs(
     return pairs, max(2, len(dialogue) - 2)
 
 
+def _last_kid_press_line(dialogue: list[Any], speaker: str) -> str:
+    """取该孩子最后一句里的追问话头（用于把接话锚在前文上）。
+
+    通用模板最大的问题是凭空一句「你再说一遍」，而前文没有可被要求重复的话，
+    终检必报「接不上」。故接话句尽量复用前文已有的 3–6 字话头片段。
+    """
+    norm = re.compile(r"[\s，。！？、；：,.!?;:\"'“”‘’（）()《》【】…—-]+")
+    for row in reversed(dialogue):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("speaker") or "").strip() != speaker:
+            continue
+        core = norm.sub("", str(row.get("line") or ""))
+        if len(core) >= 3:
+            return core[:6]
+    return ""
+
+
 def _f_natural_mid_pairs(
     dialogue: list[Any],
+    *,
+    beat_chain: list[Any] | None = None,
 ) -> tuple[
     tuple[tuple[tuple[str, str], tuple[str, str]], ...],
     int | None,
 ]:
-    """F 补位：收场之前插一组短接话互呛对。"""
+    """F 补位：收场之前插一组对呛。
+
+    把柄稿（孩子在拆穿家长）走「孩子↔家长」互呛：两个孩子须同侧，
+    否则模型会拉出第三个孩子当对手，终检必报对话对象乱跳；
+    普通姐弟互呛稿走「姐弟↔姐弟」。
+    接话句锚在前文话头上，避免「凭空开火」被判接不上。
+    """
     if len(dialogue) < 6:
         return (), None
+    if _parent_holds_secret(beat_chain, dialogue):
+        kid, parent = _kid_and_parent(dialogue)
+        if not kid or not parent:
+            return (), None
+        pairs = tuple(
+            ((kid, a), (parent, b)) for a, b in _F_PARENT_MID_TEMPLATES
+        )
+        return pairs, max(2, len(dialogue) - 2)
     kids = _kid_order_speakers(dialogue)
     if len(kids) < 2:
         return (), None
+    lead = _last_kid_press_line(dialogue, kids[0]) or kids[0]
     pairs = tuple(
-        ((kids[0], a), (kids[1], b)) for a, b in _F_NATURAL_MID_TEMPLATES
+        (
+            (kids[0], f"你刚说的「{lead}」，还敢再来一遍试试！"),
+            (kids[1], b),
+        )
+        for _a, b in _F_NATURAL_MID_TEMPLATES
     )
     return pairs, max(2, len(dialogue) - 2)
 
@@ -1360,7 +1445,9 @@ def _boost_short_with_mid_lines(
         _e_natural_mid_pairs(dialogue) if st == "E" else ((), None)
     )
     f_pair_pool, f_insert_at = (
-        _f_natural_mid_pairs(dialogue) if st == "F" else ((), None)
+        _f_natural_mid_pairs(dialogue, beat_chain=beat_chain)
+        if st == "F"
+        else ((), None)
     )
     # K：顶满 24 句时仍可能差字，允许至 26 以便插实义中段对
     line_cap = CHAT_LINE_COUNT_MAX + (2 if st == "K" else 0)

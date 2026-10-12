@@ -1467,6 +1467,83 @@ def seed_from_beat_chain(chain: list[Any]) -> list[dict[str, str]]:
     return out
 
 
+def align_seed_two_kids_vs_parent(
+    seed: list[Any] | None,
+    *,
+    characters: list[Any] | None = None,
+) -> tuple[list[Any], list[str]]:
+    """单孩+家长稿的 seed 补齐第二个孩子（同侧），避免模型自编立场。
+
+    源视频多为「一个孩子 vs 家长」，但本流水线的成稿形态是**两个孩子同侧**
+    齐上（用户口径：2 孩子 vs 大人）。seed 只含一个孩子时，模型必须自己
+    发明第二个孩子的立场，实测会漂成「替家长辩护」或「跟同伴对立」，
+    终检必报身份/对话对象错位。
+
+    这里按结构化信息补一拍：在**把柄被抛出的那一拍之后**，让另一位孩子
+    以同侧身份接话（见证/帮腔），不新增冲突、不改变既有拍序。
+    只在「恰好一个孩子 + 至少一位家长」时生效。
+    """
+    rows = [r for r in (seed or []) if isinstance(r, dict)]
+    if not rows:
+        return list(seed or []), []
+    chars = [
+        str(c).strip() for c in (characters or []) if str(c).strip()
+    ]
+    kids: list[str] = []
+    for row in rows:
+        sp = str(row.get("speaker") or "").strip()
+        if sp in CHILD_SPEAKER_LABELS and sp not in kids:
+            kids.append(sp)
+    has_parent = any(
+        str(row.get("speaker") or "").strip() in PARENT_SPEAKER_LABELS
+        for row in rows
+    )
+    if len(kids) != 1 or not has_parent:
+        return list(seed or []), []
+    kid = kids[0]
+    other = next(
+        (
+            c
+            for c in ("昭昭", "灿灿")
+            if c in CHILD_SPEAKER_LABELS and c != kid
+        ),
+        "",
+    )
+    if not other:
+        return list(seed or []), []
+    # 角色表已含两个孩子时无需补；只列一个孩子时按「单孩源须拆双孩」补齐
+    # （与扩写系统提示同一口径），避免契约与提示词互相打架。
+    listed_kids = [c for c in chars if c in CHILD_SPEAKER_LABELS]
+    if len(listed_kids) >= 2:
+        return list(seed or []), []
+    # 找把柄抛出拍：结构化槽位 accuse/claim_compensation 优先
+    anchor = -1
+    for i, row in enumerate(rows):
+        act = str(row.get("speech_act") or "").strip().lower()
+        role = str(row.get("claim_role") or "").strip().lower()
+        if act in {"accuse", "expose"} or role in {"accuser", "discoverer"}:
+            anchor = i
+    if anchor < 0:
+        return list(seed or []), []
+    if any(
+        str(row.get("speaker") or "").strip() == other
+        for row in rows[anchor:]
+    ):
+        return list(seed or []), []
+    out: list[Any] = list(seed or [])
+    insert_at = anchor + 1
+    out.insert(
+        insert_at,
+        {
+            "speaker": other,
+            "intent": "同侧接话，替同伴作证并一起追问（勿替家长辩护）",
+            "speech_act": "echo",
+            "claim_role": "accuser",
+        },
+    )
+    return out, [f"seed补同侧第二孩:{other}@{insert_at + 1}"]
+
+
 def parent_identity_claim_target(text: str) -> str | None:
     """自称家长身份的目标角色（妈妈/爸爸）；非自称或非身份句返回 None。"""
     raw = str(text or "")

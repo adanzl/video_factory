@@ -1947,6 +1947,116 @@ def patch_authority_insert_resist_after_reverse(
 
 
 
+_SEED_PREMISE_MAX_INSERTS = 2
+
+
+def _seed_premise_overlap(seed_text: str, line_text: str) -> bool:
+    """seed 拍与对白行是否有 ≥3 字连续重叠（归一化标点后判断）。"""
+    norm = re.compile(r"[\s，。！？、；：,.!?;:\"'“”‘’（）()《》【】…—-]+")
+    a = norm.sub("", str(seed_text or ""))
+    b = norm.sub("", str(line_text or ""))
+    if len(a) < 3 or len(b) < 3:
+        return bool(a) and a in b
+    grams = {a[i : i + 3] for i in range(len(a) - 2)}
+    return any(g in b for g in grams)
+
+
+def patch_seed_premise_lines(
+    story: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None = None,
+    max_seed_rows: int = 6,
+) -> tuple[dict[str, Any], bool]:
+    """前段 seed 拍若在对白里整拍缺席，按序补回该拍（前提须先立）。
+
+    终检「缺前提」的根因是被引用的那句（如家长压人的「我是你妈」）没真说出口，
+    而 seed 里本来就有这一拍——这是落地缺失，不是生成能力问题，故确定性补回。
+    只补前 ``max_seed_rows`` 拍且最多补 ``_SEED_PREMISE_MAX_INSERTS`` 句，
+    插入位置按 seed 顺序落在后一已落地拍之前，避免打乱后续节拍。
+    """
+    import copy
+
+    seed_rows: list[tuple[str, str]] = []
+    for item in dialogue_seed or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        text = str(item.get("intent") or item.get("line") or "").strip()
+        if sp and text:
+            seed_rows.append((sp, text))
+    if not seed_rows:
+        return story, False
+    seed_rows = seed_rows[:max_seed_rows]
+
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return story, False
+    from app.services.gold_story.scene import (
+        CHAT_LINE_COUNT_MAX,
+        CHAT_LINE_COUNT_MIN,
+    )
+
+    lines = [
+        str(item.get("line") or "")
+        for item in dialogue
+        if isinstance(item, dict)
+    ]
+    changed = False
+    inserts = 0
+    # 已落地的 seed 拍下标（用于决定插入位置）
+    landed: list[int] = []
+    for sp, text in seed_rows:
+        idx = next(
+            (
+                i
+                for i, item in enumerate(dialogue)
+                if isinstance(item, dict)
+                and str(item.get("speaker") or "").strip() == sp
+                and _seed_premise_overlap(text, str(item.get("line") or ""))
+            ),
+            -1,
+        )
+        landed.append(idx)
+
+    for pos, (sp, text) in enumerate(seed_rows):
+        if inserts >= _SEED_PREMISE_MAX_INSERTS:
+            break
+        if landed[pos] >= 0:
+            continue
+        if len(dialogue) >= CHAT_LINE_COUNT_MAX:
+            break
+        # 落在「下一个已落地拍」之前；都没有则放在收尾前（不挤收束）
+        insert_at = next(
+            (landed[j] for j in range(pos + 1, len(landed)) if landed[j] >= 0),
+            max(1, len(dialogue) - 2),
+        )
+        insert_at = max(1, min(insert_at, len(dialogue)))
+        if insert_at <= 0:
+            continue
+        prev_sp = str(
+            (dialogue[insert_at - 1] or {}).get("speaker") or ""
+        ).strip()
+        if prev_sp == sp:
+            # 避免同角色连说：退一格仍连说就放弃该拍
+            if insert_at - 2 < 0 or str(
+                (dialogue[insert_at - 2] or {}).get("speaker") or ""
+            ).strip() == sp:
+                continue
+            insert_at -= 1
+        dialogue.insert(insert_at, {"speaker": sp, "line": text})
+        for j in range(pos + 1, len(landed)):
+            if landed[j] >= insert_at:
+                landed[j] += 1
+        landed[pos] = insert_at
+        inserts += 1
+        changed = True
+    if changed and len(dialogue) < CHAT_LINE_COUNT_MIN:
+        # 句数仍不足时由后续补字链处理，这里不做假对白
+        pass
+    return out, changed
+
+
 def patch_authority_cull_extra_mom_lines(
     story: dict[str, Any],
     *,

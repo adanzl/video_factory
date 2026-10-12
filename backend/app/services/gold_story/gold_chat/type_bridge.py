@@ -694,10 +694,26 @@ _TYPE_HINT_APPEND: dict[str, str] = {
         "beat_chain 的触发拍；"
         "中段须有**至少两轮互呛加码**（带「再说/试试/你还…呢/更/再来」一类升级词），"
         "并各自抬高一档，勿只平级复读；"
+        "**对手关系按把柄归属定**：把柄在家长手上时（孩子当面拆穿家长），"
+        "互呛必须发生在孩子↔家长之间，**两个孩子同侧**齐上，"
+        "禁把孩子之间写成对立、禁拉第三个孩子当对手（终检会报对话对象乱跳）；"
         "收束按 seed：僵持后中止（露怯/退场/外部打断），"
         "**禁止**收成和好或大人定责"
     ),
 }
+
+
+# 通用金稿前提（与终检 D「事件前提」同口径）：后文依赖的物证/事件须先在对白里
+# 当场建立，否则终检会以「缺前提」硬拦。与类型无关，故独立于 _TYPE_HINT_APPEND。
+_GOLD_CHAT_PREMISE_BLOCK = (
+    "- **前提建立（硬要求）**：任何后文要被引用/反驳的物证、旧账、动作，"
+    "必须先在对白里由在场人**当场交代一次**（谁看见、在哪看见、什么样），"
+    "再被引用；"
+    "禁直接引用从未交代过的物证（如凭空出现「垃圾桶里的竹签」），"
+    "也禁后文凭空否认可被对方看到的事实；"
+    "开场按 beat_chain 顺序落地，家长压人的那句（如「我是你妈」）须真说出口，"
+    "孩子后面的反问才算接得住"
+)
 
 
 def structure_type_hint(
@@ -784,6 +800,7 @@ def structure_type_hint(
             extra = _MECH_HINT_APPEND.get((mech, st), "")
         if extra:
             parts.append(extra.strip())
+    parts.append(_GOLD_CHAT_PREMISE_BLOCK)
     type_extra = _TYPE_HINT_APPEND.get(st, "")
     if type_extra:
         parts.append(type_extra.strip())

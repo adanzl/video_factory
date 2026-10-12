@@ -293,6 +293,19 @@ def _is_retryable_draft_failure(exc: Exception) -> bool:
     }
 
 
+def patch_seed_premise_align(
+    story: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """前段 seed 拍整拍缺席时补回（终检「缺前提」的确定性修复）。"""
+    from app.services.gold_story.gold_chat.patch import (
+        patch_seed_premise_lines,
+    )
+
+    return patch_seed_premise_lines(story, dialogue_seed=dialogue_seed)
+
+
 def patch_seed_speaker_align(
     story: dict[str, Any],
     *,

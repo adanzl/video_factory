@@ -82,6 +82,7 @@ from app.services.gold_story.gold_chat.prompts import (
     format_expand_regen_feedback,
     format_role_binding_block,
     format_seed_span_block,
+    format_seed_skeleton_block,
     format_structure_score_feedback,
 )
 from app.services.gold_story.gold_chat.type_bridge import (
@@ -1773,6 +1774,7 @@ def gold_story_to_gold_chat(
                 structure_type=structure_type,
                 mechanism=mechanism,
             ),
+            seed_skeleton_block=format_seed_skeleton_block(prompt_seed),
             closing_intent=_closing_for_prompt(closing),
             speaker_map_note=str(
                 payload.get("speaker_map_note")
@@ -1894,12 +1896,18 @@ def gold_story_to_gold_chat(
             patch_break_consecutive_keep_seed,
             patch_collapse_empty_sibling_repeats,
             patch_score_propaganda_speakers,
+            patch_seed_premise_align,
             patch_seed_speaker_align,
         )
 
         data, seed_changed = patch_seed_speaker_align(data, dialogue_seed=seed)
         if seed_changed:
             type_notes = list(type_notes) + ["seed角色归位"]
+        data, premise_changed = patch_seed_premise_align(
+            data, dialogue_seed=seed
+        )
+        if premise_changed:
+            type_notes = list(type_notes) + ["seed前提补回"]
         data, prop_changed = patch_score_propaganda_speakers(
             data, conflict_text=conflict_text
         )
