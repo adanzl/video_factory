@@ -1179,6 +1179,26 @@ def test_opening_causality_patch_rejects_o106_narrative_rule_seed():
     assert not opening_causality_passes(fixed, beat, mom_lines_max=2)
 
 
+def test_opening_causality_ignores_name_only_anchor_hit():
+    """长叙事锚词只被人名叠字对命中时，不得据此判 beat 顺序倒挂。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "放旧视频，回看姐弟抢拼图"},
+        {"beat": 2, "speaker": "灿灿", "intent": "占物：伸手抢昭昭手里的拼图"},
+        {"beat": 3, "speaker": "昭昭", "intent": "拒给：抓住拼图喊不要"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "快看你们小时候抢拼图，昭昭抓得可紧了。"},
+            {"speaker": "灿灿", "line": "那我也要拼，昭昭你手里这块给我呀。"},
+            {"speaker": "昭昭", "line": "不要抢，这是我先拿到的，你松手吧。"},
+        ],
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=3)
+
+
 def test_opening_rule_announcement_detection_is_narrow():
     from app.services.gold_story.gold_chat.validate import _opening_authority_intent_kind
 

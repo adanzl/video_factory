@@ -1915,6 +1915,10 @@ def _anchor_matches_line(anchor: str, line: str) -> bool:
     beat intent 常是压缩短语（如「催关灯」「洗袜子」），对白里说成
     「去把灯关了」「把袜子洗了」——字面包含判定会漏，故再接受两种等价：
     相邻二字倒装（关灯↔灯关）；三字以上锚词的字面全覆盖（把字句拆装）。
+
+    叠字对（「昭昭」倒装仍是「昭昭」）不构成倒装，只等于"锚词局部二字被
+    对白含住"；长叙事锚词里的人名靠这条会退化命中任意出现该名字的句子
+    （beat 顺序校验随之误报），故跳过。
     """
     if not anchor or not line:
         return False
@@ -1925,7 +1929,7 @@ def _anchor_matches_line(anchor: str, line: str) -> bool:
         return False
     for i in range(len(anchor) - 1):
         pair = anchor[i : i + 2]
-        if len(pair) == 2 and pair[1] + pair[0] in han:
+        if len(pair) == 2 and pair[0] != pair[1] and pair[1] + pair[0] in han:
             return True
     if len(anchor) >= 3 and all(ch in han for ch in anchor):
         return True

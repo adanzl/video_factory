@@ -746,6 +746,16 @@ def test_anchor_matches_line_tolerates_reversed_pair():
     assert _anchor_matches_line("洗袜子", "把袜子洗了")
 
 
+def test_anchor_matches_line_ignores_palindromic_pair():
+    """叠字对倒装等于自身（昭昭↔昭昭）：不能只靠人名命中长叙事锚词。"""
+    from app.services.gold_story.gold_chat.validate import _anchor_matches_line
+
+    assert not _anchor_matches_line(
+        "伸手抢昭昭手里的拼图", "那我也要拼，昭昭你手里这块给我呀。"
+    )
+    assert not _anchor_matches_line("昭昭立刻老实", "昭昭，坐好，我辅导你写作业，别耍赖。")
+
+
 def test_a_closing_role_pair_follows_beat_speech_acts():
     """家长当权威（M5/A 亲子稿）时，末四拍按阵营交替判定。"""
     from app.services.daily_story.story_types.a.validate import (
