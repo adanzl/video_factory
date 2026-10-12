@@ -160,6 +160,8 @@ dialogue_seed（剧情要点，不是最终台词）：
 
 {seed_span_block}
 
+{seed_skeleton_block}
+
 收束意图（只落实要点，勿把说明整段写进对白）：{closing_intent}
 映射说明：{speaker_map_note}
 story_raw（背景，勿照抄；口播/论述须转现场对白）：{story_raw}
@@ -1014,6 +1016,44 @@ def format_semantic_acceptance_feedback(error: str) -> str:
         f"机审：{err}",
     ]
     return "\n".join(parts)
+
+
+def format_seed_skeleton_block(
+    seed: list[Any] | None,
+    *,
+    skeleton_len: int = 6,
+) -> str:
+    """草稿前 N 拍须逐字落实 seed 骨架（专家裁决：前提链必须在开头建立）。
+
+    缺前提（后文引用未交代的物证/旧账）是结构问题，提示词软约束压不住；
+    seed 已含完整前提链，故要求开头先把骨架按序落地成可见对白，
+    之后才允许自由扩写。这里只列骨架内容，不写剧情词。
+    """
+    rows: list[tuple[str, str]] = []
+    for item in seed or []:
+        if isinstance(item, dict):
+            speaker = str(item.get("speaker") or "").strip()
+            text = str(item.get("intent") or item.get("line") or "").strip()
+        else:
+            speaker, text = "", str(item or "").strip()
+        if text:
+            rows.append((speaker, text))
+    if not rows:
+        return ""
+    head = rows[:skeleton_len]
+    lines = "\n".join(
+        f"  {i}. {sp or '（按契约角色）'}：{text}"
+        for i, (sp, text) in enumerate(head, 1)
+    )
+    return (
+        f"【开头骨架（前 {len(head)} 拍逐字落实，硬要求）】\n"
+        f"{lines}\n"
+        "要求：正文**前若干句必须按上表顺序依次落地**，每拍至少一句可见对白，"
+        "被引用的一方要**真把那句话说出口**（如家长压人的那句），"
+        "物证/旧账要先由在场人当场交代一次（谁看见、在哪看见、什么样），"
+        "之后才允许自由扩写与加码；"
+        "**禁止**跳过骨架直接从反问或引用开场，也禁止引用骨架里没交代过的物证。"
+    )
 
 
 def format_seed_span_block(

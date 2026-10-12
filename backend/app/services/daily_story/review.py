@@ -863,6 +863,46 @@ def normalize_review_raw_shape(raw: Any) -> dict[str, Any]:
     return raw
 
 
+def drop_unverifiable_evidence_issues(
+    raw: dict[str, Any],
+    *,
+    line_count: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """剔除 evidence 形状不合规的问题条目，返回 (清洗后 raw, 被剔除条目)。
+
+    专家裁决（2026-10）：evidence 写不规范只说明该条不可机器核验，不证明稿子
+    语义失败。纠正预算用尽后按此剔除并继续导出，日志保留被剔除条目供抽检。
+    """
+    issues = raw.get("issues")
+    if not isinstance(issues, list):
+        return raw, []
+    kept: list[Any] = []
+    dropped: list[dict[str, Any]] = []
+    for item in issues:
+        if not isinstance(item, dict):
+            kept.append(item)
+            continue
+        nos = _normalize_issue_line_numbers(item.get("lines"))
+        bad = False
+        if nos is not None:
+            parsed_ev = _parse_issue_evidence_entries(
+                item.get("evidence"),
+                allowed_lines=frozenset(nos),
+                line_count=line_count,
+            )
+            if item.get("evidence") is not None and parsed_ev is None:
+                bad = True
+        if bad:
+            dropped.append(item)
+        else:
+            kept.append(item)
+    if not dropped:
+        return raw, []
+    out = dict(raw)
+    out["issues"] = kept
+    return out, dropped
+
+
 def _validate_export_review_raw(
     raw: dict[str, Any],
     *,
@@ -1073,13 +1113,27 @@ def run_export_semantic_review(
                 beat_chain=beat_chain,
             )
             if invalid_evidence:
-                shape_err = (
-                    "阻断问题 evidence 与原文不一致："
-                    + "；".join(
-                        format_export_blocking_issue_summary(it)
-                        for it in invalid_evidence[:3]
+                # 专家裁决（2026-10）：evidence 对不上原文只说明该条不可机器核验，
+                # 不等于稿子语义失败。先用剩余预算纠正引文；预算用尽仍不合规时
+                # 降级为告警并继续导出，不再让整稿因审读写错引文而失败。
+                if attempt < max_calls - 1:
+                    shape_err = (
+                        "阻断问题 evidence 与原文不一致："
+                        + "；".join(
+                            format_export_blocking_issue_summary(it)
+                            for it in invalid_evidence[:3]
+                        )
                     )
-                )
+                else:
+                    logger.warning(
+                        "[GOLD_CHAT] review blocking issues dropped for invalid "
+                        "evidence (%s): %s",
+                        len(invalid_evidence),
+                        "；".join(
+                            format_export_blocking_issue_summary(it)
+                            for it in invalid_evidence[:3]
+                        ),
+                    )
         if not shape_err:
             return ExportSemanticReviewResult(
                 completed=True,
@@ -1087,6 +1141,32 @@ def run_export_semantic_review(
                 humor=parse_humor(raw),
             )
         if attempt >= max_calls - 1:
+            # 专家裁决：格式问题不阻断整稿。最后一轮把 evidence 不可核验的条目
+            # 剔除（记日志）后继续，仍合规则按通过返回。
+            cleaned, dropped = drop_unverifiable_evidence_issues(
+                raw if isinstance(raw, dict) else {},
+                line_count=n_lines,
+            )
+            if dropped:
+                residual = _validate_export_review_raw(
+                    cleaned, line_count=n_lines
+                )
+                if not residual:
+                    logger.warning(
+                        "[GOLD_CHAT] review dropped %s unverifiable issue(s): %s",
+                        len(dropped),
+                        "；".join(
+                            f"第{d.get('lines')}句·{d.get('kind')}"
+                            for d in dropped[:3]
+                        ),
+                    )
+                    return ExportSemanticReviewResult(
+                        completed=True,
+                        issues=parse_review_issues(
+                            cleaned, line_count=n_lines, for_export=True
+                        ),
+                        humor=parse_humor(cleaned),
+                    )
             return ExportSemanticReviewResult(
                 completed=False,
                 error=f"审读 JSON 格式无效：{shape_err}",

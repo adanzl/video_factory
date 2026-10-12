@@ -1852,15 +1852,44 @@ def test_export_review_corrects_invalid_evidence_bounded(monkeypatch, recovered)
     monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
     story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
     result = run_export_semantic_review("测试", story)
-    # 预算内纠正：改好即停；一直不合规则用满预算后判未完成
+    # 预算内纠正：改好即停；一直不合规则用满预算
     assert len(calls) == (2 if recovered else EXPORT_REVIEW_MAX_CALLS)
     assert "issues[0].evidence" in calls[1]
     assert "姐姐好。" in calls[0] and "姐姐好。" in calls[1]
-    assert result.completed is recovered
+    # 专家裁决：evidence 不可核验不阻断整稿——剔除该条后继续导出
+    assert result.completed, "证据不合规应剔除该条并继续，不再整稿失败"
     if recovered:
         assert len(filter_llm_export_blocking_issues(result.issues, story)) == 1
     else:
-        assert "evidence" in result.error
+        assert result.issues == [], "不可核验的条目须被剔除"
+        assert len(calls) == EXPORT_REVIEW_MAX_CALLS
+
+
+def test_export_review_drops_only_unverifiable_issue(monkeypatch):
+    """部分条目证据不可核验时，只剔除该条，其余照常生效。"""
+    from app.services.llm import llm_mgr
+
+    payload = {
+        "issues": [
+            {"kind": "语病", "lines": [1], "desc": "语句不通",
+             "evidence": [{"line": 1, "quote": "姐姐好"}]},
+            {"kind": "重复", "lines": [2], "desc": "重复",
+             "evidence": [{"line": 2.5, "quote": "再说"}]},
+        ]
+    }
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            return payload, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    story = _story([
+        {"speaker": "昭昭", "line": "姐姐好。"},
+        {"speaker": "灿灿", "line": "你再说。"},
+    ])
+    result = run_export_semantic_review("测试", story)
+    assert result.completed
+    assert [it["kind"] for it in result.issues] == ["语病"]
 
 
 def test_export_review_normalizes_alias_shape(monkeypatch):
