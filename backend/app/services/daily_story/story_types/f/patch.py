@@ -83,13 +83,23 @@ _F_RETORT_POOL = (
 
 
 def patch_f_break_consecutive(story: dict) -> list[str]:
-    """F 同人连说时插入对方短接话，恢复互呛交替。"""
+    """F 同人连说时插入对方短接话，恢复互呛交替。
+
+    家长在场的稿子（两个孩子 vs 一个大人）不插接话：那时互呛发生在
+    孩子↔家长之间，硬插孩子↔孩子的通用回嘴会凭空开火（接不上）并把话头
+    派给无关的人（错位），终检必报。
+    """
     notes: list[str] = []
     if not _is_f(story):
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 2:
         return notes
+    parent_present = any(
+        isinstance(item, dict)
+        and str(item.get("speaker") or "").strip() in {"妈妈", "爸爸"}
+        for item in dialogue
+    )
     used = {
         re.sub(r"[，,。！!？?\s]+", "", str(item.get("line") or ""))
         for item in dialogue
@@ -112,6 +122,10 @@ def patch_f_break_consecutive(story: dict) -> list[str]:
         if re.search(r"^(?:我也|那我也|我还|你才|你也)", str(b.get("line") or "")):
             b["speaker"] = other
             notes.append(f"F学舌句归位[{i + 1}]")
+            i += 1
+            continue
+        if parent_present:
+            # 家长在场：对话应是孩子↔家长，跳过通用回嘴插入
             i += 1
             continue
         if str(a.get("line") or "").rstrip().endswith(("？", "?")):

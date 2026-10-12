@@ -1536,7 +1536,9 @@ def align_seed_two_kids_vs_parent(
         insert_at,
         {
             "speaker": other,
-            "intent": "同侧接话，替同伴作证并一起追问（勿替家长辩护）",
+            # 必须写成**能说出口的对白**：seed 的 intent 会被当台词补进正文，
+            # 写成说明（含括号/勿/禁）会被终检判旁白。
+            "intent": "我也看见了，这事你别想赖！",
             "speech_act": "echo",
             "claim_role": "accuser",
         },

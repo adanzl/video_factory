@@ -1982,8 +1982,13 @@ def patch_seed_premise_lines(
             continue
         sp = str(item.get("speaker") or "").strip()
         text = str(item.get("intent") or item.get("line") or "").strip()
-        if sp and text:
-            seed_rows.append((sp, text))
+        if not sp or not text:
+            continue
+        # 只补「能说出口」的拍：写作说明/约束（含括号或 勿/禁/须/不得）
+        # 塞进对白会被终检判旁白，宁可不补。
+        if any(tok in text for tok in ("（", "(", "勿", "禁", "须", "不得")):
+            continue
+        seed_rows.append((sp, text))
     if not seed_rows:
         return story, False
     seed_rows = seed_rows[:max_seed_rows]

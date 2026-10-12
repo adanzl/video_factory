@@ -911,7 +911,10 @@ def test_seed_gets_second_kid_on_same_side_for_parent_caught():
     assert [r["speaker"] for r in out][:4] == ["妈妈", "灿灿", "灿灿", "昭昭"]
     added = out[3]
     assert added["claim_role"] == "accuser", "补的这拍须同侧（作证/帮腔）"
-    assert "勿替家长辩护" in added["intent"]
+    # 这拍的 intent 会当台词补进正文，必须是能说出口的话，不能是写作说明
+    assert not any(
+        tok in added["intent"] for tok in ("（", "(", "勿", "禁", "须", "不得")
+    ), "补的拍必须是可说对白，否则终检判旁白"
 
     # 已含两个孩子时不改
     two_kids = seed + [{"speaker": "昭昭", "intent": "跟着追问"}]

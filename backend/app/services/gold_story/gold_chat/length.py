@@ -517,11 +517,11 @@ def _kid_and_parent(dialogue: list[Any]) -> tuple[str, str]:
 
 
 # 把柄稿（孩子拆穿家长）的中段互呛对：孩子在顶、家长在挡。
-# 家长那句须是**挡/辩**而非认输破功，孩子那句须带加码标记。
+# 只用一对（重复是终检高频扣分项），且**不伪造引文**——凭空替对方引一句话
+# 会被判「引用无据」，故只写加压语气，不复述台词。家长那句须是挡/辩，
+# 不能是认输破功（F 不走 E 的破功收束）。
 _F_PARENT_MID_TEMPLATES: tuple[tuple[str, str], ...] = (
-    ("你还敢再说一遍呢！", "我说了没有，你别再胡搅。"),
-    ("你再说，我可要吼了！", "吼也没用，这事就这么算。"),
-    ("你还来劲儿了呢！", "我什么时候骗过你，别乱说。"),
+    ("这事儿没完，你还想赖呢！", "我没赖，你先别嚷。"),
 )
 # E/F 句内实义尾巴：只能加在孩子的追问/顶回句上（家长句有额度与破功约束，
 # 不在此扩写）。禁记仇/威胁类空转，避免 E 中段不变量被判不合格。
@@ -753,10 +753,10 @@ def _f_natural_mid_pairs(
     kids = _kid_order_speakers(dialogue)
     if len(kids) < 2:
         return (), None
-    lead = _last_kid_press_line(dialogue, kids[0]) or kids[0]
+    # 不复述对方台词（伪引文会被判引用无据），只做加压
     pairs = tuple(
         (
-            (kids[0], f"你刚说的「{lead}」，还敢再来一遍试试！"),
+            (kids[0], "你刚刚那话，还敢再来一遍试试！"),
             (kids[1], b),
         )
         for _a, b in _F_NATURAL_MID_TEMPLATES
