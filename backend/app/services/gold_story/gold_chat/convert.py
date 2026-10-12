@@ -208,6 +208,90 @@ from app.services.gold_story.gold_chat.refine import (  # noqa: E402
 # M8+J 大缺口阈值更激进：缺 ≥40 字立即中段重写，不走轻量 FIX
 # 对白 JSON 正常约数百～1.5k tokens；再大视为跑飞
 
+# 草稿阶段重掷次数：同一契约下硬卡命中带随机性（实测 M6+E 能过、
+# 同配置另一轮撞 E 类「禁翻旧账」），重掷换契约比原地重试更容易出稿。
+GOLD_CHAT_DRAFT_ATTEMPTS = 3
+
+
+def _reroll_h3_on_retry(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """重掷机制/结构：H3 对同一稿的判型带随机性，换一判可绕开同一条硬卡。
+
+    只改内存行（不写库）：重掷结果要等本稿真生成成功才落盘，
+    否则库内判型会被反复改来改去。返回 (新行, "机制+结构")。
+    """
+    from app.services.gold_story.collect.llm import structurize_story
+
+    payload = dict(cast(dict[str, Any], row.get("payload") or {}))
+    story_raw = str(row.get("story_raw") or payload.get("story_raw") or "").strip()
+    title = str(
+        payload.get("bili_title")
+        or payload.get("source_title")
+        or row.get("title")
+        or ""
+    ).strip()
+    h3 = structurize_story(title=title, story_raw=story_raw)
+    mech = str(h3.get("mechanism") or "").strip().upper()
+    st = str(h3.get("structure_type") or "").strip().upper()
+    out = dict(row)
+    out["mechanism"] = mech
+    out["structure_type"] = st
+    if isinstance(h3.get("beat"), list) and h3["beat"]:
+        payload["beat"] = h3["beat"]
+    for key in ("structure_confidence", "structure_mapping_note", "funny_why"):
+        if h3.get(key) is not None:
+            payload[key] = h3[key]
+    out["payload"] = payload
+    return out, f"{mech}+{st}"
+
+
+def _retry_structure_pair(
+    row: dict[str, Any],
+    *,
+    attempt: int,
+) -> tuple[dict[str, Any], str]:
+    """重掷判型：先走已知可落地的兜底对，再交 H3 重判。
+
+    家长把柄稿（把柄在家长、指认是孩子）在 A/I/E/Q 上都立不住或带对不上的
+    硬卡（A 无一锤可拍、I 无语塞、Q 的耍赖方模型只认姐弟、E 的串场/闭环硬卡
+    与「关灯+零食」这类混合主题冲突）；孩子与家长互呛加码（M3+F）是本类稿
+    实测能稳定出稿的一条，故第 2 次重掷固定用它，第 3 次才回到 H3 重判。
+    """
+    from app.services.gold_story.gold_chat.type_bridge import _parent_caught_wants_e
+
+    payload = cast(dict[str, Any], row.get("payload") or {})
+    if attempt == 2 and _parent_caught_wants_e(payload):
+        out = dict(row)
+        out["mechanism"] = "M3"
+        out["structure_type"] = "F"
+        new_payload = dict(payload)
+        sc = new_payload.get("scene_contract")
+        if isinstance(sc, dict):
+            sc = dict(sc)
+            sc["story_type"] = "F"
+            new_payload["scene_contract"] = sc
+        out["payload"] = new_payload
+        return out, "M3+F(parent-caught-fallback)"
+    return _reroll_h3_on_retry(row)
+
+
+def _is_retryable_draft_failure(exc: Exception) -> bool:
+    """草稿失败是否值得重掷：修稿预算耗尽/篇幅驳回/校验不过，网络抖动也可重试。"""
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairExhausted
+
+    if isinstance(exc, GoldChatRepairExhausted):
+        return True
+    if isinstance(exc, (ValueError, RuntimeError)):
+        return True
+    name = type(exc).__name__
+    return name in {
+        "ReadTimeout",
+        "ProxyError",
+        "ConnectionError",
+        "SSLError",
+        "HTTPError",
+        "ConnectTimeout",
+    }
+
 
 def patch_seed_speaker_align(
     story: dict[str, Any],
@@ -1446,8 +1530,74 @@ def convert_gold_chat(
 
         current_stage = "draft"
         sid = str(row.get("source_id") or "").strip()
-        repair_budget = GoldChatRepairBudget(max_repairs=2)
-        chat = gold_story_to_gold_chat(row, repair_budget=repair_budget)
+        chat = None
+        last_exc: Exception | None = None
+        for draft_attempt in range(1, GOLD_CHAT_DRAFT_ATTEMPTS + 1):
+            if draft_attempt > 1:
+                # 重掷：换一次 H3 判型（机制/结构），再重跑 H3a/H3b 换契约，
+                # 避免同一条 prompt 反复撞同一硬卡
+                try:
+                    row, rerolled = _retry_structure_pair(
+                        row, attempt=draft_attempt
+                    )
+                    logger.info(
+                        "[GOLD_CHAT] draft retry pair source_id=%s -> %s",
+                        sid,
+                        rerolled,
+                    )
+                except Exception as reroll_exc:
+                    logger.info(
+                        "[GOLD_CHAT] draft retry reroll skipped source_id=%s: %s",
+                        sid,
+                        str(reroll_exc)[:120],
+                    )
+                try:
+                    row = _rebuild_h3a_h3b_on_convert(row)
+                except Exception as rebuild_exc:
+                    logger.info(
+                        "[GOLD_CHAT] draft retry contract rebuild skipped: %s",
+                        str(rebuild_exc)[:120],
+                    )
+            repair_budget = GoldChatRepairBudget(max_repairs=2)
+            try:
+                chat = gold_story_to_gold_chat(row, repair_budget=repair_budget)
+                if draft_attempt > 1:
+                    logger.info(
+                        "[GOLD_CHAT] draft retry ok source_id=%s attempt=%s",
+                        sid,
+                        draft_attempt,
+                    )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if draft_attempt >= GOLD_CHAT_DRAFT_ATTEMPTS or not _is_retryable_draft_failure(exc):
+                    raise
+                logger.info(
+                    "[GOLD_CHAT] draft retry %s/%s source_id=%s after: %s",
+                    draft_attempt,
+                    GOLD_CHAT_DRAFT_ATTEMPTS,
+                    sid,
+                    str(exc)[:160],
+                )
+        if chat is None:
+            assert last_exc is not None
+            raise last_exc
+        if draft_attempt > 1:
+            # 重掷后生成的判型才是本篇真正可落地的判型，落盘供后续沿用
+            gid = int(row.get("id") or 0)
+            if gid > 0:
+                try:
+                    repo_gold_story.update_mechanism_and_structure(
+                        gid,
+                        mechanism=str(row.get("mechanism") or ""),
+                        structure_type=str(row.get("structure_type") or ""),
+                    )
+                except Exception as persist_exc:
+                    logger.warning(
+                        "[GOLD_CHAT] persist rerolled structure failed id=%s: %s",
+                        gid,
+                        persist_exc,
+                    )
         finish_stage("draft")
 
         current_stage = "normalize_refine"

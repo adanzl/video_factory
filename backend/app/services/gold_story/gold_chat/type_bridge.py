@@ -514,8 +514,75 @@ def _seed_suggests_g(seed: list[Any] | None) -> bool:
     return bool(_RE_SEED_PIVOT.search(blob) and _RE_SEED_SOFT.search(blob))
 
 
+_PARENT_SPEAKERS = frozenset({"妈妈", "爸爸"})
+_KID_SPEAKERS = frozenset({"昭昭", "灿灿"})
+
+
+def _parent_caught_wants_e(payload: dict[str, Any]) -> bool:
+    """家长被孩子当场抓到自己把柄 → 该走 E（妈妈破功）。
+
+    A 需要权威**当众违反自己的规矩**（一锤可拍），I 需要对方**语塞**后赢家嘴硬；
+    若把柄持有者是家长、指认者是孩子，两种收束都不成立，故事内核是
+    「大人立论被孩子绕穿」（E）。只读 facts 的角色槽位，不读剧情词。
+    """
+    sc = payload.get("scene_contract")
+    if not isinstance(sc, dict):
+        return False
+    facts = sc.get("facts")
+    if not isinstance(facts, list):
+        return False
+    for item in facts:
+        if not isinstance(item, dict):
+            continue
+        holder = str(item.get("secret_holder") or "").strip()
+        accusers = {
+            str(item.get(key) or "").strip()
+            for key in ("accuser", "discoverer")
+            if str(item.get(key) or "").strip()
+        }
+        if holder in _PARENT_SPEAKERS and accusers & _KID_SPEAKERS:
+            return True
+    return False
+
+
+# 家长把柄稿的可覆盖类型：A 要一锤可拍、F 无 A–E 标准收束、I 要语塞制敌，
+# 都不成立；Q 的耍赖方模型只认姐弟（见 resolve_q_cheat_speaker），
+# 装不下「家长耍赖被孩子当场拆穿」，故 E→Q 的 align-structure 重判也要收回。
+_PARENT_CAUGHT_FROM_TYPES = frozenset({"A", "F", "I", "E", "Q"})
+
+
 def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """gold_chat 入口纠偏 structure_type（M2+C→M8+J、mapping_note+seed→G）。"""
+    """gold_chat 入口纠偏 structure_type（家长把柄→E、M2+C→M8+J、mapping_note+seed→G）。"""
+    payload0 = cast(dict[str, Any], row.get("payload") or {})
+    base_mech = str(row.get("mechanism") or "").strip().upper()
+    base_type = str(row.get("structure_type") or "").strip().upper()
+    parent_caught = _parent_caught_wants_e(payload0)
+
+    # 家长被孩子抓到把柄 → 统一落 E（先于 align-structure 的 E→M15+Q 重判）
+    if (
+        parent_caught
+        and base_type in _PARENT_CAUGHT_FROM_TYPES
+        and base_mech
+        and "E" in allowed_structure_types(base_mech)
+    ):
+        out0 = dict(row)
+        payload = copy.deepcopy(payload0)
+        out0["mechanism"] = base_mech
+        out0["structure_type"] = "E"
+        notes0 = [f"structure_type:{base_type}→E(parent-caught-by-kid)"]
+        sc = payload.get("scene_contract")
+        if isinstance(sc, dict):
+            sc = copy.deepcopy(sc)
+            sc_type = str(sc.get("story_type") or "").strip().upper()
+            if sc_type != "E":
+                sc["story_type"] = "E"
+                notes0.append(
+                    f"scene_contract.story_type:{sc_type or '?'}→E"
+                )
+            payload["scene_contract"] = sc
+        out0["payload"] = payload
+        return out0, notes0
+
     out, notes = resolve_structure_row(row)
     payload = cast(dict[str, Any], out.get("payload") or {})
     payload = copy.deepcopy(payload)
@@ -608,14 +675,37 @@ def type_align_chain(
     return _STRUCTURE_TYPE_CHAINS.get(st, ())
 
 
+# 类型级追加 hint（不分机制）：日常稿与 gold_chat 的收束前提不同，
+# 需要把 gold_chat 独有的硬卡前提讲清楚，否则模型按日常稿口径跳过触发拍。
+_TYPE_HINT_APPEND: dict[str, str] = {
+    "E": (
+        "\n- **E·gold_chat 前提**：本场**没有独立开场**，第 1 句必须落地 "
+        "beat_chain 的触发拍（家长催办/立规），再进孩子戳穿；"
+        "禁跳过立规拍直接从孩子反问开场；"
+        "家长台词须 ≤ 契约 mom_lines_max（含中段短反应），"
+        "同一人禁连续 ≥3 句；"
+        "**末句必须妈妈说破功**（唉/行行行/好吧/说不通一类），"
+        "不得让孩子收场；"
+        "**主题按把柄走**：家长前段只落催办动作，勿再立作息/睡觉类规矩，"
+        "避免与把柄主题串场"
+    ),
+}
+
+
 def structure_type_hint(
     *,
     structure_type: str,
     mechanism: str = "",
     closing_mode: str = "",
     k_close_mode: str = "",
+    challenger: str = "",
+    authority: str = "",
 ) -> str:
-    """注入 gold_chat LLM prompt：类型公式 + 成熟流水线修订 hint + 扩写链。"""
+    """注入 gold_chat LLM prompt：类型公式 + 成熟流水线修订 hint + 扩写链。
+
+    ``challenger``/``authority`` 为契约实际角色（挑战方/权威方）时，
+    A 类示例角色名按实际角色替换，家长当权威也能写对末四拍。
+    """
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     mode = str(closing_mode or "").strip()
@@ -656,7 +746,11 @@ def structure_type_hint(
         elif st == "K" and k_mode == "K_UNKNOWN":
             parts.append("- 收束修订：勿补劝失败+僵持；严格 beat")
         else:
-            type_hint = gold_chat_type_revision_hint(st)
+            type_hint = gold_chat_type_revision_hint(
+                st,
+                challenger=challenger,
+                authority=authority,
+            )
             if type_hint:
                 parts.append(type_hint)
 
@@ -682,6 +776,9 @@ def structure_type_hint(
             extra = _MECH_HINT_APPEND.get((mech, st), "")
         if extra:
             parts.append(extra.strip())
+    type_extra = _TYPE_HINT_APPEND.get(st, "")
+    if type_extra:
+        parts.append(type_extra.strip())
     if k_mode and st == "K":
         parts.append(f"- k_close_mode={k_mode}（生成前锁定，勿与 beat 相反）")
 

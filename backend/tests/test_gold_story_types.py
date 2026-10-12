@@ -55,14 +55,18 @@ def test_injectable_vs_extended():
 
 
 def test_multi_allow_sets():
-    assert allowed_structure_types("M5") == frozenset({"A", "G", "H", "J"})
+    assert allowed_structure_types("M5") == frozenset({"A", "G", "H", "J", "E"})
     assert allowed_structure_types("M8") == frozenset({"A", "J"})
     assert allowed_structure_types("M6") == frozenset({"N", "A", "E"})
     assert allowed_structure_types("M13") == frozenset({"O"})
     assert allowed_structure_types("M14") == frozenset({"P"})
     assert allowed_structure_types("M15") == frozenset({"Q"})
     assert allowed_structure_types("M3") == frozenset({"F", "P"})
+    # 家长被孩子抓到把柄 → E 妈妈破功（非 A 一锤可拍 / 非 I 语塞制敌）
+    assert allowed_structure_types("M11") == frozenset({"I", "E"})
     validate_mechanism_structure_pair("M5", "J")
+    validate_mechanism_structure_pair("M5", "E")
+    validate_mechanism_structure_pair("M11", "E")
     validate_mechanism_structure_pair("M8", "J")
     validate_mechanism_structure_pair("M6", "A")
     validate_mechanism_structure_pair("M14", "P")

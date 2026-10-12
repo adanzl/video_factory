@@ -331,7 +331,10 @@ _ALIGN_REFINE_USER_BASE = """对齐机审问题（只改标定行）：
 {story_json}
 
 硬约束：
-- 只改上方标定行号；行数、speaker 不变；每句 ≤{max_line} 字
+- 只改上方标定行号；**行数不变**；每句 ≤{max_line} 字
+- **speaker 默认不变**；仅当问题是「末四拍/收束槽位错位」时，
+  允许改标定行的 speaker（在该行 fixes 里同时给出 `"speaker":"昭昭|灿灿|妈妈|爸爸"`），
+  其余行一律不得改 speaker
 - 标定行可句内**改短或扩写**；改后全文总字数须 **≥{chars_min} 且 ≤{chars_max}**
   （拖句改短时其他行不动，靠删冗余措辞，勿低于下限）；禁止留空 line、禁止删行
 - **保真-收场Invent**：删 closing_intent 外的帮忙/搀扶/回来/不疼了等，收成短应答
@@ -414,6 +417,16 @@ def format_align_refine_type_constraints(
     if need_iodine:
         lines.append(
             "- **保真-上药**：上药完成即收束，之后禁止另起一起画、拉钩等新剧情"
+        )
+    if st == "A":
+        # 末四拍槽位错位无法靠改文本修（说话人就是错的），故显式解冻 speaker
+        lines.append(
+            "- **A类末四拍（可改 speaker）**：末 4 句须按"
+            "「挑战方→权威方→挑战方→权威方」交替，语义依次为"
+            "引原话→给具体例外→追问例外→软破功；"
+            "**挑战方是跟大人作对的孩子（两个孩子都算，可换着说）**，"
+            "权威方是那位大人且**末句必须由他说**。"
+            "错位时改标定行的 speaker（在该行 fixes 加 `\"speaker\"` 字段）并同时给出新台词"
         )
     if not lines:
         return (
@@ -756,6 +769,38 @@ def format_m8_j_beat_budget_block(
     return M8_J_BEAT_BUDGET_BLOCK
 
 
+A_BEAT_BUDGET_BLOCK = """【A 权威翻车 篇幅 beat 预算（禁止 1:1 扩 seed）】
+| beat | 句数 | 字数 | 备注 |
+| 立规/亮权威 | 2 | 40–55 | 权威当场定性、给规矩 |
+| 追问/顶回 | 2–3 | 45–65 | 核心扩写区，挑战方连着顶 |
+| 一锤可拍 | 1–2 | 25–45 | 权威自己当场违规，画面可拍 |
+| 埋可引用原话 | 1 | 15–25 | 权威亲口说的 3–10 字断言 |
+| 末四拍 | 4 | 70–100 | 引话→例外→追问→软破功 |
+| 合计 | 10–12 | 260–340 | 优先保末四拍与句数 |
+
+硬约束：
+- 禁止 1:1 扩写 seed；中段「追问/顶回」须各加码 1–2 句
+- 末四拍必须写满 4 句，按「挑战方→权威方→挑战方→权威方」交替：
+  倒数第 4 句挑战方引话、倒数第 3 句权威方找例外、倒数第 2 句挑战方追问、
+  倒数第 1 句权威方软破功
+- **挑战方＝跟大人作对的孩子（可以两个孩子都算）**：
+  2 孩子 vs 1 大人时，两个孩子在挑战方一侧**可以换着说**
+  （例：姐姐引话→妈妈找例外→弟弟追问→妈妈破功），同侧换人不算错；
+  **权威方必须是那位大人，且末句由他说**；不得让孩子替大人认输
+- 倒数第 4 句必须写成「你刚才说…／你不是说…」并接权威方前文 3–10 字原话，
+  不得只写反问或讨要
+- 禁止在首尾垫字；每句 ≤24 字；禁止复读注水"""
+
+
+def format_a_beat_budget_block(
+    *,
+    structure_type: str = "",
+) -> str:
+    if str(structure_type or "").strip().upper() != "A":
+        return ""
+    return A_BEAT_BUDGET_BLOCK
+
+
 def format_expand_regen_feedback(
     error: str,
     story: dict[str, Any] | None,
@@ -864,6 +909,35 @@ def format_expand_regen_feedback(
         parts.append(
             f"- 正文不得超过 {DAILY_STORY_BODY_CHARS_MAX} 字；删注水/复读，勿顶上限"
         )
+    # A 类短稿：同 M8+J 思路——先给 beat 字数预算（含末四拍），再按重试次数加码
+    if (
+        str(structure_type or "").strip().upper() == "A"
+        and _is_short_content_feedback_error(err)
+    ):
+        parts.append(format_a_beat_budget_block(structure_type=structure_type))
+        if short_regen_count >= 3:
+            parts.extend(
+                [
+                    "- **第 3 次重试：强制中段重写**",
+                    "- 保留开头立规句与末四拍不动",
+                    "- 只重写中段「追问/顶回→一锤→埋句」，插入 2–3 组顶回对",
+                    "- 禁止尾部灌水/复读；末四拍四句缺一即不合格",
+                ]
+            )
+        elif short_regen_count >= 2:
+            parts.extend(
+                [
+                    "- **第 2 次重试：中段 beat 不足**",
+                    "- 追问/顶回段须再加 1–2 句，一锤写清可拍动作",
+                    "- 禁止 1:1 扩 seed；禁止早早收束",
+                ]
+            )
+        else:
+            parts.append(
+                "- A：立规亮权威→孩子追问顶回→权威自己当场违规（一锤）→"
+                "埋可引用原话→末四拍；每句宜 16–22 字写满 beat，"
+                "禁止只把 seed 扩成短句就停"
+            )
     if "punchline_explain" in err:
         parts.append("- 必须含 punchline_explain，且带类型前缀")
     if "key 须" in err:

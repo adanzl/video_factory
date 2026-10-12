@@ -49,9 +49,13 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
 MECHANISM_STRUCTURE_ALTERNATIVES: dict[str, frozenset[str]] = {
     "M2": frozenset({"L", "I"}),  # L 表演公平被拒；I 灵魂拷问质问链无公平争夺
     "M3": frozenset({"P"}),  # 道具整蛊互整时可落 P（默认仍 F 口头互呛）
-    "M5": frozenset({"G", "H", "J"}),  # G 拒和后 pivot 暖收；H 调解；J 否决压住
+    # G 拒和后 pivot 暖收；H 调解；J 否决压住；
+    # E：家长被孩子当场抓到自己把柄 → 妈妈破功（非 A 自违规/非 I 语塞）
+    "M5": frozenset({"G", "H", "J", "E"}),
     "M6": frozenset({"A", "E"}),  # 偶发权威反噬/妈妈破功追问链（默认 N）
     "M8": frozenset({"J"}),  # 一锤镇住、不翻车
+    # E：灵魂拷问问的是家长自己的把柄 → 落妈妈破功，而非赢家嘴硬总结
+    "M11": frozenset({"E"}),
 }
 
 # 金故事扩展结构类型（尚未进入 daily_story validate；F 已由 M3 启用）

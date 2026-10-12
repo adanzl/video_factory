@@ -344,39 +344,72 @@ def append_mid_restatement_errors(story: dict, errors: list[str]) -> None:
 
 
 
-def _closing_role_pair(story: dict) -> tuple[str, str]:
-    """末四拍两方：挑战方（引话/追问）与权威方（找例外/破功）。
+_A_CHALLENGER_ACTS = frozenset(
+    {"accuse", "expose", "echo", "retort", "claim_compensation", "demand", "bargain"}
+)
+_A_AUTHORITY_ACTS = frozenset({"deny", "admit", "confess"})
 
-    优先按 beat 的语用角色判定（谁指认、谁辩解），使「家长当权威」的
-    M5/A 亲子稿也能满足 A 类收束；挑不出角色时回退姐弟默认槽位。
-    """
+
+def _closing_role_declared(story: dict) -> tuple[list[str], list[str]]:
+    """契约声明的挑战方/权威方名单（保持出现顺序）。"""
     chain = story.get("gold_beat_chain")
-    if not isinstance(chain, list):
-        return "昭昭", "灿灿"
-    challenger = ""
-    authority = ""
-    for row in chain:
-        if not isinstance(row, dict):
-            continue
-        speaker = str(row.get("speaker") or "").strip()
-        if not speaker:
-            continue
-        act = str(row.get("speech_act") or "").strip().lower()
-        if not challenger and act in {"accuse", "expose", "echo", "retort"}:
-            challenger = speaker
-        if not authority and act in {"deny", "admit", "confess"}:
-            authority = speaker
-    if challenger and authority and challenger != authority:
-        return challenger, authority
+    challengers: list[str] = []
+    authorities: list[str] = []
+    if isinstance(chain, list):
+        for row in chain:
+            if not isinstance(row, dict):
+                continue
+            speaker = str(row.get("speaker") or "").strip()
+            if not speaker:
+                continue
+            act = str(row.get("speech_act") or "").strip().lower()
+            if act in _A_CHALLENGER_ACTS and speaker not in challengers:
+                challengers.append(speaker)
+            if act in _A_AUTHORITY_ACTS and speaker not in authorities:
+                authorities.append(speaker)
+    return challengers, authorities
+
+
+def _closing_role_pair(story: dict) -> tuple[str, str]:
+    """末四拍两方代表名（报错文案用）；判不出回退姐弟默认槽位。"""
+    challengers, authorities = _closing_role_declared(story)
+    if challengers and authorities and challengers[0] != authorities[0]:
+        return challengers[0], authorities[0]
     return "昭昭", "灿灿"
+
+
+def _closing_role_sides(story: dict) -> tuple[frozenset[str], frozenset[str]]:
+    """末四拍两方阵营：挑战阵营与权威阵营。
+
+    A 类末四拍只锁「阵营交替」，不锁单个说话人：**两个孩子 vs 一个大人的稿子，
+    两个孩子同属挑战阵营**，末四拍里换谁说不判错（引话可以是姐姐、追问换成弟弟），
+    但权威方那位大人必须说例外与软破功两句。
+    """
+    challengers, authorities = _closing_role_declared(story)
+    if not authorities:
+        return frozenset({"昭昭"}), frozenset({"灿灿"})
+    auth = frozenset(authorities)
+    challenger_side = {sp for sp in challengers if sp not in auth}
+    speakers = {
+        str(row.get("speaker") or "").strip()
+        for row in (story.get("dialogue") or [])
+        if isinstance(row, dict)
+    }
+    # 同场其他孩子与挑战方同侧；权威方若本身是孩子则不入挑战阵营
+    for sp in ("昭昭", "灿灿"):
+        if sp in speakers and sp not in auth:
+            challenger_side.add(sp)
+    if not challenger_side:
+        return frozenset({"昭昭"}), frozenset({"灿灿"})
+    return frozenset(challenger_side), auth
 
 
 def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
     """A 类末四拍结构存在性硬卡。
 
-    末 4 句只锁语义槽位：引原话 → 具体例外辩解 → 追问例外 → 软破功。
+    末 4 句只锁语义槽位与**阵营交替**：引原话 → 具体例外辩解 → 追问例外 → 软破功。
     不锁「那不一样/哪里不一样」固定字面；挑战方/权威方按契约角色判定，
-    家长当权威（亲子稿）时同样成立。
+    家长当权威（亲子稿）时同样成立，两个孩子可同在挑战方一侧换着说。
     """
     punch = str(story.get("punchline_explain") or "")
     code = parse_story_type_code(punchline=punch)
@@ -399,11 +432,19 @@ def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
     sp3, ln3 = rows[1]
     sp2, ln2 = rows[2]
     sp1, ln1 = rows[3]
+    challenger_side, authority_side = _closing_role_sides(story)
     challenger, authority = _closing_role_pair(story)
-    if not (sp4 == challenger and sp3 == authority and sp2 == challenger and sp1 == authority):
+    if not (
+        sp4 in challenger_side
+        and sp3 in authority_side
+        and sp2 in challenger_side
+        and sp1 in authority_side
+    ):
+        side_ch = "/".join(sorted(challenger_side))
+        side_au = "/".join(sorted(authority_side))
         errors.append(
-            f"A类末四拍缺失：末4句 speaker 须{challenger}→{authority}→"
-            f"{challenger}→{authority}"
+            "A类末四拍缺失：末4句须挑战方↔权威方交替"
+            f"（挑战方={side_ch}，权威方={side_au}，末句必须{authority}说）"
             f"（实际{'→'.join([sp4, sp3, sp2, sp1])}）",
         )
         return

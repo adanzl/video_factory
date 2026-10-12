@@ -410,8 +410,7 @@ _O_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
         ("灿灿", "你玩你的，份额可越来越少。"),
     ),
 )
-_O_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "吧")  # 单语气词；禁 particle_upgrade 叠字
-# O 句内扩写：只允许过程/催夹实义，禁抬杠/记仇类 clutter
+_O_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "吧")  # 单语气词；禁 particle_upgrade 叠字# O 句内扩写：只允许过程/催夹实义，禁抬杠/记仇类 clutter
 _O_SAFE_NATURAL_EXPAND: tuple[str, ...] = (
     "，认真点",
     "，别磨蹭",
@@ -447,6 +446,47 @@ _M8_J_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
         ("昭昭", "你真敢跟我动手啊？"),
         ("灿灿", "规矩先讲好，输了别赖账！"),
     ),
+)
+# A（权威翻车）：字数不够时插「施压→顶回」实义对；说话人运行时按契约角色映射
+# （挑战方＝指认/翻旧账方；施压方＝权威方是孩子时才用它，否则换另一位孩子，
+# 避免吃掉家长台词额度）。只写抽象规矩/公平话，不绑单篇道具，也不碰末四拍。
+_A_NATURAL_MID_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("你先照规矩做，别拖着了。", "凭什么单让我做，你倒说说看？"),
+    ("按说好的来，快点动手吧。", "行，那你先做到，我立马照做。"),
+    ("别磨蹭了，这事先这么定。", "你先答应我那件事，我这就去。"),
+)
+# E（妈妈破功）：字数不够时补一组「孩子追问」实义对，插在收束两拍之前。
+# 只用两个孩子，不占妈妈额度（E 中段妈妈只准一句短反应），也不新增道具。
+_E_NATURAL_MID_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("那你刚才说的还算不算数？", "你自己都做不到，凭什么让我听？"),
+    ("先把这事说清楚再讲道理。", "你讲的那套，怎么到自己就变了？"),
+    ("你再解释一遍，我听着呢。", "解释不通就别拿辈分压人。"),
+)
+# E 单孩稿（孩子+家长）：家长那句只能是短反应，且须避开破功词/大人例外/翻旧账，
+# 否则 E 硬卡（末句破功、中段漏新开脱）会判不合格。
+_E_NATURAL_MID_PARENT_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("你别绕，先把我问的说清楚。", "我听着呢，你慢慢说。"),
+    ("那你给我个准话。", "先别嚷，我这就说。"),
+    ("这话是你自己讲的吧？", "是，我是这么说过。"),
+)
+# F（互呛加码）：字数不够时补一组短接话互呛对，插在收场之前。
+_F_NATURAL_MID_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("你再说一遍！", "说就说，谁怕谁啊！"),
+    ("哼，少来这一套！", "我才不信你这话！"),
+    ("我偏不认！", "不认就不认，看谁先服！"),
+)
+# E/F 句内实义尾巴：只能加在孩子的追问/顶回句上（家长句有额度与破功约束，
+# 不在此扩写）。禁记仇/威胁类空转，避免 E 中段不变量被判不合格。
+_E_SAFE_NATURAL_EXPAND: tuple[str, ...] = (
+    "，你自己说说看",
+    "，我记着呢",
+    "，你先给我讲清楚",
+    "，这话可不算完",
+)
+_F_SAFE_NATURAL_EXPAND: tuple[str, ...] = (
+    "，你敢不敢",
+    "，谁怕谁啊",
+    "，你接着说",
 )
 # G/M4 行动软化的收拾类 near-miss：只补同域动作对白，不凭空制造护短/真情戏。
 _G_CLEANUP_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
@@ -564,6 +604,130 @@ def _j_expand_bare_allowed(bare: str, speaker: str) -> bool:
     if sp == "灿灿" and any(x in b or b in x for x in _J_CAN_FORBIDDEN_EXPAND):
         return False
     return True
+
+
+def _kid_order_speakers(dialogue: list[Any]) -> list[str]:
+    """对白里出现的孩子（按出场顺序，最多两个）。"""
+    kids: list[str] = []
+    for row in dialogue:
+        if not isinstance(row, dict):
+            continue
+        sp = str(row.get("speaker") or "").strip()
+        if sp in {"昭昭", "灿灿"} and sp not in kids:
+            kids.append(sp)
+    return kids[:2]
+
+
+def _e_natural_mid_pairs(
+    dialogue: list[Any],
+) -> tuple[
+    tuple[tuple[tuple[str, str], tuple[str, str]], ...],
+    int | None,
+]:
+    """E 补位：收束两拍（孩子闭环+妈妈破功）之前插一组追问对。
+
+    两个孩子 → 姐弟轮问；单孩+家长 → 孩子追问、家长短反应
+    （家长那句不能是破功/开脱加码，否则末句破功与中段不变量会被判不合格）。
+    """
+    if len(dialogue) < 6:
+        return (), None
+    kids = _kid_order_speakers(dialogue)
+    parent = ""
+    parent_lines = 0
+    for row in dialogue:
+        if not isinstance(row, dict):
+            continue
+        sp = str(row.get("speaker") or "").strip()
+        if sp in {"妈妈", "爸爸"}:
+            parent = parent or sp
+            parent_lines += 1
+    if len(kids) >= 2:
+        pairs = tuple(
+            ((kids[0], a), (kids[1], b)) for a, b in _E_NATURAL_MID_TEMPLATES
+        )
+    elif kids and parent and parent_lines < 3:
+        # 家长已满 3 句（契约 mom_lines_max）时不再添家长台词，避免超额度
+        pairs = tuple(
+            ((kids[0], a), (parent, b))
+            for a, b in _E_NATURAL_MID_PARENT_TEMPLATES
+        )
+    else:
+        return (), None
+    if not pairs:
+        return (), None
+    # 收束两拍前的最后可插位：挤进末三句会破坏「孩子闭环+妈妈破功」
+    return pairs, max(2, len(dialogue) - 2)
+
+
+def _f_natural_mid_pairs(
+    dialogue: list[Any],
+) -> tuple[
+    tuple[tuple[tuple[str, str], tuple[str, str]], ...],
+    int | None,
+]:
+    """F 补位：收场之前插一组短接话互呛对。"""
+    if len(dialogue) < 6:
+        return (), None
+    kids = _kid_order_speakers(dialogue)
+    if len(kids) < 2:
+        return (), None
+    pairs = tuple(
+        ((kids[0], a), (kids[1], b)) for a, b in _F_NATURAL_MID_TEMPLATES
+    )
+    return pairs, max(2, len(dialogue) - 2)
+
+
+def _a_natural_mid_pairs(
+    dialogue: list[Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[
+    tuple[tuple[tuple[str, str], tuple[str, str]], ...],
+    int | None,
+]:
+    """A 类安全补位：施压方↔挑战方，插入点固定在末四拍之前。
+
+    挑战方＝契约里指认/翻旧账的那方；权威方是孩子时由它施压，
+    权威方是家长时改用另一位孩子施压（家长台词有额度，勿靠补句破额）。
+    末四拍（引话→例外→追问→破功）是硬卡，补位只能落在它前面。
+    near-miss（≤20 字）仍走句内扩写/粒子，不在此处插对。
+    """
+    from app.services.gold_story.scene import fact_role_pair
+
+    if len(dialogue) < 8:
+        return (), None
+    total = sum(
+        len(str(row.get("line") or ""))
+        for row in dialogue
+        if isinstance(row, dict)
+    )
+    if DAILY_STORY_BODY_CHARS_MIN - total <= GOLD_CHAT_NEAR_MISS_DEFICIT_MAX:
+        # 窄缝缺口交句内扩写/粒子收口：插整对会超出软目标且动结构
+        return (), None
+    challenger, authority = fact_role_pair({"beat_chain": beat_chain or []})
+    speakers = [
+        str(row.get("speaker") or "").strip()
+        for row in dialogue
+        if isinstance(row, dict)
+    ]
+    kids = [sp for sp in dict.fromkeys(speakers) if sp in {"昭昭", "灿灿"}]
+    if not challenger and len(kids) == 2:
+        # 契约没标语用角色时保守兜底：权威常是破功方（末句），挑战方取另一位
+        last_sp = speakers[-1] if speakers else ""
+        challenger = next((sp for sp in kids if sp != last_sp), "")
+    if not challenger:
+        return (), None
+    if authority and authority in kids and authority != challenger:
+        presser = authority
+    else:
+        others = [sp for sp in kids if sp != challenger]
+        if not others:
+            return (), None
+        presser = others[0]
+    pairs = tuple(
+        ((presser, a), (challenger, b)) for a, b in _A_NATURAL_MID_TEMPLATES
+    )
+    return pairs, max(2, len(dialogue) - 4)
 
 
 def _n_natural_mid_pairs(
@@ -890,6 +1054,35 @@ def _pad_gold_chat_line(
                 used.add(tail)
             return f"{core}{tail}{trail}", len(tail)
         return line, 0
+    if st in {"E", "F"}:
+        # E/F 短稿的儿童句可补实义尾巴（家长句有额度/破功约束，不在此扩写）
+        from app.services.daily_story.dialogue_text import (
+            DAILY_STORY_LINE_CHARS_MAX,
+            dialogue_char_count,
+        )
+
+        text = str(line or "").strip()
+        if need <= 0 or not text:
+            return line, 0
+        trail = ""
+        core = text
+        if core[-1] in "。！？…":
+            trail = core[-1]
+            core = core[:-1]
+        room = max(0, DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(text))
+        tails = _E_SAFE_NATURAL_EXPAND if st == "E" else _F_SAFE_NATURAL_EXPAND
+        for tail in tails:
+            bare = tail.lstrip("，,")
+            if used is not None and bare in used:
+                continue
+            if bare in core or core.endswith(bare):
+                continue
+            if len(tail) > need or len(tail) > room:
+                continue
+            if used is not None:
+                used.add(bare)
+            return f"{core}{tail}{trail}", len(tail)
+        return _pad_gold_chat_single_particle(line, need, used=used)
     return _pad_gold_chat_single_particle(
         line,
         need,
@@ -982,6 +1175,10 @@ def _patch_gold_chat_near_miss_chars(story: dict[str, Any]) -> tuple[dict[str, A
         natural_bares = {c.lstrip("，,") for c in _O_SAFE_NATURAL_EXPAND}
     elif story_type == "K":
         natural_bares = {c.lstrip("，,") for c in _K_GOLD_CHAT_NATURAL_EXPAND}
+    elif story_type == "E":
+        natural_bares = {c.lstrip("，,") for c in _E_SAFE_NATURAL_EXPAND}
+    elif story_type == "F":
+        natural_bares = {c.lstrip("，,") for c in _F_SAFE_NATURAL_EXPAND}
     else:
         natural_bares = {c.lstrip("，,") for c in _GOLD_CHAT_NATURAL_EXPAND}
     for idx in reversed(indices):
@@ -1045,6 +1242,10 @@ def _pad_gold_chat_to_min_chars(
         expand_src = _O_SAFE_NATURAL_EXPAND
     elif story_type == "K":
         expand_src = _K_GOLD_CHAT_NATURAL_EXPAND
+    elif story_type == "E":
+        expand_src = _E_SAFE_NATURAL_EXPAND
+    elif story_type == "F":
+        expand_src = _F_SAFE_NATURAL_EXPAND
     elif story_type == "I":
         expand_src = tuple(
             c
@@ -1148,6 +1349,17 @@ def _boost_short_with_mid_lines(
         if st == "N"
         else ((), None)
     )
+    a_pair_pool, a_insert_at = (
+        _a_natural_mid_pairs(dialogue, beat_chain=beat_chain)
+        if st == "A"
+        else ((), None)
+    )
+    e_pair_pool, e_insert_at = (
+        _e_natural_mid_pairs(dialogue) if st == "E" else ((), None)
+    )
+    f_pair_pool, f_insert_at = (
+        _f_natural_mid_pairs(dialogue) if st == "F" else ((), None)
+    )
     # K：顶满 24 句时仍可能差字，允许至 26 以便插实义中段对
     line_cap = CHAT_LINE_COUNT_MAX + (2 if st == "K" else 0)
     m8_j = is_m8_j_domination(mechanism=mechanism, structure_type=st)
@@ -1158,6 +1370,9 @@ def _boost_short_with_mid_lines(
         len(dialogue) < CHAT_LINE_COUNT_MIN
         and not large_gap
         and not (st == "N" and n_pair_pool)
+        # E/F 短稿常卡在 11 句 + 差几字：句中垫粒子补不动，
+        # 直接插实义对同时补句数与字数
+        and not (st in {"E", "F"} and (e_pair_pool or f_pair_pool))
     ):
         return story, False
 
@@ -1185,6 +1400,14 @@ def _boost_short_with_mid_lines(
     if st == "N" and n_insert_at is not None:
         # 紧跟已有因果回答插入，必须落在后续愣住/收束之前。
         insert_at = n_insert_at
+    if st == "A" and a_insert_at is not None:
+        # 固定落在末四拍之前，保证收束四槽不动
+        insert_at = a_insert_at
+    if st == "E" and e_insert_at is not None:
+        # 落在末句妈妈破功之前
+        insert_at = e_insert_at
+    if st == "F" and f_insert_at is not None:
+        insert_at = f_insert_at
     if st == "K":
         from app.services.daily_story.story_types.k.close_mode import (
             K_A_PARENT_FAIL_STALEMATE,
@@ -1243,6 +1466,12 @@ def _boost_short_with_mid_lines(
         pair_pool = _G_CLEANUP_NATURAL_MID_PAIRS
     elif st == "N":
         pair_pool = n_pair_pool
+    elif st == "A":
+        pair_pool = a_pair_pool
+    elif st == "E":
+        pair_pool = e_pair_pool
+    elif st == "F":
+        pair_pool = f_pair_pool
     elif st == "K":
         pair_pool = _K_NATURAL_MID_PAIRS
     elif st == "O":
@@ -1297,6 +1526,12 @@ def _boost_short_with_mid_lines(
     if st == "N":
         # 一次只插一对；仍不足时由稳定器下一轮选择另一对，避免一次性灌满。
         max_pairs = 1
+    if st == "A":
+        # 同样一次一对：补满即停，避免中段灌虚
+        max_pairs = 1
+    if st in {"E", "F"}:
+        # 缺口更大时允许两对，仍由字数达标即停
+        max_pairs = 2 if need >= 24 else 1
 
     def _norm_pad_line(text: str) -> str:
         return re.sub(r"[呀啊吧呢嘛了呗！？。!?，,\s]", "", str(text or ""))
@@ -1337,6 +1572,9 @@ def _boost_short_with_mid_lines(
             punch = _o_goal_punch_index(dialogue)
             if punch >= 0 and insert_at > punch:
                 continue
+        if st == "A" and insert_at > max(2, len(dialogue) - 4):
+            # 交替调整把插入点挤进末四拍：宁可少补一对，也不动收束四槽
+            break
         if insert_at > 0 and insert_at <= len(dialogue):
             prev_item = dialogue[insert_at - 1]
             if (
@@ -1574,8 +1812,12 @@ def _ensure_gold_chat_min_chars(
     changed_mid = False
     st = str(structure_type or story.get("story_type") or "").strip().upper()
     mech = str(mechanism or "").strip()
+    # E/F 的 near-miss 只能靠粒子加 1–4 字：留出窄缝就直接走实义中段对
+    mid_pair_gate = (
+        5 if st in {"E", "F"} else GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
+    )
     if (
-        need_now > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
+        need_now > mid_pair_gate
         or (st == "N" and need_now >= 12)
     ):
         # N 的明显缺口优先补「追问→复述理由」实义对，再考虑单粒子；

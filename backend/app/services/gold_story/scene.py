@@ -371,6 +371,46 @@ def format_scene_block(contract: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def fact_role_pair(contract: dict[str, Any] | None) -> tuple[str, str]:
+    """把柄稿的两方：(挑战方, 权威方)。
+
+    挑战方＝指认/翻旧账的人；权威方＝被指认后自曝、辩解、服软的人。
+    优先读 ``facts``，其次读 ``beat_chain`` 的 speech_act；推不出返回空串。
+    """
+    sc = contract if isinstance(contract, dict) else {}
+    challenger = ""
+    authority = ""
+    facts = sc.get("facts")
+    if isinstance(facts, list):
+        for item in facts:
+            if not isinstance(item, dict):
+                continue
+            if not challenger:
+                challenger = str(
+                    item.get("accuser") or item.get("discoverer") or ""
+                ).strip()
+            if not authority:
+                authority = str(
+                    item.get("secret_holder") or item.get("denier") or ""
+                ).strip()
+    chain = sc.get("beat_chain")
+    if isinstance(chain, list):
+        for row in chain:
+            if not isinstance(row, dict):
+                continue
+            speaker = str(row.get("speaker") or "").strip()
+            if not speaker:
+                continue
+            act = str(row.get("speech_act") or "").strip().lower()
+            if not challenger and act in {"accuse", "expose", "echo", "retort"}:
+                challenger = speaker
+            if not authority and act in {"deny", "admit", "confess"}:
+                authority = speaker
+    if challenger and authority and challenger != authority:
+        return challenger, authority
+    return "", ""
+
+
 def format_fact_slots_block(facts: list[Any] | None) -> str:
     """把把柄事实的角色槽位写进 prompt：谁做过、谁指认、谁讨要。
 

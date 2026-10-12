@@ -747,10 +747,11 @@ def test_anchor_matches_line_tolerates_reversed_pair():
 
 
 def test_a_closing_role_pair_follows_beat_speech_acts():
-    """家长当权威（M5/A 亲子稿）时，末四拍两方按契约角色判定。"""
+    """家长当权威（M5/A 亲子稿）时，末四拍按阵营交替判定。"""
     from app.services.daily_story.story_types.a.validate import (
         append_closing_structure_errors,
         _closing_role_pair,
+        _closing_role_sides,
     )
 
     chain = [
@@ -783,7 +784,14 @@ def test_a_closing_role_pair_follows_beat_speech_acts():
     )
     assert not errors, errors
 
-    # 权威方缺席、两方顺序错（旧槽位口径）应判缺失
+    # 孩子阵营不得只剩一个：弟弟也在挑战方一侧
+    sides = _closing_role_sides(
+        {"gold_beat_chain": chain, "dialogue": dialogue[:1] + [{"speaker": "昭昭", "line": "我也在。"}]}
+    )
+    assert sides[0] == frozenset({"灿灿", "昭昭"})
+    assert sides[1] == frozenset({"妈妈"})
+
+    # 末句由孩子说（大人没破功）应判缺失
     wrong_errors: list[str] = []
     append_closing_structure_errors(
         {
@@ -793,13 +801,193 @@ def test_a_closing_role_pair_follows_beat_speech_acts():
             + [
                 {"speaker": "妈妈", "line": "我这是检查，不算数。"},
                 {"speaker": "灿灿", "line": "检查凭什么不算？"},
-                {"speaker": "妈妈", "line": "行吧，我去关。"},
-                {"speaker": "灿灿", "line": "这还差不多。"},
+                {"speaker": "昭昭", "line": "姐，你说妈会不会赖账啊？"},
             ],
         },
         wrong_errors,
     )
-    assert wrong_errors and "须灿灿→妈妈" in wrong_errors[0]
+    assert wrong_errors and "末句必须妈妈" in wrong_errors[0]
+
+
+def test_a_closing_allows_two_kids_on_challenger_side():
+    """2 孩子 vs 1 大人：末四拍两个孩子在挑战方一侧换着说，不算错。"""
+    from app.services.daily_story.story_types.a.validate import (
+        append_closing_structure_errors,
+    )
+
+    chain = [
+        {"beat": 4, "speaker": "灿灿", "intent": "反问", "speech_act": "echo"},
+        {"beat": 6, "speaker": "妈妈", "intent": "追问谁说的", "speech_act": "deny"},
+        {"beat": 9, "speaker": "灿灿", "intent": "讨要补偿", "speech_act": "claim_compensation"},
+    ]
+    dialogue = [
+        {"speaker": "妈妈", "line": "快去关灯。"},
+        {"speaker": "昭昭", "line": "我也在玩呢。"},
+        {"speaker": "灿灿", "line": "还有呢。"},
+        {"speaker": "妈妈", "line": "别磨蹭。"},
+        {"speaker": "灿灿", "line": "你刚才说关灯就补烤串，算不算数？"},
+        {"speaker": "妈妈", "line": "那不一样，我这是说明天补。"},
+        {"speaker": "昭昭", "line": "哪里不一样，明天不也是明天？"},
+        {"speaker": "妈妈", "line": "行吧行吧，明天补你们俩。"},
+    ]
+    errors: list[str] = []
+    append_closing_structure_errors(
+        {
+            "punchline_explain": "A类权威翻车",
+            "gold_beat_chain": chain,
+            "dialogue": dialogue,
+        },
+        errors,
+    )
+    assert not errors, errors
+
+
+def test_e_mid_pairs_support_single_kid_plus_parent():
+    """E 单孩稿：中段补位须是「孩子追问+家长短反应」，且落在收束两拍之前。"""
+    from app.services.gold_story.gold_chat.length import _e_natural_mid_pairs
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "灿灿，快去把灯关了。"},
+        {"speaker": "灿灿", "line": "等会儿，我还没看完。"},
+        {"speaker": "灿灿", "line": "你还知道你是我妈呀？"},
+        {"speaker": "灿灿", "line": "你晚上偷吃烤串，都背着我。"},
+        {"speaker": "灿灿", "line": "垃圾桶里签子还在呢。"},
+        {"speaker": "灿灿", "line": "你刚才说算不算数？"},
+        {"speaker": "妈妈", "line": "行行行，明天补你。"},
+    ]
+    pairs, insert_at = _e_natural_mid_pairs(dialogue)
+    assert pairs, "单孩+家长也要有补位对"
+    assert insert_at == len(dialogue) - 2, "补位须落在收束两拍之前"
+    assert pairs[0][0][0] == "灿灿" and pairs[0][1][0] == "妈妈"
+    # 家长那句不得是破功词，也不得复读大人例外
+    for _kid_line, parent_line in pairs:
+        assert not any(w in parent_line for w in ("行行行", "说不通", "唉"))
+
+    # 家长已满 3 句（契约 mom_lines_max）时不再添家长台词，避免超额度
+    denser = dialogue[:1] + dialogue[1:5] + [
+        {"speaker": "妈妈", "line": "我这不是在说嘛。"},
+        {"speaker": "妈妈", "line": "谁告诉你我偷吃了？"},
+        dialogue[-1],
+    ]
+    assert _e_natural_mid_pairs(denser)[0] == ()
+
+
+def test_fact_role_pair_prefers_facts_then_beat_acts():
+    """把柄稿两方：挑战方=指认者，权威方=自曝/辩解者。"""
+    from app.services.gold_story.scene import fact_role_pair
+
+    by_facts = fact_role_pair(
+        {
+            "facts": [
+                {
+                    "fact_id": "F1",
+                    "secret_holder": "妈妈",
+                    "accuser": "灿灿",
+                    "attribution_status": "resolved",
+                }
+            ]
+        }
+    )
+    assert by_facts == ("灿灿", "妈妈")
+
+    by_beats = fact_role_pair(
+        {
+            "beat_chain": [
+                {"beat": 4, "speaker": "灿灿", "intent": "反问", "speech_act": "echo"},
+                {"beat": 6, "speaker": "妈妈", "intent": "追问", "speech_act": "deny"},
+            ]
+        }
+    )
+    assert by_beats == ("灿灿", "妈妈")
+
+    assert fact_role_pair({}) == ("", "")
+    assert fact_role_pair(None) == ("", "")
+    # 单一角色（推不出对抗双方）不返回
+    assert (
+        fact_role_pair(
+            {"beat_chain": [{"speaker": "灿灿", "speech_act": "echo"}]}
+        )
+        == ("", "")
+    )
+
+
+def test_a_hint_localizes_roles_for_parent_authority():
+    """家长当权威时，A 类 hint 的示例角色名须换成契约实际角色。"""
+    from app.services.daily_story.story_types import (
+        gold_chat_type_revision_hint,
+    )
+    from app.services.gold_story.gold_chat.type_bridge import (
+        structure_type_hint,
+    )
+
+    default_hint = gold_chat_type_revision_hint("A")
+    assert "昭昭引前文原话" in default_hint
+
+    localized = gold_chat_type_revision_hint(
+        "A",
+        challenger="灿灿",
+        authority="妈妈",
+    )
+    assert "灿灿引前文原话→妈妈给当前动作找具体例外" in localized
+    assert "昭昭" not in localized
+    assert "翻旧账戳妈妈" in localized
+
+    hint = structure_type_hint(
+        structure_type="A",
+        mechanism="M5",
+        challenger="灿灿",
+        authority="妈妈",
+    )
+    assert "灿灿引前文原话→妈妈给当前动作找具体例外" in hint
+    # 姐弟稿不传角色时保持原样
+    plain = structure_type_hint(structure_type="A", mechanism="M5")
+    assert "昭昭引前文原话" in plain
+
+
+def test_a_natural_mid_pairs_maps_roles_at_runtime():
+    """A 类补位：家长当权威时改用另一位孩子施压，插入点落在末四拍之前。"""
+    from app.services.gold_story.gold_chat.length import (
+        _a_natural_mid_pairs,
+        _boost_short_with_mid_lines,
+    )
+
+    chain = [
+        {"beat": 4, "speaker": "灿灿", "intent": "反问", "speech_act": "echo"},
+        {"beat": 6, "speaker": "妈妈", "intent": "追问", "speech_act": "deny"},
+    ]
+    dialogue = [
+        {"speaker": "妈妈", "line": "灿灿，去把灯关了。"},
+        {"speaker": "灿灿", "line": "等会儿，我还没弄完呢。"},
+        {"speaker": "妈妈", "line": "你去，我是你妈！"},
+        {"speaker": "灿灿", "line": "你还知道你是我妈呀？"},
+        {"speaker": "昭昭", "line": "姐，我也闻见味儿了。"},
+        {"speaker": "灿灿", "line": "你光顾自己吃！"},
+        {"speaker": "妈妈", "line": "谁说的？"},
+        {"speaker": "灿灿", "line": "垃圾桶呗。"},
+        {"speaker": "昭昭", "line": "竹签还在呢。"},
+        {"speaker": "灿灿", "line": "那明天你得补给我。"},
+        {"speaker": "妈妈", "line": "行行行，明天再说。"},
+        {"speaker": "灿灿", "line": "你刚才说补给我，别赖。"},
+        {"speaker": "妈妈", "line": "我这是记着账，不算赖。"},
+        {"speaker": "灿灿", "line": "记账凭什么不算赖？"},
+        {"speaker": "妈妈", "line": "行吧，灯我关。"},
+    ]
+    pairs, insert_at = _a_natural_mid_pairs(dialogue, beat_chain=chain)
+    assert pairs, "A 类应有实义中段对"
+    assert insert_at == len(dialogue) - 4
+    # 家长当权威：施压方改用另一位孩子，不吃妈妈台词额度
+    assert {sp for sp, _ in pairs[0]} == {"昭昭", "灿灿"}
+
+    tight = {"dialogue": dialogue, "story_type": "A"}
+    out, changed = _boost_short_with_mid_lines(
+        tight,
+        structure_type="A",
+        beat_chain=chain,
+    )
+    assert changed
+    tail_before = [r["line"] for r in dialogue[-4:]]
+    tail_after = [r["line"] for r in out["dialogue"][-4:]]
+    assert tail_after == tail_before, "末四拍不得被补位改动"
 
 
 def test_fact_claim_alignment_notes_detects_missing_claim_beat():

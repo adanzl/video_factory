@@ -1428,7 +1428,54 @@ def test_gold_chat_summary_from_payload():
     assert summary["humor_score"] == 14
 
 
-def test_source_facts_gate_blocks_unresolved_attribution():
+def test_parent_caught_by_kid_retargets_a_and_i_to_e():
+    """家长被孩子抓到把柄：A（要一锤可拍）/I（要语塞制敌）都不成立 → E 妈妈破功。"""
+    from app.services.gold_story.gold_chat.type_bridge import (
+        resolve_gold_chat_structure_row,
+    )
+
+    def row(st: str, mech: str, holder: str = "妈妈") -> dict:
+        return {
+            "id": 1,
+            "mechanism": mech,
+            "structure_type": st,
+            "conflict_core": "妈妈催关灯，孩子翻出妈妈偷吃烤串的旧账",
+            "payload": {
+                "scene_contract": {
+                    "story_type": st,
+                    "facts": [
+                        {
+                            "fact_id": "F1",
+                            "secret_holder": holder,
+                            "accuser": "灿灿",
+                            "discoverer": "灿灿",
+                            "attribution_status": "resolved",
+                        }
+                    ],
+                }
+            },
+        }
+
+    for st, mech in (("A", "M5"), ("I", "M11")):
+        out, notes = resolve_gold_chat_structure_row(row(st, mech))
+        assert out["structure_type"] == "E", (st, notes)
+        assert out["payload"]["scene_contract"]["story_type"] == "E"
+        assert any("parent-caught-by-kid" in n for n in notes)
+
+    # 孩子自己做过那件事（把柄在孩子手上）不纠偏
+    out2, _ = resolve_gold_chat_structure_row(row("A", "M5", holder="灿灿"))
+    assert out2["structure_type"] == "A"
+
+    # 非家长把柄的 I 稿保持 I
+    out3, _ = resolve_gold_chat_structure_row(
+        {
+            "id": 2,
+            "mechanism": "M11",
+            "structure_type": "I",
+            "payload": {"scene_contract": {"story_type": "I"}},
+        }
+    )
+    assert out3["structure_type"] == "I"
     """指定了行为人的 facts 未 resolved 时不得自动发布（判 review_pending）。"""
     from app.services.gold_story.gold_chat.import_story import (
         _source_facts_not_resolved,

@@ -1880,8 +1880,11 @@ def apply_spot_fixes(
     """按行号替换台词；同步 discovery_opening；返回新故事与改动说明。
 
     `only` 限定本次只落哪几行，用于逐条试落、避开会破硬卡的那条。
+    `speaker` 可选：仅末四拍/收束槽位错位时用来改说话人（其余情况不带该键）。
     """
     import copy
+
+    from app.services.daily_story.speaker import DAILY_STORY_SPEAKER_NAMES
 
     if not isinstance(raw, dict):
         return story, []
@@ -1900,11 +1903,17 @@ def apply_spot_fixes(
             no = int(item.get("no"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
+        new_speaker = str(item.get("speaker") or "").strip()
+        if new_speaker and new_speaker not in DAILY_STORY_SPEAKER_NAMES:
+            new_speaker = ""
         new_line = _strip_speaker_prefix(
             str(item.get("line") or "").strip(),
-            speaker=str(rows[no - 1].get("speaker") or "").strip()
-            if 1 <= no <= len(rows)
-            else "",
+            speaker=new_speaker
+            or (
+                str(rows[no - 1].get("speaker") or "").strip()
+                if 1 <= no <= len(rows)
+                else ""
+            ),
         )
         new_line = _strip_action_declaration(new_line)
         if not new_line or not (1 <= no <= len(rows)):
@@ -1912,10 +1921,16 @@ def apply_spot_fixes(
         if only is not None and no not in only:
             continue
         old_line = str(rows[no - 1].get("line") or "").strip()
-        if new_line == old_line:
+        old_speaker = str(rows[no - 1].get("speaker") or "").strip()
+        speaker_changed = bool(new_speaker and new_speaker != old_speaker)
+        if new_line == old_line and not speaker_changed:
             continue
         rows[no - 1]["line"] = new_line
-        notes.append(f"第{no}句")
+        if speaker_changed:
+            rows[no - 1]["speaker"] = new_speaker
+            notes.append(f"第{no}句（{old_speaker}→{new_speaker}）")
+        else:
+            notes.append(f"第{no}句")
         # 开场是正文前两句的副本，改了就得同步，否则拼接后自相矛盾
         if isinstance(opening, list) and no <= len(opening):
             row = opening[no - 1]

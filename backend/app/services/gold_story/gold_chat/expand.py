@@ -1529,16 +1529,22 @@ def _structure_type_hint(
     mechanism: str = "",
     closing_mode: str = "",
     k_close_mode: str = "",
+    *,
+    contract: dict[str, Any] | None = None,
 ) -> str:
     from app.services.gold_story.gold_chat.type_bridge import (
         structure_type_hint,
     )
+    from app.services.gold_story.scene import fact_role_pair
 
+    challenger, authority = fact_role_pair(contract)
     return structure_type_hint(
         structure_type=structure_type,
         mechanism=mechanism,
         closing_mode=closing_mode,
         k_close_mode=k_close_mode,
+        challenger=challenger,
+        authority=authority,
     )
 
 def _gate_forced_m14_p_or_raise(row: dict[str, Any]) -> None:
@@ -1782,6 +1788,7 @@ def gold_story_to_gold_chat(
                 mechanism,
                 str(payload.get("closing_mode") or ""),
                 k_close_mode,
+                contract=scene_contract,
             ),
             align_block=align_block,
             gold_chat_snippet=resolve_gold_chat_snippet(str(row.get("source_id") or "")),

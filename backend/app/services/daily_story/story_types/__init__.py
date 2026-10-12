@@ -434,12 +434,36 @@ def revision_hints_for_type(
     return esc, close
 
 
+def _localize_gold_chat_roles(
+    text: str,
+    *,
+    challenger: str,
+    authority: str,
+) -> str:
+    """把 A 类 hint 里的示例角色名换成契约实际角色。
+
+    A 类末四拍/升级链的文案以「昭昭引话→灿灿找例外」为示例；当权威方是
+    家长（如 M5/A 亲子稿）时，原样注入会把模型带偏，故按实际角色替换。
+    """
+    out = str(text or "")
+    if not out:
+        return out
+    sis, bro = "\x00c\x00", "\x00a\x00"
+    out = out.replace("昭昭", sis).replace("灿灿", bro)
+    return out.replace(sis, challenger or "昭昭").replace(bro, authority or "灿灿")
+
+
 def gold_chat_type_revision_hint(
     structure_type: str,
     *,
     theme: str | None = None,
+    challenger: str = "",
+    authority: str = "",
 ) -> str:
-    """金稿 prompt 用：类型修订 hint + 正文锚（不含机制附录）。"""
+    """金稿 prompt 用：类型修订 hint + 正文锚（不含机制附录）。
+
+    ``challenger``/``authority`` 为契约实际角色时，A 类示例名会按角色替换。
+    """
     st = str(structure_type or "").strip().upper()
     if not st or st not in STORY_TYPE_LINES:
         return ""
@@ -460,7 +484,14 @@ def gold_chat_type_revision_hint(
         anchor = str(line.body_user_anchor or "").strip()
     if anchor:
         parts.append(f"- 正文锚：{anchor}")
-    return "\n".join(parts)
+    text = "\n".join(parts)
+    if st == "A" and (challenger or authority):
+        text = _localize_gold_chat_roles(
+            text,
+            challenger=challenger,
+            authority=authority,
+        )
+    return text
 
 
 def apply_gold_chat_type_patch(
