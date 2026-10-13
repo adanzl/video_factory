@@ -56,6 +56,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { editMaterialVideo } from "@/api/api-materials";
+import { useErrorHandler } from "@/composables/useErrorHandler";
 import type { MaterialVideoRecord } from "@/types/material-video";
 
 interface TimelineSegment {
@@ -76,6 +77,8 @@ const props = defineProps<{
     modelValue: boolean;
     material: MaterialVideoRecord | null;
 }>();
+
+const { handleError } = useErrorHandler();
 
 const emit = defineEmits<{
     (e: "update:modelValue", v: boolean): void;
@@ -162,8 +165,7 @@ const handleSave = async () => {
         visible.value = false;
         emit("saved");
     } catch (error) {
-        const { useErrorHandler } = await import("@/composables/useErrorHandler");
-        useErrorHandler().handleError(error, "保存失败");
+        handleError(error, "保存失败");
     } finally {
         saving.value = false;
     }
