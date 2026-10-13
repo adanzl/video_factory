@@ -124,20 +124,4 @@ if (existsSync(distFavicon)) {
     }
 }
 
-// 复制 web/pdfjs 目录（PDF.js 资源文件）
-const distWebPdfjsDir = join(distDir, "web", "pdfjs");
-const staticWebPdfjsDir = join(staticDir, "web", "pdfjs");
-
-if (existsSync(distWebPdfjsDir)) {
-    try {
-        cpSync(distWebPdfjsDir, staticWebPdfjsDir, { recursive: true, force: true });
-        console.log("✅ 已复制 web/pdfjs 目录（PDF.js 资源）");
-    } catch (error) {
-        console.error(`❌ 复制 web/pdfjs 目录失败: ${error.message}`);
-        process.exit(1);
-    }
-} else {
-    console.log("⚠️  未找到 web/pdfjs 目录，跳过复制");
-}
-
 console.log("🎉 部署完成！");
