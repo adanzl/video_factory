@@ -4,7 +4,7 @@ import logging
 import re
 from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.script.optimize_title import CHAT_TITLE_MAX_LEN, build_chat_title_prompts, ensure_chat_title_candidates, extract_core_anchor_words, extract_theme_action_phrase, maybe_keep_cover_draft, parse_chat_title_candidates_payload, pick_best_chat_title, polish_chat_title
+from app.services.script.optimize_title import CHAT_TITLE_MAX_LEN, build_chat_title_prompts, ensure_chat_title_candidates, extract_core_anchor_words, extract_hard_anchor_words, extract_theme_action_phrase, maybe_keep_cover_draft, parse_chat_title_candidates_payload, pick_best_chat_title, polish_chat_title
 from app.utils.job_cancel import job_cancel
 from app.utils.job_info import parse_job_info
 from worker.context import JobContext
@@ -155,7 +155,12 @@ class DailyScriptStage(StageExecutor):
                     candidates = parse_chat_title_candidates_payload(
                         raw, max_title_len=max_len,
                     )
-                    anchors = extract_core_anchor_words(title, title_content)
+                    anchors = extract_hard_anchor_words(title, title_content)
+                    soft_anchors = [
+                        w
+                        for w in extract_core_anchor_words(title, title_content)
+                        if w not in anchors
+                    ]
                     phrase = extract_theme_action_phrase(title, title_content)
                     if phrase and phrase not in anchors:
                         anchors = [phrase, *anchors]
@@ -176,6 +181,7 @@ class DailyScriptStage(StageExecutor):
                         max_len=max_len,
                         avoid_titles=avoid_titles,
                         anchor_words=anchors,
+                        soft_anchor_words=soft_anchors,
                         story_type=title_content.get('story_type'),
                         story_content=title_content,
                     )

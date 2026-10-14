@@ -14,6 +14,7 @@ from app.services.gold_story.gold_chat.export import (
     load_gold_chat,
 )
 from app.services.daily_story.prompts import dialogue_total_chars
+from app.services.gold_story.gold_chat.patch import remap_source_kinship
 from app.services.gold_story.scene import sanitize_banned_literals
 from app.services.llm.llm_mgr import llm_mgr
 
@@ -307,7 +308,7 @@ def polish_gold_chat_export(
     issues_before = collect_gold_chat_polish_issues(chat)
     polished, accepted_n = polish_gold_chat_wording(
         chat,
-        theme=str(chat.get("scene_title") or row.get("title") or sid),
+        theme=remap_source_kinship(str(chat.get("scene_title") or row.get("title") or sid)),
         banned_literals=banned,
         source_type=source_type,
         mom_lines_max=int(mom_max),

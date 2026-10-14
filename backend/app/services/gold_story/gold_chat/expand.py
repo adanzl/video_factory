@@ -18,6 +18,7 @@ from app.services.gold_story.gold_chat.patch import (
     apply_m5_h_local_patches,
     patch_m5_break_sibling_consecutive,
     patch_remap_sibling_terms,
+    remap_source_kinship,
 )
 from app.services.gold_story.gold_chat.length import (
     GOLD_CHAT_NEAR_MISS_DEFICIT_MAX,
@@ -2051,7 +2052,9 @@ def gold_story_to_gold_chat(
                 chat,
                 structure_type=structure_type,
                 mechanism=mechanism,
-                theme=str(row.get("title") or chat.get("scene_title") or ""),
+                theme=remap_source_kinship(
+                    str(row.get("title") or chat.get("scene_title") or "")
+                ),
                 payload=payload,
             )
             if m2_notes:
@@ -2217,7 +2220,9 @@ def gold_story_to_gold_chat(
                             draft,
                             structure_type=structure_type,
                             mechanism=mechanism,
-                            theme=str(row.get("title") or draft.get("scene_title") or ""),
+                            theme=remap_source_kinship(
+                                str(row.get("title") or draft.get("scene_title") or "")
+                            ),
                             payload=payload,
                         )
                         draft, _ = _post_align_j_closing_touchup(
@@ -2375,7 +2380,7 @@ def gold_story_to_gold_chat(
 
         ctx_story = {
             "story_type": "C",
-            "scene_title": str(row.get("title") or ""),
+            "scene_title": remap_source_kinship(str(row.get("title") or "")),
             "setting": str((payload.get("scene_contract") or {}).get("location") or ""),
             "conflict_core": conflict_core
             or str(payload.get("conflict") or conflict_text or ""),

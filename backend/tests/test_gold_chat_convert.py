@@ -2523,3 +2523,37 @@ def test_replace_banned_kinship_still_maps_source_terms():
     out, changed = patch_replace_banned_kinship(story, banned_literals=["哥哥"])
     assert changed
     assert out["dialogue"][0]["line"] == "灿灿你别抢！"
+
+
+def test_remap_source_kinship_to_jiedi_metadata():
+    """落库前元数据 remap：站内关系只有姐弟，只换关系标签、保留内容词。"""
+    from app.services.gold_story.gold_chat.patch import (
+        remap_chat_kinship_metadata,
+        remap_source_kinship,
+    )
+
+    assert remap_source_kinship("双胞胎抢娃娃，妹妹自砸头") == "姐弟抢娃娃，弟弟自砸头"
+    assert remap_source_kinship("哥哥真动手") == "姐姐真动手"
+    assert remap_source_kinship("姐妹抢拼图") == "姐弟抢拼图"
+    # 相邻标签收敛成一个「姐弟」，不出「姐弟姐弟」
+    assert remap_source_kinship("龙凤胎兄妹抢娃娃") == "姐弟抢娃娃"
+    # 第三方亲属不 remap
+    assert remap_source_kinship("隔壁妹妹也想来玩") == "隔壁妹妹也想来玩"
+    assert remap_source_kinship("同学哥哥送我的") == "同学哥哥送我的"
+    # 站内合法称呼原样
+    assert remap_source_kinship("姐姐一棍就老实") == "姐姐一棍就老实"
+
+    story = {
+        "scene_title": "双胞胎抢娃娃，妹妹自砸头",
+        "key": "抢娃娃自砸头",
+        "conflict_core": "灿灿和昭昭抢同一个布娃娃",
+        "punchline_explain": "G类：妹妹举书假装砸姐姐",
+        "dialogue": [{"speaker": "昭昭", "line": "妹妹你干嘛"}],
+    }
+    out, theme, notes = remap_chat_kinship_metadata(story, theme="双胞胎抢娃娃，妹妹自砸头")
+    assert theme == "姐弟抢娃娃，弟弟自砸头"
+    assert out["scene_title"] == "姐弟抢娃娃，弟弟自砸头"
+    assert out["punchline_explain"] == "G类：弟弟举书假装砸姐姐"
+    # 对白正文不动（第三方可能有出处）
+    assert out["dialogue"] == story["dialogue"]
+    assert notes

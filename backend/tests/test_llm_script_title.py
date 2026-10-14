@@ -988,3 +988,149 @@ def test_revise_patch_in_band_for_yinhua_and_g_long():
     assert "压到" in g_sys or "删冗余" in g_sys
     assert "偏长句内删" in g_user or "压到" in g_user
 
+
+def _job117_story() -> dict:
+    """#117 稿子：源稿称谓「双胞胎/妹妹」，站内角色是灿灿/昭昭。"""
+    return {
+        "scene_title": "双胞胎抢娃娃，妹妹自砸头",
+        "theme": "双胞胎抢娃娃，妹妹自砸头",
+        "setting": "客厅沙发前，灿灿怀里抱着布娃娃，昭昭脚边摊着一本硬壳绘本",
+        "conflict_core": "灿灿和昭昭抢同一个布娃娃，谁也不让谁。",
+        "key": "抢娃娃自砸头",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "这个布娃娃我先抱的，你松手别拽了！"},
+            {"speaker": "昭昭", "line": "我没砸姐姐，我砸我自己总行！"},
+        ],
+    }
+
+
+def test_extract_core_anchor_words_no_cross_word_fragment():
+    """长 scene_title 不再切出跨词碎片：双胞胎抢娃娃→抢娃娃，不是「胎抢娃娃」。"""
+    from app.services.script.optimize_title import extract_core_anchor_words
+
+    anchors = extract_core_anchor_words("双胞胎抢娃娃，妹妹自砸头", _job117_story())
+    assert anchors == ["抢娃娃", "砸头"]
+    for bad in ("胎抢娃娃", "妹妹自砸", "妹妹", "双胞胎"):
+        assert bad not in anchors
+    # 段内切出来的窗口必须由剧本正文自证：「抢鸡爪」正文里没有 → 退回正文认过的「阳台」
+    chicken = {
+        "scene_title": "阳台抢鸡爪",
+        "setting": "阳台上摆着小板凳，鸡爪放在盘子里",
+        "conflict_core": "灿灿和昭昭都想要盘子里的鸡爪。",
+        "key": "抢食加码",
+    }
+    assert extract_core_anchor_words("阳台抢鸡爪", chicken) == ["阳台"]
+
+
+def test_title_guards_reject_source_labels_and_dirty_chars():
+    """源稿标签（双胞胎/妹妹）与剧本里没有的拉丁字母不得进标题。"""
+    from app.services.script.optimize_title import (
+        filter_chat_title_candidates,
+        title_source_label_leak,
+        title_unusable,
+    )
+
+    story = _job117_story()
+    assert title_source_label_leak("妹妹自砸头", story) == ("妹妹",)
+    assert title_source_label_leak("双胞胎抢娃娃", story) == ("双胞胎",)
+    # 站内关系只有姐弟：兄妹/兄弟/姐妹/龙凤胎 都是错关系词
+    assert title_source_label_leak("龙凤胎抢娃娃", story) == ("龙凤胎",)
+    assert title_source_label_leak("兄妹抢娃娃", story) == ("兄妹",)
+    assert title_source_label_leak("姐妹抢娃娃", story) == ("姐妹",)
+    assert title_source_label_leak("兄弟抢娃娃", story) == ("兄弟",)
+    # 姐弟/姐姐/弟弟 是站内合法称呼，放行
+    assert title_source_label_leak("姐弟抢娃娃", story) == ()
+    assert title_source_label_leak("姐姐抢娃娃，弟弟自砸头", story) == ()
+    assert title_unusable("胎抢娃娃，j自砸头", story) is True
+    assert title_unusable("妹妹自砸头", story) is True
+    assert title_unusable("抢娃娃，砸自己头", story) is False
+    # 对白真提到过「妹妹」（第三方）时不算漏标
+    third_party = dict(story, dialogue=[{"speaker": "灿灿", "line": "隔壁妹妹也想来玩。"}])
+    assert title_source_label_leak("隔壁妹妹也想来", third_party) == ()
+    # 剧本里出现过的字母放行（Q弹屁股救场）
+    q_story = dict(story, scene_title="Q弹屁股救场", setting="昭昭一屁股坐上去，Q弹得很")
+    assert title_unusable("Q弹屁股救场", q_story) is False
+    # 候选层硬校验：漏标/脏字符候选直接作废
+    out = filter_chat_title_candidates(
+        ["布娃娃谁先抱归谁", "妹妹自砸头，姐姐认怂", "抢娃娃，j自砸头"],
+        [],
+        story_content=story,
+    )
+    assert out == ["布娃娃谁先抱归谁"]
+
+
+def test_extract_hard_anchor_words_excludes_scene_only_words():
+    """硬锚词只要动作/整段短语；纯场景词（阳台）只作软锚词，不作硬门槛。"""
+    from app.services.script.optimize_title import (
+        extract_core_anchor_words,
+        extract_hard_anchor_words,
+    )
+
+    assert extract_hard_anchor_words("双胞胎抢娃娃，妹妹自砸头", _job117_story()) == ["抢娃娃"]
+    # 「砸头」是段尾名词窗口 → 只作软锚词，仍进提示词与加分
+    assert extract_core_anchor_words("双胞胎抢娃娃，妹妹自砸头", _job117_story()) == [
+        "抢娃娃",
+        "砸头",
+    ]
+    chicken = {
+        "scene_title": "阳台抢鸡爪",
+        "setting": "阳台上摆着小板凳，鸡爪放在盘子里",
+        "conflict_core": "灿灿和昭昭都想要盘子里的鸡爪。",
+        "key": "抢食加码",
+    }
+    assert extract_hard_anchor_words("阳台抢鸡爪", chicken) == []
+    assert extract_core_anchor_words("阳台抢鸡爪", chicken) == ["阳台"]
+
+
+def test_pick_best_chat_title_soft_anchor_never_gates():
+    """软锚词只加分：候选不含软锚词时不得像硬锚词那样被作废。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    chicken = {
+        "scene_title": "阳台抢鸡爪",
+        "setting": "阳台上摆着小板凳，鸡爪放在盘子里",
+        "conflict_core": "灿灿和昭昭都想要盘子里的鸡爪。",
+        "key": "抢食加码",
+    }
+    picked = pick_best_chat_title(
+        "阳台抢鸡爪",
+        ["弟弟护着鸡爪不撒手"],
+        max_len=15,
+        anchor_words=[],
+        soft_anchor_words=["阳台"],
+        story_content=chicken,
+    )
+    assert picked == "弟弟护着鸡爪不撒手"
+    # 同一候选在硬门槛下会被作废（对照：锚词当硬门槛时的行为）
+    assert (
+        pick_best_chat_title(
+            "阳台抢鸡爪",
+            ["弟弟护着鸡爪不撒手"],
+            max_len=15,
+            anchor_words=["阳台"],
+            story_content=chicken,
+        )
+        == "阳台抢鸡爪"
+    )
+
+
+def test_pick_best_chat_title_unusable_draft_not_fallback():
+    """手输初稿带脏字符时：不当基线、也不当「无锚词候选」的兜底，让候选胜出。"""
+    from app.services.script.optimize_title import pick_best_chat_title, title_unusable
+
+    story = _job117_story()
+    picked = pick_best_chat_title(
+        "抢娃娃，j自砸头",
+        ["举书砸头反砸自己", "布娃娃谁先抱归谁"],
+        max_len=15,
+        anchor_words=["娃娃"],
+        story_content=story,
+        avoid_titles=["抢娃娃，j自砸头"],
+    )
+    assert picked != "抢娃娃，j自砸头"
+    assert title_unusable(picked, story) is False
+    # 一个可用候选都没有时不许返回空串（否则会把 job 标题写没）
+    assert pick_best_chat_title(
+        "抢娃娃，j自砸头", [], max_len=15, anchor_words=["娃娃"], story_content=story,
+    ) != ""
+

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
 from app.services.gold_story.gold_chat.export import load_gold_chat_for_row
+
+logger = logging.getLogger(__name__)
 
 def validate_gold_chat_story_for_row(
     story: dict[str, Any],
@@ -122,6 +125,17 @@ def import_gold_chat_daily_story(
         or row.get("title")
         or sid
     ).strip()
+    # 落库前统一 remap：源视频关系标签（双胞胎/妹妹/哥哥…）→ 站内姐弟口径，
+    # 只改元数据不碰对白正文；否则脏 theme 会一路漏进发布标题（#117 事故）
+    from app.services.gold_story.gold_chat.patch import remap_chat_kinship_metadata
+
+    story, theme, kinship_notes = remap_chat_kinship_metadata(story, theme=theme)
+    if kinship_notes:
+        logger.info(
+            "[gold_chat] import kinship remap source_id=%s: %s",
+            sid,
+            "；".join(kinship_notes),
+        )
     story_type = str(row.get("structure_type") or "").strip().upper()[:1] or None
     if story_type:
         story["story_type"] = story_type

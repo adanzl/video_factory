@@ -1272,6 +1272,7 @@ def run_gold_chat_finalize(
         chat, _ = patch_sanitize_c_tone_stack(chat)
         from app.services.gold_story.gold_chat.patch import (
             patch_m2_c_structure,
+            remap_source_kinship,
         )
 
         payload = cast(dict[str, Any], row.get("payload") or {})
@@ -1279,7 +1280,7 @@ def run_gold_chat_finalize(
             chat,
             structure_type=str(row.get("structure_type") or ""),
             mechanism=str(row.get("mechanism") or ""),
-            theme=str(row.get("title") or chat.get("scene_title") or ""),
+            theme=remap_source_kinship(str(row.get("title") or chat.get("scene_title") or "")),
             payload=payload,
         )
         if strip_notes:

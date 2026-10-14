@@ -94,6 +94,7 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
         build_chat_title_prompts,
         ensure_chat_title_candidates,
         extract_core_anchor_words,
+        extract_hard_anchor_words,
         extract_theme_action_phrase,
         maybe_keep_cover_draft,
         parse_chat_title_candidates_payload,
@@ -109,7 +110,10 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
     client = llm_mgr._get_client()
     raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)  # type: ignore[attr-defined]
     candidates = parse_chat_title_candidates_payload(raw, max_title_len=max_len)
-    anchors = extract_core_anchor_words(draft, story_content)
+    anchors = extract_hard_anchor_words(draft, story_content)
+    soft_anchors = [
+        w for w in extract_core_anchor_words(draft, story_content) if w not in anchors
+    ]
     phrase = extract_theme_action_phrase(draft, story_content)
     # 完整主题短语优先（要求标题含「偷看电视」，不只含「电视」），缺短语时退回核心名词
     if phrase and phrase not in anchors:
@@ -126,6 +130,7 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
     final_title = pick_best_chat_title(
         draft, candidates,
         max_len=max_len, avoid_titles=avoid_titles, anchor_words=anchors,
+        soft_anchor_words=soft_anchors,
         story_type=story_content.get('story_type'),
         story_content=story_content,
     )

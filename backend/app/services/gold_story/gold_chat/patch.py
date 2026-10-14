@@ -446,8 +446,94 @@ def patch_fight_question_speaker(
     return out, changed
 
 
+# 站内人物关系只有姐弟一种（灿灿 = 10 岁姐姐、昭昭 = 7 岁弟弟）。源视频标题里的
+# 关系标签按站内口径改写：**只换关系标签，内容词（抢娃娃/自砸头）原样保留**。
+# 双胞胎/龙凤胎/兄妹/兄弟/姐妹 都不是站内关系 → 一律落回「姐弟」（不删除：删掉会丢
+# 两人同框的关系锚点）。专家 2026-10-14 评审口径。
+_METADATA_KINSHIP_REMAP: tuple[tuple[str, str], ...] = (
+    ("双胞胎", "姐弟"),
+    ("龙凤胎", "姐弟"),
+    ("兄妹", "姐弟"),
+    ("兄弟", "姐弟"),
+    ("姐妹", "姐弟"),
+    ("哥哥", "姐姐"),
+    ("妹妹", "弟弟"),
+)
+
+# 其后紧跟的源稿标签不算主角色漏标（如「隔壁妹妹」「同学哥哥」）。
+_THIRD_PARTY_PREFIXES = ("隔壁", "邻居", "同学", "朋友", "别人", "人家", "同事", "路人")
+
+# 需要跟 theme 一起 remap 的元数据字段（不含对白正文：正文已由称谓 patch 处理）。
+_KINSHIP_TEXT_FIELDS = ("scene_title", "key", "conflict_core", "punchline_explain")
+
+# 单遍匹配用（长词优先，避免「兄妹」被拆）
+_KINSHIP_REMAP_RE = re.compile(
+    "|".join(
+        re.escape(source)
+        for source, _ in sorted(_METADATA_KINSHIP_REMAP, key=lambda item: -len(item[0]))
+    )
+)
+
+
+def _after_third_party_prefix(text: str, index: int) -> bool:
+    for size in (2, 1):
+        if index >= size and text[index - size : index] in _THIRD_PARTY_PREFIXES:
+            return True
+    return False
+
+
+def remap_source_kinship(text: str) -> str:
+    """源稿关系标签 → 站内姐弟口径：双胞胎/兄妹/姐妹/兄弟 → 姐弟，哥哥 → 姐姐，妹妹 → 弟弟。
+
+    只动关系标签，不动内容词；带第三方前缀（隔壁/同学…）的不动。
+    单遍替换（替出的「姐弟/姐姐/弟弟」不再参与后续匹配，「龙凤胎兄妹」不会变成「姐弟姐弟」）。
+    """
+    out = str(text or "")
+    if not out:
+        return out
+    mapping = dict(_METADATA_KINSHIP_REMAP)
+
+    def _replace(match: re.Match[str]) -> str:
+        if _after_third_party_prefix(out, match.start()):
+            return match.group(0)
+        return mapping[match.group(0)]
+
+    remapped = _KINSHIP_REMAP_RE.sub(_replace, out)
+    # 相邻两个标签（「龙凤胎兄妹」）会各替一次 → 收敛成一个「姐弟」
+    while "姐弟姐弟" in remapped:
+        remapped = remapped.replace("姐弟姐弟", "姐弟")
+    return remapped
+
+
+def remap_chat_kinship_metadata(
+    story: dict[str, Any],
+    *,
+    theme: str,
+) -> tuple[dict[str, Any], str, list[str]]:
+    """落库前统一 remap：theme + 元数据字段的源稿关系标签 → 站内姐弟口径。
+
+    返回 ``(story, theme, notes)``；notes 非空表示确实改写过（调用方记日志）。
+    对白正文不在这里改（已有称谓 patch 按 banned_literals 处理），避免误伤第三方。
+    """
+    import copy
+
+    out = copy.deepcopy(story)
+    notes: list[str] = []
+    new_theme = remap_source_kinship(theme)
+    if new_theme != theme:
+        notes.append(f"theme: {theme!r} -> {new_theme!r}")
+    for field in _KINSHIP_TEXT_FIELDS:
+        value = out.get(field)
+        if not isinstance(value, str) or not value:
+            continue
+        cleaned = remap_source_kinship(value)
+        if cleaned != value:
+            out[field] = cleaned
+            notes.append(f"{field}: {value!r} -> {cleaned!r}")
+    return out, new_theme, notes
+
+
 def patch_remap_sibling_terms(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """精修：站外兄弟称谓 → 姐弟映射（哥哥→姐姐，弟弟→昭昭）。"""
     import copy
 
     rows = _dialogue_rows(story)

@@ -173,6 +173,79 @@ def title_absent_roles(title: str, story_content: dict | None = None) -> tuple[s
     return tuple(absent)
 
 
+# 站内人物关系只有「姐弟」一种（灿灿=10 岁姐姐、昭昭=7 岁弟弟；昭昭称灿灿「姐姐」，
+# 灿灿称昭昭「弟弟」）。下列都是源视频侧的关系标签/错关系词，剧本正文里没出现过
+# 却写进标题 = 抄了源稿标签，一律拒收；不含「姐姐/弟弟」（站内合法互称）。
+_TITLE_SOURCE_LABELS = ("双胞胎", "龙凤胎", "妹妹", "哥哥", "兄妹", "兄弟", "姐妹")
+
+# 标题里的拉丁字母：剧本任何字段都没出现过 → 判脏字符（手改初稿/模型带进，如 'j'）。
+_LATIN_LETTER_RE = re.compile(r"[A-Za-z]")
+
+
+def _story_script_blob(story_content: dict | None) -> str:
+    """剧本正文（**不含** scene_title/theme）：判断词是否真在稿子里出现过。
+
+    场景标题/主题可能直接抄源视频标题（带「双胞胎/妹妹」这类源稿标签），
+    拿它自证会把标签洗白，所以只认稿子本身；punchline_explain 是源稿侧的
+    「反差说明」（同样可能带源稿标签），也不计入。
+    """
+    if not story_content:
+        return ""
+    parts = [
+        str(story_content.get(key) or "")
+        for key in ("setting", "conflict_core", "key")
+    ]
+    parts.append(_dialogue_blob(story_content))
+    return "".join(parts)
+
+
+def _story_full_blob(story_content: dict | None) -> str:
+    """剧本全部文本（含 scene_title/theme）：脏字符宽松判定用，避免误杀合法字母。"""
+    if not story_content:
+        return ""
+    parts = [
+        str(story_content.get(key) or "")
+        for key in (
+            "scene_title",
+            "theme",
+            "setting",
+            "conflict_core",
+            "key",
+            "punchline_explain",
+        )
+    ]
+    parts.append(_dialogue_blob(story_content))
+    return "".join(parts)
+
+
+def title_source_label_leak(title: str, story_content: dict | None = None) -> tuple[str, ...]:
+    """标题里的源视频标签（双胞胎/妹妹/哥哥）在剧本正文里找不到 → 漏标。无剧本时不判。"""
+    text = str(title or "")
+    blob = _story_script_blob(story_content)
+    if not text or not blob:
+        return ()
+    return tuple(label for label in _TITLE_SOURCE_LABELS if label in text and label not in blob)
+
+
+def title_has_unattested_latin(title: str, story_content: dict | None = None) -> bool:
+    """标题里的拉丁字母在剧本里找不到出处 → 判脏。无剧本时不判。"""
+    text = str(title or "")
+    blob = _story_full_blob(story_content)
+    if not text or not blob:
+        return False
+    letters = set(_LATIN_LETTER_RE.findall(text.lower()))
+    if not letters:
+        return False
+    return not letters <= set(_LATIN_LETTER_RE.findall(blob.lower()))
+
+
+def title_unusable(title: str, story_content: dict | None = None) -> bool:
+    """标题不可用：源稿标签漏标，或含剧本里没有的拉丁字母（如手输 'j'）。"""
+    return bool(title_source_label_leak(title, story_content)) or title_has_unattested_latin(
+        title, story_content
+    )
+
+
 def _dialogue_cast_mismatch_note(draft_title: str, story_content: dict) -> str:
     """源标题/主题写了但对白没有的人物 → 提示词硬卡。"""
     meta = "".join(
@@ -198,11 +271,15 @@ def filter_chat_title_candidates(
     *,
     story_content: dict | None = None,
 ) -> list[str]:
-    """候选层硬校验：只保留含主题锚词、且人物对得上对白的候选。"""
+    """候选层硬校验：只保留含主题锚词、人物对得上对白、无源稿标签/脏字符的候选。"""
     anchors = [str(a).strip() for a in (anchor_words or []) if str(a).strip()]
     out = [c for c in candidates if _candidate_has_anchor(c, anchors)]
     if story_content:
-        out = [c for c in out if not title_absent_roles(c, story_content)]
+        out = [
+            c
+            for c in out
+            if not title_absent_roles(c, story_content) and not title_unusable(c, story_content)
+        ]
     return out
 
 
@@ -314,7 +391,8 @@ def _polish_keeps_content(source: str, candidate: str) -> bool:
 
 
 def _title_anchor_parts(draft_title: str, story_content: dict) -> tuple[list[str], list[str]]:
-    anchors = extract_core_anchor_words(draft_title, story_content)
+    """润色硬校验用的锚词：只用高置信硬锚词，避免把场景词/碎片当「必须保留」。"""
+    anchors = extract_hard_anchor_words(draft_title, story_content)
     phrase = extract_theme_action_phrase(draft_title, story_content)
     if phrase and phrase not in anchors:
         anchors = [phrase, *anchors]
@@ -356,6 +434,9 @@ def _polish_candidate_ok(
     if not allow_deletion and not _polish_keeps_content(source, candidate):
         return False
     if title_absent_roles(candidate, story_content):
+        return False
+    # 润色不得引入源稿标签（双胞胎/妹妹）或剧本里没有的字符
+    if title_unusable(candidate, story_content):
         return False
     return True
 
@@ -538,9 +619,8 @@ _RHETORICAL_RE = re.compile(r"还咋|咋就|咋收场|凭啥|说好")
 
 # 中文核心名词多为 2 字（月饼/电视/玩具/洗澡…）；4 字几乎都是动词+名词拼的整句
 _ANCHOR_NGRAM_ORDER = (2, 3, 4)
-# scene_title 扫描用「最长优先」：完整短语（分蛋糕/抢遥控器）先于 2 字碎片，
-# 否则「分蛋」「控器」这类前缀/后缀碎片会因单侧边界被误判成独立词
-_ANCHOR_SCENE_NGRAM_ORDER = (4, 3, 2)
+# 场景标题按标点切短语段；锚词只在段内取，绝不跨段拼
+_ANCHOR_CLAUSE_SPLIT_RE = re.compile(r"[\s，,。！？!?；;、…]+")
 
 # 汉字范围：判断词在正文里是否前后有非汉字边界
 _CJK_CHAR_RE = re.compile(r'[一-鿿]')
@@ -595,37 +675,112 @@ def _extract_theme_fallback(theme: str, story_content: dict) -> list[str]:
     return []
 
 
-def extract_core_anchor_words(draft: str, story_content: dict) -> list[str]:
-    """提取本场核心名词（2–4 字）：原始 scene_title 与冲突核心/场景/主题共有的词。
+def _clause_anchor_windows(clause: str) -> list[tuple[str, bool]]:
+    """一个短语段里可当锚词的窗口：``(窗口, 是否高置信硬锚词)``。
 
-    用于「标题必须包含核心名词」的硬要求与 picker 兜底，防「鞋底渣印谁擦」式
-    盯住次级元素、把核心主题（月饼）丢掉。
+    只取「段边界对齐」的窗口：整段（≤4 字）、或从动作动词一直到段尾（抢娃娃/抢鸡爪/
+    争夺战），或段首/段尾 2 字名词。绝不产出从更长的词里切出来的 3–4 字碎片——
+    「双胞胎抢娃娃」的「胎抢娃娃」、「奶瓶争夺战」的「瓶争夺战」都是这么来的。
 
-    只保留在正文中有独立词位（前/后非汉字）的候选，避免「偷看电」这类把
-    「偷看电视」从词边界切开的坏碎片进提示词、被 LLM 照抄成病句标题。
-
-    scene_title 提不到（太短/只出现在词内）时，用主题（theme）兜底提取核心名词，
-    让标题仍能锚定主题；两者都取不到时返回空列表 = 不强制。
+    硬锚词（动作/整段短语，如「抢娃娃」「砸头」）= 可作「标题须含」的硬门槛；
+    软锚词（段首/段尾 2 字名词，多为「阳台」这类场景词）= 只加分与提示，不作硬门槛。
     """
-    scene = title_core(str(story_content.get('scene_title') or draft or ''))
+    hard: list[str] = []
+    soft: list[str] = []
+    if 2 <= len(clause) <= 4:
+        hard.append(clause)
+    for i, ch in enumerate(clause):
+        if ch in _THEME_ACTION_VERBS and 2 <= len(clause) - i <= 4:
+            hard.append(clause[i:])
+        two = clause[i:i + 2]
+        if two in _THEME_ACTION_2CHAR and 2 <= len(clause) - i <= 4:
+            hard.append(clause[i:])
+    if len(clause) >= 2:
+        soft.append(clause[:2])
+        soft.append(clause[-2:])
+    out: list[tuple[str, bool]] = []
+    seen: set[str] = set()
+    for w, is_hard in ((w, True) for w in hard):
+        if len(w) >= 2 and w not in seen:
+            seen.add(w)
+            out.append((w, is_hard))
+    for w in soft:
+        if len(w) >= 2 and w not in seen:
+            seen.add(w)
+            out.append((w, False))
+    return out
+
+
+def _collect_anchor_words(draft: str, story_content: dict) -> list[tuple[str, bool]] | None:
+    """``(锚词, 是否硬锚词)`` 列表：段内窗口 → 正文自证 → 关系/源稿标签过滤。
+
+    返回 ``None`` = 锚词不可信（源标题点名了对白没出场的人），调用方**不得**再走
+    主题兜底（否则又会把「怼妈」这类源稿标签洗成锚词），直接不锚定。
+    """
+    raw_scene = str(story_content.get('scene_title') or draft or '').strip()
+    scene = title_core(raw_scene)
     if not scene:
         return []
     # 源标题点名了对白没有的人（如金故事「怼妈」映射成姐弟戏）→ 锚词不可信，宁可不锚定
     if title_absent_roles(scene, story_content) or title_absent_roles(draft, story_content):
-        return []
+        return None
     blob = ''.join(str(story_content.get(k) or '') for k in ('conflict_core', 'setting', 'theme'))
-    for n in _ANCHOR_SCENE_NGRAM_ORDER:
-        found: list[str] = []
-        for i in range(len(scene) - n + 1):
-            w = scene[i:i + n]
-            if w in blob and w not in found and _word_boundary_in_blob(w, blob):
-                if title_absent_roles(w, story_content):
-                    continue
-                found.append(w)
-        if found:
-            return found[:2]
-    fallback = _extract_theme_fallback(str(story_content.get('theme') or ''), story_content)
-    return [w for w in fallback if not title_absent_roles(w, story_content)]
+    script_blob = _story_script_blob(story_content)
+    found: list[tuple[str, bool]] = []
+    for clause in (c for c in _ANCHOR_CLAUSE_SPLIT_RE.split(raw_scene) if c):
+        for w, is_hard in _clause_anchor_windows(clause):
+            if any(w == kept for kept, _ in found):
+                continue
+            if not (w in blob and _word_boundary_in_blob(w, blob)):
+                continue
+            if title_absent_roles(w, story_content) or title_source_label_leak(w, story_content):
+                continue
+            # 段内切出来的窗口必须由剧本正文自证（「抢娃娃」若在正文里只以
+            # 「布娃娃」出现，就退回被正文认过的「娃娃」；「看抢拼图」直接作废）
+            if w != clause and w not in script_blob:
+                continue
+            found.append((w, is_hard))
+            break
+        if len([1 for _, is_hard in found if is_hard]) >= 2:
+            break
+    return found
+
+
+def extract_core_anchor_words(draft: str, story_content: dict) -> list[str]:
+    """提取本场核心动作/物件词（2–4 字），硬锚词在前：scene_title 与正文共有的词。
+
+    用于提示词「标题须含核心物件/动作」与 picker 兜底，防「鞋底渣印谁擦」式
+    盯住次级元素、把核心主题（月饼）丢掉。
+
+    只保留在正文中有独立词位（前/后非汉字）的候选，避免「偷看电」这类把
+    「偷看电视」从词边界切开的坏碎片进提示词、被 LLM 照抄成病句标题；
+    段内切出来的窗口（动词尾/2 字名词）还要能在**剧本正文**（不含 scene_title/
+    theme）里找到出处，否则可能是「胎抢娃娃」这种跨词碎片，宁可不锚定。
+
+    scene_title 提不到（太短/只出现在词内）时，用主题（theme）兜底提取核心名词，
+    让标题仍能锚定主题；两者都取不到时返回空列表 = 不强制。
+    """
+    found = _collect_anchor_words(draft, story_content)
+    if found is None:
+        return []
+    if not found:
+        fallback = _extract_theme_fallback(str(story_content.get('theme') or ''), story_content)
+        return [w for w in fallback if not title_absent_roles(w, story_content)]
+    hard = [w for w, is_hard in found if is_hard][:2]
+    soft = [w for w, is_hard in found if not is_hard]
+    return (hard + soft)[:2]
+
+
+def extract_hard_anchor_words(draft: str, story_content: dict) -> list[str]:
+    """高置信硬锚词（动作/整段短语）：只有它们才配作「标题须含」的硬门槛。
+
+    段首/段尾 2 字名词（如「阳台」这类场景词）不出现在这里——作硬门槛会误拦
+    合规候选，只该加分与提示（见 ``_clause_anchor_windows``）。
+    """
+    found = _collect_anchor_words(draft, story_content)
+    if not found:
+        return []
+    return [w for w, is_hard in found if is_hard][:2]
 
 
 # 主题动作动词：用来拼「动作+核心名词」的完整主题短语（偷看电视/偷吃月饼/藏玩具）
@@ -647,13 +802,24 @@ def extract_theme_action_phrase(draft: str, story_content: dict) -> str:
     """提取本集「完整动作+核心名词」的主题短语（如「偷看电视」「偷吃月饼」「藏玩具」）。
 
     专家要求标题必须原样保留这个完整动作短语（「偷看电视」绝不可缩成「偷电视」）。
-    从 theme / conflict_core / scene_title 里找「动作动词+紧邻核心名词」组合；
-    找不到就退回核心名词本身。
+    从 theme / conflict_core / scene_title 里找「动作动词+紧邻核心名词」组合，
+    且组合结果必须在正文里有独立词位（否则是「回看抢拼图」→「看抢拼图」这种
+    切头碎片）；找不到就退回核心名词本身。
     """
     anchor = extract_core_anchor_words(draft, story_content)
     if not anchor:
         return ""
     noun = anchor[0]
+    script_blob = _story_script_blob(story_content)
+
+    def _composed_ok(phrase: str) -> bool:
+        """组合短语也必须由剧本正文认下：防「回看抢拼图」→「看抢拼图」这种切头碎片。"""
+        if title_absent_roles(phrase, story_content):
+            return False
+        if phrase not in script_blob:
+            return False
+        return _word_boundary_in_blob(phrase, script_blob)
+
     for src in (
         str(story_content.get('theme') or ''),
         str(story_content.get('conflict_core') or ''),
@@ -665,15 +831,13 @@ def extract_theme_action_phrase(draft: str, story_content: dict) -> str:
             two = src[i - 2:i] if i >= 2 else ""
             if two in _THEME_ACTION_2CHAR:
                 phrase = two + noun  # 偷看+电视 → 偷看电视；偷吃+月饼 → 偷吃月饼
-                if title_absent_roles(phrase, story_content):
-                    return ""
-                return phrase
+                if _composed_ok(phrase):
+                    return phrase
             prev = src[i - 1]
             if prev in _THEME_ACTION_VERBS:
                 phrase = prev + noun  # 藏+玩具 → 藏玩具
-                if title_absent_roles(phrase, story_content):
-                    return ""
-                return phrase
+                if _composed_ok(phrase):
+                    return phrase
     if title_absent_roles(noun, story_content):
         return ""
     return noun
@@ -726,6 +890,9 @@ def maybe_keep_cover_draft(
     if not _is_visual_cover_phrase(text):
         return None
     if title_absent_roles(text, story_content):
+        return None
+    # 源稿标签（双胞胎/妹妹）与剧本里没有的脏字符（手改初稿的 'j'）不进初稿保留
+    if title_unusable(text, story_content):
         return None
     return text
 
@@ -813,16 +980,21 @@ def _story_type_grammar_bad_hit(title: str, story_type: str | None) -> bool:
     return any(p.search(core) for p in patterns)
 
 
-def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avoid_titles: list[str] | None=None, anchor_words: list[str] | None=None, story_type: str | None=None, story_content: dict | None=None) -> str:
+def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avoid_titles: list[str] | None=None, anchor_words: list[str] | None=None, soft_anchor_words: list[str] | None=None, story_type: str | None=None, story_content: dict | None=None) -> str:
     """从多个候选中选最终标题：退化保护 + 长度硬截断 + 钩子分排序。
 
     - 命中初稿或 avoid_titles（已用过的标题）的候选降权，避免手动重跑输出同一个；
     - C 类：问号/叹号/称呼开头/甩锅质问优先于平铺直叙的事件复述；
     - A/B/D/E：画面物件短语优先，口述反问与封面剧透词降权；
-    - anchor_words：本场核心名词（如「月饼」）。含核心名词的候选 +2（贴主题），
-      不含的候选直接作废、不参与选择；全部候选都不含核心词时回退初稿，绝不写跑题标题；
+    - anchor_words：**高置信硬锚词**（动作/整段短语，如「偷看电视」「月饼」）。含硬锚词的
+      候选 +2（贴主题），不含的直接作废；全部候选都不含硬锚词时回退初稿，绝不写跑题标题。
+      硬锚词为空（提取不到）时此硬门槛自动失效；
+    - soft_anchor_words：软锚词（段首/段尾 2 字名词，如场景词「阳台」）。只参与加分，
+      绝不作废候选——拿场景词当硬门槛会误拦合规候选（专家 2026-10-14 评审口径）；
     - story_content：标题点名了对白没有的家庭角色（妈妈/爸爸等）→ 该候选作废；
       初稿自身也对不上对白时，不保护初稿，让对白候选胜出；
+      初稿含源稿标签（双胞胎/妹妹）或剧本里没有的脏字符（手输 'j'）时同样不保护，
+      也不作「全候选都不含硬锚词」时的兜底；
     - story_type：命中信息锚词（C 类「先挑/大块/白忙/咋还输」等）→ +2，孩子话风格词
       （说好/凭啥/明明）→ +1，弱孩子话词（呀/呗）在有信息锚词时 +1；
       黑名单书面词、书面倒装、缺信息锚词 → 直接拒收该候选；
@@ -833,21 +1005,25 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
     """
     avoid = [str(t).strip() for t in (avoid_titles or []) if str(t).strip()]
     anchors = [str(a).strip() for a in (anchor_words or []) if str(a).strip()]
+    bonus_anchors = [*anchors, *(str(a).strip() for a in (soft_anchor_words or []) if str(a).strip())]
     draft_core = title_core(draft)
     avoid_cores = {title_core(t) for t in avoid}
     # 完整主题短语（≥3 字，如「偷看电视」）必须完整出现；2 字核心名词（电视）按子串即可
     phrases = [a for a in anchors if len(a) >= 3]
     nouns = [a for a in anchors if len(a) < 3]
-    draft_mismatch = bool(title_absent_roles(draft, story_content))
-    best = draft
+    draft_mismatch = bool(title_absent_roles(draft, story_content)) or title_unusable(
+        draft, story_content
+    )
+    draft_usable = not draft_mismatch
+    best = draft if draft_usable else ""
     best_score = (
-        -999 if draft_mismatch else _chat_title_hook_score(draft, story_type=story_type)
+        -999 if not draft_usable else _chat_title_hook_score(draft, story_type=story_type)
     )
     best_tie = (-1, -1, -1, -1)  # 初稿平局永不替换
     any_anchored = False
     for cand in candidates:
         chosen = select_optimized_title(draft, cand, max_len=max_len)
-        if title_absent_roles(chosen, story_content):
+        if title_absent_roles(chosen, story_content) or title_unusable(chosen, story_content):
             continue
         info_hit, style_hit, block_hit, weak_hit = _story_type_word_hit(chosen, story_type)
         if (
@@ -868,12 +1044,15 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
         if weak_hit and info_hit:
             score += 1
         anchored = _candidate_has_anchor(chosen, anchors)
-        if not anchored:
-            # 候选层硬校验：缺主题短语/核心名词的候选直接作废，不参与选择
+        if not anchored and draft_usable:
+            # 候选层硬门槛：缺硬锚词的候选作废，不参与选择；硬锚词为空时自动失效；
+            # 初稿不可信时没有可信兜底，此时放开锚定限制、按钩子分选最优候选
             continue
-        any_anchored = True
-        # 显式给了核心名词才加分：贴主题的候选该比 hook 同分的局部画面候选优
-        if anchors:
+        if anchored:
+            any_anchored = True
+        # 含硬锚词加分；只含软锚词（场景词）也给同样的贴题加分，但不作硬门槛
+        anchored_bonus = _candidate_has_anchor(chosen, bonus_anchors)
+        if bonus_anchors and anchored_bonus:
             score += 2
         # 主题短语句尾倒装（如「先挑咋还输了，分蛋糕」）削弱主题锚定，轻微扣分
         if anchored and phrases:
@@ -902,9 +1081,13 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
             best_score = score
             best_tie = cand_tie
             best = chosen
-    if anchors and not any_anchored:
+    if anchors and not any_anchored and draft_usable:
+        # 全部候选都不含核心词 → 回退初稿，绝不写跑题标题（初稿可信时才回退）
         return draft
-    return best
+    if best:
+        return best
+    # 初稿不可信、又没有可用候选时退回场景标题：绝不能返回空串把标题写没
+    return str((story_content or {}).get("scene_title") or draft).strip() or draft
 
 # --------------- chat (daily_story) 标题优化 ---------------
 
@@ -1175,12 +1358,21 @@ def build_chat_title_user_prompt(
             "\n- 反例：剪刀剪歪了，还咋教弟弟？、笔字写歪咋收场、折飞机翻车。"
         )
 
-    anchors = extract_core_anchor_words(draft_title, story_content)
+    anchors = extract_hard_anchor_words(draft_title, story_content)
+    soft_anchors = [
+        w for w in extract_core_anchor_words(draft_title, story_content) if w not in anchors
+    ]
     theme_phrase = extract_theme_action_phrase(draft_title, story_content)
     if theme_phrase and title_absent_roles(theme_phrase, story_content):
         theme_phrase = ""
     cast_note = _dialogue_cast_mismatch_note(draft_title, story_content)
-    core_label = theme_phrase or draft_title
+    # 手输初稿不干净（源稿标签/脏字符）时不拿它当「核心物件」，免得模型照抄
+    fallback_label = draft_title
+    if title_unusable(draft_title, story_content):
+        fallback_label = str(
+            story_content.get("scene_title") or story_content.get("theme") or draft_title
+        ).strip()
+    core_label = theme_phrase or fallback_label
     if title_absent_roles(core_label, story_content):
         core_label = "对白里的冲突（不要用源标题里没出场的人）"
     anchor_note = ""
@@ -1204,6 +1396,12 @@ def build_chat_title_user_prompt(
                 f"\n【硬性】标题须含核心物件/动作（{names}），允许画面化、具体化改写，"
                 "不强制原文照抄；不含核心物件/动作的标题不合格。"
             )
+    elif soft_anchors:
+        # 只提到场景词（阳台之类）时降为建议：拿它当硬性要求会逼出不自然的标题
+        anchor_note = (
+            f"\n【建议】若自然，标题可带上本场场景/物件词（{'、'.join(soft_anchors)}），"
+            "但不强制照抄。"
+        )
 
     if _is_c_type(type_key):
         steps = (
