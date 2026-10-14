@@ -267,13 +267,16 @@ def _dialogue_cast_mismatch_note(draft_title: str, story_content: dict) -> str:
 
 def filter_chat_title_candidates(
     candidates: list[str],
-    anchor_words: list[str],
     *,
     story_content: dict | None = None,
 ) -> list[str]:
-    """候选层硬校验：只保留含主题锚词、人物对得上对白、无源稿标签/脏字符的候选。"""
-    anchors = [str(a).strip() for a in (anchor_words or []) if str(a).strip()]
-    out = [c for c in candidates if _candidate_has_anchor(c, anchors)]
+    """候选层硬校验：只留合规候选（人物对得上对白、无源稿标签/脏字符）。
+
+    锚词**不再过滤**候选（2026-10-14 用户裁定）：拿事件短语（「抢娃娃」）当硬门槛
+    会把标题逼成事件复述，好钩子（反问/原话/反差）全部被拦。锚词改为 picker 里的
+    加分项，见 ``pick_best_chat_title``。
+    """
+    out = list(candidates)
     if story_content:
         out = [
             c
@@ -285,17 +288,16 @@ def filter_chat_title_candidates(
 
 def ensure_chat_title_candidates(
     candidates: list[str],
-    anchor_words: list[str],
     *,
     fetch_candidates: Callable[[], list[str]],
     max_attempts: int = 3,
     story_content: dict | None = None,
 ) -> list[str]:
-    """候选层硬校验+补足：缺主题锚词/对白人物对不上的候选作废；不足 3 个时重生成补足。"""
+    """候选层硬校验+补足：对白人物对不上的候选作废；不足 3 个时重生成补足。"""
     seen: set[str] = set()
     out: list[str] = []
     for c in filter_chat_title_candidates(
-        candidates, anchor_words, story_content=story_content,
+        candidates, story_content=story_content,
     ):
         if c not in seen:
             seen.add(c)
@@ -307,7 +309,7 @@ def ensure_chat_title_candidates(
         except Exception:
             break
         for c in filter_chat_title_candidates(
-            more, anchor_words, story_content=story_content,
+            more, story_content=story_content,
         ):
             if c not in seen:
                 seen.add(c)
@@ -325,7 +327,9 @@ def build_chat_title_polish_prompts(
 ) -> dict[str, str]:
     """标题润色提示词：只修语病/读感，不改主题、不换钩子方向。"""
     max_len = _clamp_chat_title_len(max_title_len)
-    theme_phrase = extract_theme_action_phrase(draft_title, story_content)
+    # 只保护「当前标题里已经有」的主题词：选中标题可能不含主题短语（锚词已降为软加分），
+    # 此时若还按初稿强制保留，润色会把短语塞回来、把好钩子重新压平成事件复述
+    must_keep = _present_anchor_words(title, draft_title, story_content)
     skeleton = _story_type_skeleton(story_content.get("story_type"))
     type_key = str(story_content.get("story_type") or "").strip().upper()
     words = _STORY_TYPE_OUTCOME_WORDS.get(type_key)
@@ -338,24 +342,43 @@ def build_chat_title_polish_prompts(
         f"输出 JSON，字段 title；title 不含空格换行，≤{max_len} 字。"
         'JSON 输出样例：{"title": "润色后标题"}'
     )
+    if must_keep:
+        keep_line = f"须原样保留（当前标题里已有）：{'、'.join(must_keep)}\n"
+        keep_rule = "\n- 上面「须原样保留」的词必须完整保留，且放在句首或中段，禁止放在句尾倒装；"
+    else:
+        keep_line = "本标题不含主题短语，润色时**不得**把主题短语/事件名塞回来。\n"
+        keep_rule = "\n- 禁止新增主题短语/事件名（会变成平铺直叙的事件复述）；"
     user = (
         f"原初稿标题：{draft_title}\n"
         f"当前标题：{title}\n"
-        f"主题短语（必须原样保留）：{theme_phrase or draft_title}\n"
+        f"{keep_line}"
     )
     if skeleton:
         user += f"类型骨架：{skeleton}\n"
+    # 润色按类型分支（2026-10-14 专家评审）：C 类保留「白忙→白忙了」校准；
+    # 其余类型禁止加语气词/把问句改陈述/删结构词，免得把口吻标题压平成陈述句
+    if _is_c_type(story_content.get("story_type")):
+        style_rules = (
+            "\n- 缺语气词要补（「白忙」→「白忙了/白忙一场」）；"
+        )
+    else:
+        style_rules = (
+            "\n- **禁止新增原标题没有的语气词**（了/吧/呢/啊/呀/嘛）——"
+            "只加语气词不算修好语病，反而把标题压成陈述句；"
+            "\n- 禁止把问句改写成陈述句；禁止删掉「我/你/自己/不行/总行/凭啥/咋」这类结构词；"
+            "\n- 禁止把两个分句合并成一句；"
+        )
     user += (
         "【润色要求】"
         "\n- 最小改动：只修语病、读感、节奏；可加逗号、语气词（了/呗/呀），可微调语序；"
         "\n- 禁止删掉原标题里的任何内容字（动词/结局词/钩子词），只能加字、加标点或调整语序；"
-        "\n- 主题短语必须完整保留，且放在句首或中段，禁止放在句尾倒装；"
+        f"{keep_rule}"
         "\n- 保持原有钩子方向和类型结局，不要换成另一个句式/结局词；"
         "\n- 润色后仍须孩子气：若原标题用了咋/凭啥/说好/明明/白忙/亏/赖皮，必须保留；"
         "\n- 不能有语病：必须通顺，不能缺字、缺动词、语序倒错；"
         "\n- 专门修语病：主谓宾要完整、语序要自然；缺主语要补（「说好先挑」→「说好我先挑」），"
-        "主题短语被拆散要理顺（「说好分蛋糕先挑」→「分蛋糕说好我先挑」），"
-        "缺语气词要补（「白忙」→「白忙了/白忙一场」）；"
+        "主题短语被拆散要理顺（「说好分蛋糕先挑」→「分蛋糕说好我先挑」）；"
+        f"{style_rules}"
         "\n- 保持短促封面感：不要为了补全句子把标题加长，能短则短；"
         "\n- 禁止新增剧本没有的细节、道具或夸张；"
         f"\n- 只要有一点点不顺或缺字就必须修，修不动才原样输出；{block_note}"
@@ -377,6 +400,8 @@ def parse_chat_title_polish_payload(raw: dict[str, Any], *, max_title_len: int) 
 
 
 _POLISH_OPTIONAL_CHARS = frozenset("的了着过吧吗呢啊呀呗啦")
+# 只给这些字加语气词：C 类「白忙→白忙了/白忙一场」的校准需要，其余类型禁用
+_POLISH_PARTICLE_CHARS = frozenset("的了着过吧吗呢啊呀嘛啦呗")
 
 
 def _polish_keeps_content(source: str, candidate: str) -> bool:
@@ -390,12 +415,40 @@ def _polish_keeps_content(source: str, candidate: str) -> bool:
     return src_chars <= cand_chars
 
 
-def _title_anchor_parts(draft_title: str, story_content: dict) -> tuple[list[str], list[str]]:
-    """润色硬校验用的锚词：只用高置信硬锚词，避免把场景词/碎片当「必须保留」。"""
+def _polish_only_added_particles(source: str, candidate: str) -> bool:
+    """润色是否只是在原文外新增了语气词（把标题补成陈述句）。
+
+    「举书砸自己脑袋」→「举书砸自己脑袋了」就是这种压平：新增字符全是语气词，
+    没有带来任何信息增量。非 C 类拒收（2026-10-14 专家评审口径）。
+    """
+    extra = [ch for ch in candidate if ch not in source]
+    if not extra:
+        return False
+    return all(ch in _POLISH_PARTICLE_CHARS for ch in extra)
+
+
+def _candidate_anchor_pool(draft_title: str, story_content: dict) -> list[str]:
+    """本集可参与加分的锚词池（高置信动作/整段短语优先，再补主题短语）。"""
     anchors = extract_hard_anchor_words(draft_title, story_content)
     phrase = extract_theme_action_phrase(draft_title, story_content)
     if phrase and phrase not in anchors:
         anchors = [phrase, *anchors]
+    return anchors
+
+
+def _present_anchor_words(title: str, draft_title: str, story_content: dict) -> list[str]:
+    """当前标题里**已经含有**的锚词：润色只保护这些，不再按初稿强行塞回主题短语。"""
+    pool = _candidate_anchor_pool(draft_title, story_content)
+    return [a for a in pool if _candidate_has_anchor(title, [a])]
+
+
+def _title_anchor_parts(
+    title: str,
+    draft_title: str,
+    story_content: dict,
+) -> tuple[list[str], list[str]]:
+    """润色硬校验用的锚词：只算当前标题里已含的高置信锚词，避免把场景词/碎片当「必须保留」。"""
+    anchors = _present_anchor_words(title, draft_title, story_content)
     phrases = [a for a in anchors if len(a) >= 3]
     return anchors, phrases
 
@@ -437,6 +490,10 @@ def _polish_candidate_ok(
         return False
     # 润色不得引入源稿标签（双胞胎/妹妹）或剧本里没有的字符
     if title_unusable(candidate, story_content):
+        return False
+    # 非 C 类禁止靠加语气词压平（「举书砸自己脑袋」→「…脑袋了」）；C 类保留「白忙→白忙了」校准。
+    # 注意：不跟 allow_deletion 绑定——语法修复路径也常靠加「了/吧」收尾，那正是要拦的压平。
+    if not _is_c_type(type_key) and _polish_only_added_particles(source, candidate):
         return False
     return True
 
@@ -490,7 +547,11 @@ def build_chat_title_grammar_fix_prompts(
 ) -> dict[str, str]:
     """语病修复提示词：把审核意见回喂给模型，只补字/调序，不删内容字。"""
     max_len = _clamp_chat_title_len(max_title_len)
-    theme_phrase = extract_theme_action_phrase(draft_title, story_content)
+    # 同润色：只保护当前标题里已有的主题词，不按初稿强行塞回主题短语
+    must_keep = _present_anchor_words(title, draft_title, story_content)
+    keep_line = (
+        f"须完整保留（当前标题里已有）：{'、'.join(must_keep)}\n" if must_keep else ""
+    )
     type_key = (story_content.get("story_type") or "").strip().upper()
     words = _STORY_TYPE_OUTCOME_WORDS.get(type_key)
     block_note = ""
@@ -503,11 +564,11 @@ def build_chat_title_grammar_fix_prompts(
         "system": "你是短视频标题语病修复编辑。只修语病，不改主题。输出 JSON，字段 title。",
         "user": (
             f"原标题：{title}\n"
-            f"主题短语（必须完整保留）：{theme_phrase or draft_title}\n"
+            f"{keep_line}"
             f"语病审核意见：{reason or '标题不通顺'}\n"
             "【修复要求】"
             "\n- 以修好语病为准：可删错位/多余的字、可调语序、可加字；"
-            "但必须保留主题短语和核心信息（先挑/大块/白忙/亏/赖皮等）；"
+            "但必须保留核心信息（先挑/大块/白忙/亏/赖皮等）；"
             "\n- 补主语、补语气词、理顺语序，修到读起来通顺自然；"
             "\n- 保持短促封面感，不要为了补全句子加长；"
             "\n- 修复示例：「分蛋糕说好我先挑，赖皮大的归你」→「分蛋糕说好我先挑，凭啥大的归你」；"
@@ -517,7 +578,7 @@ def build_chat_title_grammar_fix_prompts(
             "「分蛋糕说好我先挑，亏我让大块」→「分蛋糕说好我先挑，亏我让出大块」；"
             "「分蛋糕明明先挑，白忙一场」→「分蛋糕明明我先挑，白忙一场」；"
             "「分蛋糕先挑，大块咋归你？」→「分蛋糕我先挑，大块咋归你？」。"
-            f"\n- 主题短语必须完整保留且放在句首或中段；{block_note}"
+            f"\n- 上面「须完整保留」若列了词，须完整保留且放在句首或中段；{block_note}"
             f"\n- 输出 ≤{max_len} 字。"
             'JSON 输出样例：{"title": "修好的标题"}'
         ),
@@ -541,7 +602,7 @@ def polish_chat_title(
         story_content,
         max_title_len=max_len,
     )
-    anchors, phrases = _title_anchor_parts(draft_title, story_content)
+    anchors, phrases = _title_anchor_parts(title, draft_title, story_content)
     result = title
     for _ in range(max_attempts):
         try:
@@ -843,6 +904,29 @@ def extract_theme_action_phrase(draft: str, story_content: dict) -> str:
     return noun
 
 
+# ---------- 钩子形态判据（2026-10-14 专家评审口径，功能词类别，不给单篇词表） ----------
+# 分句切分：逗号/问号/叹号/顿号都算边界（对照结构靠它拆两半）
+_TITLE_CLAUSE_SPLIT_RE = re.compile(r"[\s，,。！？!?；;、…]+")
+_FIRST_PERSON_RE = re.compile(r"[我俺咱]")
+_SECOND_PERSON_RE = re.compile(r"[你您]")
+# 否定：不行/不能/别/没/不（对照结构的前半边）
+_NEGATION_RE = re.compile(r"不行|不能|不可以|别|没|不|亏|白忙")
+# 肯定/许可：总行/可以/偏/就/才/归/算（对照结构的后半边）
+_AFFIRMATION_RE = re.compile(r"总行|可以|偏|就|才|归|算|行")
+# 反问词：咋/怎么/凭什么/为啥/难道/吗/呢
+_RHETORICAL_WORD_RE = re.compile(r"咋|怎么|凭什么|为啥|难道|吗|呢")
+# 反转连接：却/倒/偏/结果/没想到/反而/越…越
+_REVERSAL_LINK_RE = re.compile(r"却|倒|偏|结果|没想到|反而|居然|竟然")
+# 条件-承诺：就/才/总/也/还/就……总
+_CONDITION_PROMISE_RE = re.compile(r"就|才|总|也|还")
+# 立场/口吻功能词：条件、否定、许可、语气（原话型靠它识别）
+_STANCE_WORD_RE = re.compile(r"不算|总行|凭啥|明明|说好|偏要|就不|就是不|归我|归你|行吧|呗|嘛")
+# 金句立规矩：才算/才叫/才是
+_RULE_SLOGAN_RE = re.compile(r"才算|才叫|才是")
+# 编辑式旁白（属反转叙述，非纯画面复述）
+_EDITORIAL_RE = re.compile(r"更|反而|居然|竟然")
+
+
 def _is_c_type(story_type: str | None) -> bool:
     return str(story_type or "").strip().upper() == "C"
 
@@ -898,55 +982,173 @@ def maybe_keep_cover_draft(
 
 
 def _chat_title_hook_score(title: str, *, story_type: str | None = None) -> int:
-    """轻量钩子分：只做多候选相对排序，不拦截单结果。
+    """钩子分：多候选相对排序（不拦截单结果）。
 
-    C 类保持原分（问号+3 等），以免推倒先挑/白忙校准。
-    A/B/D/E：画面物件短语加分，口述反问与封面剧透词扣分，问号不再+3。
+    2026-10-14 专家评审后重排：**口吻/反差/原话压过画面复述**。
+    旧表只给画面物件 +4，口吻/反差/原话三类完全没有正分，导致好钩子与画面句同分、
+    平局按「更短优先」输给画面句（#117 实测）。新表：
+
+    - 形态基分：口吻/原话 +5、对照/反差 +5、结果反转 +4、反问 +3、金句 +3、
+      画面 +2、动作任务 +2（画面由 +4 降权）；
+    - 结构分：第一人称 +2、第二人称 +1、否定+肯定双分句 +2、反转连接 +2、
+      反问词 +2、问号 +1、条件-承诺 +1；
+    - 立场分：含「自己」+1、称呼开头 +1、甩锅声明 +1（均较旧表降权）；
+    - 简短分：≤10 字 +1、≤7 字 +2；
+    - 扣分：封面剧透 -5（C 类不过该表：「白忙」是 C 类必需信息锚词）、含「谁」-3
+      （且不触发反问加分）、≥2 逗号 -3、纯事件复述 -2、锚词硬塞 -1（锚词由调用方传入，
+      见 picker）。
     """
-    score = 0
-    has_q = "？" in title or "?" in title
-    if _is_c_type(story_type):
-        if has_q:
-            score += 3
-        elif "！" in title or "!" in title:
-            score += 1
-    else:
-        if has_q:
-            if (
-                _is_visual_cover_phrase(title.replace("？", "").replace("?", ""))
-                and not _RHETORICAL_RE.search(title)
-                and not _COVER_SPOILER_RE.search(title)
-            ):
-                score += 1
-        elif "！" in title or "!" in title:
-            score += 1
-        if _is_visual_cover_phrase(title):
-            score += 4
-        if _RHETORICAL_RE.search(title):
-            score -= 2
-        if _COVER_SPOILER_RE.search(title):
-            score -= 5
-    # 甩锅声明/辩解（不是我/怪我）加分；「谁…」不加分——它只是质问句一种，
-    # 一视同仁避免「谁这个谁那个」刷屏，让孩子原话/具体画面/推锅给东西同台竞争
-    if "不是我" in title or "怪我" in title:
+    text = str(title or "").strip()
+    if not text:
+        return 0
+    core = title_core(text)
+    has_q = "？" in text or "?" in text
+    has_excl = "！" in text or "!" in text
+
+    # ---- 形态基分 ----
+    score = _title_form_base_score(text)
+
+    # ---- 结构分 ----
+    if _FIRST_PERSON_RE.search(core):
         score += 2
-    if "自己" in title:
-        score += 2
-    if title[:1] in "妈姐爸哥弟":
+    if _SECOND_PERSON_RE.search(core):
         score += 1
-    # 「谁…」质问句本身已刷屏（谁擦的渣/渣印谁擦/谁踩的渣印），
-    # 扣 3 让谁字问句整体为负（谁-3 + 问号+3 = 0），让位于荒谬反差/孩子原话/具体道具
-    if "谁" in title:
+    if _is_contrast_title(text):
+        score += 2  # 否定分句 + 肯定分句双分句
+    if _REVERSAL_LINK_RE.search(core):
+        score += 2
+    if _RHETORICAL_WORD_RE.search(core):
+        score += 2
+    if has_q:
+        score += 1
+    if _CONDITION_PROMISE_RE.search(core):
+        score += 1
+
+    # ---- 立场分 ----
+    if "不是我" in text or "怪我" in text:
+        score += 1
+    if "自己" in text:
+        score += 1
+    if text[:1] in "妈姐爸哥弟":
+        score += 1
+
+    # ---- 简短分（封面大字：短促有力）----
+    length = len(core)
+    if length <= 7:
+        score += 2
+    elif length <= 10:
+        score += 1
+
+    # ---- 扣分 ----
+    # 「谁…」质问句历史上刷过屏（谁擦的渣/渣印谁擦/谁踩的渣印）：扣分且不给反问加分
+    if "谁" in text:
         score -= 3
-    # 结局播报重罚：把结局动词全说出来（「月饼全滚出来」「掉一地」「被抓住」）
-    # 或把笑点直接剧透（「露馅了/被抓了/满地都是」）——感叹号给 +1 救不回来
-    if _SPOILER_RE.search(title) or _OUTCOME_REVEAL_RE.search(title):
+    # 封面剧透词 / 结局播报。注意 C 类不过 _COVER_SPOILER_RE：该表含「白忙」，
+    # 而「白忙」是 C 类的必需信息锚词（硬卡要求含它），不能反过来扣分。
+    if _SPOILER_RE.search(text) or _OUTCOME_REVEAL_RE.search(text):
         score -= 5
-    # 平铺罗列重罚：≥2 个逗号 = 在逐项列事件（「线缠脚上，电视黑了，水杯翻」），
-    # 像事故清单没有口吻/结构/账，比有口吻的候选弱
-    if title.count("，") + title.count(",") >= 2:
+    elif not _is_c_type(story_type) and _COVER_SPOILER_RE.search(text):
+        score -= 5
+    # 平铺罗列：≥2 逗号 = 逐项列事件，像事故清单
+    if text.count("，") + text.count(",") >= 2:
         score -= 3
+    # 纯事件复述：只有画面/动作形态、没有任何口吻/反差/反问/反转结构
+    if _is_plain_event_restatement(text):
+        score -= 2
+    if has_excl and not _is_c_type(story_type):
+        score += 1  # 感叹句仍给一点，但救不回上面的大扣分
     return score
+
+
+def _title_form_base_score(title: str) -> int:
+    """形态基分：先判形态再给分（口吻/反差 > 反转/反问/金句 > 画面/动作）。"""
+    text = str(title or "").strip()
+    if not text:
+        return 0
+    if _is_contrast_title(text):
+        return 5
+    if _is_original_speech_title(text):
+        return 5
+    if _is_reversal_title(text):
+        return 4
+    if _is_rhetorical_title(text):
+        return 3
+    if _RULE_SLOGAN_RE.search(title_core(text)):
+        return 3
+    if _is_visual_cover_phrase(text):
+        return 2
+    return 2  # 动作任务型等其余形态：与画面同档
+
+
+def _is_rhetorical_title(title: str) -> bool:
+    """反问/质问型：有问号或反问词，且不含「谁」（谁字问句单独扣分、不给形态分）。"""
+    text = str(title or "").strip()
+    if not text or "谁" in text:
+        return False
+    if "？" in text or "?" in text:
+        return True
+    return bool(_RHETORICAL_WORD_RE.search(title_core(text)))
+
+
+def _is_original_speech_title(title: str) -> bool:
+    """口吻/原话型：第一/二人称 + 立场/条件/否定/许可等功能词，且非纯第三人称复述。"""
+    core = title_core(title)
+    if not core or "谁" in title:
+        return False
+    if not (_FIRST_PERSON_RE.search(core) or _SECOND_PERSON_RE.search(core)):
+        return False
+    if "？" in title or "?" in title:
+        return False  # 问句归反问型
+    return bool(
+        _STANCE_WORD_RE.search(core)
+        or _CONDITION_PROMISE_RE.search(core)
+        or _REVERSAL_LINK_RE.search(core)
+    )
+
+
+def _is_contrast_title(title: str) -> bool:
+    """对照/反差型：分句 ≥2，一句否定、一句肯定/许可，且两分句有共同实体。"""
+    text = str(title or "").strip()
+    if not text:
+        return False
+    clauses = [c for c in _TITLE_CLAUSE_SPLIT_RE.split(text) if c]
+    if len(clauses) < 2:
+        return False
+    neg = [c for c in clauses if _NEGATION_RE.search(c)]
+    pos = [c for c in clauses if _AFFIRMATION_RE.search(c)]
+    if not neg or not pos:
+        return False
+    neg_text = "".join(neg)
+    pos_text = "".join(pos)
+    shared = {ch for ch in neg_text if _CJK_CHAR_RE.match(ch)} & {
+        ch for ch in pos_text if _CJK_CHAR_RE.match(ch)
+    }
+    return len(shared) >= 1
+
+
+def _is_reversal_title(title: str) -> bool:
+    """结果反转型：带反转连接词（结果/反而/没想到/却/倒/偏），或短句对撞（越 X 越 Y）。"""
+    core = title_core(title)
+    if not core:
+        return False
+    if _REVERSAL_LINK_RE.search(core):
+        return True
+    return bool(re.search(r"越.{0,4}越", core)) or bool(_EDITORIAL_RE.search(core))
+
+
+def _is_plain_event_restatement(title: str) -> bool:
+    """纯事件复述：画面/动作型语言，但没有任何口吻/反差/反问/反转结构。"""
+    text = str(title or "").strip()
+    if not text:
+        return False
+    if "？" in text or "?" in text:
+        return False
+    if _is_contrast_title(text) or _is_reversal_title(text):
+        return False
+    core = title_core(text)
+    if _FIRST_PERSON_RE.search(core) or _SECOND_PERSON_RE.search(core):
+        return False
+    return bool(_STANCE_WORD_RE.search(core)) is False
 
 
 def _story_type_word_hit(title: str, story_type: str | None) -> tuple[bool, bool, bool, bool]:
@@ -986,18 +1188,18 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
     - 命中初稿或 avoid_titles（已用过的标题）的候选降权，避免手动重跑输出同一个；
     - C 类：问号/叹号/称呼开头/甩锅质问优先于平铺直叙的事件复述；
     - A/B/D/E：画面物件短语优先，口述反问与封面剧透词降权；
-    - anchor_words：**高置信硬锚词**（动作/整段短语，如「偷看电视」「月饼」）。含硬锚词的
-      候选 +2（贴主题），不含的直接作废；全部候选都不含硬锚词时回退初稿，绝不写跑题标题。
-      硬锚词为空（提取不到）时此硬门槛自动失效；
-    - soft_anchor_words：软锚词（段首/段尾 2 字名词，如场景词「阳台」）。只参与加分，
-      绝不作废候选——拿场景词当硬门槛会误拦合规候选（专家 2026-10-14 评审口径）；
+    - anchor_words / soft_anchor_words：**只加分，不作门槛**（2026-10-14 用户裁定）。
+      命中任一锚词 +2，一次封顶。曾经「不含锚词直接作废 + 全废回退初稿」的硬门槛已删除：
+      锚词多来自事件短语（如「抢娃娃」），作硬门槛等于强制标题复述事件，
+      好钩子（反问/原话/反差，如「砸姐姐不行，砸自己总行」）会被整体拦掉；
+      跑题风险改由「类型信息锚词硬卡 + 初稿严格更高分才替换」兜；
     - story_content：标题点名了对白没有的家庭角色（妈妈/爸爸等）→ 该候选作废；
       初稿自身也对不上对白时，不保护初稿，让对白候选胜出；
-      初稿含源稿标签（双胞胎/妹妹）或剧本里没有的脏字符（手输 'j'）时同样不保护，
-      也不作「全候选都不含硬锚词」时的兜底；
+      初稿含源稿标签（双胞胎/妹妹）或剧本里没有的脏字符（手输 'j'）时同样不保护；
     - story_type：命中信息锚词（C 类「先挑/大块/白忙/咋还输」等）→ +2，孩子话风格词
       （说好/凭啥/明明）→ +1，弱孩子话词（呀/呗）在有信息锚词时 +1；
-      黑名单书面词、书面倒装、缺信息锚词 → 直接拒收该候选；
+      **C 类缺信息锚词 → 直接拒收该候选**（这条是类型硬卡，与锚词无关，保留）；
+      黑名单书面词、书面倒装 → 拒收；
     - 平局不再无条件保第一个候选：按 类型钩子 > 问句 > 感叹句 > 更短 的优先级排序；
     - **防御当前标题**：以初稿自身的钩子分为基线，候选必须严格更高才替换。
       否则手动重跑会把「妈，月饼自己滚的」(3分) 换成「偷吃月饼翻车记」(0分)，
@@ -1020,7 +1222,6 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
         -999 if not draft_usable else _chat_title_hook_score(draft, story_type=story_type)
     )
     best_tie = (-1, -1, -1, -1)  # 初稿平局永不替换
-    any_anchored = False
     for cand in candidates:
         chosen = select_optimized_title(draft, cand, max_len=max_len)
         if title_absent_roles(chosen, story_content) or title_unusable(chosen, story_content):
@@ -1044,13 +1245,7 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
         if weak_hit and info_hit:
             score += 1
         anchored = _candidate_has_anchor(chosen, anchors)
-        if not anchored and draft_usable:
-            # 候选层硬门槛：缺硬锚词的候选作废，不参与选择；硬锚词为空时自动失效；
-            # 初稿不可信时没有可信兜底，此时放开锚定限制、按钩子分选最优候选
-            continue
-        if anchored:
-            any_anchored = True
-        # 含硬锚词加分；只含软锚词（场景词）也给同样的贴题加分，但不作硬门槛
+        # 含锚词加分，**不作门槛**：缺锚词的好钩子候选照样参选（2026-10-14 用户裁定）
         anchored_bonus = _candidate_has_anchor(chosen, bonus_anchors)
         if bonus_anchors and anchored_bonus:
             score += 2
@@ -1081,9 +1276,6 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
             best_score = score
             best_tie = cand_tie
             best = chosen
-    if anchors and not any_anchored and draft_usable:
-        # 全部候选都不含核心词 → 回退初稿，绝不写跑题标题（初稿可信时才回退）
-        return draft
     if best:
         return best
     # 初稿不可信、又没有可用候选时退回场景标题：绝不能返回空串把标题写没
@@ -1236,35 +1428,43 @@ def build_chat_title_system_prompt(
         "你是家庭日常对话短剧的标题编辑，面向孩子和有娃的大人。"
         "根据剧本输出 JSON，字段 titles（3 个候选）。"
         f"title：≤{max_title_len} 字，不含空格换行，适合短封面。"
-        "\n【封面标题唯一标准】≤15字，给出一个能直接拍成封面画面的动作/物件短语，"
-        "只设预期、不播结局；读标题要看见画面，不是听见复述。"
-        "\n【三条硬规矩】"
-        "\n- 必须能看出本集在做什么，保留核心物件/动作；允许画面化改写"
-        "（「剪纸边」→「剪刀下的直线」合格），不强制原文照抄主题短语；"
-        "禁止改成抽象结果（「反正就是剪不好」）。"
-        "\n- 不强制结局词/咋/凭啥/翻车记；这些只在不剧透时可用，不能为凑孩子话硬加。"
-        "\n- 极简、干净，6–12 字为佳，像封面大字不是评论区口述。"
-        "\n【三种形态，候选集必须至少 1 条画面物件型】"
-        "\n①画面物件型（优先，候选1必须是这种）：剪刀下的直线 / 洗手不搓泡 / 冰箱最后的果汁"
-        "\n②动作任务型：教弟弟剪直线 / 浇花别浇太多"
-        "\n③金句立规矩型：剪直了才算本事 / 就尝一口不算吃"
-        "禁止三个候选全是口述问句；禁止默认套翻车记/被抓包/还咋教。"
-        "\n【逐候选生成规则】三个候选形态尽量不重复；生成完毕自查，"
-        "若没有画面物件型或三个都是问句，整组作废重写。"
+        "\n【唯一标准：有钩子】标题要让人想点进来，不是复述事件。"
+        "钩子可以是孩子原话/口吻、对照反差、反问、结果反转、具体画面——"
+        "**口吻与反差优先于画面复述**。"
+        "\n【七种形态】"
+        "\nF1 画面物件型：<可拍物/身体部位>+<动作/状态>，如「剪刀下的直线」「冰箱最后的果汁」"
+        "\nF2 动作任务型：<角色>+<目标动作>+<条件/障碍>，如「教弟弟剪直线」「浇花别浇太多」"
+        "\nF3 口吻原话型：第一/二人称 + 立场/条件/威胁/辩解/谈判，"
+        "像孩子当场脱口而出，如「就尝一口不算吃」"
+        "\nF4 对照反差型：<A>不行，<B>总行 / 以为<A>，其实<B>，用一正一反制造荒诞"
+        "\nF5 反问质问型：反问词（咋/凭啥/明明/难道）+ 冲突点 + 问号，"
+        "如「剪歪了还咋教」"
+        "\nF6 金句立规矩型：<条件>才<评价>，如「剪直了才算本事」"
+        "\nF7 结果反转型：预期落空或反转，如「关门关到门更开」「浇花发洪水」"
+        "\n【候选配额（硬性）】每写一条先想好它属于哪个形态，输出时在 JSON 外加标注："
+        "\n- 至少 1 条 F3 或 F4 或 F5（口吻/反差/反问）；"
+        "\n- 至少 1 条 F1 或 F2（画面/动作）；"
+        "\n- 至少 1 条 F6 或 F7（金句/反转）；"
+        "\n- 同一形态最多 2 条；禁止三条同形态。"
+        "\n- 候选1 =钩子潜力最高的一条，**不限定形态**（口吻/反差型就该放第一个）。"
+        "\n生成完毕自查：若三条全无 F3/F4/F5，或三条同形态，整组作废重写。"
         "\n【标题生成规则】"
         f"\n- 硬性：标题必须 ≤{max_title_len} 字"
-        "\n- 不用描述性事件名（如「抢饼干」「姐弟吵架」）"
+        "\n- 口吻/反差型必须像孩子说话：可用咋/凭啥/说好/明明/总行/不算，"
+        "但禁止为凑口吻硬加语气词（了/吧/呢/啊）"
+        "\n- 不用描述性事件名（如「抢饼干」「姐弟吵架」）；不要平铺直叙复述过程"
         "\n- 禁止书面类型术语：结盟/同盟/权威/公平/字面/破功"
         "\n- 禁止用「谁…」「…怨谁」质问句"
         "\n- 禁止编造剧本里没有的细节、道具或量词"
         "\n- 称呼只准用剧本孩子原话里出现过的，瞒着妈妈的戏不要开场「妈，…」"
         "\n- 标题人物必须来自对白：对白没出现的人（妈妈/爸爸等）禁止写进标题；"
         "源标题写了但对白没有，必须按对白重写，禁止沿用怼妈这类对不上的旧标题"
-        "\n- 坏例：「剪刀剪歪了，还咋教弟弟？」「折飞机翻车」「偷看电视被抓包！」"
-        "「三个全是翻车记」"
-        "\n- 好例：「剪刀下的直线」「洗手不搓泡」「浇花发洪水」「关门关到门更开」"
+        "\n- 坏例：「剪刀剪歪了，还咋教弟弟？」「折飞机翻车」「看电视被抓包！」"
+        "「三个全是翻车记」「三条全是画面复述」"
+        "\n- 好例（仅示范形态，勿照抄）：「剪刀下的直线」「洗手不搓泡」"
+        "「浇花发洪水」「关门关到门更开」"
         'JSON 输出样例：{"titles": ["候选1", "候选2", "候选3"]}。'
-        "画面感最强的放第一个。"
+        "最有钩子的放第一个。"
         '（也可退化为 {"title": "单个"}）'
     )
 
@@ -1303,12 +1503,8 @@ def build_chat_title_user_prompt(
     if theme_phrase and title_absent_roles(theme_phrase, story_content):
         theme_phrase = ""
     if theme_phrase:
-        if _is_c_type(type_key):
-            context_parts.append(f"本集主题短语（标题必须原样保留）：{theme_phrase}")
-        else:
-            context_parts.append(
-                f"本集核心物件/动作（须保留，允许画面化改写）：{theme_phrase}"
-            )
+        # 锚词只作建议（2026-10-14 用户裁定）：不再写「必须原样保留」，避免逼出事件复述
+        context_parts.append(f"本集主题短语（优先据此写，不强制照抄）：{theme_phrase}")
     skeleton = _story_type_skeleton(story_content.get("story_type"))
     if skeleton:
         context_parts.append(f"类型骨架：{skeleton}")
@@ -1376,31 +1572,20 @@ def build_chat_title_user_prompt(
     if title_absent_roles(core_label, story_content):
         core_label = "对白里的冲突（不要用源标题里没出场的人）"
     anchor_note = ""
+    # 锚词只作建议不强制（2026-10-14 用户裁定）：硬性「必须含」会把标题逼成事件复述，
+    # 好钩子（反问/原话/反差）全被挤掉；类型信息锚词硬卡仍在下方的 type_note 里。
     if _is_c_type(type_key) and theme_phrase:
         anchor_note = (
-            f"\n【硬性】标题必须原样保留本集主题短语「{theme_phrase}」"
-            f"（如「{theme_phrase}」不能缩成「{theme_phrase[-2:]}」或只留核心名词）。"
-            "不含完整主题短语的标题不合格，作废重写。"
-            f"\n每个候选（候选1/2/3）都必须完整包含「{theme_phrase}」，候选1也不允许省略；"
-            "主题短语放在句首或中段，禁止放在句尾倒装（如「先挑咋还输了，分蛋糕」不合格）。"
+            f"\n【建议】本集主题短语是「{theme_phrase}」，带上更贴主题，但**不强制**；"
+            "**优先写有钩子的说法**（孩子原话、反问、反差），"
+            "别为了凑主题短语把标题写成事件复述。"
         )
-    elif anchors:
-        if _is_c_type(type_key):
-            anchor_note = (
-                f"\n【硬性】标题必须包含本场核心名词：{'、'.join(anchors)}。"
-                "不含核心名词的标题不合格，作废重写。"
-            )
-        else:
-            names = "、".join(anchors)
-            anchor_note = (
-                f"\n【硬性】标题须含核心物件/动作（{names}），允许画面化、具体化改写，"
-                "不强制原文照抄；不含核心物件/动作的标题不合格。"
-            )
-    elif soft_anchors:
-        # 只提到场景词（阳台之类）时降为建议：拿它当硬性要求会逼出不自然的标题
+    elif anchors or soft_anchors:
+        names = "、".join([*anchors, *soft_anchors])
         anchor_note = (
-            f"\n【建议】若自然，标题可带上本场场景/物件词（{'、'.join(soft_anchors)}），"
-            "但不强制照抄。"
+            f"\n【建议·非强制】本场核心物件/动作/场景词：{names}。"
+            "带上更贴主题，但不强制照抄；"
+            "**优先写有钩子的说法**（孩子原话、反问、反差），别为了凑这些词把标题写成事件复述。"
         )
 
     if _is_c_type(type_key):
@@ -1421,8 +1606,8 @@ def build_chat_title_user_prompt(
             "都落在「主题 + 类型结局」上，极简干净，别只抓一个局部道具/意外（「线缠脚电视黑」这种=没点出结局）。"
         )
         tail = (
-            "主题锚定（最高优先，硬性）：标题必须原样保留本集主题短语（上面「本集主题短语」）"
-            "和类型结局（上面「类型骨架」的结局，用孩子话）——"
+            "主题锚定（最高优先）：标题要能看出本集主题，且带上本集主题短语或类型结局"
+            "（上面「类型骨架」的结局，用孩子话）——"
             "禁止「结盟/同盟/权威/公平/字面/破功」这类书面术语，"
             "但「翻车/散伙/搞砸/没看成/被抓包/露馅」这类通用孩子话结局词默认允许；"
             "若下方有「本次类型硬规则」，以硬规则为准（黑名单词禁用）。"
@@ -1438,23 +1623,24 @@ def build_chat_title_user_prompt(
         )
     else:
         steps = (
-            "第一步，先定封面画面：本集核心物件/动作是"
-            f"「{core_label}」，"
-            "标题只设预期、不播结局。"
+            "第一步，先找本集最强的钩子（孩子原话/反差/意外结果），本集核心物件/动作是"
+            f"「{core_label}」。"
             "（这行写在 JSON 外面，不要进 JSON。）"
-            "第二步，写 3 个候选 title（同一 JSON 数组，画面感最强的放第一个），"
-            "必须至少 1 条画面物件型，禁止三个全是口述问句："
-            "①画面物件型（候选1必须是）：如「剪刀下的直线」「洗手不搓泡」；"
-            "②动作任务型：如「教弟弟剪直线」；"
-            "③金句立规矩型：如「剪直了才算本事」。"
-            "不要用翻车记/被抓包/还咋教当默认结局词。"
+            "第二步，写 3 个候选 title（同一 JSON 数组，**钩子潜力最高**的放第一个，"
+            "不限定形态），按配额覆盖形态："
+            "至少 1 条 F3 口吻原话/F4 对照反差/F5 反问质问（如「就尝一口不算吃」这种口吻）；"
+            "至少 1 条 F1 画面物件/F2 动作任务（如「剪刀下的直线」）；"
+            "至少 1 条 F6 金句立规矩/F7 结果反转（如「剪直了才算本事」）。"
+            "同一形态最多 2 条，禁止三条同形态、禁止三条全是画面复述。"
         )
         tail = (
             "主题锚定：保留核心物件/动作，允许画面化改写，不强制原文照抄；"
+            "**口吻/反差/反问优先于画面复述**；"
             "禁止「结盟/同盟/权威/公平/字面/破功」这类书面术语。"
             f"{anchor_note}"
             f"{type_note}"
-            "封面感：短促、能拍成封面大字；不要完整口语长句、不要剧透翻车。"
+            "钩子要短促、能拍成封面大字；不要完整口语长句、不要剧透翻车、"
+            "不要为凑口吻硬加语气词（了/吧/呢/啊）。"
             "好例「剪刀下的直线」「浇花发洪水」；坏例「剪刀剪歪了，还咋教弟弟？」。"
         )
 

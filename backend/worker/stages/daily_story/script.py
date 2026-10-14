@@ -166,7 +166,6 @@ class DailyScriptStage(StageExecutor):
                         anchors = [phrase, *anchors]
                     candidates = ensure_chat_title_candidates(
                         candidates,
-                        anchors,
                         fetch_candidates=lambda: parse_chat_title_candidates_payload(
                             client._chat_json(  # type: ignore[attr-defined]
                                 prompts['system'], prompts['user'],

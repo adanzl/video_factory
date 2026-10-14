@@ -115,12 +115,11 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
         w for w in extract_core_anchor_words(draft, story_content) if w not in anchors
     ]
     phrase = extract_theme_action_phrase(draft, story_content)
-    # 完整主题短语优先（要求标题含「偷看电视」，不只含「电视」），缺短语时退回核心名词
+    # 主题短语并入锚词池（只作加分，不再要求标题必须含）
     if phrase and phrase not in anchors:
         anchors = [phrase, *anchors]
     candidates = ensure_chat_title_candidates(
         candidates,
-        anchors,
         fetch_candidates=lambda: parse_chat_title_candidates_payload(
             client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)[0],  # type: ignore[attr-defined]
             max_title_len=max_len,

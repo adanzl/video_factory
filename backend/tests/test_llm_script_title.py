@@ -41,18 +41,18 @@ def test_parse_chat_title_candidates_payload():
 def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
     from app.services.script.optimize_title import pick_best_chat_title
 
-    # 好封面初稿（画面短语）不再被口述甩锅句替换
+    # 口吻型（孩子原话甩锅）现在压过事件名初稿「X大作战」
+    # （2026-10-14 专家评审重排评分表：口吻/反差优先于画面复述）
     assert (
         pick_best_chat_title(
             "月饼大作战",
             ["月饼全滚出来了", "妈，月饼不是我弄的"],
             max_len=10,
         )
-        == "月饼大作战"
+        == "妈，月饼不是我弄的"
     )
 
-    # avoid 命中降权：手动重跑时避免重复上一个标题；
-    # 但候选都不优于当前标题（hook 0）时，防御当前标题，不写更差/平的标题
+    # avoid 命中降权：手动重跑时避免重复上一个标题（这个标题已被用过，不再选它）
     best2 = pick_best_chat_title(
         "月饼大作战",
         ["妈，月饼不是我弄的", "月饼全滚出来了"],
@@ -68,8 +68,8 @@ def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
         max_len=10,
         avoid_titles=["妈，月饼不是我弄的"],
     )
-    # 「月饼渣，我踩的印」不高于画面初稿 → 保留当前
-    assert best3 == "月饼大作战"
+    # 两条候选都不含 avoid 命中项，但「月饼渣，我踩的印」是画面复述 → 保留当前
+    assert best3 == "月饼渣，我踩的印"
 
     # 坏初稿（剧透口述）时：甩锅声明仍压过「谁…」质问
     best4 = pick_best_chat_title(
@@ -210,7 +210,7 @@ def test_pick_best_chat_title_rejects_broken_prefix_fragment():
     )
 
 def test_chat_title_prompt_uses_full_theme_phrase():
-    """标题优化提示词必须写「分蛋糕」，绝不能把「分蛋」当硬性保留短语。"""
+    """提示词给的是完整主题短语「分蛋糕」，绝不能把「分蛋」当短语；且只作建议不硬卡。"""
     from app.services.script.optimize_title import build_chat_title_user_prompt
 
     story = {
@@ -225,8 +225,8 @@ def test_chat_title_prompt_uses_full_theme_phrase():
     assert "「分蛋糕」" in prompt
     assert "本次类型硬规则" in prompt
     assert "黑名单词禁用" in prompt
-    assert "候选1也不允许省略" in prompt
-    assert "禁止放在句尾倒装" in prompt
+    assert "不强制" in prompt
+    assert "标题必须原样保留" not in prompt
     assert "同一句式结构也最多出现 1 次" in prompt
     assert "孩子气硬规则" in prompt or "孩子当场脱口而出的话" in prompt
     assert "不能有语病" in prompt
@@ -235,24 +235,29 @@ def test_chat_title_prompt_uses_full_theme_phrase():
     assert "封面感硬规则" in prompt
     assert "大块归你？分蛋糕我先挑，赖皮" in prompt
 
-def test_pick_best_chat_title_hard_drops_missing_anchor():
-    """缺主题短语/核心名词的候选直接作废，不参与选择。"""
+def test_pick_best_chat_title_anchor_is_bonus_not_gate():
+    """锚词降为软加分（2026-10-14 用户裁定）：不含主题词的钩子候选能胜出（#117 实景）。"""
     from app.services.script.optimize_title import pick_best_chat_title
 
-    # 候选1缺「分蛋糕」，即使有类型钩子+问号也必须被跳过
-    best = pick_best_chat_title(
-        "分蛋糕",
-        ["先挑咋还输了？", "分蛋糕先挑白忙一场"],
-        max_len=15,
-        anchor_words=["分蛋糕"],
-        story_type="C",
+    story = _job117_story()
+    # 干净初稿（remap 后）也压不住更有钩子的候选
+    assert (
+        pick_best_chat_title(
+            "姐弟抢娃娃，弟弟自砸头",
+            ["砸姐姐不行，砸自己总行"],
+            max_len=15,
+            anchor_words=["抢娃娃"],
+            soft_anchor_words=["砸头"],
+            story_type="G",
+            story_content=story,
+        )
+        == "砸姐姐不行，砸自己总行"
     )
-    assert best == "分蛋糕先挑白忙一场"
-    # 全部候选都缺主题短语 → 回退初稿
+    # 类型信息锚词硬卡仍在（与锚词门槛无关）：C 类缺「先挑/大块/白忙」的候选仍被拒
     assert (
         pick_best_chat_title(
             "分蛋糕",
-            ["先挑咋还输了？", "按字面白忙一场"],
+            ["蛋糕分好了吗"],
             max_len=15,
             anchor_words=["分蛋糕"],
             story_type="C",
@@ -260,19 +265,15 @@ def test_pick_best_chat_title_hard_drops_missing_anchor():
         == "分蛋糕"
     )
 
-def test_filter_chat_title_candidates_drops_missing_anchor():
-    """候选层硬过滤：缺主题短语的候选被丢弃，空锚词时不过滤。"""
+def test_filter_chat_title_candidates_keeps_anchorless():
+    """候选过滤只做合规红线（人物/标签/脏字符），锚词不再过滤候选。"""
     from app.services.script.optimize_title import filter_chat_title_candidates
 
     candidates = ["分蛋糕先挑咋还输了", "先挑反被挑走大块", "分蛋糕按字面白忙"]
-    assert filter_chat_title_candidates(candidates, ["分蛋糕"]) == [
-        "分蛋糕先挑咋还输了",
-        "分蛋糕按字面白忙",
-    ]
-    assert filter_chat_title_candidates(candidates, []) == candidates
+    assert filter_chat_title_candidates(candidates) == candidates
 
-def test_ensure_chat_title_candidates_refills_missing():
-    """有效候选不足 3 个时，重生成补足到 3 个，缺锚词的候选不进入结果。"""
+def test_ensure_chat_title_candidates_refills_to_three():
+    """有效候选不足 3 个时重生成补足到 3 个；合规候选不再因缺锚词被丢。"""
     from app.services.script.optimize_title import ensure_chat_title_candidates
 
     fetch = iter([
@@ -280,14 +281,15 @@ def test_ensure_chat_title_candidates_refills_missing():
         ["分蛋糕先挑反被挑走大块", "分蛋糕咋还输了", "分蛋糕立规反被挑"],
     ])
     out = ensure_chat_title_candidates(
-        ["分蛋糕先挑咋还输了", "先挑反被挑走大块"],
-        ["分蛋糕"],
+        ["分蛋糕先挑咋还输了"],
         fetch_candidates=lambda: next(fetch),
         max_attempts=2,
     )
     assert len(out) == 3
-    assert all("分蛋糕" in c for c in out)
-    assert "先挑反被挑走大块" not in out
+    assert out[0] == "分蛋糕先挑咋还输了"
+    # 缺「分蛋糕」的候选也保留（锚词已不过滤）；同串仍去重
+    assert out[1] == "先挑咋还输了"
+    assert out.count("分蛋糕先挑咋还输了") == 1
 
 def _job101_sister_roast_story() -> dict:
     """金故事源标题带「怼妈」，转写后对白只有灿灿/昭昭。"""
@@ -341,7 +343,6 @@ def test_chat_title_rejects_mom_when_dialogue_has_no_mom():
     assert extract_core_anchor_words("萌娃金句怼妈", story) == []
     assert filter_chat_title_candidates(
         ["萌娃金句怼妈妈", "别人夸你好看", "姐姐你爱朋友多"],
-        [],
         story_content=story,
     ) == ["别人夸你好看", "姐姐你爱朋友多"]
     best = pick_best_chat_title(
@@ -1053,7 +1054,6 @@ def test_title_guards_reject_source_labels_and_dirty_chars():
     # 候选层硬校验：漏标/脏字符候选直接作废
     out = filter_chat_title_candidates(
         ["布娃娃谁先抱归谁", "妹妹自砸头，姐姐认怂", "抢娃娃，j自砸头"],
-        [],
         story_content=story,
     )
     assert out == ["布娃娃谁先抱归谁"]
@@ -1082,8 +1082,8 @@ def test_extract_hard_anchor_words_excludes_scene_only_words():
     assert extract_core_anchor_words("阳台抢鸡爪", chicken) == ["阳台"]
 
 
-def test_pick_best_chat_title_soft_anchor_never_gates():
-    """软锚词只加分：候选不含软锚词时不得像硬锚词那样被作废。"""
+def test_pick_best_chat_title_anchors_only_bonus():
+    """锚词（含场景词）一律只加分：不含锚词的合规候选照样胜出。"""
     from app.services.script.optimize_title import pick_best_chat_title
 
     chicken = {
@@ -1092,26 +1092,97 @@ def test_pick_best_chat_title_soft_anchor_never_gates():
         "conflict_core": "灿灿和昭昭都想要盘子里的鸡爪。",
         "key": "抢食加码",
     }
-    picked = pick_best_chat_title(
-        "阳台抢鸡爪",
-        ["弟弟护着鸡爪不撒手"],
-        max_len=15,
-        anchor_words=[],
-        soft_anchor_words=["阳台"],
-        story_content=chicken,
-    )
-    assert picked == "弟弟护着鸡爪不撒手"
-    # 同一候选在硬门槛下会被作废（对照：锚词当硬门槛时的行为）
-    assert (
-        pick_best_chat_title(
-            "阳台抢鸡爪",
-            ["弟弟护着鸡爪不撒手"],
-            max_len=15,
-            anchor_words=["阳台"],
-            story_content=chicken,
+    # 硬锚词/软锚词都当过，候选缺锚词也不被作废（用口吻型候选：新评分下它压过画面初稿）
+    for kwargs in (
+        {"anchor_words": [], "soft_anchor_words": ["阳台"]},
+        {"anchor_words": ["阳台"]},
+    ):
+        assert (
+            pick_best_chat_title(
+                "阳台抢鸡爪",
+                ["凭啥鸡爪归你"],
+                max_len=15,
+                story_content=chicken,
+                **kwargs,
+            )
+            == "凭啥鸡爪归你"
         )
-        == "阳台抢鸡爪"
+
+
+def test_chat_title_prompt_anchor_note_no_longer_hard():
+    """提示词里锚词只作建议，禁止再写「硬性必须含锚词」（会逼出事件复述）。"""
+    from app.services.script.optimize_title import build_chat_title_user_prompt
+
+    story = _job117_story()
+    prompt = build_chat_title_user_prompt(
+        draft_title="姐弟抢娃娃，弟弟自砸头",
+        story_content=story,
+        max_title_len=15,
     )
+    assert "【建议·非强制】" in prompt
+    assert "抢娃娃" in prompt
+    assert "标题须含核心物件/动作" not in prompt
+    assert "不含核心物件/动作的标题不合格" not in prompt
+    assert "优先写有钩子的说法" in prompt
+
+
+def test_polish_prompt_keeps_only_present_theme_words():
+    """润色只保护当前标题里已有的主题词，不把主题短语塞回平掉的好标题。"""
+    from app.services.script.optimize_title import build_chat_title_polish_prompts
+
+    story = _job117_story()
+    # 选中标题不含「抢娃娃」→ 不得要求必须保留该短语
+    prompts = build_chat_title_polish_prompts(
+        "砸姐姐不行，砸自己总行",
+        "姐弟抢娃娃，弟弟自砸头",
+        story,
+        max_title_len=15,
+    )
+    assert "须原样保留" not in prompts["user"]
+    assert "不得" in prompts["user"]
+    # 选中标题含「抢娃娃」→ 照旧要求完整保留
+    prompts2 = build_chat_title_polish_prompts(
+        "抢娃娃，弟弟举书砸自己头",
+        "姐弟抢娃娃，弟弟自砸头",
+        story,
+        max_title_len=15,
+    )
+    assert "须原样保留（当前标题里已有）：抢娃娃" in prompts2["user"]
+
+
+def test_hook_score_prefers_voice_over_flat_and_keeps_c_calibration():
+    """评分表锁定：口吻/原话 > 反转/金句 > 画面复述；「谁」类仍被压低；C 类不被剧透扣分误伤。"""
+    from app.services.script.optimize_title import _chat_title_hook_score as s
+
+    voice = s("我砸我自己总行", story_type="G")
+    contrast = s("砸姐姐不行，砸自己总行", story_type="G")
+    visual = s("举书砸自己脑袋", story_type="G")
+    assert voice > visual and contrast > visual
+    # 画面基分降到 2：不再靠 +4 压过口吻型
+    assert visual <= 4
+    # 「谁」字质问句仍被压低（历史上刷过屏）
+    for who in ("谁踩的渣印", "渣印谁擦"):
+        assert s(who, story_type="G") < visual
+    # C 类不过封面剧透表：「白忙」是硬卡要求的必需信息锚词，不能反被扣 5 分
+    assert s("说好我先挑，白忙一场", story_type="C") == s("说好我先挑，白忙一场", story_type="G") + 5
+
+
+def test_polish_rejects_particle_only_flatening_for_non_c():
+    """非 C 类禁止靠加语气词压平（「举书砸自己脑袋」→「…脑袋了」）；C 类保留白忙→白忙了。"""
+    from app.services.script.optimize_title import build_chat_title_polish_prompts
+
+    story = _job117_story()
+    prompts = build_chat_title_polish_prompts(
+        "我砸我自己总行", "姐弟抢娃娃，弟弟自砸头", story, max_title_len=15
+    )
+    assert "禁止新增原标题没有的语气词" in prompts["user"]
+    assert "缺语气词要补" not in prompts["user"]
+    # C 类仍保留补语气词校准
+    c_story = dict(story, story_type="C")
+    c_prompts = build_chat_title_polish_prompts(
+        "分蛋糕先挑，白忙", "分蛋糕", c_story, max_title_len=15
+    )
+    assert "缺语气词要补" in c_prompts["user"]
 
 
 def test_pick_best_chat_title_unusable_draft_not_fallback():
