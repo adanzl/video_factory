@@ -2069,6 +2069,35 @@ def _ensure_gold_chat_min_chars(
     return data, changed
 
 
+def _sanitize_pad_lines_in_place(data: dict[str, Any]) -> bool:
+    """姐弟句本地机械垫字清理：清掉机审命中的句尾垫字，不垫字数、不调 LLM。
+
+    与 review/pad_stack 同口径：`pad_stack_issue_for_line` 命中即清（真实问句由
+    sanitizer 内部保留）。必须独立于长度门控调用——此前该清理只挂在
+    `_stabilize_local_length_candidate` 的 hard_deficit 门控内，字数已达标
+    （≥240）的稿子整段跳过，句尾垫字（如「…这车我占住了好不好」）会一路带到
+    终检，被当成必须 LLM 定点改的硬伤，把整轮实跑打死。
+    """
+    changed = False
+    rows = data.get("dialogue")
+    if not isinstance(rows, list):
+        return changed
+    for line_no, item in enumerate(rows, 1):
+        if not isinstance(item, dict):
+            continue
+        speaker = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if speaker not in {"昭昭", "灿灿"} or not line:
+            continue
+        if pad_stack_issue_for_line(line, line_no) is None:
+            continue
+        cleaned = sanitize_pad_stack_line(line)
+        if cleaned and cleaned != line:
+            item["line"] = cleaned
+            changed = True
+    return changed
+
+
 def _stabilize_local_length_candidate(
     candidate: dict[str, Any],
     *,
@@ -2081,6 +2110,10 @@ def _stabilize_local_length_candidate(
     """统一机械收口：句长压缩 + near-miss 补字；最终不得靠垫字痕迹过线。"""
     data, shortened = _apply_deterministic_shorten(candidate)
     changed = shortened
+
+    # 垫字清理先于长度门控：字数已达标时同样要清，否则本地可清的句尾垫字
+    # 会带着进终检。清理只会变短，若因此掉到 240 以下再由下方补字路径兜底。
+    changed = _sanitize_pad_lines_in_place(data) or changed
 
     total = dialogue_total_chars(data)
     hard_deficit = DAILY_STORY_BODY_CHARS_MIN - total
@@ -2111,21 +2144,7 @@ def _stabilize_local_length_candidate(
     # `_pad_gold_chat_to_min_chars` 是兜底工具，可能留下「好不好」等机审痕迹。
     # 对所有机审命中的姐弟句直接调用安全 sanitizer（真实问句会被保留），
     # 再用实义句内扩写/中段补句恢复 hard min；最终不再用粒子 pad 回填。
-    rows = data.get("dialogue")
-    if isinstance(rows, list):
-        for line_no, item in enumerate(rows, 1):
-            if not isinstance(item, dict):
-                continue
-            speaker = str(item.get("speaker") or "").strip()
-            line = str(item.get("line") or "").strip()
-            if speaker not in {"昭昭", "灿灿"} or not line:
-                continue
-            if pad_stack_issue_for_line(line, line_no) is None:
-                continue
-            cleaned = sanitize_pad_stack_line(line)
-            if cleaned and cleaned != line:
-                item["line"] = cleaned
-                changed = True
+    changed = _sanitize_pad_lines_in_place(data) or changed
 
     for _ in range(3):
         if dialogue_total_chars(data) >= DAILY_STORY_BODY_CHARS_MIN:
@@ -2152,21 +2171,7 @@ def _stabilize_local_length_candidate(
     # 不为追求 250 的软余量重新塞语气尾巴。
     data, shortened2 = _apply_deterministic_shorten(data)
     changed = changed or shortened2
-    rows = data.get("dialogue")
-    if isinstance(rows, list):
-        for line_no, item in enumerate(rows, 1):
-            if not isinstance(item, dict):
-                continue
-            speaker = str(item.get("speaker") or "").strip()
-            line = str(item.get("line") or "").strip()
-            if speaker not in {"昭昭", "灿灿"} or not line:
-                continue
-            if pad_stack_issue_for_line(line, line_no) is None:
-                continue
-            cleaned = sanitize_pad_stack_line(line)
-            if cleaned and cleaned != line:
-                item["line"] = cleaned
-                changed = True
+    changed = _sanitize_pad_lines_in_place(data) or changed
     return data, changed
 
 

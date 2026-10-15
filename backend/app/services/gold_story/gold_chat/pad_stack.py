@@ -56,6 +56,11 @@ def is_genuine_haobu_question(line: str) -> bool:
     """「我们一起玩好不好呀？」类保留；陈述强接尾巴不算。"""
     if not RE_HAOBU_TAIL.search(line):
         return False
+    # 「好不好(呀)」紧跟问号 ⇒ 疑问句（如「…朋友多了到底好不好？」）。
+    # 陈述句强接的垫字尾巴不会带问号；若只认下方词表，这类真问句会被当垫字
+    # 去尾后改残成「…到底？」。故以此结构信号优先保留。
+    if re.search(r"(?:好不好呀|好不好)\s*[？?]", line):
+        return True
     body = RE_HAOBU_TAIL.sub("", line).strip().rstrip("。！？…!?")
     if RE_GENUINE_HAOBU_QUESTION.search(body):
         return True
@@ -86,6 +91,7 @@ def classify_pad_line(line: str) -> PadLineKind:
 
 
 def line_needs_pad_sanitize(line: str) -> bool:
+    """只认「明确垫字」：歧义句留给审稿报出、由 LLM 定点改，勿本地静默剥掉。"""
     return classify_pad_line(line) == "clear_pad"
 
 

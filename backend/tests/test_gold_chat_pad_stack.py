@@ -283,3 +283,99 @@ def test_pad_safe_insert_bounds_avoid_opening_and_tail():
     assert lo <= hi
     lo2, hi2 = _pad_safe_insert_bounds(3)
     assert lo2 <= hi2
+
+
+def _filler_dialogue(count: int) -> list[dict[str, str]]:
+    """抽象占位对白：只为凑够正文字数，不含任何单篇词。"""
+    return [
+        {
+            "speaker": "昭昭" if i % 2 == 0 else "灿灿",
+            "line": f"占位对白第{i}句内容各不相同仅用于凑足正文字数",
+        }
+        for i in range(count)
+    ]
+
+
+def test_haobu_question_with_mark_is_genuine_and_kept():
+    """「…到底好不好？」是真实问句：不能当垫字去尾（否则会改成「…到底？」）。"""
+    line = "那你说，朋友多了到底好不好？"
+    assert is_genuine_haobu_question(line)
+    assert classify_pad_line(line) == "keep_question"
+    assert sanitize_pad_stack_line(line) == line
+    out, changed = apply_clear_pad_sanitize(
+        {"dialogue": [{"speaker": "灿灿", "line": line}]},
+    )
+    assert not changed
+    assert out["dialogue"][0]["line"] == line
+
+
+def test_statement_haobu_pad_still_reported_for_llm_repair():
+    """歧义垫字仍须报给 LLM 定点改：repair 路径不得本地静默剥掉。"""
+    line = "这球我先拿着好不好"
+    assert classify_pad_line(line) == "uncertain"
+    out, changed = apply_clear_pad_sanitize(
+        {"dialogue": [{"speaker": "灿灿", "line": line}]},
+    )
+    assert not changed
+
+
+def test_pad_cleanup_runs_when_body_chars_already_meet_floor():
+    """字数已达标（≥240）时机械垫字清理仍须执行。
+
+    原实现把该清理挂在 hard_deficit 门控内，字数达标即整段跳过，句尾垫字一路
+    带到终检被当成「必须 LLM 定点改」的硬伤，直接打死整轮实跑。
+    """
+    from app.services.gold_story.gold_chat.length import (
+        _stabilize_local_length_candidate,
+        dialogue_total_chars,
+    )
+    from app.services.daily_story.review import collect_pad_stack_issues
+
+    pad_line = "这球我先拿着好不好"
+    story = {
+        "story_type": "K",
+        "dialogue": [
+            {"speaker": "灿灿", "line": pad_line},
+            *_filler_dialogue(11),
+        ],
+    }
+    # 前提：正文已达标，硬缺口 ≤0 —— 正是原实现提前 return 的场景
+    assert dialogue_total_chars(story) >= DAILY_STORY_BODY_CHARS_MIN
+    assert collect_pad_stack_issues(story), "前提：该句确实被判为垫字"
+
+    out, changed = _stabilize_local_length_candidate(
+        story,
+        structure_type="K",
+        mechanism="M12",
+    )
+    assert changed
+    assert all("好不好" not in row["line"] for row in out["dialogue"])
+    assert not collect_pad_stack_issues(out), "清理后不应再报垫字硬伤"
+
+
+def test_pad_cleanup_leaves_normal_lines_untouched():
+    """清理只动机审命中的垫字句，普通句原样保留。"""
+    from app.services.gold_story.gold_chat.length import (
+        _stabilize_local_length_candidate,
+    )
+
+    normal = [
+        "你昨天骑了一下午，今天该我吧",
+        "那是我先拿到的，你松手嘛",
+    ]
+    story = {
+        "story_type": "K",
+        "dialogue": [
+            *[{"speaker": "灿灿", "line": ln} for ln in normal],
+            *_filler_dialogue(12),
+        ],
+    }
+    out, _ = _stabilize_local_length_candidate(
+        story,
+        structure_type="K",
+        mechanism="M12",
+    )
+    kept = [row["line"] for row in out["dialogue"]]
+    for ln in normal:
+        assert ln in kept
+
