@@ -2107,6 +2107,107 @@ def test_reject_message_not_pad_when_missing_fields():
     assert gc._has_non_short_hard_errors(err)
 
 
+def test_structure_cons_lists_dad_penalty_symmetric_with_mom():
+    """爸爸侧契约感知补丁须与妈妈侧同构：契约给 N 句则第 N+1 句才扣。"""
+    from app.services.daily_story.quality import (
+        score_daily_story,
+        structure_cons_for_log,
+    )
+
+    def _dad_penalty(dad_count: int, **extra: object) -> list[str]:
+        dialogue = [
+            {"speaker": "灿灿", "line": "我先骑，你松手，这轮到我啦吧。"},
+            {"speaker": "昭昭", "line": "该我骑了，给我，你都骑三圈了。"},
+            {"speaker": "灿灿", "line": "再闹我恼了！"},
+        ] + [
+            {"speaker": "爸爸", "line": "不念了不念了，我吃饭，你俩自己分。"}
+        ] * dad_count
+        story = {
+            "story_type": "K",
+            "conflict_core": "抢三轮车",
+            "punchline_explain": "回旋镖式收束",
+            "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+            "closing_mode": "K_B_CHILD_SELF_RESOLVE",
+            "dialogue": dialogue,
+        }
+        story.update(extra)
+        q = score_daily_story(story, skip_relevancy=True)
+        return [str(c) for c in (q.get("structure_cons") or []) if "爸爸台词" in str(c)]
+
+    # 无契约：沿用全局默认 dad_lines_penalty_at=2，第 2 句起扣
+    assert not _dad_penalty(1)
+    assert _dad_penalty(2)
+
+    # 契约给 2 句：第 2 句不应再扣（契约要求爸爸承担 2 拍，这是合规的）
+    assert not _dad_penalty(2, _gold_chat_dad_lines_max=2)
+    # 超过契约值仍扣，阈值未失效
+    assert _dad_penalty(3, _gold_chat_dad_lines_max=2)
+
+    # 契约给 0 句：阈值只会被抬高、不会被压到 0 以下；爸爸仍按全局默认 2 句起扣
+    assert _dad_penalty(2, _gold_chat_dad_lines_max=0)
+    assert not _dad_penalty(1, _gold_chat_dad_lines_max=0)
+
+    # 与妈妈侧口径分离：妈妈契约字段不应放开爸爸（两套字段各自生效）
+    assert _dad_penalty(2, _gold_chat_mom_lines_max=2)
+    assert structure_cons_for_log({"structure_cons": ["爸爸台词偏多（2句）"]})
+
+
+def test_gold_chat_dad_budget_injection_uses_authoritative_resolver():
+    """注入的 _gold_chat_dad_lines_max 须与 resolve_parent_lines_budget 同口径。"""
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    # 契约给爸爸 2 拍、mom_lines_max=2：爸爸额度须抬到 2（不被硬编码 1 压住）
+    scene_contract = {
+        "story_type": "K",
+        "mom_lines_max": 2,
+        "beat_chain": [
+            {"beat": 1, "speaker": "灿灿", "intent": "占物"},
+            {"beat": 3, "speaker": "爸爸", "intent": "旁观解说"},
+            {"beat": 5, "speaker": "爸爸", "intent": "被推趔趄"},
+        ],
+    }
+    _, dad_expect, _ = resolve_parent_lines_budget(
+        scene_contract, mom_lines_max=scene_contract.get("mom_lines_max")
+    )
+    assert dad_expect >= 2  # 拍到 2，额度不得低于 2
+
+    # 契约没给爸爸拍：额度回落，不应无端放大
+    plain = {"story_type": "K", "mom_lines_max": 2, "beat_chain": [
+        {"beat": 1, "speaker": "灿灿", "intent": "占物"},
+    ]}
+    _, dad_plain, _ = resolve_parent_lines_budget(
+        plain, mom_lines_max=plain.get("mom_lines_max")
+    )
+    assert dad_plain <= 2
+
+
+def test_review_contract_snapshot_includes_dad_lines_max():
+    """爸爸额度会影响评分，须进终验快照，否则契约变化漏判为「正文未失效」。"""
+    from app.services.daily_story.quality import (
+        story_review_contract_snapshot,
+        story_review_content_hash,
+    )
+
+    base = {
+        "story_type": "K",
+        "dialogue": [{"speaker": "灿灿", "line": "我先骑。"}],
+        "_gold_chat_mom_lines_max": 2,
+    }
+    snap = story_review_contract_snapshot(base)
+    assert snap.get("mom_lines_max") == 2
+    # 未注入爸爸额度时不写该键（存量稿/非 K 不受影响）
+    assert "dad_lines_max" not in snap
+
+    with_dad = dict(base, _gold_chat_dad_lines_max=2)
+    snap_dad = story_review_contract_snapshot(with_dad)
+    assert snap_dad.get("dad_lines_max") == 2
+
+    # 爸爸契约变化须改变正文摘要，从而触发重新审读
+    h_2 = story_review_content_hash(with_dad)
+    h_1 = story_review_content_hash(dict(base, _gold_chat_dad_lines_max=1))
+    assert h_2 != h_1
+
+
 def test_structure_cons_lists_mom_penalty_and_log_cons():
     from app.services.daily_story.quality import (
         score_daily_story,

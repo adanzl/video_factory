@@ -116,6 +116,9 @@ def story_review_contract_snapshot(
     mom_max = story.get("_gold_chat_mom_lines_max")
     if mom_max is not None:
         snapshot["mom_lines_max"] = mom_max
+    dad_max = story.get("_gold_chat_dad_lines_max")
+    if dad_max is not None:
+        snapshot["dad_lines_max"] = dad_max
     return _stable_review_value(snapshot)
 
 
@@ -1177,7 +1180,16 @@ def score_daily_story(
         1 for d in (dialogue or [])
         if isinstance(d, dict) and str(d.get("speaker") or "").strip() == "爸爸"
     )
-    if dad_n >= profile.dad_lines_penalty_at:
+    dad_penalty_at = profile.dad_lines_penalty_at
+    contract_dad_raw = story.get("_gold_chat_dad_lines_max")
+    if contract_dad_raw is not None:
+        try:
+            contract_dad = max(0, int(contract_dad_raw))
+            # 与妈妈侧同构：契约允许 N 句时，第 N+1 句起才扣「偏多」
+            dad_penalty_at = max(dad_penalty_at, contract_dad + 1)
+        except (TypeError, ValueError):
+            pass
+    if dad_n >= dad_penalty_at:
         score -= profile.dad_lines_penalty
         cons.append(f"爸爸台词偏多（{dad_n}句）")
 

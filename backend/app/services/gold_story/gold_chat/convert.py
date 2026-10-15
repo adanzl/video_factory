@@ -1338,6 +1338,16 @@ def _attach_gold_chat_structure_score(
             out["_gold_chat_mom_lines_max"] = int(mom_contract)
         except (TypeError, ValueError):
             pass
+    # 爸爸侧同样要注入契约额度：评分层按契约值抬阈值，否则契约要求爸爸承担 N 拍时
+    # 合规稿仍被「爸爸台词偏多」扣分打到发布线下（与硬卡 mom/dad 口径不对称）。
+    # 走 resolve_parent_lines_budget，含 beat_chain 拍数兜底，勿在此另算一套。
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    _, dad_contract, _ = resolve_parent_lines_budget(
+        scene_contract,
+        mom_lines_max=scene_contract.get("mom_lines_max"),
+    )
+    out["_gold_chat_dad_lines_max"] = int(dad_contract)
     # 按正文一体计分：勿把前 2 句 sync 成 discovery_opening 再扣开场分
     out.pop("discovery_opening", None)
     attach_daily_story_quality(out, theme=theme, finalize=True, skip_relevancy=True)
