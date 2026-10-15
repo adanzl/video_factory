@@ -517,6 +517,52 @@ def _seed_suggests_g(seed: list[Any] | None) -> bool:
 _PARENT_SPEAKERS = frozenset({"妈妈", "爸爸"})
 _KID_SPEAKERS = frozenset({"昭昭", "灿灿"})
 
+# 权威方「自己的认知/判断出错」的拍型与孩子的当场拆穿拍型（只读槽位，不读剧情词）
+_AUTHORITY_WRONG_CLAIM_ACTS = frozenset(
+    {"misidentify", "false_assert", "wrong_judgment"}
+)
+_KID_REFUTE_ACTS = frozenset({"deny", "self_prove", "correct"})
+# A 类前置槽位：权威先立规（rule/command/promise）+ 孩子引其原话（echo/quote/remind）。
+# 两者任一在场即视为标准 A 拍，不得改判 E（防误伤「立规后自己违规」的 A 稿）。
+_PRIOR_RULE_ACTS = frozenset({"rule", "command", "promise"})
+_CHILD_QUOTE_ACTS = frozenset({"echo", "quote", "quote_rule", "remind"})
+
+
+def _authority_cognition_caught_wants_e(payload: dict[str, Any]) -> bool:
+    """家长自己认错人/认错事实、被孩子当场自证或否认拆穿 → 该走 E（妈妈破功）。
+
+    A 的硬拍是「权威先立规 → 随后自己当众违反 → 孩子引用其原话」，
+    缺立规与可引原话即不成立；I 要对方语塞。只读 beat_chain 的
+    speaker + speech_act 槽位，不解析剧情词。
+    前置（专家裁定）：存在立规拍或孩子引话拍 → 判标准 A，不改 E。
+    """
+    sc = payload.get("scene_contract")
+    if not isinstance(sc, dict):
+        return False
+    beats = sc.get("beat_chain")
+    if not isinstance(beats, list):
+        return False
+    authority_claimed = False
+    kid_refuted = False
+    has_prior_rule = False
+    has_child_quote = False
+    for beat in beats:
+        if not isinstance(beat, dict):
+            continue
+        speaker = str(beat.get("speaker") or "").strip()
+        act = str(beat.get("speech_act") or "").strip().lower()
+        if act in _PRIOR_RULE_ACTS:
+            has_prior_rule = True
+        if speaker in _KID_SPEAKERS and act in _CHILD_QUOTE_ACTS:
+            has_child_quote = True
+        if speaker in _PARENT_SPEAKERS and act in _AUTHORITY_WRONG_CLAIM_ACTS:
+            authority_claimed = True
+        if speaker in _KID_SPEAKERS and act in _KID_REFUTE_ACTS:
+            kid_refuted = True
+    if has_prior_rule or has_child_quote:
+        return False
+    return authority_claimed and kid_refuted
+
 
 def _parent_caught_wants_e(payload: dict[str, Any]) -> bool:
     """家长被孩子当场抓到自己把柄 → 该走 E（妈妈破功）。
@@ -550,6 +596,10 @@ def _parent_caught_wants_e(payload: dict[str, Any]) -> bool:
 # 装不下「家长耍赖被孩子当场拆穿」，故 E→Q 的 align-structure 重判也要收回。
 _PARENT_CAUGHT_FROM_TYPES = frozenset({"A", "F", "I", "E", "Q"})
 
+# 权威方认知错误稿的可覆盖类型：A 要立规+一锤、I 要语塞制敌、C 要双规则回旋镖、
+# D 要字面执行、F 要互呛无标准收束、Q 的耍赖方模型只认姐弟，都不成立。
+_AUTHORITY_COGNITION_FROM_TYPES = frozenset({"A", "C", "D", "F", "I", "Q"})
+
 
 def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """gold_chat 入口纠偏 structure_type（家长把柄→E、M2+C→M8+J、mapping_note+seed→G）。"""
@@ -582,6 +632,29 @@ def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any]
             payload["scene_contract"] = sc
         out0["payload"] = payload
         return out0, notes0
+
+    # 家长认错人/认错事实、被孩子当场拆穿 → E（同「家长把柄」族，先于 align-structure）
+    if (
+        _authority_cognition_caught_wants_e(payload0)
+        and base_type in _AUTHORITY_COGNITION_FROM_TYPES
+        and base_mech
+        and "E" in allowed_structure_types(base_mech)
+    ):
+        out1 = dict(row)
+        payload1 = copy.deepcopy(payload0)
+        out1["mechanism"] = base_mech
+        out1["structure_type"] = "E"
+        notes1 = [f"structure_type:{base_type}→E(authority-cognition-caught)"]
+        sc1 = payload1.get("scene_contract")
+        if isinstance(sc1, dict):
+            sc1 = copy.deepcopy(sc1)
+            sc_type1 = str(sc1.get("story_type") or "").strip().upper()
+            if sc_type1 != "E":
+                sc1["story_type"] = "E"
+                notes1.append(f"scene_contract.story_type:{sc_type1 or '?'}→E")
+            payload1["scene_contract"] = sc1
+        out1["payload"] = payload1
+        return out1, notes1
 
     out, notes = resolve_structure_row(row)
     payload = cast(dict[str, Any], out.get("payload") or {})

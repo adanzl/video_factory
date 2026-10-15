@@ -666,3 +666,109 @@ def test_m5_h_self_harm_warm_reclassifies_to_m4_g():
     assert fixed["mechanism"] == "M4"
     assert fixed["structure_type"] == "G"
     assert any("self-harm-warm-not-fight" in n for n in notes)
+
+
+def _cognition_caught_row(structure_type: str, *, wrong_claim_act: str = "misidentify"):
+    return {
+        "id": 126,
+        "mechanism": "M5",
+        "structure_type": structure_type,
+        "conflict_core": "灿灿把变高变样的昭昭误认成别人",
+        "payload": {
+            "scene_contract": {
+                "story_type": structure_type,
+                "facts": [],
+                "beat_chain": [
+                    {
+                        "beat": 1,
+                        "speaker": "妈妈",
+                        "intent": "误认占位",
+                        "speech_act": wrong_claim_act,
+                    },
+                    {
+                        "beat": 2,
+                        "speaker": "昭昭",
+                        "intent": "自证身份",
+                        "speech_act": "self_prove",
+                    },
+                    {
+                        "beat": 3,
+                        "speaker": "妈妈",
+                        "intent": "尴尬改口",
+                        "speech_act": "other",
+                    },
+                ],
+            }
+        },
+    }
+
+
+def test_authority_cognition_caught_reclassifies_a_to_e():
+    """家长认错人被孩子当场拆穿 → 与「家长把柄」同族，统一改判 E。"""
+    fixed, notes = resolve_gold_chat_structure_row(_cognition_caught_row("A"))
+    assert fixed["structure_type"] == "E"
+    assert fixed["payload"]["scene_contract"]["story_type"] == "E"
+    assert any("authority-cognition-caught" in n for n in notes)
+
+
+def test_authority_cognition_accepts_j_family_acts():
+    for act in ("false_assert", "wrong_judgment"):
+        fixed, _ = resolve_gold_chat_structure_row(
+            _cognition_caught_row("A", wrong_claim_act=act)
+        )
+        assert fixed["structure_type"] == "E"
+
+
+def test_authority_cognition_keeps_a_when_only_rule_violation():
+    """权威立规后自己违规、孩子引原话 → 仍是 A（无「认知错误」槽位）。"""
+    row = {
+        "id": 999,
+        "mechanism": "M5",
+        "structure_type": "A",
+        "payload": {
+            "scene_contract": {
+                "story_type": "A",
+                "beat_chain": [
+                    {"beat": 1, "speaker": "妈妈", "intent": "立规", "speech_act": "rule"},
+                    {
+                        "beat": 2,
+                        "speaker": "昭昭",
+                        "intent": "指认妈妈自己违规",
+                        "speech_act": "accuse",
+                    },
+                    {
+                        "beat": 3,
+                        "speaker": "昭昭",
+                        "intent": "引妈妈原话",
+                        "speech_act": "echo",
+                    },
+                ],
+            }
+        },
+    }
+    fixed, notes = resolve_gold_chat_structure_row(row)
+    assert fixed["structure_type"] == "A"
+    assert not any("authority-cognition-caught" in n for n in notes)
+
+
+def test_authority_cognition_keeps_a_when_prior_rule_slot_present():
+    """权威立规拍在场 → 判标准 A，即便另有误认/否认槽位也不改判 E。"""
+    row = _cognition_caught_row("A")
+    row["payload"]["scene_contract"]["beat_chain"].append(
+        {"beat": 4, "speaker": "妈妈", "intent": "立规矩", "speech_act": "rule"}
+    )
+    fixed, notes = resolve_gold_chat_structure_row(row)
+    assert fixed["structure_type"] == "A"
+    assert not any("authority-cognition-caught" in n for n in notes)
+
+
+def test_authority_cognition_keeps_a_when_child_quotes_prior_line():
+    """孩子引话拍在场 → 判标准 A（引原话是一锤的必要证据）。"""
+    row = _cognition_caught_row("A")
+    row["payload"]["scene_contract"]["beat_chain"].append(
+        {"beat": 4, "speaker": "昭昭", "intent": "引妈妈原话", "speech_act": "echo"}
+    )
+    fixed, notes = resolve_gold_chat_structure_row(row)
+    assert fixed["structure_type"] == "A"
+    assert not any("authority-cognition-caught" in n for n in notes)
+

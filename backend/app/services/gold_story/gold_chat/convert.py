@@ -1539,6 +1539,12 @@ def convert_gold_chat(
         row, structure_notes = _resolve_structure_row(row)
         row = _persist_structure_correction(row, structure_notes)
         row = _rebuild_h3a_h3b_on_convert(row)
+        # 重建后的契约才带出新槽位证据（如家长认错人的 misidentify 拍）→ 再纠偏一次并重建，
+        # 避免首轮拿旧判型白跑一遍草稿
+        row, notes_after_rebuild = _resolve_structure_row(row)
+        if notes_after_rebuild:
+            row = _persist_structure_correction(row, notes_after_rebuild)
+            row = _rebuild_h3a_h3b_on_convert(row)
         finish_stage("contract")
 
         current_stage = "draft"
