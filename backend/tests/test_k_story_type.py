@@ -60,6 +60,73 @@ def test_k_validate_rejects_h_reconcile():
     assert any("H 式" in e for e in errors)
 
 
+def test_k_explicit_unknown_is_rejected_but_legacy_empty_passes():
+    """显式 K_UNKNOWN（解析器跑过没定轨）须硬拒；历史字段缺失仍走旧兜底。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        k_close_mode_is_explicit_unknown,
+    )
+    from app.services.daily_story.story_types.k.validate import append_k_body_errors
+
+    # 1) 历史稿：字段从未落盘（legacy_empty / absent）→ 不因"缺失"阻断
+    legacy = _k_stalemate_story()
+    legacy["k_close_mode"] = ""
+    errors: list[str] = []
+    append_k_body_errors(legacy, errors)
+    assert not [e for e in errors if "K_UNKNOWN" in e]
+    assert k_close_mode_is_explicit_unknown(legacy) is False
+
+    absent = _k_stalemate_story()
+    absent.pop("k_close_mode")
+    assert k_close_mode_is_explicit_unknown(absent) is False
+    errors_absent: list[str] = []
+    append_k_body_errors(absent, errors_absent)
+    assert not [e for e in errors_absent if "K_UNKNOWN" in e]
+
+    # 2) 新稿：显式 K_UNKNOWN = 未定轨非法状态 → 必须拒
+    explicit = _k_stalemate_story()
+    explicit["k_close_mode"] = "K_UNKNOWN"
+    assert k_close_mode_is_explicit_unknown(explicit) is True
+    errors2: list[str] = []
+    append_k_body_errors(explicit, errors2)
+    assert any("K_UNKNOWN" in e for e in errors2)
+
+    # 3) 嵌套在 scene_contract 里的显式 K_UNKNOWN 同样拒
+    nested = _k_stalemate_story()
+    nested["k_close_mode"] = ""
+    nested["scene_contract"] = {"k_close_mode": "K_UNKNOWN"}
+    assert k_close_mode_is_explicit_unknown(nested) is True
+    errors3: list[str] = []
+    append_k_body_errors(nested, errors3)
+    assert any("K_UNKNOWN" in e for e in errors3)
+    # 但嵌套只是缺失（空串）时仍算历史稿
+    nested_empty = _k_stalemate_story()
+    nested_empty["k_close_mode"] = ""
+    nested_empty["scene_contract"] = {"k_close_mode": ""}
+    assert k_close_mode_is_explicit_unknown(nested_empty) is False
+
+
+def test_k_contract_phase_fails_fast_on_unresolvable_close_mode():
+    """契约期判不出 K-A/K-B 就该 fail-fast，不许烧完 16 句才在终检失败。"""
+    import pytest
+
+    from app.services.gold_story.gold_chat.expand import _repair_k_row_contract
+
+    row = {
+        "id": 999,
+        "structure_type": "K",
+        "payload": {
+            "scene_contract": {"beat_chain": [], "mechanism": ""},
+            "closing_intent": "",
+        },
+    }
+    with pytest.raises(ValueError, match="K_CLOSE_MODE_UNRESOLVED"):
+        _repair_k_row_contract(row)
+
+    # 非 K 类不受影响，原样返回
+    passthrough = {"id": 1, "structure_type": "C", "payload": {}}
+    assert _repair_k_row_contract(passthrough) is passthrough
+
+
 def test_k_patch_strips_h_reconcile_and_fills_stalemate():
     from app.services.daily_story.story_types.k.patch import patch_k_body
 

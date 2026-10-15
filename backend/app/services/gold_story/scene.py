@@ -841,6 +841,92 @@ def normalize_k_parent_intervention_budget(
     return out, [f"K家长预算2合并同轮干预:{parent}"]
 
 
+def _parent_beat_count(chain: Any, *, speaker: str = "") -> int:
+    """beat_chain 中由家长承担的拍数；给定 speaker 时只数该家长。"""
+    if not isinstance(chain, list):
+        return 0
+    rows: list[Any] = []
+    for row in chain:
+        if not isinstance(row, dict):
+            continue
+        sp = str(row.get("speaker") or "").strip()
+        if speaker:
+            if sp == speaker:
+                rows.append(row)
+        elif sp in _PARENT_SPEAKERS:
+            rows.append(row)
+    return len(rows)
+
+
+def chat_line_cap(structure_type: str = "") -> int:
+    """对白句数硬上限：K 类（家长看戏）允许 +2，与 validate/length 同口径。"""
+    st = str(structure_type or "").strip().upper()
+    return CHAT_LINE_COUNT_MAX + (2 if st == "K" else 0)
+
+
+def resolve_parent_lines_budget(
+    source: dict[str, Any] | None = None,
+    *,
+    mom_lines_max: int | None = None,
+    dad_lines_max: int | None = None,
+    parent_lines_max: int | None = None,
+    default_mom_lines_max: int = 1,
+) -> tuple[int, int, int]:
+    """家长台词预算权威口径：(mom_max, dad_max, parent_max)。
+
+    取值优先级：显式入参 > ``source``（scene_contract / story）同名字段 > 派生默认。
+
+    - ``mom_max``：妈妈上限，默认 ``default_mom_lines_max``；
+    - ``parent_max``：家长合计上限，默认 ``mom_max + 1``
+      （另一位家长最多 1 句，与"爸爸宜更少"的提示词口径一致）；
+    - ``dad_max``：爸爸上限，默认 ``1``（家长预算为 0 时即 0）。
+
+    再按 beat_chain 兜底抬额：契约自身要求某位家长承担 N 拍，却不给 N 句额度，会让任何
+    合规稿都无法通过硬卡（死锁）。只按拍数抬额度，不凭剧情猜词。
+
+    最后统一封顶到 ``chat_line_cap``：家长句数不可能超过全稿句数上限，故该封顶
+    只挡脏契约（拍数异常膨胀），不会挡任何合法稿，也就不可能重新引入死锁。
+    注意封顶用 ``min(max(契约值, 拍数), 上限)``：若写成 ``min(契约值, 拍数)``
+    会反而把额度压到低于拍数，死锁复现。
+    """
+
+    def _pick(key: str, explicit: int | None, fallback: int) -> tuple[int, bool]:
+        if explicit is not None:
+            try:
+                return max(0, int(explicit)), True
+            except (TypeError, ValueError):
+                return fallback, False
+        if isinstance(source, dict):
+            raw = source.get(key)
+            if raw is not None:
+                try:
+                    return max(0, int(raw)), True
+                except (TypeError, ValueError):
+                    return fallback, False
+        return fallback, False
+
+    chain = None
+    story_type = ""
+    if isinstance(source, dict):
+        chain = source.get("beat_chain") or source.get("gold_beat_chain")
+        story_type = str(
+            source.get("story_type") or source.get("structure_type") or ""
+        )
+    mom_beats = _parent_beat_count(chain, speaker="妈妈")
+    dad_beats = _parent_beat_count(chain, speaker="爸爸")
+    parent_beats = _parent_beat_count(chain)
+
+    mom, _ = _pick("mom_lines_max", mom_lines_max, max(0, int(default_mom_lines_max)))
+    parent, _ = _pick("parent_lines_max", parent_lines_max, mom + 1)
+    dad, _ = _pick("dad_lines_max", dad_lines_max, 1 if parent > 0 else 0)
+
+    cap = chat_line_cap(story_type)
+    mom = min(max(mom, mom_beats), cap)
+    dad = min(max(dad, dad_beats), cap)
+    parent = min(max(parent, mom, dad, parent_beats), cap)
+    return mom, dad, parent
+
+
 def apply_parent_role_budget(
     contract: dict[str, Any],
     *,

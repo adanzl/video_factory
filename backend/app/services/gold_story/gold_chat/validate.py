@@ -2402,18 +2402,25 @@ def validate_chat_hard(
     banned_literals: list[str] | None = None,
     source_type: str = "",
     mom_lines_max: int | None = None,
+    parent_lines_max: int | None = None,
+    dad_lines_max: int | None = None,
 ) -> list[str]:
-    """gold_chat / 成品对白 hard 校验。"""
+    """gold_chat / 成品对白 hard 校验。
+
+    家长预算口径（与 expand._trim_gold_chat_mom_lines 共用同一契约）：
+    家长合计≤parent_lines_max（默认取 mom_lines_max），妈妈≤mom_lines_max，
+    爸爸≤dad_lines_max（默认取 parent_lines_max，不再硬编码 1）。
+    """
     from statistics import mean
 
     from app.services.gold_story.scene import (
         ALLOWED_SPEAKERS,
         CHAT_AVG_LINE_CHARS_MAX,
-        CHAT_LINE_COUNT_MAX,
         CHAT_LINE_COUNT_MIN,
         CHAT_MAX_LINE_CHARS,
         MOM_BANNED_IN_LINE,
         TUTORIAL_RESIDUE,
+        chat_line_cap,
         collect_voice_errors,
     )
     from app.services.daily_story.prompts import (
@@ -2428,10 +2435,17 @@ def validate_chat_hard(
         return ["dialogue 不是列表"]
 
     allowed = set(ALLOWED_SPEAKERS)
-    mom_max = 1 if mom_lines_max is None else max(0, int(mom_lines_max))
-    dad_max = 1
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    mom_max, dad_max, parent_max = resolve_parent_lines_budget(
+        story,
+        mom_lines_max=mom_lines_max,
+        dad_lines_max=dad_lines_max,
+        parent_lines_max=parent_lines_max,
+    )
     mom_count = 0
     dad_count = 0
+    parent_count = 0
 
     for i, item in enumerate(dialogue):
         if not isinstance(item, dict):
@@ -2445,21 +2459,27 @@ def validate_chat_hard(
             errors.append(f"dialogue[{i}] line 为空")
         if sp == "妈妈":
             mom_count += 1
+            parent_count += 1
             if any(w in line for w in MOM_BANNED_IN_LINE):
                 errors.append(f"dialogue[{i}] 妈妈台词像说教")
         if sp == "爸爸":
             dad_count += 1
+            parent_count += 1
             if any(w in line for w in MOM_BANNED_IN_LINE):
                 errors.append(f"dialogue[{i}] 爸爸台词像说教")
 
-    if mom_count > mom_max:
+    mom_over = mom_count > mom_max
+    dad_over = dad_count > dad_max
+    if mom_over:
         errors.append(f"妈妈台词须≤{mom_max}句，当前{mom_count}")
-    if dad_count > dad_max:
+    if dad_over:
         errors.append(f"爸爸台词须≤{dad_max}句，当前{dad_count}")
+    if not mom_over and not dad_over and parent_count > parent_max:
+        errors.append(f"家长台词须≤{parent_max}句，当前{parent_count}")
 
     line_count = len([x for x in dialogue if isinstance(x, dict) and str(x.get("line") or "").strip()])
     st = str(story.get("story_type") or "").strip().upper()
-    line_max = CHAT_LINE_COUNT_MAX + (2 if st == "K" else 0)
+    line_max = chat_line_cap(st)
     if line_count < CHAT_LINE_COUNT_MIN:
         errors.append(f"对白句数须≥{CHAT_LINE_COUNT_MIN}，当前{line_count}")
     if line_count > line_max:

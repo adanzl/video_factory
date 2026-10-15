@@ -155,6 +155,8 @@ _USER = """金故事标题：{title}
 
 {expand_feedback_block}
 
+{retry_missing_events_block}
+
 dialogue_seed（剧情要点，不是最终台词）：
 {dialogue_seed}
 
@@ -1003,18 +1005,66 @@ def format_structure_score_feedback(
     return "\n".join(parts)
 
 
-def format_semantic_acceptance_feedback(error: str) -> str:
-    """终检语义硬伤后的定点修稿指令（保留主线，修问题句及必要上下文）。"""
+def format_retry_missing_events_block(row: dict[str, Any]) -> str:
+    """甲重掷反馈块：上一轮终检缺了哪些叙事事件（无反馈时返回空串）。
+
+    只承载**语义**（事件意图 + 期望说话人），不带 beat 编号与行号——重掷会
+    重建契约，旧编号在新契约里没有意义（专家裁决）。
+    """
+    feedback = row.get("gold_chat_retry_feedback")
+    if not isinstance(feedback, dict):
+        return ""
+    events = feedback.get("missing_events")
+    if not isinstance(events, list) or not events:
+        return ""
+    lines = [
+        "【上一轮缺拍·必须补齐】",
+        "上一轮成稿在终检被判「缺前提」：下列叙事事件没有被任何角色说出口。",
+        "本轮须让它们在对应角色的话里真实发生（可换措辞，不得改事件本身，勿新增道具）：",
+    ]
+    for item in events[:4]:
+        if not isinstance(item, dict):
+            continue
+        intent = str(item.get("original_intent") or "").strip()
+        if not intent:
+            continue
+        speaker = str(item.get("expected_speaker") or "").strip()
+        lines.append(f"- {intent}" + (f"（说话人应为{speaker}）" if speaker else ""))
+    if len(lines) <= 3:
+        return ""
+    return "\n".join(lines)
+
+
+def format_semantic_acceptance_feedback(
+    error: str, *, allow_insert: bool = False
+) -> str:
+    """终检语义硬伤后的定点修稿指令（保留主线，修问题句及必要上下文）。
+
+    ``allow_insert``：缺拍类硬伤只靠改写补不出前提，放行「补拍一行」；
+    默认仍严格冻结行数，避免常规语义修稿借插行缝补绕过问题。
+    """
     err = str(error or "").strip()
     parts = [
         "【终检硬伤·定点修稿】",
         "保留主线冲突与类型收束；只改机审点名的问题行，未点名行只作只读上下文。",
-        "不得增删、合并、拆分对白，不得换 speaker，不得调整行序；勿引入新设定。",
-        "speaker 与 line 须一致：谁做动作、谁被打、「我/你/姐/哥」须按当前说话人视角前后连贯。",
-        "问答/接话问题必须直接接住上一句的话头；修指代时先确认谁在问、谁在答，再改我/你/称呼。",
-        "重复问题只在点名行内删除或改掉重复含义，保留开场触发和必要因果。",
-        f"机审：{err}",
     ]
+    if allow_insert:
+        parts.append(
+            "除机审明确点名的缺拍补行外，不得增删、合并、拆分对白，"
+            "不得换 speaker，不得调整行序；勿引入新设定。"
+        )
+    else:
+        parts.append(
+            "不得增删、合并、拆分对白，不得换 speaker，不得调整行序；勿引入新设定。"
+        )
+    parts.extend(
+        [
+            "speaker 与 line 须一致：谁做动作、谁被打、「我/你/姐/哥」须按当前说话人视角前后连贯。",
+            "问答/接话问题必须直接接住上一句的话头；修指代时先确认谁在问、谁在答，再改我/你/称呼。",
+            "重复问题只在点名行内删除或改掉重复含义，保留开场触发和必要因果。",
+            f"机审：{err}",
+        ]
+    )
     return "\n".join(parts)
 
 

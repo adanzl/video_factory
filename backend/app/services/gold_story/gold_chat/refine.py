@@ -113,6 +113,8 @@ def _close_align_length_without_repair_budget(
     mechanism: str,
     beat_chain: list[Any] | None,
     mom_lines_max: int,
+    dad_lines_max: int | None = None,
+    parent_lines_max: int | None = None,
     dialogue_seed: list[Any] | None = None,
     max_shorten_rounds: int = 2,
 ) -> dict[str, Any]:
@@ -133,6 +135,8 @@ def _close_align_length_without_repair_budget(
             structure_type=structure_type,
             beat_chain=beat_chain,
             mom_lines_max=mom_lines_max,
+            dad_lines_max=dad_lines_max,
+            parent_lines_max=parent_lines_max,
             dialogue_seed=dialogue_seed,
             mechanism=mechanism,
         )
@@ -182,6 +186,8 @@ def _stabilize_refine_candidate(
     structure_type: str,
     beat_chain: list[Any] | None,
     mom_lines_max: int,
+    dad_lines_max: int | None = None,
+    parent_lines_max: int | None = None,
     dialogue_seed: list[Any] | None = None,
     mechanism: str = "",
 ) -> dict[str, Any]:
@@ -198,6 +204,8 @@ def _stabilize_refine_candidate(
         data,
         structure_type=structure_type,
         mom_lines_max=mom_lines_max,
+        dad_lines_max=dad_lines_max,
+        parent_lines_max=parent_lines_max,
     )
     data, opening_patched = apply_opening_causality_local_patch(
         data,
@@ -236,6 +244,8 @@ def _stabilize_refine_repair_candidate(
     structure_type: str,
     beat_chain: list[Any] | None,
     mom_lines_max: int,
+    dad_lines_max: int | None = None,
+    parent_lines_max: int | None = None,
     dialogue_seed: list[Any] | None = None,
     mechanism: str = "",
 ) -> dict[str, Any]:
@@ -251,6 +261,8 @@ def _stabilize_refine_repair_candidate(
         structure_type=structure_type,
         beat_chain=beat_chain,
         mom_lines_max=mom_lines_max,
+        dad_lines_max=dad_lines_max,
+        parent_lines_max=parent_lines_max,
         dialogue_seed=dialogue_seed,
         mechanism=mechanism,
     )
@@ -264,6 +276,8 @@ def _stabilize_refine_repair_candidate(
         mechanism=mechanism,
         beat_chain=beat_chain,
         mom_lines_max=mom_lines_max,
+        dad_lines_max=dad_lines_max,
+        parent_lines_max=parent_lines_max,
         dialogue_seed=dialogue_seed,
     )
     closed_chars = dialogue_total_chars(closed)
@@ -330,6 +344,8 @@ def refine_gold_chat_align(
     align_block: str,
     banned_literals: list[str] | None = None,
     mom_lines_max: int = 1,
+    dad_lines_max: int | None = None,
+    parent_lines_max: int | None = None,
     closing_intent: str = "",
     beat_chain: list[Any] | None = None,
     conflict_text: str = "",

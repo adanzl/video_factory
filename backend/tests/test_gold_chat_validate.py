@@ -1752,3 +1752,59 @@ def test_short_spot_unfreezes_head_when_opening_not_ok():
     unfrozen = list_short_spot_editable_line_nos(chat, freeze_opening=False)
     assert 1 not in frozen
     assert 1 in unfrozen
+
+
+def test_parent_budget_parity_between_validator_and_trimmer():
+    """缺陷1：校验层与裁句层必须共用家长预算口径，否则合规稿必然死锁。
+
+    契约让爸爸承担 2 拍，mom_lines_max 只给 1 时：
+    - 旧实现把爸爸上限硬编码为 1 → 报「爸爸台词须≤1句，当前2」，任何稿都过不了；
+    - 新实现按 beat_chain 抬到 2 → 放行，且裁句层也不砍。
+    """
+    from app.services.gold_story.gold_chat.validate import validate_chat_hard
+    from app.services.gold_story.gold_chat.expand import _trim_gold_chat_mom_lines
+
+    chain = [
+        {"beat": 3, "speaker": "爸爸", "intent": "旁观解说"},
+        {"beat": 5, "speaker": "爸爸", "intent": "被推趔趄"},
+    ]
+    dialogue = [
+        {"speaker": "灿灿", "line": "我先拿到的三轮车，你松手！"},
+        {"speaker": "昭昭", "line": "你才松手，明明是我先看见的！"},
+        {"speaker": "爸爸", "line": "你俩别抢了，我看着头晕。"},
+        {"speaker": "灿灿", "line": "你别解说，我推你一下。"},
+        {"speaker": "爸爸", "line": "哎哟，我站都站不稳了。"},
+        {"speaker": "灿灿", "line": "谁让你不好好劝架，活该。"},
+    ]
+    story = {"story_type": "K", "beat_chain": chain, "dialogue": dialogue}
+
+    errors = validate_chat_hard(story, mom_lines_max=1)
+    assert not [e for e in errors if "爸爸台词" in e], (
+        f"爸爸 2 句被误拦，缺陷1 回归: {errors}"
+    )
+
+    trimmed, _ = _trim_gold_chat_mom_lines(
+        story, mom_lines_max=1, structure_type="K"
+    )
+    dad_after = sum(
+        1 for x in trimmed["dialogue"] if x["speaker"] == "爸爸"
+    )
+    assert dad_after >= 2, "裁句层把爸爸砍到 1 句，与校验层口径不一致"
+
+
+def test_parent_budget_zero_still_blocks_parent_lines():
+    """反例：契约要求家长预算为 0 时，家长说话仍须被拦（别把兜底放宽成不设限）。"""
+    from app.services.gold_story.gold_chat.validate import validate_chat_hard
+
+    story = {
+        "story_type": "N",
+        "beat_chain": [{"beat": 1, "speaker": "灿灿", "intent": "占物"}],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车，你松手！"},
+            {"speaker": "妈妈", "line": "你们别抢了，快松手。"},
+        ],
+    }
+    errors = validate_chat_hard(
+        story, mom_lines_max=0, dad_lines_max=0, parent_lines_max=0
+    )
+    assert [e for e in errors if "妈妈台词" in e]

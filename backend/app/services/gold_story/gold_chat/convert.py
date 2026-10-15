@@ -212,6 +212,91 @@ from app.services.gold_story.gold_chat.refine import (  # noqa: E402
 # 同配置另一轮撞 E 类「禁翻旧账」），重掷换契约比原地重试更容易出稿。
 GOLD_CHAT_DRAFT_ATTEMPTS = 3
 
+# 「缺拍耗尽」单独收窄：终检缺前提是叙事结构缺口，盲重掷换契约不改命，
+# 每次 draft 约 71s（实测 id49），重掷 3 次纯烧钱。故只给 1 次带反馈的重掷。
+GOLD_CHAT_MISSING_BEAT_ATTEMPTS = 1
+
+
+def _is_missing_beat_exhausted(exc: Exception) -> bool:
+    """失败是否属「终检缺前提/缺拍」类（决定甲的重掷上限）。
+
+    以机审结构化的 kind=缺前提 为准（沿 cause 链看），文本匹配仅作兜底。
+    """
+    from app.services.gold_story.gold_chat.finalize import (
+        GoldChatAcceptanceBlocked,
+    )
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairExhausted
+
+    if _missing_beat_intents_from(exc):
+        return True
+    if isinstance(exc, GoldChatRepairExhausted) and _missing_beat_intents_from(
+        exc.candidate
+    ):
+        return True
+    if not isinstance(
+        exc, (GoldChatAcceptanceBlocked, GoldChatRepairExhausted)
+    ):
+        return False
+    # 兜底：机审只给了文字、没带结构化 issue 时按错误文本判断
+    texts: list[str] = []
+    node: Any = exc
+    seen: set[int] = set()
+    while node is not None and id(node) not in seen:
+        seen.add(id(node))
+        texts.append(str(node))
+        node = getattr(node, "__cause__", None) or getattr(node, "__context__", None)
+    text = "\n".join(texts)
+    return "缺前提" in text or "missing_beat" in text
+
+
+def _missing_beat_intents_from(source: Any) -> list[dict[str, str]]:
+    """从异常或候选稿里抽「上一轮缺了哪些叙事事件」。
+
+    只取**语义**信息（意图文本/说话人），不带 beat 编号与行号——甲会重建契约，
+    旧编号在新契约里没有意义（专家裁决）。
+    异常常被 `GoldChatRepairExhausted` 包一层，故沿 cause 链回溯。
+    """
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    visited: set[int] = set()
+    node: Any = source
+    while node is not None and id(node) not in visited:
+        visited.add(id(node))
+        for item in _iter_missing_beat_issues(node):
+            missing = item.get("missing_beat")
+            if not isinstance(missing, dict):
+                continue
+            intent = str(missing.get("intent") or missing.get("event") or "").strip()
+            if not intent or intent in seen:
+                continue
+            seen.add(intent)
+            entry: dict[str, str] = {"original_intent": intent}
+            speaker = str(missing.get("speaker") or "").strip()
+            if speaker:
+                entry["expected_speaker"] = speaker
+            out.append(entry)
+        node = getattr(node, "__cause__", None) or getattr(node, "__context__", None)
+    return out
+
+
+def _iter_missing_beat_issues(node: Any) -> list[dict[str, Any]]:
+    """取出节点上 kind=缺前提 的 issue 列表（异常对象或候选稿均可）。"""
+    issues: Any = getattr(node, "issues", None)
+    if not isinstance(issues, list) and isinstance(node, dict):
+        quality = node.get("quality")
+        if isinstance(quality, dict):
+            issues = quality.get("review_issues")
+        if not isinstance(issues, list):
+            issues = node.get("issues")
+    if not isinstance(issues, list):
+        return []
+    return [
+        item
+        for item in issues
+        if isinstance(item, dict)
+        and str(item.get("kind") or "").strip() == "缺前提"
+    ]
+
 
 def _reroll_h3_on_retry(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """重掷机制/结构：H3 对同一稿的判型带随机性，换一判可绕开同一条硬卡。
@@ -905,9 +990,13 @@ def _refine_after_normalize(
         scene_contract=scene_contract,
         beat=beat,
     )
-    mom_max = scene_contract.get("mom_lines_max")
-    if mom_max is None:
-        mom_max = 1
+    # 家长预算走同一权威口径（与 validate/expand 一致），勿在此另立一套默认值
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    mom_max, dad_max, parent_max = resolve_parent_lines_budget(
+        scene_contract,
+        mom_lines_max=scene_contract.get("mom_lines_max"),
+    )
     source_type = str(
         payload.get("source_type") or scene_contract.get("source_type") or "field"
     )
@@ -954,6 +1043,8 @@ def _refine_after_normalize(
             align_block=align_block,
             banned_literals=banned_list,
             mom_lines_max=int(mom_max),
+            dad_lines_max=int(dad_max),
+            parent_lines_max=int(parent_max),
             closing_intent=closing,
             beat_chain=beat_chain,
             conflict_text=conflict_text,
@@ -1155,6 +1246,8 @@ def validate_gold_chat(
     banned_literals: list[str] | None = None,
     source_type: str = "",
     mom_lines_max: int | None = None,
+    dad_lines_max: int | None = None,
+    parent_lines_max: int | None = None,
 ) -> None:
     """gold_chat 校验：字段/字数/speaker 对齐日常故事常量，再追加金稿独有项。"""
     errors: list[str] = []
@@ -1203,6 +1296,8 @@ def validate_gold_chat(
             banned_literals=banned_literals,
             source_type=source_type,
             mom_lines_max=mom_lines_max,
+            dad_lines_max=dad_lines_max,
+            parent_lines_max=parent_lines_max,
         )
     )
 
@@ -1336,7 +1431,48 @@ def _persist_m5_h_contract_if_needed(row: dict[str, Any]) -> dict[str, Any]:
         repo_gold_story.patch_story_payload(gid, {"scene_contract": repaired_sc})
     if core_changed:
         repo_gold_story.update_conflict_core(gid, conflict_core)
-    return repo_gold_story.get_story(gid) or row
+    return carry_retry_feedback(repo_gold_story.get_story(gid), row)
+
+
+def carry_retry_feedback(
+    fresh: dict[str, Any] | None, stale: dict[str, Any]
+) -> dict[str, Any]:
+    """从库里重读行后，把内存态的重掷反馈带过去。
+
+    ``gold_chat_retry_feedback`` 只活在内存（不入库），而若干处会
+    `repo_gold_story.get_story()` 重建行对象；不带走就会被静默丢掉，
+    甲的缺拍提示等于没生效。
+    """
+    if not fresh or fresh is stale:
+        return stale
+    feedback = stale.get("gold_chat_retry_feedback")
+    if feedback is None:
+        return fresh
+    return {**fresh, "gold_chat_retry_feedback": feedback}
+
+
+def _attach_retry_missing_events(
+    row: dict[str, Any],
+    missing_events: list[dict[str, str]],
+) -> dict[str, Any]:
+    """把上一轮缺失的叙事事件挂到行上，供契约重建与草稿消费（软约束）。
+
+    只传语义（original_intent / expected_speaker），**不传** beat 编号与行号——
+    甲会重建契约，旧编号在新契约里没有意义（专家裁决）。
+    """
+    events = [
+        dict(x)
+        for x in missing_events
+        if isinstance(x, dict) and str(x.get("original_intent") or "").strip()
+    ]
+    if not events:
+        return row
+    out = dict(row)
+    out["gold_chat_retry_feedback"] = {
+        "reason": "missing_beat_exhausted",
+        "missing_events": events,
+    }
+    return out
 
 
 def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
@@ -1551,6 +1687,9 @@ def convert_gold_chat(
         sid = str(row.get("source_id") or "").strip()
         chat = None
         last_exc: Exception | None = None
+        # 「缺拍耗尽」只给 1 次带反馈的重掷；其它失败类型仍用全局 3 次（专家裁决）。
+        draft_attempts = GOLD_CHAT_DRAFT_ATTEMPTS
+        retry_feedback: list[dict[str, str]] = []
         for draft_attempt in range(1, GOLD_CHAT_DRAFT_ATTEMPTS + 1):
             if draft_attempt > 1:
                 # 重掷：换一次 H3 判型（机制/结构），再重跑 H3a/H3b 换契约，
@@ -1570,6 +1709,9 @@ def convert_gold_chat(
                         sid,
                         str(reroll_exc)[:120],
                     )
+                if retry_feedback:
+                    # 甲：把上一轮缺的叙事事件回灌契约重建，避免盲重掷
+                    row = _attach_retry_missing_events(row, retry_feedback)
                 try:
                     row = _rebuild_h3a_h3b_on_convert(row)
                 except Exception as rebuild_exc:
@@ -1589,13 +1731,21 @@ def convert_gold_chat(
                 break
             except Exception as exc:
                 last_exc = exc
-                if draft_attempt >= GOLD_CHAT_DRAFT_ATTEMPTS or not _is_retryable_draft_failure(exc):
+                if _is_missing_beat_exhausted(exc):
+                    draft_attempts = min(
+                        draft_attempts, GOLD_CHAT_MISSING_BEAT_ATTEMPTS
+                    )
+                    found = _missing_beat_intents_from(exc)
+                    if found:
+                        retry_feedback = found
+                if draft_attempt >= draft_attempts or not _is_retryable_draft_failure(exc):
                     raise
                 logger.info(
-                    "[GOLD_CHAT] draft retry %s/%s source_id=%s after: %s",
+                    "[GOLD_CHAT] draft retry %s/%s source_id=%s feedback=%s after: %s",
                     draft_attempt,
-                    GOLD_CHAT_DRAFT_ATTEMPTS,
+                    draft_attempts,
                     sid,
+                    [x.get("original_intent") for x in retry_feedback] or "none",
                     str(exc)[:160],
                 )
         if chat is None:

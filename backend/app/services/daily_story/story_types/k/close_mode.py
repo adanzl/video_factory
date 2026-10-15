@@ -30,6 +30,14 @@ RE_BEAT_PARENT_FAIL = re.compile(
     r"劝失败|管不了|劝不动|劝不了|拦不住|制止失败|越劝越"
 )
 RE_BEAT_STALE = re.compile(r"僵持|不和好|冷战|仍不对付|不对付")
+# 孩子自行停战（抽象冲突终止事件类型，非单篇道具/动作）
+RE_BEAT_CHILD_STOP = re.compile(
+    r"停手|收手|罢手|放手|停战|停下|不打了|不闹了|收场|收势"
+)
+# 停战后再恢复互动/关系缓和；单有"停手"只算暂停，须与之组合才判 K-B
+RE_BEAT_CHILD_RESUME = re.compile(
+    r"笑|一起|一块|和好|恢复互动|搭话|邀约|勾肩|继续玩|出门|问吃|抹脸"
+)
 RE_CLOSE_PASSIVE = re.compile(r"不掺和|旁观|不评理|不参与")
 RE_CLOSE_FAIL_STALE = re.compile(
     r"劝失败|管不了|僵持|不和好|劝不动|劝不了"
@@ -123,19 +131,61 @@ def k_b_passive_mutter_from_closing(closing_intent: str) -> str:
     return f"{lead}……嗯，让他们自己弄去吧。"
 
 
-def k_close_mode_from_story(story: dict[str, Any]) -> str:
-    """读稿上已落盘的 k_close_mode；缺省为 K_UNKNOWN（勿当 K-A）。"""
+K_MODE_SOURCE_STORED = "stored"
+K_MODE_SOURCE_LEGACY_EMPTY = "legacy_empty"
+K_MODE_SOURCE_EXPLICIT_UNKNOWN = "explicit_unknown"
+K_MODE_SOURCE_ABSENT = "absent"
+# 历史稿从未落盘该字段：沿用旧兜底，不因"字段缺失"阻断。
+K_MODE_SOURCE_LEGACY = frozenset({K_MODE_SOURCE_LEGACY_EMPTY, K_MODE_SOURCE_ABSENT})
+
+
+def _read_k_close_mode(
+    story: dict[str, Any],
+) -> tuple[str, str]:
+    """读稿上 k_close_mode，并区分来源：(mode, source)。
+
+    ``legacy_empty``/``absent`` 表示历史字段缺失（旧稿兼容，勿当"判不出"）；
+    ``explicit_unknown`` 才是解析器跑过但落 K_UNKNOWN 的显式状态。
+    """
     if not isinstance(story, dict):
-        return K_UNKNOWN
-    direct = normalize_k_close_mode(str(story.get("k_close_mode") or ""))
-    if direct != K_UNKNOWN:
-        return direct
+        return K_UNKNOWN, K_MODE_SOURCE_ABSENT
+    raw = str(story.get("k_close_mode") or "").strip()
+    if raw:
+        return (
+            normalize_k_close_mode(raw),
+            K_MODE_SOURCE_EXPLICIT_UNKNOWN
+            if normalize_k_close_mode(raw) == K_UNKNOWN
+            else K_MODE_SOURCE_STORED,
+        )
     sc = story.get("scene_contract")
     if isinstance(sc, dict):
-        nested = normalize_k_close_mode(str(sc.get("k_close_mode") or ""))
-        if nested != K_UNKNOWN:
-            return nested
-    return K_UNKNOWN
+        nested = str(sc.get("k_close_mode") or "").strip()
+        if nested:
+            return (
+                normalize_k_close_mode(nested),
+                K_MODE_SOURCE_EXPLICIT_UNKNOWN
+                if normalize_k_close_mode(nested) == K_UNKNOWN
+                else K_MODE_SOURCE_STORED,
+            )
+    if "k_close_mode" in story or (
+        isinstance(sc, dict) and "k_close_mode" in sc
+    ):
+        return K_UNKNOWN, K_MODE_SOURCE_LEGACY_EMPTY
+    return K_UNKNOWN, K_MODE_SOURCE_ABSENT
+
+
+def k_close_mode_from_story(story: dict[str, Any]) -> str:
+    """读稿上已落盘的 k_close_mode；缺省为 K_UNKNOWN（勿当 K-A）。"""
+    return _read_k_close_mode(story)[0]
+
+
+def k_close_mode_is_explicit_unknown(story: dict[str, Any]) -> bool:
+    """是否"解析器跑过并显式判为 K_UNKNOWN"（历史空值不算）。
+
+    新稿显式 K_UNKNOWN 属未定轨非法状态，不得空转放行；历史空值走旧兜底。
+    """
+    mode, source = _read_k_close_mode(story)
+    return mode == K_UNKNOWN and source == K_MODE_SOURCE_EXPLICIT_UNKNOWN
 
 
 def _beat_intents(beat_chain: list[Any]) -> list[str]:
@@ -171,13 +221,17 @@ def resolve_k_close_mode(
         RE_CLOSE_FAIL_STALE.search(closing)
     )
     stale_end = bool(RE_BEAT_STALE.search(last3 + closing))
+    # 组合规则：自行停战 + 末段恢复互动。单有"停手"只算暂停，不判 K-B。
+    child_stop_last = bool(RE_BEAT_CHILD_STOP.search(last3 + closing))
+    child_resume = bool(RE_BEAT_CHILD_RESUME.search(last3 + closing))
+    child_self_resolved = (child_stop_last and child_resume) or child_self_last
 
-    if child_self_last and parent_passive and not stale_end:
+    if child_self_resolved and parent_passive and not stale_end:
         return K_B_CHILD_SELF_RESOLVE
-    if parent_fail and stale_end and not child_self_last:
+    if parent_fail and stale_end and not child_self_resolved:
         return K_A_PARENT_FAIL_STALEMATE
     if child_self_any and parent_passive:
-        if not parent_fail or child_self_last:
+        if not parent_fail or child_self_resolved:
             return K_B_CHILD_SELF_RESOLVE
     if parent_fail and not child_self_any:
         return K_A_PARENT_FAIL_STALEMATE

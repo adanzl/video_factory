@@ -323,6 +323,8 @@ def _is_body_chars_shortage_only_text(msg: str) -> bool:
         "垫字",
         "structure_score:",
         "妈妈台词须",
+        "爸爸台词须",
+        "家长台词须",
         "narration_not_speech",
     )
     return not any(token in text for token in blocked)

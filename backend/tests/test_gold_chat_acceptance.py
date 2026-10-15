@@ -2822,3 +2822,433 @@ def test_mixed_local_hard_errors_do_not_enter_duplicate_repair(monkeypatch):
         )
     fix.assert_not_called()
     semantic.assert_not_called()
+
+
+def _missing_beat_exc(line_no: int, beat: int, speaker: str, intent: str):
+    return GoldChatSemanticBlocked(
+        f"终检语义硬伤：第[{line_no}]句·缺前提：测试",
+        issues=[
+            {
+                "lines": [line_no],
+                "kind": "缺前提",
+                "desc": "结果句依赖的事件前文没交代",
+                "fix": "先把缺失事件说出来",
+                "missing_beat": {"beat": beat, "speaker": speaker, "intent": intent},
+            }
+        ],
+    )
+
+
+def test_semantic_repair_allows_one_missing_beat_insertion():
+    """缺拍只靠改故障行补不出前提，应放行「补拍一行」并保留其余全部原行。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _apply_semantic_missing_beat_insertion,
+        _semantic_repair_target_lines,
+    )
+
+    original = {
+        "story_type": "K",
+        "gold_beat_chain": [
+            {"beat": 5, "speaker": "爸爸", "addressee": "灿灿", "intent": "被推趔趄"},
+        ],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "你从沙发上跳下来就抢。"},
+            {"speaker": "爸爸", "line": "看这招，昭昭无影脚。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    exc = _missing_beat_exc(4, 5, "爸爸", "被推趔趄")
+    lifted = {
+        "story_type": "K",
+        "gold_beat_chain": original["gold_beat_chain"],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "你从沙发上跳下来就抢。"},
+            {"speaker": "爸爸", "line": "看这招，昭昭无影脚。"},
+            {"speaker": "灿灿", "line": "谁让你解说，我推你一下！"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    out, changed = _apply_semantic_missing_beat_insertion(
+        original,
+        lifted,
+        exc,
+        target_lines=_semantic_repair_target_lines(exc),
+        st_final="K",
+        normalize_chat=lambda c: c,
+    )
+    assert changed is True
+    assert len(out["dialogue"]) == len(original["dialogue"]) + 1
+    # 原行逐字保留（补行之外不动任何一行）
+    assert out["dialogue"][:3] == original["dialogue"][:3]
+    assert out["dialogue"][4] == original["dialogue"][3]
+    # 补行落在故障行（第4句）之前
+    assert out["dialogue"][3] == {
+        "speaker": "灿灿",
+        "line": "谁让你解说，我推你一下！",
+    }
+
+
+def test_semantic_repair_insert_keeps_target_edits_after_insert_point():
+    """补行插在目标行之前时，目标行改写须取右移后的那一行，不得抄到补行文本。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _apply_semantic_missing_beat_insertion,
+        _semantic_repair_target_lines,
+    )
+
+    original = {
+        "story_type": "K",
+        "gold_beat_chain": [
+            {"beat": 5, "speaker": "爸爸", "addressee": "灿灿", "intent": "被推趔趄"},
+        ],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "你从沙发上跳下来就抢。"},
+            {"speaker": "爸爸", "line": "看这招，昭昭无影脚。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    # 最早故障行=4；补行插在下标2（第3句之前）
+    exc = _missing_beat_exc(4, 5, "爸爸", "被推趔趄")
+    lifted = {
+        "story_type": "K",
+        "gold_beat_chain": original["gold_beat_chain"],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "你从沙发上跳下来就抢。"},
+            {"speaker": "灿灿", "line": "谁让你解说，我推你一下！"},
+            {"speaker": "爸爸", "line": "看这招，昭昭无影脚。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲，屁股沾了灰呀。"},
+        ],
+    }
+    out, changed = _apply_semantic_missing_beat_insertion(
+        original,
+        lifted,
+        exc,
+        target_lines=_semantic_repair_target_lines(exc),
+        st_final="K",
+        normalize_chat=lambda c: c,
+    )
+    assert changed is True
+    assert len(out["dialogue"]) == 5
+    # 补行只出现一次
+    texts = [x["line"] for x in out["dialogue"]]
+    assert texts.count("谁让你解说，我推你一下！") == 1
+    # 未点名的第1、2句原样保留
+    assert out["dialogue"][0] == original["dialogue"][0]
+    assert out["dialogue"][1] == original["dialogue"][1]
+    # 目标行（第4句）取到右移后的改写，且 speaker 沿用原行
+    assert out["dialogue"][4] == {
+        "speaker": "昭昭",
+        "line": "爸爸摔了个屁股蹲，屁股沾了灰呀。",
+    }
+    # 第3句（原样，非目标行）仍是爸爸那句，没被补行顶掉
+    assert out["dialogue"][3] == original["dialogue"][2]
+
+
+def test_missing_beat_expected_speakers_include_addressee():
+    """受动拍（爸爸·被推）的补前提行由施动方（addressee=灿灿）说出也应放行。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _missing_beat_expected_speakers,
+    )
+
+    chat = {
+        "gold_beat_chain": [
+            {"beat": 5, "speaker": "爸爸", "addressee": "灿灿", "intent": "被推趔趄"},
+        ],
+    }
+    speakers = _missing_beat_expected_speakers(
+        [{"beat": 5, "speaker": "爸爸", "intent": "被推趔趄"}], chat=chat
+    )
+    assert speakers == {"爸爸", "灿灿"}
+
+
+def test_semantic_repair_rejects_speaker_not_in_dialogue():
+    """契约里的说话人在本篇对白里没开口时，不得放行其补行。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _apply_semantic_missing_beat_insertion,
+        _semantic_repair_target_lines,
+    )
+
+    original = {
+        "story_type": "K",
+        "gold_beat_chain": [{"beat": 5, "speaker": "妈妈", "intent": "被推趔趄"}],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    exc = _missing_beat_exc(2, 5, "妈妈", "被推趔趄")
+    lifted = {
+        "story_type": "K",
+        "gold_beat_chain": original["gold_beat_chain"],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "妈妈", "line": "你推你爸爸干嘛。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    out, changed = _apply_semantic_missing_beat_insertion(
+        original,
+        lifted,
+        exc,
+        target_lines=_semantic_repair_target_lines(exc),
+        st_final="K",
+        normalize_chat=lambda c: c,
+    )
+    assert changed is False
+    assert out["dialogue"] == original["dialogue"]
+
+
+def test_semantic_repair_rejects_narration_insertion():
+    """补拍行不得写成旁白；旁白直接拒绝，退回冻结域修稿。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _apply_semantic_missing_beat_insertion,
+        _semantic_repair_target_lines,
+    )
+
+    original = {
+        "story_type": "K",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    exc = _missing_beat_exc(2, 5, "爸爸", "被推趔趄")
+    lifted = {
+        "story_type": "K",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "灿灿", "line": "灿灿一把推得爸爸趔趄。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    out, changed = _apply_semantic_missing_beat_insertion(
+        original,
+        lifted,
+        exc,
+        target_lines=_semantic_repair_target_lines(exc),
+        st_final="K",
+        normalize_chat=lambda c: c,
+    )
+    assert changed is False
+    assert out["dialogue"] == original["dialogue"]
+
+
+def test_semantic_repair_rejects_insert_after_failure_line():
+    """补行插在故障行之后就构不成因果，必须拒绝。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _apply_semantic_missing_beat_insertion,
+        _semantic_repair_target_lines,
+    )
+
+    original = {
+        "story_type": "K",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+            {"speaker": "灿灿", "line": "谁让你不好好劝架。"},
+        ],
+    }
+    exc = _missing_beat_exc(2, 5, "爸爸", "被推趔趄")
+    lifted = {
+        "story_type": "K",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+            {"speaker": "灿灿", "line": "谁让你不好好劝架。"},
+            {"speaker": "灿灿", "line": "谁让你解说，我推你一下！"},
+        ],
+    }
+    out, changed = _apply_semantic_missing_beat_insertion(
+        original,
+        lifted,
+        exc,
+        target_lines=_semantic_repair_target_lines(exc),
+        st_final="K",
+        normalize_chat=lambda c: c,
+    )
+    assert changed is False
+    assert out["dialogue"] == original["dialogue"]
+
+
+def test_semantic_repair_rejects_insert_with_wrong_speaker():
+    """补行说话人须是该缺失 beat 的说话人。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _apply_semantic_missing_beat_insertion,
+        _semantic_repair_target_lines,
+    )
+
+    original = {
+        "story_type": "K",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    exc = _missing_beat_exc(2, 5, "爸爸", "被推趔趄")
+    lifted = {
+        "story_type": "K",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "妈妈", "line": "你别推你爸爸行不行。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    out, changed = _apply_semantic_missing_beat_insertion(
+        original,
+        lifted,
+        exc,
+        target_lines=_semantic_repair_target_lines(exc),
+        st_final="K",
+        normalize_chat=lambda c: c,
+    )
+    assert changed is False
+    assert out["dialogue"] == original["dialogue"]
+
+
+def test_semantic_repair_prompt_states_insert_permission_only_for_missing_beat():
+    """只有缺拍类硬伤才在提示词里放行插行；普通语义瑕疵仍冻结行数。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _build_export_repair_feedback,
+    )
+
+    chat = {
+        "story_type": "K",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀。"},
+        ],
+    }
+    gap_prompt = _build_export_repair_feedback(
+        _missing_beat_exc(2, 5, "爸爸", "被推趔趄"),
+        chat,
+        {"title": "测试"},
+        st_final="K",
+        mom_max=1,
+    )
+    assert "缺拍补行" in gap_prompt
+    assert "beat=5" in gap_prompt
+    assert "不得增删、合并、拆分对白" in gap_prompt
+
+    grammar = GoldChatSemanticBlocked(
+        "终检语义硬伤：第[2]句·语病：指代不清",
+        issues=[{"lines": [2], "kind": "语病", "desc": "指代不清"}],
+    )
+    grammar_prompt = _build_export_repair_feedback(
+        grammar, chat, {"title": "测试"}, st_final="K", mom_max=1
+    )
+    assert "缺拍补行" not in grammar_prompt
+    assert "不得增删、合并、拆分对白" in grammar_prompt
+
+
+def _cap_fixture(n_rows: int):
+    """造一篇 n_rows 行的 K 稿，末句缺前提；缺失拍 5 的说话人已开口。"""
+    filler = [
+        {"speaker": "灿灿", "line": f"我先拿到的三轮车，第{i}遍问他。"}
+        for i in range(n_rows - 2)
+    ]
+    rows = [
+        *filler,
+        {"speaker": "爸爸", "line": "你俩别抢了，我看着都头晕。"},
+        {"speaker": "昭昭", "line": "爸爸摔了个屁股蹲呀，屁股都沾灰了。"},
+    ]
+    assert len(rows) == n_rows
+    original = {"story_type": "K", "dialogue": rows}
+    exc = _missing_beat_exc(n_rows, 5, "爸爸", "被推趔趄")
+    lifted = {
+        "story_type": "K",
+        "dialogue": [
+            *rows[:-1],
+            {"speaker": "爸爸", "line": "她推我一下，我站都站不稳。"},
+            rows[-1],
+        ],
+    }
+    return original, lifted, exc
+
+
+def test_semantic_insertion_cap_matches_validator_for_k():
+    """乙的插入上限必须与校验层一致：K 类同样享受 +2，否则合法 K 稿不许补拍。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _apply_semantic_missing_beat_insertion,
+        _semantic_repair_target_lines,
+    )
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
+
+    # 已到普通上限 24 行的 K 稿：校验层允许到 26，故仍应允许补拍
+    original, lifted, exc = _cap_fixture(CHAT_LINE_COUNT_MAX)
+    out, changed = _apply_semantic_missing_beat_insertion(
+        original,
+        lifted,
+        exc,
+        target_lines=_semantic_repair_target_lines(exc),
+        st_final="K",
+        normalize_chat=lambda c: c,
+    )
+    assert changed is True
+    assert len(out["dialogue"]) == CHAT_LINE_COUNT_MAX + 1
+
+
+def test_semantic_insertion_rejects_over_cap_even_for_k():
+    """超过 K 类上限（26）时必须拒绝补行，不得无界膨胀。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _apply_semantic_missing_beat_insertion,
+        _semantic_repair_target_lines,
+    )
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
+
+    # 刚好压线 26 行：再补一行就是 27，超 K 上限，必须拒绝
+    original, lifted, exc = _cap_fixture(CHAT_LINE_COUNT_MAX + 2)
+    out, changed = _apply_semantic_missing_beat_insertion(
+        original,
+        lifted,
+        exc,
+        target_lines=_semantic_repair_target_lines(exc),
+        st_final="K",
+        normalize_chat=lambda c: c,
+    )
+    assert changed is False
+    assert len(out["dialogue"]) == CHAT_LINE_COUNT_MAX + 2
+
+
+def test_repeated_missing_beat_insertion_is_not_retried(monkeypatch):
+    """同一缺拍连续两轮仍被判缺 → 属契约/生成根因，禁止反复插行。"""
+    from app.services.daily_story import review as review_mod
+    from app.services.gold_story.gold_chat import finalize
+    from unittest.mock import Mock
+
+    beat_exc = _missing_beat_exc(2, 5, "爸爸", "被推趔趄")
+    monkeypatch.setattr(
+        review_mod, "run_export_semantic_review", Mock(side_effect=beat_exc)
+    )
+    # 冻结域永远改不动 → 每轮都会考虑走乙
+    monkeypatch.setattr(
+        finalize, "_sanitize_semantic_scoped_repair",
+        lambda *a, **k: (dict(a[0]), False),
+    )
+    insert_attempts: list[int] = []
+    real_apply = finalize._apply_semantic_missing_beat_insertion
+
+    def _spy_apply(*args, **kwargs):
+        insert_attempts.append(1)
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(finalize, "_apply_semantic_missing_beat_insertion", _spy_apply)
+    with pytest.raises(GoldChatAcceptanceBlocked):
+        finalize.run_gold_chat_final_acceptance_with_semantic_repair(
+            _story([{"speaker": "灿灿", "line": "我先拿到的三轮车。"}]),
+            {"title": "测试"},
+            sid="TEST",
+            st_final="K",
+            banned=[],
+            mom_max=1,
+            source_type="field",
+            attach_score=lambda c, r: c,
+            gate_score=lambda c: 80,
+            normalize_chat=lambda c: c,
+            fix_llm=Mock(side_effect=lambda *a, **k: {"dialogue": []}),
+            validate_chat=lambda c: None,
+        )
+    # 第一轮允许尝试补拍；同拍第二轮必须被拦，不能每轮都插
+    assert len(insert_attempts) == 1

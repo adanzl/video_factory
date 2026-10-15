@@ -2557,3 +2557,129 @@ def test_remap_source_kinship_to_jiedi_metadata():
     # 对白正文不动（第三方可能有出处）
     assert out["dialogue"] == story["dialogue"]
     assert notes
+
+
+class _SemanticBlocked(gcf.GoldChatAcceptanceBlocked):
+    """带结构化 issues 的终检语义硬伤（测试替身）。"""
+
+    def __init__(self, message: str, issues: list) -> None:
+        self.issues = issues
+        super().__init__(message)
+
+
+def _missing_beat_issues() -> list:
+    return [
+        {
+            "lines": [13],
+            "kind": "缺前提",
+            "desc": "爸爸只是坐着解说，没有任何被推或摔倒的事件发生",
+            "missing_beat": {"beat": 5, "speaker": "爸爸", "intent": "被推趔趄"},
+        },
+        {
+            "lines": [14],
+            "kind": "缺前提",
+            "desc": "这句归因依赖缺失的推人事件",
+            "missing_beat": {"beat": 4, "speaker": "灿灿", "intent": "攻击解说员"},
+        },
+    ]
+
+
+def test_missing_beat_exhausted_detects_semantic_block():
+    """缺拍类终检硬伤应被识别（甲 触发条件）。"""
+    exc = _SemanticBlocked("终检语义硬伤：缺前提", _missing_beat_issues())
+    assert gc._is_missing_beat_exhausted(exc)
+
+
+def test_missing_beat_exhausted_unwraps_repair_exhausted():
+    """真实链路里语义异常被 GoldChatRepairExhausted 包一层，仍须识别。"""
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairExhausted
+
+    inner = _SemanticBlocked("终检语义硬伤：缺前提", _missing_beat_issues())
+    wrapped = GoldChatRepairExhausted(
+        stage="final_acceptance", reason=str(inner), candidate={"dialogue": []}
+    )
+    wrapped.__cause__ = inner
+    assert gc._is_missing_beat_exhausted(wrapped)
+
+
+def test_missing_beat_exhausted_ignores_non_beat_failures():
+    """非缺拍失败不得触发甲（仍走全局 3 次重掷）。"""
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairExhausted
+
+    other = GoldChatRepairExhausted(
+        stage="final_acceptance",
+        reason="对白句数须≥12，当前9",
+        candidate={"dialogue": []},
+    )
+    assert not gc._is_missing_beat_exhausted(other)
+
+
+def test_missing_beat_retry_limit_is_one():
+    """缺拍类只给 1 次重掷，全局常量仍为 3（专家裁决，勿改全局）。"""
+    assert gc.GOLD_CHAT_MISSING_BEAT_ATTEMPTS == 1
+    assert gc.GOLD_CHAT_DRAFT_ATTEMPTS == 3
+
+
+def test_extract_missing_beat_intents_keeps_semantics_only():
+    """抽取的反馈只带语义事件与说话人，不带 beat 编号/行号。"""
+    exc = _SemanticBlocked("终检语义硬伤：缺前提", _missing_beat_issues())
+    got = gc._missing_beat_intents_from(exc)
+    assert got == [
+        {"original_intent": "被推趔趄", "expected_speaker": "爸爸"},
+        {"original_intent": "攻击解说员", "expected_speaker": "灿灿"},
+    ]
+    for item in got:
+        assert "beat" not in item
+        assert "insert_after_line" not in item
+        assert "lines" not in item
+
+
+def test_extract_missing_beat_intents_dedupes():
+    """同一事件重复报多次只保留一条。"""
+    issues = _missing_beat_issues()
+    issues.append(dict(issues[0], lines=[15]))
+    exc = _SemanticBlocked("终检语义硬伤：缺前提", issues)
+    assert len(gc._missing_beat_intents_from(exc)) == 2
+
+
+def test_retry_feedback_block_renders_events():
+    """重掷反馈块须落到提示词里，且无反馈时为空串。"""
+    from app.services.gold_story.gold_chat.prompts import (
+        format_retry_missing_events_block,
+    )
+
+    exc = _SemanticBlocked("终检语义硬伤：缺前提", _missing_beat_issues())
+    row = gc._attach_retry_missing_events({"id": 49}, gc._missing_beat_intents_from(exc))
+    block = format_retry_missing_events_block(row)
+    assert "上一轮缺拍" in block
+    assert "被推趔趄" in block
+    assert "爸爸" in block
+    # 无反馈行不得渲染出提示块
+    assert format_retry_missing_events_block({"id": 49}) == ""
+    assert gc._attach_retry_missing_events({"id": 49}, []) == {"id": 49}
+
+
+def test_expand_prompt_template_has_retry_events_slot():
+    """扩写模板须留出缺拍反馈槽位，否则甲 的反馈根本进不了草稿。"""
+    from app.services.gold_story.gold_chat.prompts import _USER
+
+    assert "{retry_missing_events_block}" in _USER
+
+
+def test_carry_retry_feedback_survives_db_reload():
+    """从库里重读行后，内存态的重掷反馈不得被静默丢掉。"""
+    stale = {
+        "id": 49,
+        "gold_chat_retry_feedback": {
+            "reason": "missing_beat_exhausted",
+            "missing_events": [{"original_intent": "被推趔趄"}],
+        },
+    }
+    fresh = {"id": 49, "structure_type": "K"}  # 库里没有该字段
+    out = gc.carry_retry_feedback(fresh, stale)
+    assert out["gold_chat_retry_feedback"] == stale["gold_chat_retry_feedback"]
+    assert out["structure_type"] == "K"
+    # 无反馈时原样返回库里行；库无行时退回旧行
+    assert gc.carry_retry_feedback({"id": 49}, {"id": 49}) == {"id": 49}
+    assert gc.carry_retry_feedback(None, stale) is stale
+    assert gc.carry_retry_feedback(fresh, fresh) is fresh

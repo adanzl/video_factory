@@ -237,3 +237,49 @@ def test_collect_errors_sanitize_then_validate():
     errors = collect_candidate_repair_errors(story, mom_lines_max=3)
     assert errors
     assert any(str(DAILY_STORY_BODY_CHARS_MIN) in e for e in errors)
+
+
+def test_pad_line_duplicate_three_levels():
+    """垫字判重三级：逐字、去语气词后同句、以及近似句都要拦住。"""
+    from app.services.gold_story.gold_chat.length import (
+        _norm_pad_line,
+        _pad_line_bigrams,
+        _pad_line_is_duplicate,
+        _pad_line_similarity,
+    )
+
+    existing = ["你再说一遍试试，我就是不服！"]
+    # 1) 逐字重复
+    assert _pad_line_is_duplicate("你再说一遍试试，我就是不服！", existing) is True
+    # 2) 只差语气词/标点：逐字比对会漏，归一化后须判重
+    assert _pad_line_is_duplicate("你再说一遍试试啊，我就是不服！", existing) is True
+    assert _norm_pad_line("你再说一遍试试啊，我就是不服！") == _norm_pad_line(existing[0])
+    # 3) 真正的近似句（高相似但非同一句）也要拦
+    assert _pad_line_similarity("你再说一遍试试，我就是不服气！", existing[0]) >= 0.6
+    assert _pad_line_is_duplicate("你再说一遍试试，我就是不服气！", existing) is True
+    # 反例：不相关的句子必须放行，否则垫字补不出内容
+    assert _pad_line_is_duplicate("咱们去吃西瓜吧。", existing) is False
+    assert _pad_line_similarity("咱们去吃西瓜吧。", existing[0]) < 0.6
+    # 空串视为重复（不可插入空行）
+    assert _pad_line_is_duplicate("   ", existing) is True
+    assert _pad_line_is_duplicate("不管你说啥。", []) is False
+    assert _pad_line_bigrams("") == set()
+    assert _pad_line_similarity("", "不管你说啥。") == 0.0
+
+
+def test_pad_safe_insert_bounds_avoid_opening_and_tail():
+    """垫字不得插在开场前两句，也不得挤掉末段收束槽位。"""
+    from app.services.gold_story.gold_chat.length import _pad_safe_insert_bounds
+
+    for count in range(1, 30):
+        lo, hi = _pad_safe_insert_bounds(count)
+        assert 0 <= lo <= hi <= count
+        assert lo <= 2, "开场前两句须避开"
+        # 末段须留 4 个收束槽位；区间已被 lo 垫底时（超短稿）不强求
+        if count - 4 >= lo:
+            assert hi <= count - 4, "末段须留 4 个收束槽位"
+    # 短稿不能因收缩区间而变成空区间
+    lo, hi = _pad_safe_insert_bounds(1)
+    assert lo <= hi
+    lo2, hi2 = _pad_safe_insert_bounds(3)
+    assert lo2 <= hi2

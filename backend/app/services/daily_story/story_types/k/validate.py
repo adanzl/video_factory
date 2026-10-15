@@ -8,8 +8,8 @@ from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.k.close_mode import (
     K_A_PARENT_FAIL_STALEMATE,
     K_B_CHILD_SELF_RESOLVE,
-    K_UNKNOWN,
     k_close_mode_from_story,
+    k_close_mode_is_explicit_unknown,
     normalize_k_close_mode,
 )
 
@@ -194,4 +194,10 @@ def append_k_body_errors(story: dict, errors: list[str]) -> None:
         _append_k_a_body_errors(story, errors, lines=lines, speakers=speakers)
     elif mode == K_B_CHILD_SELF_RESOLVE:
         _append_k_b_body_errors(story, errors, lines=lines, speakers=speakers)
-    # K_UNKNOWN：不卡劝失败/僵持/自行收场，避免误当 K-A
+    elif k_close_mode_is_explicit_unknown(story):
+        # 新稿显式 K_UNKNOWN：解析器跑过却未定轨，属非法状态。
+        # 若在此空转，则 K-A/K-B 两条硬卡都不生效，任何非法收场都能过。
+        errors.append(
+            "K_UNKNOWN：未能归入 K-A/K-B，须回契约重建收束意图后重生成"
+        )
+    # 历史稿字段缺失（legacy_empty/absent）：不卡劝失败/僵持/自行收场，避免误当 K-A

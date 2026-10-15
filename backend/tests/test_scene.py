@@ -1234,3 +1234,96 @@ def test_fact_attribution_review_required_for_unresolved():
             }
         ]
     )
+
+
+def test_resolve_parent_lines_budget_derives_from_beats_not_guesses():
+    """家长台词预算：beat_chain 里家长承担几拍，就给几句额度（防死锁）。"""
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    # 契约让爸爸承担 2 拍，却不给额度 → 任何合规稿都过不了硬卡，须按拍数抬
+    chain = [
+        {"speaker": "灿灿", "intent": "占物"},
+        {"speaker": "爸爸", "intent": "旁观解说"},
+        {"speaker": "爸爸", "intent": "被推趔趄"},
+    ]
+    mom, dad, parent = resolve_parent_lines_budget({"beat_chain": chain})
+    assert dad >= 2
+    assert parent >= 2
+
+    # 妈妈承担 3 拍同理
+    mom2, _, parent2 = resolve_parent_lines_budget(
+        {"beat_chain": [{"speaker": "妈妈", "intent": f"劝{i}"} for i in range(3)]}
+    )
+    assert mom2 >= 3 and parent2 >= 3
+
+    # 只按拍数抬，不凭剧情猜词
+    mom3, dad3, parent3 = resolve_parent_lines_budget(
+        {"beat_chain": [{"speaker": "昭昭", "intent": "争抢"}]}
+    )
+    assert dad3 == 1 and parent3 == mom3 + 1
+
+
+def test_resolve_parent_lines_budget_prefers_explicit_values():
+    """显式入参 > 契约字段 > 派生默认。"""
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    chain = [{"speaker": "爸爸", "intent": "被推趔趄"}]
+    # 显式入参优先
+    mom, dad, parent = resolve_parent_lines_budget(
+        {"beat_chain": chain, "mom_lines_max": 5, "dad_lines_max": 4},
+        mom_lines_max=2,
+        dad_lines_max=3,
+    )
+    assert mom == 2 and dad == 3
+    # 契约字段次之
+    mom2, dad2, _ = resolve_parent_lines_budget(
+        {"beat_chain": chain, "mom_lines_max": 5, "dad_lines_max": 4}
+    )
+    assert mom2 == 5 and dad2 == 4
+    # 无家长拍且无契约时，爸爸额度为 0（家长预算为 0）
+    mom3, dad3, parent3 = resolve_parent_lines_budget(
+        {"beat_chain": [{"speaker": "昭昭", "intent": "争抢"}]},
+        mom_lines_max=0,
+        dad_lines_max=0,
+        parent_lines_max=0,
+    )
+    assert mom3 == 0 and dad3 == 0 and parent3 == 0
+    # 非法值不炸，退回派生默认
+    mom4, dad4, parent4 = resolve_parent_lines_budget(
+        {"beat_chain": [], "mom_lines_max": "abc"}
+    )
+    assert mom4 == 1 and dad4 == 1 and parent4 == 2
+
+
+def test_resolve_parent_lines_budget_caps_but_never_below_beats():
+    """封顶只挡脏契约，且绝不能把额度压到低于拍数（否则死锁复现）。"""
+    from app.services.gold_story.scene import (
+        CHAT_LINE_COUNT_MAX,
+        chat_line_cap,
+        resolve_parent_lines_budget,
+    )
+
+    # 脏契约：家长拍数远超全稿句数上限 -> 须封到句数上限
+    huge = [{"speaker": "爸爸", "intent": f"拍{i}"} for i in range(80)]
+    mom, dad, parent = resolve_parent_lines_budget({"beat_chain": huge})
+    assert dad == chat_line_cap("K") or dad <= CHAT_LINE_COUNT_MAX + 2
+    assert parent <= CHAT_LINE_COUNT_MAX + 2
+    # 契约里塞了巨大显式额度，同样要被封顶
+    _, dad_big, parent_big = resolve_parent_lines_budget(
+        {"beat_chain": [], "mom_lines_max": 999, "dad_lines_max": 999}
+    )
+    assert dad_big <= CHAT_LINE_COUNT_MAX and parent_big <= CHAT_LINE_COUNT_MAX
+
+    # 关键反例：封顶不得写成 min(契约值, 拍数)，否则额度低于拍数 -> 死锁
+    chain = [{"speaker": "爸爸", "intent": f"拍{i}"} for i in range(6)]
+    _, dad6, parent6 = resolve_parent_lines_budget(
+        {"beat_chain": chain, "dad_lines_max": 1}
+    )
+    assert dad6 >= 6, "封顶误压到拍数以下，合规稿会重新被拦死"
+    assert parent6 >= 6
+
+    # 合法区间内封顶不生效（不误伤）
+    _, dad1, _ = resolve_parent_lines_budget(
+        {"beat_chain": [{"speaker": "爸爸", "intent": "旁观"}]}
+    )
+    assert dad1 == 1

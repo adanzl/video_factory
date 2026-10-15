@@ -277,6 +277,7 @@ def _repair_k_row_contract(row: dict[str, Any]) -> dict[str, Any]:
         payload.get("scene_contract"), dict
     ) else {}
     from app.services.daily_story.story_types.k.close_mode import (
+        K_UNKNOWN,
         stamp_k_close_mode_on_payload,
     )
 
@@ -291,6 +292,14 @@ def _repair_k_row_contract(row: dict[str, Any]) -> dict[str, Any]:
             sc.get("mechanism") or row.get("mechanism") or ""
         ),
     )
+    if mode == K_UNKNOWN:
+        # 契约期 fail-fast：解析器跑过却判不出轨，勿进正文生成。
+        # 否则 K-A/K-B 两条硬卡都不生效（且正文已烧完 16 句才在终检失败）。
+        # 在落盘之前抛：勿把历史空值行写成显式 K_UNKNOWN（重算只作诊断）。
+        raise ValueError(
+            "K_CLOSE_MODE_UNRESOLVED：beat_chain/closing 无法归入 K-A/K-B，"
+            "须先重建收束意图（家长劝失败僵持 或 旁观+孩子自行停场），勿直接生成"
+        )
     out = dict(row)
     out["payload"] = new_payload
     gid = int(row.get("id") or 0)
@@ -306,7 +315,12 @@ def _repair_k_row_contract(row: dict[str, Any]) -> dict[str, Any]:
         )
         refreshed = repo_gold_story.get_story(gid)
         if refreshed:
-            out = refreshed
+            # 重掷反馈是内存态（不入库），刷新行时须留下，否则甲的缺拍提示丢失
+            from app.services.gold_story.gold_chat.convert import (
+                carry_retry_feedback,
+            )
+
+            out = carry_retry_feedback(refreshed, out)
     return out
 
 
@@ -362,7 +376,9 @@ def _persist_structure_correction(row: dict[str, Any], notes: list[str]) -> dict
         gid,
         "；".join(notes),
     )
-    return repo_gold_story.get_story(gid) or row
+    from app.services.gold_story.gold_chat.convert import carry_retry_feedback
+
+    return carry_retry_feedback(repo_gold_story.get_story(gid), row)
 
 EXPAND_CANDIDATE_COUNT = 2
 
@@ -1289,14 +1305,28 @@ def _is_regenerable_short_error(msg: str) -> bool:
     char_def = _char_deficit_from_error(msg)
     return char_def is not None and char_def > 0
 
+def _retry_missing_events_block(row: dict[str, Any]) -> str:
+    """甲重掷时的「上一轮缺拍」提示块；无重掷反馈时返回空串。"""
+    from app.services.gold_story.gold_chat.prompts import (
+        format_retry_missing_events_block,
+    )
+
+    try:
+        return format_retry_missing_events_block(row)
+    except Exception as exc:  # pragma: no cover - 提示词辅助不得阻断出稿
+        logger.debug("[GOLD_CHAT] retry missing-events block skipped: %s", exc)
+        return ""
+
+
 def _has_non_short_hard_errors(msg: str) -> bool:
-    """缺字段/妈句/精修失败等硬错：勿只走短篇幅 FIX。"""
+    """缺字段/家长句/精修失败等硬错：勿只走短篇幅 FIX。"""
     text = str(msg or "")
     return (
         "缺少字段" in text
         or "punchline_explain" in text
         or "妈妈台词须" in text
         or "爸爸台词须" in text
+        or "家长台词须" in text
         or "key 须" in text
         or "align_refine_failed:" in text
     )
@@ -1386,23 +1416,35 @@ def _trim_gold_chat_mom_lines(
     *,
     mom_lines_max: int = 1,
     structure_type: str = "",
+    parent_lines_max: int | None = None,
+    dad_lines_max: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """妈妈句超限：先合并连续句；N 类保护关键追问，其余优先保留末段。"""
+    """家长句超限：先合并连续句；N 类保护关键追问，其余优先保留末段。
+
+    口径与 validate.validate_chat_hard 共用 resolve_parent_lines_budget：
+    妈妈≤mom_max、爸爸≤dad_max、家长合计≤parent_max。
+    """
     import copy
 
-    mom_max = max(0, int(mom_lines_max))
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    mom_max, dad_max, parent_max = resolve_parent_lines_budget(
+        story,
+        mom_lines_max=mom_lines_max,
+        dad_lines_max=dad_lines_max,
+        parent_lines_max=parent_lines_max,
+    )
     out = copy.deepcopy(story)
     dialogue = out.get("dialogue")
-    if not isinstance(dialogue, list) or mom_max <= 0:
-        # mom_max=0：删全部妈妈句
-        if not isinstance(dialogue, list):
-            return story, False
+    if not isinstance(dialogue, list):
+        return story, False
+    if mom_max <= 0 and dad_max <= 0 and parent_max <= 0:
         kept = [
             item
             for item in dialogue
             if not (
                 isinstance(item, dict)
-                and str(item.get("speaker") or "").strip() == "妈妈"
+                and str(item.get("speaker") or "").strip() in {"妈妈", "爸爸"}
             )
         ]
         if len(kept) == len(dialogue):
@@ -1414,6 +1456,16 @@ def _trim_gold_chat_mom_lines(
         DAILY_STORY_LINE_CHARS_MAX,
         dialogue_char_count,
     )
+
+    def _count(dlg: list[Any], speaker: str) -> int:
+        return len(
+            [
+                item
+                for item in dlg
+                if isinstance(item, dict)
+                and str(item.get("speaker") or "").strip() == speaker
+            ]
+        )
 
     changed = False
     # 合并连续妈妈句
@@ -1446,10 +1498,14 @@ def _trim_gold_chat_mom_lines(
         if isinstance(item, dict)
         and str(item.get("speaker") or "").strip() in {"妈妈", "爸爸"}
     ]
-    if len(parent_idxs) <= mom_max:
+    if (
+        _count(dialogue, "妈妈") <= mom_max
+        and _count(dialogue, "爸爸") <= dad_max
+        and len(parent_idxs) <= parent_max
+    ):
         return (out, changed) if changed else (story, False)
 
-    # 超限：家长句一起计入上限。优先保末段收束与开场触发，再保 N 追问。
+    # 超限：按 speaker 各自上限与合计上限一起裁。优先保末段收束与开场触发，再保 N 追问。
     protected: list[int] = []
     if str(structure_type or "").strip().upper() == "N":
         from app.services.daily_story.story_types.n.validate import RE_WHY
@@ -1469,13 +1525,28 @@ def _trim_gold_chat_mom_lines(
     for idx in [*protected, *reversed(parent_idxs)]:
         if idx not in keep_order:
             keep_order.append(idx)
-    keep_set = set(keep_order[:mom_max])
-    if len(keep_set) < min(mom_max, len(parent_idxs)):
-        for idx in reversed(parent_idxs):
-            if len(keep_set) >= mom_max:
-                break
-            keep_set.add(idx)
+
+    def _speaker_of(idx: int) -> str:
+        item = dialogue[idx]
+        return str(item.get("speaker") or "").strip() if isinstance(item, dict) else ""
+
+    keep_set: set[int] = set()
+    speaker_cap = {"妈妈": mom_max, "爸爸": dad_max}
+    used = {"妈妈": 0, "爸爸": 0}
+    for idx in keep_order:
+        if len(keep_set) >= parent_max:
+            break
+        sp = _speaker_of(idx)
+        if sp not in speaker_cap:
+            continue
+        if used[sp] >= speaker_cap[sp]:
+            continue
+        keep_set.add(idx)
+        used[sp] += 1
+
     drop = set(parent_idxs) - keep_set
+    if not drop:
+        return (out, changed) if changed else (story, False)
     out["dialogue"] = [
         item for idx, item in enumerate(dialogue) if idx not in drop
     ]
@@ -1486,8 +1557,10 @@ def _apply_gold_chat_local_hard_repairs(
     *,
     structure_type: str = "",
     mom_lines_max: int = 1,
+    parent_lines_max: int | None = None,
+    dad_lines_max: int | None = None,
 ) -> dict[str, Any]:
-    """校验前本地硬修复：补 punchline、裁妈妈句。"""
+    """校验前本地硬修复：补 punchline、裁家长句。"""
     data = _ensure_gold_chat_punchline_explain(
         story, structure_type=structure_type
     )
@@ -1495,6 +1568,8 @@ def _apply_gold_chat_local_hard_repairs(
         data,
         mom_lines_max=mom_lines_max,
         structure_type=structure_type,
+        parent_lines_max=parent_lines_max,
+        dad_lines_max=dad_lines_max,
     )
     return data
 
@@ -1769,6 +1844,7 @@ def gold_story_to_gold_chat(
                 beat_chain=beat_chain,
             ),
             expand_feedback_block=expand_feedback_block,
+            retry_missing_events_block=_retry_missing_events_block(row),
             dialogue_seed=_format_dialogue_seed(prompt_seed)[:4000],
             seed_span_block=format_seed_span_block(
                 prompt_seed,

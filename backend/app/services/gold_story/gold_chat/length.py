@@ -543,6 +543,58 @@ _G_CLEANUP_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...
         ("灿灿", "我先把手边这些放回去。"),
     ),
 )
+# 垫字插入点的归一化与近似判重：模板对整对灌入时，只有逐字比对会漏掉
+# 只差语气词/标点的同义句（如稿内已有「…这事还没完啊！」又要插「…这事还没完！」）。
+_PAD_LINE_NOISE = re.compile(r"[呀啊吧呢嘛了呗哦么！？。!?，,、…\s]")
+_PAD_SIM_THRESHOLD = 0.6
+# 垫字插入安全区：句首过近会打乱开场因果，末段留出收束槽位不许动。
+_PAD_MIN_INSERT_AT = 2
+_PAD_TAIL_KEEP = 4
+
+
+def _norm_pad_line(text: str) -> str:
+    """垫字判重用的归一化：去语气词/标点，只留实义汉字与字母数字。"""
+    return _PAD_LINE_NOISE.sub("", str(text or ""))
+
+
+def _pad_line_bigrams(text: str) -> set[str]:
+    normalized = _norm_pad_line(text)
+    if len(normalized) < 2:
+        return {normalized} if normalized else set()
+    return {normalized[i : i + 2] for i in range(len(normalized) - 1)}
+
+
+def _pad_line_similarity(left: str, right: str) -> float:
+    """归一化字符二元组 Jaccard；口语垫字句的近似重复判定。"""
+    a = _pad_line_bigrams(left)
+    b = _pad_line_bigrams(right)
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _pad_line_is_duplicate(text: str, existing: list[str]) -> bool:
+    """逐字、归一化、近似（相似度阈值）三级判重。"""
+    target = _norm_pad_line(text)
+    if not target:
+        return True
+    for item in existing:
+        other = _norm_pad_line(item)
+        if not other:
+            continue
+        if target == other:
+            return True
+        if _pad_line_similarity(text, item) >= _PAD_SIM_THRESHOLD:
+            return True
+    return False
+
+
+def _pad_safe_insert_bounds(count: int) -> tuple[int, int]:
+    """垫字可插入区间 [lo, hi]：避开开场前两句与末段收束槽位。"""
+    lo = min(_PAD_MIN_INSERT_AT, count)
+    return lo, max(lo, count - _PAD_TAIL_KEEP)
+
+
 # K：只补抽象互顶与僵持，不凭空新增道具、追跑或肢体动作。
 _K_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
     (
@@ -1450,7 +1502,9 @@ def _boost_short_with_mid_lines(
         else ((), None)
     )
     # K：顶满 24 句时仍可能差字，允许至 26 以便插实义中段对
-    line_cap = CHAT_LINE_COUNT_MAX + (2 if st == "K" else 0)
+    from app.services.gold_story.scene import chat_line_cap
+
+    line_cap = chat_line_cap(st)
     m8_j = is_m8_j_domination(mechanism=mechanism, structure_type=st)
     large_gap = need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
     if total < 100 and not large_gap:
@@ -1622,10 +1676,8 @@ def _boost_short_with_mid_lines(
         # 缺口更大时允许两对，仍由字数达标即停
         max_pairs = 2 if need >= 24 else 1
 
-    def _norm_pad_line(text: str) -> str:
-        return re.sub(r"[呀啊吧呢嘛了呗！？。!?，,\s]", "", str(text or ""))
-
     existing_norm = {_norm_pad_line(x) for x in existing if x}
+    existing_lines = [x for x in existing if x]
     for pair in pair_pool:
         if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
             break
@@ -1636,7 +1688,12 @@ def _boost_short_with_mid_lines(
         lines_ok = True
         for _sp, line in pair:
             text = str(line).strip()
-            if not text or text in existing or _norm_pad_line(text) in existing_norm:
+            if (
+                not text
+                or text in existing
+                or _norm_pad_line(text) in existing_norm
+                or _pad_line_is_duplicate(text, existing_lines)
+            ):
                 lines_ok = False
                 break
         if not lines_ok:
@@ -1675,6 +1732,7 @@ def _boost_short_with_mid_lines(
             text = str(line).strip()
             dialogue.insert(insert_at, {"speaker": speaker, "line": text})
             existing.add(text)
+            existing_lines.append(text)
             existing_norm.add(_norm_pad_line(text))
             insert_at += 1
         pairs_used += 1

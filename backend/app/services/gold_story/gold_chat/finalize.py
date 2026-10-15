@@ -10,6 +10,7 @@ K 收口原则：走 ``story_types.k.patch`` 的 seal/pin，中段通用补字�
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, cast
 
 from app.services.daily_story.prompts import (
@@ -26,6 +27,7 @@ from app.services.gold_story.gold_chat.length import (
     _expand_short_gold_chat_lines,
     _gold_chat_force_min_chars,
     _pad_gold_chat_to_min_chars,
+    _pad_line_is_duplicate,
     patch_sanitize_bridge_lines,
     patch_sanitize_c_tone_stack,
     patch_sanitize_pad_particles,
@@ -53,6 +55,7 @@ _REPAIRABLE_VALIDATE_MARKERS = (
     "正文总字数须≤",
     "妈妈台词须≤",
     "爸爸台词须≤",
+    "家长台词须≤",
     "opening_causality:",
 )
 
@@ -203,11 +206,33 @@ def _semantic_repair_scope_block(
     if not targets:
         return ""
     labels = "、".join(f"第{no}句" for no in targets)
+    # 「缺前提」是结果句依赖的事件没被任何人说出来；只允许改写无法补出前提，
+    # 故对缺拍类额外放行「插入至多一行」，其余行数/行序/speaker 仍冻结。
+    missing_beat_rows = _semantic_missing_beat_entries(exc)
     parts = [
         f"【语义定点范围】只允许改{labels}的 line 文本；",
-        "对白行数、行序、全部 speaker、其它行文本全部冻结。",
+        "对白行数、行序、全部 speaker、其它行文本全部冻结"
+        + ("（下述缺拍补行为唯一例外）。" if missing_beat_rows else "。"),
         "未点名的相邻句仅用于判断问答对象和我/你视角，不得修改。",
     ]
+    if missing_beat_rows:
+        earliest = _semantic_earliest_target_line(exc) or min(targets)
+        parts.append(
+            f"【缺拍补行】可在第{max(1, earliest)}句之前**新增至多一行**对白，"
+            "用来把缺失事件说出来；只许新增这一行，不许删行、挪行、改他人台词。"
+            "补行必须是角色说出口的话，不得写成旁白或动作说明，"
+            "且不得引入新的道具或新事件。"
+        )
+        for beat in missing_beat_rows[:4]:
+            beat_no = beat.get("beat")
+            intent = str(beat.get("intent") or "").strip()
+            speaker = str(beat.get("speaker") or "").strip()
+            row_desc = f"- 缺失契约 beat={beat_no}"
+            if speaker:
+                row_desc += f" 说话人应为{speaker}"
+            if intent:
+                row_desc += f"：{intent}"
+            parts.append(row_desc)
     for item in exc.issues[:8]:
         raw_lines = item.get("lines")
         line_txt = raw_lines if isinstance(raw_lines, list) else []
@@ -315,6 +340,318 @@ def _sanitize_semantic_scoped_repair(
     return out, changed
 
 
+def _semantic_missing_beat_entries(
+    exc: GoldChatSemanticBlocked,
+) -> list[dict[str, Any]]:
+    """终检「缺前提」项里携带的缺失契约 beat（含期望 speaker）。"""
+    out: list[dict[str, Any]] = []
+    for item in exc.issues:
+        if str(item.get("kind") or "").strip() != "缺前提":
+            continue
+        missing = item.get("missing_beat")
+        if isinstance(missing, dict):
+            out.append(missing)
+    return out
+
+
+def _semantic_earliest_target_line(exc: GoldChatSemanticBlocked) -> int:
+    """最早故障行号；缺拍须插在它之前才有因果。"""
+    earliest = 0
+    for item in exc.issues:
+        raw_lines = item.get("lines")
+        if not isinstance(raw_lines, list):
+            continue
+        for no in raw_lines:
+            if isinstance(no, int) and not isinstance(no, bool) and no > 0:
+                earliest = int(no) if not earliest else min(earliest, int(no))
+    return earliest
+
+
+def _extract_single_inserted_row(
+    original_rows: list[Any],
+    repaired_rows: list[Any],
+    *,
+    editable_indexes: set[int] | None = None,
+) -> tuple[int, dict[str, Any]] | None:
+    """修复稿比原稿恰好多一行时，定位该行与其插入下标。
+
+    ``editable_indexes`` 是允许改写 line 文本的原稿下标（故障行），其余行必须
+    逐句未改；**所有**行（含故障行）的 speaker 都必须与原文一致。
+
+    允许改写会让多个插入点都「说得通」（把某个原行误判成新插行），故这里按
+    **逐行精确匹配数**取最高分，而不是取第一个能自圆其说的下标——否则会把
+    原稿已有的台词当成补拍行插进去，同时丢掉真正的新行。
+    """
+    if len(repaired_rows) - len(original_rows) != 1:
+        return None
+    editable = editable_indexes or set()
+
+    def _text(item: Any) -> str:
+        return str(item.get("line") or "").strip() if isinstance(item, dict) else ""
+
+    def _spk(item: Any) -> str:
+        return (
+            str(item.get("speaker") or "").strip() if isinstance(item, dict) else ""
+        )
+
+    best_rank: tuple[int, int] | None = None
+    best_idx = -1
+    for idx in range(len(repaired_rows)):
+        inserted = repaired_rows[idx]
+        if not isinstance(inserted, dict):
+            continue
+        score = 0
+        valid = True
+        for pos, old in enumerate(original_rows):
+            if not isinstance(old, dict):
+                valid = False
+                break
+            j = pos if pos < idx else pos + 1
+            if not (0 <= j < len(repaired_rows)):
+                valid = False
+                break
+            new = repaired_rows[j]
+            if not isinstance(new, dict) or _spk(old) != _spk(new):
+                valid = False
+                break
+            if _text(old) == _text(new):
+                score += 1
+            elif pos not in editable:
+                valid = False
+                break
+        if not valid:
+            continue
+        # 优先「插入行确实不是任何原行原文」的解，避免把原行当补行。
+        is_new_text = _text(inserted) not in {
+            _text(x) for x in original_rows if isinstance(x, dict) and _text(x)
+        }
+        rank = (score, 1 if is_new_text else 0)
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_idx = idx
+    if best_rank is None or best_idx < 0:
+        return None
+    return best_idx, dict(repaired_rows[best_idx])
+
+
+def _missing_beat_expected_speakers(
+    beats: list[dict[str, Any]],
+    *,
+    chat: dict[str, Any] | None = None,
+) -> set[str]:
+    """缺失拍允许的补行说话人：beat 本人 + 该拍的对手方（addressee）。
+
+    「被推趔趄」这类拍，契约 speaker 是**受动方**，但补前提的话通常由**施动方**
+    说出（谁干了这事）。若只认 speaker，合法补行会被一律拒绝；故从契约 beat_chain
+    读出 addressee（施动方）一并放行。全部取自数据字段，不写剧情词表。
+
+    ``chat`` 只用于取契约 beat_chain（读 addressee）；不要用求交结果当作
+    「是否需要校验」的判据——那会把「契约有 speaker、但名字对不上」这种该拒绝
+    的情况变成静默放行。
+    """
+    chain_lookup = _missing_beat_contract_lookup(chat)
+    speakers: set[str] = set()
+    for beat in beats:
+        speaker = str(beat.get("speaker") or "").strip()
+        if speaker:
+            speakers.add(speaker)
+        source = beat
+        beat_no = beat.get("beat")
+        if isinstance(beat_no, int) and beat_no in chain_lookup:
+            source = {**chain_lookup[beat_no], **beat}
+        raw_addressee = source.get("addressee")
+        candidates: list[str] = []
+        if isinstance(raw_addressee, str):
+            candidates = re.split(r"[/、,，和与]", raw_addressee)
+        elif isinstance(raw_addressee, list):
+            candidates = [str(x) for x in raw_addressee]
+        for name in candidates:
+            cleaned = str(name or "").strip()
+            if cleaned:
+                speakers.add(cleaned)
+    speakers = {x for x in speakers if x}
+    return speakers
+
+
+def _missing_beat_contract_lookup(
+    chat: dict[str, Any] | None,
+) -> dict[int, dict[str, Any]]:
+    """从候选稿携带的契约里按 beat 号索引整拍（读 addressee 等字段）。"""
+    if not isinstance(chat, dict):
+        return {}
+    chain = chat.get("gold_beat_chain")
+    if not isinstance(chain, list) or not chain:
+        sc = chat.get("scene_contract")
+        chain = sc.get("beat_chain") if isinstance(sc, dict) else None
+    if not isinstance(chain, list):
+        return {}
+    out: dict[int, dict[str, Any]] = {}
+    for index, item in enumerate(chain, 1):
+        if not isinstance(item, dict):
+            continue
+        beat_no = item.get("beat")
+        key = beat_no if isinstance(beat_no, int) and beat_no > 0 else index
+        out[key] = item
+    return out
+
+
+def _dialogue_speaker_names(chat: dict[str, Any]) -> set[str]:
+    dialogue = chat.get("dialogue")
+    if not isinstance(dialogue, list):
+        return set()
+    return {
+        str(x.get("speaker") or "").strip()
+        for x in dialogue
+        if isinstance(x, dict) and str(x.get("speaker") or "").strip()
+    }
+
+
+def _apply_semantic_missing_beat_insertion(
+    original: dict[str, Any],
+    lifted: dict[str, Any],
+    exc: GoldChatSemanticBlocked,
+    *,
+    target_lines: set[int],
+    st_final: str,
+    normalize_chat: Any,
+) -> tuple[dict[str, Any], bool]:
+    """缺拍兜底：允许插入**至多一行**契约缺失拍，其余行严格冻结。
+
+    缺前提的根因是「结果句依赖的事件没被任何人说出来」，只改写故障行必然
+    改出无因之果。故在最早故障行之前放行一行补拍，仍受硬约束：
+    行数上限、期望 speaker、禁旁白、禁近似重复。
+    """
+    from app.services.gold_story.scene import (
+        CHAT_MAX_LINE_CHARS,
+        chat_line_cap,
+        looks_like_narration_line,
+    )
+
+    beats = _semantic_missing_beat_entries(exc)
+    earliest = _semantic_earliest_target_line(exc)
+    original_rows = original.get("dialogue")
+    if (
+        not beats
+        or not earliest
+        or not isinstance(original_rows, list)
+        or not original_rows
+    ):
+        return dict(original), False
+
+    normalized = normalize_chat(lifted)
+    repaired_rows = normalized.get("dialogue")
+    if not isinstance(repaired_rows, list):
+        return dict(original), False
+
+    cap = chat_line_cap(st_final)
+    if len(original_rows) + 1 > cap:
+        return dict(original), False
+
+    located = _extract_single_inserted_row(
+        original_rows,
+        repaired_rows,
+        editable_indexes={n - 1 for n in target_lines if 1 <= n <= len(original_rows)},
+    )
+    if located is None:
+        return dict(original), False
+    raw_idx, inserted = located
+    inserted_line = str(inserted.get("line") or "").strip()
+    inserted_speaker = str(inserted.get("speaker") or "").strip()
+    if not inserted_line or not inserted_speaker:
+        return dict(original), False
+    if len(inserted_line) > CHAT_MAX_LINE_CHARS:
+        return dict(original), False
+    if looks_like_narration_line(inserted_line):
+        return dict(original), False
+    # 说话人校验：拿到契约期望 speaker 就必须严格匹配；求交为空说明契约里的
+    # 说话人在本篇根本没开口，同样拒绝（不可静默放行）。契约给不出期望时，
+    # 退化为「不得引入新角色」。
+    dialogue_speakers = _dialogue_speaker_names(original)
+    expected = _missing_beat_expected_speakers(beats, chat=original)
+    if expected:
+        allowed = expected & dialogue_speakers
+        if not allowed or inserted_speaker not in allowed:
+            return dict(original), False
+    elif inserted_speaker not in dialogue_speakers:
+        return dict(original), False
+    # 必须落在最早故障行之前（0-based 下标 <= earliest-1）
+    if raw_idx > earliest - 1:
+        return dict(original), False
+    existing_lines = [
+        str(x.get("line") or "").strip()
+        for x in original_rows
+        if isinstance(x, dict)
+    ]
+    if _pad_line_is_duplicate(inserted_line, existing_lines):
+        return dict(original), False
+
+    scoped_rows: list[Any] = [
+        dict(x) if isinstance(x, dict) else x for x in original_rows
+    ]
+    # 修复稿比原稿多了一行，故原稿下标 i 在修复稿里的位置要按插入点右移。
+    def _original_index_to_new(i: int) -> int:
+        return i + 1 if i >= raw_idx else i
+
+    # 同批只允许目标行改写（故障行，非已通过行）；speaker 一律沿用原行。
+    # 注意：改写必须取自**右移后**对应的那一行，否则会把补行的文本抄进目标行；
+    # 但写入要用**原稿下标**（此时还没执行 insert，scoped_rows 仍是原长度）。
+    allowed_text: dict[int, str] = {}
+    for line_no in sorted(target_lines):
+        i = line_no - 1
+        if not (0 <= i < len(original_rows)):
+            continue
+        old_item = original_rows[i]
+        if not isinstance(old_item, dict):
+            continue
+        pos = _original_index_to_new(i)
+        if pos == raw_idx or not (0 <= pos < len(repaired_rows)):
+            continue
+        cand = repaired_rows[pos]
+        if not isinstance(cand, dict):
+            continue
+        if str(cand.get("speaker") or "").strip() != str(
+            old_item.get("speaker") or ""
+        ).strip():
+            continue
+        old_line = str(old_item.get("line") or "").strip()
+        new_line = str(cand.get("line") or "").strip()
+        if new_line and new_line != old_line:
+            allowed_text[i] = new_line
+            scoped_rows[i]["line"] = new_line
+    scoped_rows.insert(raw_idx, {"speaker": inserted_speaker, "line": inserted_line})
+
+    out = dict(original)
+    out["dialogue"] = scoped_rows
+    if st_final:
+        out["story_type"] = st_final
+    out, _ = patch_sanitize_pad_suffix(out)
+    out, _ = patch_sanitize_pad_particles(out)
+
+    # sanitize 若动了行数，整条补拍不可信，直接放弃。
+    cleaned_rows = out.get("dialogue")
+    if not isinstance(cleaned_rows, list) or len(cleaned_rows) != len(scoped_rows):
+        return dict(original), False
+
+    # 逐行回滚：非目标行逐字还原；目标行只保留允许的 line 文本、沿用原 speaker。
+    for i, old_item in enumerate(original_rows):
+        if not isinstance(old_item, dict):
+            continue
+        if i in allowed_text:
+            continue
+        cleaned_rows[_original_index_to_new(i)] = dict(old_item)
+    for i, new_line in allowed_text.items():
+        old_item = original_rows[i]
+        if not isinstance(old_item, dict):
+            continue
+        cur_item = cleaned_rows[_original_index_to_new(i)]
+        if not isinstance(cur_item, dict):
+            continue
+        if not str(cur_item.get("line") or "").strip():
+            cur_item["line"] = old_item.get("line")
+        cur_item["speaker"] = old_item.get("speaker")
+    return out, True
+
+
 def _build_export_repair_feedback(
     exc: BaseException,
     chat: dict[str, Any],
@@ -359,10 +696,13 @@ def _build_export_repair_feedback(
 
     if isinstance(exc, GoldChatSemanticBlocked):
         scope = _semantic_repair_scope_block(exc, chat)
+        allow_insert = bool(_semantic_missing_beat_entries(exc))
         return "\n".join(
             part
             for part in (
-                format_semantic_acceptance_feedback(str(exc)),
+                format_semantic_acceptance_feedback(
+                    str(exc), allow_insert=allow_insert
+                ),
                 scope,
                 metrics,
                 "只在目标行内完成修复并维持现有字数/结构硬约束；不得靠改其它行补长度。",
@@ -698,6 +1038,10 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     last_err: str | None = None
     attempt = 0
     duplicate_rescue_used = 0
+    # 已**尝试**补过的缺拍（beat 号）：同一拍反复补说明是契约/生成根因，
+    # 不是措辞问题，禁止反复插行（专家裁决）。按"尝试"记账而非"成功"，
+    # 否则补行被拒（超上限/speaker 不符）时会每轮重试到天荒地老。
+    attempted_beats: set[int] = set()
     while True:
         try:
             try:
@@ -785,6 +1129,42 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                     st_final=st_final,
                     normalize_chat=normalize_chat,
                 )
+                # 冻结域改不出缺拍时，放行「补拍一行」（仍受上限/speaker/禁旁白约束）
+                if not scoped_changed:
+                    beat_ids = {
+                        int(x["beat"])
+                        for x in _semantic_missing_beat_entries(exc)
+                        if isinstance(x.get("beat"), int)
+                    }
+                    if beat_ids and beat_ids <= attempted_beats:
+                        # 同一拍上一轮已尝试补过仍被判缺 → 根因在契约/生成，
+                        # 再插只会反复缝补，直接放弃本轮补行。
+                        logger.info(
+                            "gold_chat missing-beat insertion skipped: "
+                            "beat already attempted beats=%s",
+                            sorted(beat_ids),
+                        )
+                    else:
+                        attempted_beats |= beat_ids
+                        inserted_chat, ins_changed = (
+                            _apply_semantic_missing_beat_insertion(
+                                repair_base,
+                                lifted,
+                                exc,
+                                target_lines=targets,
+                                st_final=st_final,
+                                normalize_chat=normalize_chat,
+                            )
+                        )
+                        if ins_changed:
+                            repaired = inserted_chat
+                            scoped_changed = True
+                            logger.info(
+                                "gold_chat semantic missing-beat insertion accepted "
+                                "beats=%s target_lines=%s",
+                                _semantic_missing_beat_entries(exc),
+                                sorted(targets),
+                            )
                 logger.info(
                     "gold_chat semantic repair bounded scope target_lines=%s changed=%s",
                     sorted(targets),
@@ -925,7 +1305,11 @@ def _k_meet_min_chars(
     from app.services.daily_story.story_types import (
         apply_gold_chat_k_fix_truncations,
     )
-    from app.services.gold_story.gold_chat.length import _K_NATURAL_MID_PAIRS
+    from app.services.gold_story.gold_chat.length import (
+        _K_NATURAL_MID_PAIRS,
+        _pad_line_is_duplicate,
+        _pad_safe_insert_bounds,
+    )
 
     chat = dict(chat)
     chat["story_type"] = "K"
@@ -970,12 +1354,15 @@ def _k_meet_min_chars(
                 ),
                 len(dialogue),
             )
-            insert_at = max(1, parent_i)
-            existing = {
+            # 插入点须落在安全区：太靠前会占掉开场因果的槽位，
+            # 太靠后会把互顶灌进收束段，破坏已钉好的收场。
+            lo, hi = _pad_safe_insert_bounds(len(dialogue))
+            insert_at = max(lo, min(parent_i, hi))
+            existing = [
                 str(x.get("line") or "").strip()
                 for x in dialogue
                 if isinstance(x, dict)
-            }
+            ]
             inserted = 0
             for pair in _K_NATURAL_MID_PAIRS:
                 if not _k_under_hard_floor(chat) or inserted >= 4:
@@ -984,8 +1371,13 @@ def _k_meet_min_chars(
                     {"speaker": sp, "line": line}
                     for sp, line in pair
                 ]
-                if any(r["line"] in existing for r in rows):
+                # 逐字/归一化/近似三级判重，避免把只差语气词的同义句又灌一遍
+                if any(
+                    _pad_line_is_duplicate(r["line"], existing) for r in rows
+                ):
                     continue
+                lo, hi = _pad_safe_insert_bounds(len(dialogue))
+                insert_at = max(lo, min(insert_at, hi))
                 # 避免同人连说
                 prev_sp = (
                     str(dialogue[insert_at - 1].get("speaker") or "")
@@ -998,7 +1390,7 @@ def _k_meet_min_chars(
                     rows = list(reversed(rows))
                 dialogue[insert_at:insert_at] = rows
                 insert_at += len(rows)
-                existing.update(r["line"] for r in rows)
+                existing.extend(r["line"] for r in rows)
                 inserted += 1
                 chat["dialogue"] = dialogue
             if inserted and _k_under_hard_floor(chat):
