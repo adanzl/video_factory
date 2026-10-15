@@ -1495,6 +1495,23 @@ def patch_k_dedupe_near_lines(story: dict) -> list[str]:
     if not isinstance(dialogue, list) or len(dialogue) < 4:
         return notes
 
+    # K-B：本补丁跑在 patch_k_b_ensure_self_resolve_tail 之后，而「孩子自行恢复
+    # 互动」要求末段同时存在「邀约 + 更晚的接住」。去重会按归一化整句去重，
+    # 可能删掉承载该不变量的接住句，把已成立的收束拆成只剩邀约句。
+    # 与下方「字数过砍就不改」同构：优化补丁不得破坏已成立的收束不变量。
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        k_close_mode_from_story,
+    )
+    from app.services.daily_story.story_types.k.resolve_check import (
+        kid_self_resolve_in_tail,
+    )
+
+    preserve_tail = k_close_mode_from_story(story) == K_B_CHILD_SELF_RESOLVE
+    if preserve_tail:
+        _lines_before, _spk_before = _lines_and_speakers_from_dialogue(dialogue)
+        preserve_tail = kid_self_resolve_in_tail(_spk_before, _lines_before)
+
     def _norm(text: str) -> str:
         return re.sub(r"[呀啊吧呢嘛了呗！？。!?，,\s]", "", str(text or ""))
 
@@ -1537,6 +1554,10 @@ def patch_k_dedupe_near_lines(story: dict) -> list[str]:
     # 保 ≥12 句；字数过砍交给下游 boost，但勿一次砍到不可再生
     if len(kept) < 12:
         return notes
+    if preserve_tail:
+        _lines_after, _spk_after = _lines_and_speakers_from_dialogue(kept)
+        if not kid_self_resolve_in_tail(_spk_after, _lines_after):
+            return notes
     from app.services.daily_story.prompts import (
         DAILY_STORY_BODY_CHARS_MIN,
         dialogue_total_chars,

@@ -948,3 +948,89 @@ def test_self_name_legal_not_suspicion():
 
     assert not collect_k_dialogue_suspicions(["我叫昭昭，我才不怕！"], ["昭昭"])
     assert collect_k_dialogue_suspicions(["昭昭你等着说呀！"], ["昭昭"])
+
+
+def _k_b_tail_duplicate_dialogue() -> list[dict[str, str]]:
+    """末段接住句与更早某句逐字重复的 K-B 稿（抽象场景，不含单篇词）。"""
+    lines = [
+        ("灿灿", "你别动我的东西，这是我先拿到手的玩具啊！"),
+        ("灿灿", "行啊！一起玩！"),
+        ("昭昭", "谁先拿到就算谁的，你可千万不要再赖皮了。"),
+        ("灿灿", "我才没有赖皮，明明就是你先动手推我的呀。"),
+        ("昭昭", "你再推我一下试试看，我可是一点都不怕你的。"),
+        ("灿灿", "你先动手打我的，我现在就要去告诉妈妈了啊。"),
+        ("妈妈", "不评理，规矩都写在墙上了，你们自己看着办。"),
+        ("昭昭", "哼，那我也绝对不会让着你的，你等着瞧吧！"),
+        ("灿灿", "我也不让，看你能把我怎么样，有本事试试啊！"),
+        ("昭昭", "你再说一遍我就真的动手了，到时候别怪我！"),
+        ("灿灿", "来啊，谁怕谁啊，我可是真的一点都不怕你呢！"),
+        ("昭昭", "……姐姐，还玩不玩？我们两个一起接着玩吧。"),
+        ("灿灿", "行啊！一起玩！"),
+        ("妈妈", "不掺和就对了，让他们自己慢慢弄去吧，嗯。"),
+    ]
+    return [{"speaker": sp, "line": ln} for sp, ln in lines]
+
+
+def test_k_b_dedupe_does_not_break_self_resolve_tail():
+    """近义句去重不得拆掉已成立的 K-B「孩子自行恢复互动」末段。
+
+    该补丁跑在 patch_k_b_ensure_self_resolve_tail 之后，会按归一化整句去重；
+    末段的接住句若与更早某句重复，会被删掉，只剩邀约句 → punchline 归零。
+    与「字数过砍就不改」同构：优化补丁不得破坏已成立的收束不变量。
+    """
+    from app.services.daily_story.story_types.k.patch import (
+        patch_k_dedupe_near_lines,
+    )
+    from app.services.daily_story.story_types.k.resolve_check import (
+        kid_self_resolve_in_tail,
+    )
+
+    dialogue = _k_b_tail_duplicate_dialogue()
+
+    def _tail_ok(rows: list[dict[str, str]]) -> bool:
+        return kid_self_resolve_in_tail(
+            [row["speaker"] for row in rows],
+            [row["line"] for row in rows],
+        )
+
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "dialogue": [dict(row) for row in dialogue],
+    }
+    assert _tail_ok(story["dialogue"]), "前提：去重前末段不变量已成立"
+
+    notes = patch_k_dedupe_near_lines(story)
+
+    assert notes == [], "为保末段不变量应整体跳过删除"
+    assert _tail_ok(story["dialogue"])
+    assert len(story["dialogue"]) == len(dialogue)
+
+
+def test_k_a_dedupe_still_drops_duplicate_lines():
+    """非 K-B 不受守卫影响：重复句照常去重（守卫不是一概不删）。"""
+    from app.services.daily_story.story_types.k.patch import (
+        patch_k_dedupe_near_lines,
+    )
+    from app.services.daily_story.story_types.k.resolve_check import (
+        kid_self_resolve_in_tail,
+    )
+
+    dialogue = _k_b_tail_duplicate_dialogue()
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_A_PARENT_FAIL_STALEMATE",
+        "dialogue": [dict(row) for row in dialogue],
+    }
+    before = len(story["dialogue"])
+
+    notes = patch_k_dedupe_near_lines(story)
+
+    assert notes, "K-A 路径应照常去重"
+    assert len(story["dialogue"]) < before
+    # 同一段稿在 K-B 下是「不变量已成立」的，K-A 下本就无需保护
+    assert not kid_self_resolve_in_tail(
+        [row["speaker"] for row in story["dialogue"]],
+        [row["line"] for row in story["dialogue"]],
+    )
+
