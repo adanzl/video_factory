@@ -3039,8 +3039,12 @@ def test_seed_premise_patch_lands_before_first_landed_successor():
     assert lines.index("看这招，昭昭无影脚") < lines.index("让你解说，你上来打。")
 
 
-def test_seed_premise_patch_skips_without_landed_successor():
-    """找不到后继锚点时不补（旧行为是补到收尾前，等于把前提放到引用之后）。"""
+def test_seed_premise_patch_fills_absent_tail_speaker():
+    """整场缺席的收尾拍（如家长反应）要按 seed 补回，而不是无声丢掉。
+
+    旧行为「找不到后继锚点就不补」会让无人引用的收尾拍整拍丢失（专家裁决）：
+    尾拍没有依赖它的句子，插到已落地前驱之后、收束句之前即可。
+    """
     from app.services.gold_story.gold_chat import patch as gcp
 
     seed = [
@@ -3056,8 +3060,69 @@ def test_seed_premise_patch_skips_without_landed_successor():
         {"speaker": "灿灿", "line": "好吧。"},
     ]
     out, changed = gcp.patch_seed_premise_lines({"dialogue": dlg}, dialogue_seed=seed)
+    assert changed is True
+    speakers = [item["speaker"] for item in out["dialogue"]]
+    lines = [item["line"] for item in out["dialogue"]]
+    # 爸爸整场缺席 -> 补在收束句之前；灿灿已说过话，不因字面对不上再插一行
+    assert speakers == ["灿灿", "昭昭", "灿灿", "昭昭", "爸爸", "灿灿"]
+    assert lines[4] == "看这招，昭昭无影脚"
+    assert "行，我推你一把" not in lines
+    assert dlg == [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "昭昭", "line": "我不管。"},
+        {"speaker": "灿灿", "line": "随便你。"},
+        {"speaker": "昭昭", "line": "嗯。"},
+        {"speaker": "灿灿", "line": "好吧。"},
+    ]
+
+
+def test_seed_premise_patch_keeps_paraphrase_tail_speaker():
+    """角色已经说过话（换词写了同一拍）时不得再插 seed 原文，避免语义重复。"""
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    seed = [
+        {"speaker": "灿灿", "intent": "我先骑，你松手"},
+        {"speaker": "爸爸", "intent": "看这招，昭昭无影脚"},
+    ]
+    dlg = [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "昭昭", "line": "我不管。"},
+        {"speaker": "爸爸", "line": "你们自己商量，我看戏。"},
+    ]
+    out, changed = gcp.patch_seed_premise_lines({"dialogue": dlg}, dialogue_seed=seed)
     assert changed is False
     assert out == {"dialogue": dlg}
+
+
+def test_missing_seed_rows_reports_absent_speaker_only():
+    """拍落地覆盖检查只认「说话人整场缺席」，改写过的同角色拍不算丢失。"""
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    seed = [
+        {"speaker": "灿灿", "intent": "我先骑，你松手"},
+        {"speaker": "爸爸", "intent": "看这招，昭昭无影脚"},
+    ]
+    assert gcp.missing_seed_rows(
+        [{"speaker": "灿灿", "line": "我先骑，你松手。"}], seed
+    ) == [("爸爸", "看这招，昭昭无影脚")]
+    assert gcp.missing_seed_rows(
+        [{"speaker": "爸爸", "line": "你们自己商量。"}], seed
+    ) == [("灿灿", "我先骑，你松手")]
+    # 两个角色都说过话（哪怕换了词）就不算丢失
+    assert gcp.missing_seed_rows(
+        [
+            {"speaker": "灿灿", "line": "我先骑，你松手。"},
+            {"speaker": "爸爸", "line": "你们自己商量。"},
+        ],
+        seed,
+    ) == []
+    # 空稿等于所有拍都没落地（调用方另有句数下限兜底）
+    assert gcp.missing_seed_rows([], seed) == [
+        ("灿灿", "我先骑，你松手"),
+        ("爸爸", "看这招，昭昭无影脚"),
+    ]
+    assert gcp.missing_seed_rows([{"speaker": "灿灿", "line": "x"}], []) == []
+
 
 
 def test_seed_premise_patch_allows_seed_consecutive_same_speaker():
@@ -3323,3 +3388,125 @@ def test_convert_persists_pair_remap_note_after_reroll(monkeypatch):
     assert remap["to"] == {"mechanism": "M8", "structure_type": "J"}
     assert "K_B_DISQUALIFIED" in remap["reason"]
     assert patch["scene_contract"]["remap_note"] == "判型重掷 M12+K→M8+J"
+
+
+class _RetryExc(Exception):
+    """模拟终检失败异常：带结构化 issues，供回灌编译测试。"""
+
+    def __init__(self, issues: list[dict]) -> None:
+        super().__init__("gold_chat修稿预算耗尽 stage=final_acceptance；终检语义硬伤")
+        self.issues = issues
+
+
+def test_semantic_retry_constraints_compile_and_skip_grammar() -> None:
+    exc = _RetryExc(
+        [
+            {"kind": "矛盾", "text": "第[12]句·矛盾"},
+            {"kind": "接不上", "text": "第[13]句·接不上"},
+            {"kind": "语病", "text": "第[2]句·语病"},
+            {"kind": "重复", "text": "第[3]句·重复"},
+        ]
+    )
+    got = gc._semantic_retry_constraints_from(exc)
+    assert got == [
+        gc._SEMANTIC_CONSTRAINT_TEMPLATES["矛盾"],
+        gc._SEMANTIC_CONSTRAINT_TEMPLATES["接不上"],
+    ]
+
+
+def test_semantic_retry_constraints_dedupe_and_cap() -> None:
+    exc = _RetryExc(
+        [
+            {"kind": "矛盾"},
+            {"kind": "矛盾"},
+            {"kind": "错位"},
+            {"kind": "接不上"},
+            {"kind": "引用无据"},
+        ]
+    )
+    got = gc._semantic_retry_constraints_from(exc)
+    assert len(got) == gc.SEMANTIC_FEEDBACK_MAX_ITEMS
+    assert sum(len(x) for x in got) <= gc.SEMANTIC_FEEDBACK_MAX_CHARS
+    assert len(set(got)) == len(got)
+
+
+def test_semantic_retry_constraints_fall_back_to_error_text() -> None:
+    exc = _RetryExc([])
+    exc.args = (
+        "终检语义硬伤：第[8]句·错位：指代不明；第[9]句·语病：叠语气词",
+    )
+    got = gc._semantic_retry_constraints_from(exc)
+    assert got == [gc._SEMANTIC_CONSTRAINT_TEMPLATES["错位"]]
+
+
+def test_semantic_retry_constraints_empty_for_pure_grammar() -> None:
+    exc = _RetryExc([{"kind": "语病"}, {"kind": "垫字"}])
+    assert gc._semantic_retry_constraints_from(exc) == []
+
+
+def test_attach_retry_semantic_issues_keeps_missing_events() -> None:
+    original = {
+        "reason": "missing_beat_exhausted",
+        "missing_events": [{"original_intent": "爸爸旁观解说"}],
+    }
+    row = {"gold_chat_retry_feedback": original}
+    out = gc._attach_retry_semantic_issues(row, ["甲", "乙"])
+    feedback = out["gold_chat_retry_feedback"]
+    assert feedback["reason"] == "missing_beat_exhausted"
+    assert feedback["missing_events"] == [{"original_intent": "爸爸旁观解说"}]
+    assert feedback["semantic_constraints"] == ["甲", "乙"]
+    # 原行不被就地改写（重掷失败时库内契约要保持原样）
+    assert original.get("semantic_constraints") is None
+
+
+def test_attach_retry_semantic_issues_noop_without_items() -> None:
+    row = {"id": 1}
+    assert gc._attach_retry_semantic_issues(row, []) is row
+
+
+def test_retry_prompt_block_renders_semantic_constraints() -> None:
+    from app.services.gold_story.gold_chat.prompts import (
+        format_retry_missing_events_block,
+    )
+
+    row = {
+        "gold_chat_retry_feedback": {
+            "reason": "semantic_review_exhausted",
+            "semantic_constraints": ["同一角色不得先承认又反口"],
+        }
+    }
+    block = format_retry_missing_events_block(row)
+    assert "【上一轮终检问题·勿重复】" in block
+    assert "同一角色不得先承认又反口" in block
+    assert "已通过的拍及其顺序" in block
+    assert "【上一轮缺拍·必须补齐】" not in block
+
+
+def test_retry_prompt_block_renders_both_channels() -> None:
+    from app.services.gold_story.gold_chat.prompts import (
+        format_retry_missing_events_block,
+    )
+
+    row = {
+        "gold_chat_retry_feedback": {
+            "reason": "missing_beat_exhausted",
+            "missing_events": [{"original_intent": "爸爸旁观解说", "expected_speaker": "爸爸"}],
+            "semantic_constraints": ["每句须直接回应上一句"],
+        }
+    }
+    block = format_retry_missing_events_block(row)
+    assert "【上一轮缺拍·必须补齐】" in block
+    assert "爸爸旁观解说" in block
+    assert "【上一轮终检问题·勿重复】" in block
+    assert "每句须直接回应上一句" in block
+
+
+def test_retry_prompt_block_empty_without_feedback() -> None:
+    from app.services.gold_story.gold_chat.prompts import (
+        format_retry_missing_events_block,
+    )
+
+    assert format_retry_missing_events_block({}) == ""
+    assert format_retry_missing_events_block(
+        {"gold_chat_retry_feedback": {"reason": "semantic_review_exhausted"}}
+    ) == ""

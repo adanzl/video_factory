@@ -2057,6 +2057,9 @@ def _seed_speakable_rows(
 
 
 _SEED_PREMISE_MAX_INSERTS = 2
+# 覆盖补拍（整场缺席的角色）单独额度：不与引用补拍互抢，避免覆盖缺口挤掉
+# 真正需要按序补回的前提拍。
+_SEED_COVERAGE_MAX_INSERTS = 2
 
 
 def _seed_premise_overlap(seed_text: str, line_text: str) -> bool:
@@ -2135,6 +2138,7 @@ def patch_seed_premise_lines(
                 used[sp_used] = used.get(sp_used, 0) + 1
     changed = False
     inserts = 0
+    coverage_inserts = 0
     last_inserted_speaker = ""
     # 已落地的 seed 拍下标（用于决定插入位置）
     landed: list[int] = []
@@ -2150,6 +2154,13 @@ def patch_seed_premise_lines(
             -1,
         )
         landed.append(idx)
+    # 「整场缺席」判定（与 `missing_seed_rows` 同一口径）：只对稿子里一句都没有的
+    # 角色做尾拍补拍——模型换词写了同一拍时不能再插一行，否则补出语义重复。
+    present_speakers = {
+        str(item.get("speaker") or "").strip()
+        for item in dialogue
+        if isinstance(item, dict)
+    }
 
     # 终检点名的说话人：补拍的额度只花在它们身上（专家裁决：缺拍关系要作为
     # 一等输入）。否则按 seed 顺序补，额度会被无关的前置拍吃光，真正缺失的
@@ -2159,14 +2170,35 @@ def patch_seed_premise_lines(
         if only_speakers
         else None
     )
-    for pos, (sp, text) in enumerate(seed_rows):
+    # 补拍顺序：**整场缺席的角色优先**（拍落地覆盖缺口），其次才是「字面没对上」
+    # 的引用缺口。否则有限额度会被改写导致的假缺口吃光，真正整拍丢失的收尾拍
+    # （家长反应）反而补不回来。各组内部保持 seed 顺序，避免插入乱序。
+    coverage_first = [
+        pos
+        for pos in range(len(seed_rows))
+        if seed_rows[pos][0] not in present_speakers
+    ]
+    coverage_first += [
+        pos
+        for pos in range(len(seed_rows))
+        if seed_rows[pos][0] in present_speakers
+    ]
+    for pos in coverage_first:
+        sp, text = seed_rows[pos]
         if wanted is not None and sp not in wanted:
             continue
         # 连续同角色的 seed 拍是一个整体（专家裁决：seed 自身连说允许，不得拆开），
         # 因此额度按「补了几段」记账，而不是按补了几句。
         continuing = pos > 0 and last_inserted_speaker == sp
-        if not continuing and inserts >= _SEED_PREMISE_MAX_INSERTS:
-            break
+        # 覆盖补拍（整场缺席的角色）与引用补拍各用各的额度：否则覆盖缺口会吃掉
+        # 前提拍的额度，让「beat 没按序落地」这类引用缺口补不回来。
+        is_coverage = sp not in present_speakers
+        if not continuing:
+            if is_coverage:
+                if coverage_inserts >= _SEED_COVERAGE_MAX_INSERTS:
+                    continue
+            elif inserts >= _SEED_PREMISE_MAX_INSERTS:
+                break
         if landed[pos] >= 0:
             continue
         if len(dialogue) >= CHAT_LINE_COUNT_MAX:
@@ -2176,17 +2208,33 @@ def patch_seed_premise_lines(
             # 该角色的契约额度已满：补上去必然被硬卡判死，因此不补这一拍。
             continue
         # 插入窗口 [lower, upper]：上界是首个已落地的后继 seed 拍——前提必须先于
-        # 引用它的话落地；下界是最后一个已落地的前驱拍之后。找不到后继锚点说明
-        # 无法定位依赖它的句子，此时宁可不动，也不要后置补叙。
+        # 引用它的话落地；下界是最后一个已落地的前驱拍之后。
+        # 找不到后继锚点的**尾拍**不能直接放弃：收尾的旁观反应拍（如家长笑场）
+        # 全稿无人引用，既不会触发「缺前提」，也不会有后继锚点，老逻辑会让它
+        # 整拍静默丢失（专家裁决）。尾拍没有依赖它的句子，按 seed 顺序插到已落地
+        # 前驱之后、尽量不越过收束句即可。
         upper = next(
             (landed[j] for j in range(pos + 1, len(landed)) if landed[j] >= 0),
             -1,
         )
-        if upper < 0:
-            continue
         lowers = [landed[j] for j in range(0, pos) if landed[j] >= 0]
         lower = (max(lowers) + 1) if lowers else 1
-        insert_at = max(lower, min(upper, len(dialogue)))
+        if upper < 0:
+            # 尾拍只在「该角色整场缺席」时才补（与 `missing_seed_rows` 同口径）：
+            # 模型换词写了同一拍不该再插一行，否则补出语义重复。
+            if sp in present_speakers:
+                continue
+            tail_at = _seed_tail_insert_index(
+                dialogue,
+                sp,
+                seed_speaker_before=(seed_rows[pos - 1][0] if pos > 0 else ""),
+                lower=lower,
+            )
+            if tail_at is None:
+                continue
+            insert_at = tail_at
+        else:
+            insert_at = max(lower, min(upper, len(dialogue)))
         if insert_at <= 0:
             continue
         prev_sp = str(
@@ -2203,7 +2251,10 @@ def patch_seed_premise_lines(
                 landed[j] += 1
         landed[pos] = insert_at
         if not continuing:
-            inserts += 1
+            if is_coverage:
+                coverage_inserts += 1
+            else:
+                inserts += 1
         last_inserted_speaker = sp
         changed = True
     if changed and len(dialogue) < CHAT_LINE_COUNT_MIN:
@@ -2215,6 +2266,62 @@ def patch_seed_premise_lines(
 _SEED_ORDER_TAIL_GUARD = 3
 _SEED_ORDER_MAX_FIXES = 2
 _SEED_ORDER_MOVE_RATIO_DEN = 2
+
+
+def _seed_tail_insert_index(
+    dialogue: list[Any],
+    speaker: str,
+    *,
+    seed_speaker_before: str,
+    lower: int,
+) -> int | None:
+    """尾拍（没有已落地后继锚点）的插入点：收束句之前优先，其次末尾。
+
+    收束句要留在最后（它是契约的收束拍），所以先试 ``len-1``；只有插入后不新增
+    同角色连说才采用（seed 自身连续同角色例外——seed 顺序单调优先，绝不为避连说
+    而退格反序）。找不到安全位置就返回 ``None``（宁可不补，也不补出必挂的稿子）。
+    """
+    if len(dialogue) < 2 or lower > len(dialogue):
+        return None
+    for insert_at in (len(dialogue) - 1, len(dialogue)):
+        if insert_at < lower:
+            continue
+        prev_sp = str((dialogue[insert_at - 1] or {}).get("speaker") or "").strip()
+        next_sp = (
+            str((dialogue[insert_at] or {}).get("speaker") or "").strip()
+            if insert_at < len(dialogue)
+            else ""
+        )
+        if prev_sp != speaker and next_sp != speaker:
+            return insert_at
+        if seed_speaker_before == speaker:
+            return insert_at
+    return None
+
+
+def missing_seed_rows(
+    dialogue: list[Any] | None,
+    dialogue_seed: list[Any] | None = None,
+    *,
+    max_seed_rows: int | None = None,
+) -> list[tuple[str, str]]:
+    """拍落地覆盖检查：整拍丢失的 seed 拍（说话人全稿一句都没有）。
+
+    终检的「缺前提」只在后文引用了该前提时才触发，收尾的旁观反应拍全稿无人引用，
+    会静默丢失（专家裁决：拍落地必须由本地覆盖检查强制，不能等引用）。判据只认
+    「说话人整场缺席」这一抽象事实，不认字面重叠——模型把 seed 改写（同角色换词
+    说了同一个意思）不算丢失，否则会补出语义重复的行；单条 seed 拍的缺失仍由引用
+    驱动的 ``patch_seed_premise_lines`` 负责。返回 ``(speaker, text)`` 列表。
+    """
+    rows = _seed_speakable_rows(dialogue_seed, max_rows=max_seed_rows)
+    if not isinstance(dialogue, list) or not rows:
+        return []
+    present = {
+        str(item.get("speaker") or "").strip()
+        for item in dialogue
+        if isinstance(item, dict)
+    }
+    return [(sp, text) for sp, text in rows if sp not in present]
 
 
 def _seed_first_landing(speaker: str, text: str, dialogue: list[Any]) -> int:

@@ -218,6 +218,26 @@ GOLD_CHAT_DRAFT_ATTEMPTS = 3
 # 重掷（在首个 draft 之上追加，而不是把总次数压成 1 次——压成 1 次等于零重掷）。
 GOLD_CHAT_MISSING_BEAT_ATTEMPTS = 1
 
+# 语义问题回灌（专家裁决）：矛盾/接不上这类连贯性问题编译成抽象约束回灌下一稿，
+# 语病/垫字不进 LLM 反馈（那类走本地定点修复，回灌只会让模型整篇改写）。
+SEMANTIC_FEEDBACK_MAX_ITEMS = 3
+SEMANTIC_FEEDBACK_MAX_CHARS = 120
+# 语义回灌最多追加一稿：同一问题连续两轮不改，说明不是随机性，继续重掷纯烧钱。
+GOLD_CHAT_SEMANTIC_RETRY_ATTEMPTS = 1
+
+_SEMANTIC_ISSUE_KINDS = frozenset(
+    {"矛盾", "接不上", "错位", "引用无据", "缺前提", "跳步", "无据"}
+)
+# 抽象约束模板：只写不变量，不绑定具体剧情/名词（防过拟合）。
+_SEMANTIC_CONSTRAINT_TEMPLATES: dict[str, str] = {
+    "矛盾": "同一角色在相邻数句内不得先承认/接受某状态又反口否认",
+    "错位": "指代（如「照做/这次」）所指的指令或事件须在前文已建立",
+    "接不上": "每句须直接回应上一句的问/答/挑衅，不得答非所问",
+    "引用无据": "不得引用前文未发生的事件或未出现的物件",
+    "缺前提": "被后文引用的前提事件须先真实落地，再让后文引用",
+    "跳步": "事件按既定顺序逐步落实，不得跳步",
+}
+
 
 def _next_draft_attempt_limit(
     *,
@@ -316,6 +336,75 @@ def _iter_missing_beat_issues(node: Any) -> list[dict[str, Any]]:
         if isinstance(item, dict)
         and str(item.get("kind") or "").strip() == "缺前提"
     ]
+
+
+def _iter_review_issues(node: Any) -> list[dict[str, Any]]:
+    """取出节点上机审 issue 列表（异常对象或候选稿均可）。"""
+    issues: Any = getattr(node, "issues", None)
+    if not isinstance(issues, list) and isinstance(node, dict):
+        quality = node.get("quality")
+        if isinstance(quality, dict):
+            issues = quality.get("review_issues")
+        if not isinstance(issues, list):
+            issues = node.get("issues")
+    if not isinstance(issues, list):
+        return []
+    return [item for item in issues if isinstance(item, dict)]
+
+
+def _semantic_retry_constraints_from(source: Any) -> list[str]:
+    """把上一轮终检的**语义**问题编译成抽象约束（专家裁决，供下一稿避坑）。
+
+    只收矛盾/接不上/错位/引用无据类；语病/垫字/重复类返回空——那类本地定点修，
+    回灌给 LLM 只会诱发整篇改写。异常常被包一层，故沿 cause 链回溯。
+    """
+    constraints: list[str] = []
+    seen: set[str] = set()
+    visited: set[int] = set()
+    node: Any = source
+    while node is not None and id(node) not in visited:
+        visited.add(id(node))
+        for item in _iter_review_issues(node):
+            kind = str(item.get("kind") or "").strip()
+            if kind not in _SEMANTIC_ISSUE_KINDS:
+                continue
+            template = _SEMANTIC_CONSTRAINT_TEMPLATES.get(kind)
+            if not template or template in seen:
+                continue
+            seen.add(template)
+            constraints.append(template)
+        node = getattr(node, "__cause__", None) or getattr(node, "__context__", None)
+    if not constraints:
+        # 兜底：机审只给了文字、没带结构化 issue 时，从「第[N]句·kind：」里取类
+        for kind in re.findall(r"句·([\u4e00-\u9fff]{2,4})[：:]", str(source)):
+            template = _SEMANTIC_CONSTRAINT_TEMPLATES.get(kind)
+            if template and template not in seen:
+                seen.add(template)
+                constraints.append(template)
+    capped: list[str] = []
+    total = 0
+    for item in constraints[:SEMANTIC_FEEDBACK_MAX_ITEMS]:
+        if total + len(item) > SEMANTIC_FEEDBACK_MAX_CHARS:
+            break
+        capped.append(item)
+        total += len(item)
+    return capped
+
+
+def _attach_retry_semantic_issues(
+    row: dict[str, Any],
+    constraints: list[str],
+) -> dict[str, Any]:
+    """把上一轮的语义问题抽象约束挂到行上（软约束，供下一稿提示词消费）。"""
+    items = [str(x).strip() for x in constraints if str(x).strip()]
+    if not items:
+        return row
+    out = dict(row)
+    feedback = dict(out.get("gold_chat_retry_feedback") or {})
+    feedback.setdefault("reason", "semantic_review_exhausted")
+    feedback["semantic_constraints"] = items
+    out["gold_chat_retry_feedback"] = feedback
+    return out
 
 
 def _reroll_h3_on_retry(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -1857,6 +1946,9 @@ def convert_gold_chat(
         draft_attempts = GOLD_CHAT_DRAFT_ATTEMPTS
         retry_feedback: list[dict[str, str]] = []
         missing_beat_retry_used = False
+        # 语义问题回灌（专家裁决）：最多追加一稿，避免同一问题反复盲抽
+        retry_constraints: list[str] = []
+        semantic_retry_used = False
         # 首次重掷前的判型（原判型）与触发原因，成功落盘时留痕
         pair_before: tuple[str, str] | None = None
         pair_remap_reason = ""
@@ -1888,6 +1980,9 @@ def convert_gold_chat(
                 if retry_feedback:
                     # 甲：把上一轮缺的叙事事件回灌契约重建，避免盲重掷
                     row = _attach_retry_missing_events(row, retry_feedback)
+                if retry_constraints:
+                    # 语义问题编译成抽象约束回灌：只修问题，不动已通过的拍
+                    row = _attach_retry_semantic_issues(row, retry_constraints)
                 try:
                     row = _rebuild_h3a_h3b_on_convert(row)
                 except Exception as rebuild_exc:
@@ -1921,14 +2016,25 @@ def convert_gold_chat(
                     found = _missing_beat_intents_from(exc)
                     if found:
                         retry_feedback = found
+                found_constraints = _semantic_retry_constraints_from(exc)
+                if found_constraints and found_constraints != retry_constraints:
+                    # 语义问题（矛盾/接不上…）编译成抽象约束回灌，最多追加一稿
+                    retry_constraints = found_constraints
+                    if not semantic_retry_used:
+                        semantic_retry_used = True
+                        draft_attempts = min(
+                            max(draft_attempts, draft_attempt + 1),
+                            GOLD_CHAT_DRAFT_ATTEMPTS + GOLD_CHAT_SEMANTIC_RETRY_ATTEMPTS,
+                        )
                 if draft_attempt >= draft_attempts or not _is_retryable_draft_failure(exc):
                     raise
                 logger.info(
-                    "[GOLD_CHAT] draft retry %s/%s source_id=%s feedback=%s after: %s",
+                    "[GOLD_CHAT] draft retry %s/%s source_id=%s feedback=%s constraints=%s after: %s",
                     draft_attempt,
                     draft_attempts,
                     sid,
                     [x.get("original_intent") for x in retry_feedback] or "none",
+                    retry_constraints or "none",
                     str(exc)[:160],
                 )
         if chat is None:

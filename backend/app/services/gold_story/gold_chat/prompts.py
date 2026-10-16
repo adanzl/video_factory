@@ -1007,31 +1007,46 @@ def format_structure_score_feedback(
 
 
 def format_retry_missing_events_block(row: dict[str, Any]) -> str:
-    """甲重掷反馈块：上一轮终检缺了哪些叙事事件（无反馈时返回空串）。
+    """甲重掷反馈块：上一轮终检缺了哪些叙事事件、犯了哪些语义问题。
 
-    只承载**语义**（事件意图 + 期望说话人），不带 beat 编号与行号——重掷会
-    重建契约，旧编号在新契约里没有意义（专家裁决）。
+    只承载**语义**（事件意图 + 期望说话人 + 抽象约束），不带 beat 编号与行号——
+    重掷会重建契约，旧编号在新契约里没有意义（专家裁决）。
+    语病/垫字类不进本块：那类走本地定点修复，回灌只会让模型整篇改写。
     """
     feedback = row.get("gold_chat_retry_feedback")
     if not isinstance(feedback, dict):
         return ""
     events = feedback.get("missing_events")
-    if not isinstance(events, list) or not events:
-        return ""
-    lines = [
-        "【上一轮缺拍·必须补齐】",
-        "上一轮成稿在终检被判「缺前提」：下列叙事事件没有被任何角色说出口。",
-        "本轮须让它们在对应角色的话里真实发生（可换措辞，不得改事件本身，勿新增道具）：",
-    ]
-    for item in events[:4]:
-        if not isinstance(item, dict):
-            continue
-        intent = str(item.get("original_intent") or "").strip()
-        if not intent:
-            continue
-        speaker = str(item.get("expected_speaker") or "").strip()
-        lines.append(f"- {intent}" + (f"（说话人应为{speaker}）" if speaker else ""))
-    if len(lines) <= 3:
+    events = events if isinstance(events, list) else []
+    constraints = feedback.get("semantic_constraints")
+    constraints = constraints if isinstance(constraints, list) else []
+    lines: list[str] = []
+    if events:
+        lines += [
+            "【上一轮缺拍·必须补齐】",
+            "上一轮成稿在终检被判「缺前提」：下列叙事事件没有被任何角色说出口。",
+            "本轮须让它们在对应角色的话里真实发生（可换措辞，不得改事件本身，勿新增道具）：",
+        ]
+        for item in events[:4]:
+            if not isinstance(item, dict):
+                continue
+            intent = str(item.get("original_intent") or "").strip()
+            if not intent:
+                continue
+            speaker = str(item.get("expected_speaker") or "").strip()
+            lines.append(
+                f"- {intent}" + (f"（说话人应为{speaker}）" if speaker else "")
+            )
+    if constraints:
+        lines += [
+            "【上一轮终检问题·勿重复】",
+            "上一轮成稿在终检被判下列连贯性问题。本轮只修这些问题：已通过的拍及其顺序、"
+            "各角色台词额度、句数篇幅、收束位置保持不变，不得新增事件或道具。",
+        ]
+        lines += [
+            f"- {str(item).strip()}" for item in constraints[:4] if str(item).strip()
+        ]
+    if not lines:
         return ""
     return "\n".join(lines)
 

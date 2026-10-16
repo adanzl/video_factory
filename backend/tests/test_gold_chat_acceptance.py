@@ -3519,10 +3519,10 @@ def test_duplicate_repair_target_prefers_orphan_for_k_b():
 
 
 def test_final_acceptance_premise_align_runs_before_semantic_budget(monkeypatch):
-    """终检缺前提且 seed 前提拍没落地时：先确定性补拍复验，不烧语义预算。
+    """seed 里整场缺席的角色（收尾家长反应拍）在终检前确定性补回，不烧语义预算。
 
-    失败稿会拿「缺前提」硬伤去消耗终检那唯一一次语义修稿额度，而这类缺陷是
-    seed 拍没落地的机械问题，机械修复即可——预算为零时也应能过。
+    终检的「缺前提」只在后文引用了该前提时才触发，无人引用的收尾拍要靠拍落地
+    覆盖检查主动补回（专家裁决）；补拍发生在语义审读之前，所以预算为零时也应能过。
     """
     from app.services.daily_story import review
     from app.services.gold_story.gold_chat import finalize
@@ -3551,12 +3551,10 @@ def test_final_acceptance_premise_align_runs_before_semantic_budget(monkeypatch)
 
     def semantic(theme, chat, **kwargs):
         seen.append([str(item.get("line") or "") for item in chat["dialogue"]])
-        if len(seen) == 1:
-            raise _missing_beat_exc(3, 3, "爸爸", "旁观解说")
         return ExportSemanticReviewResult(completed=True)
 
     def fix(story, feedback, **kwargs):  # pragma: no cover - 不应被调用
-        raise AssertionError("缺前提必须先走确定性 seed 补拍")
+        raise AssertionError("整场缺席的拍必须先走覆盖补拍")
 
     monkeypatch.setattr(review, "collect_export_blocking_local_issues", local)
     monkeypatch.setattr(review, "run_export_semantic_review", semantic)
@@ -3579,9 +3577,8 @@ def test_final_acceptance_premise_align_runs_before_semantic_budget(monkeypatch)
         dialogue_seed=dialogue_seed,
     )
 
-    assert len(seen) == 2
-    assert seen[0] == [item["line"] for item in dialogue]
-    assert "看这招，昭昭无影脚" in seen[1][2]
-    assert seen[1][3].startswith("爸你站哪边的")
+    assert len(seen) == 1
+    assert seen[0][2].startswith("看这招")
+    assert seen[0][3].startswith("爸你站哪边的")
     assert score == 80
     assert budget.used == 0

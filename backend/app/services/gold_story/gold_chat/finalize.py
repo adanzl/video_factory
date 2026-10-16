@@ -1140,6 +1140,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     repair_budget: Any | None = None,
 ) -> tuple[dict[str, Any], int]:
     """导出前统一修稿；共享预算耗尽后，纯重复终检仅额外救援一次。"""
+    from app.services.gold_story.gold_chat.patch import missing_seed_rows
     from app.services.gold_story.gold_chat.repair import (
         GoldChatRepairBudget,
         GoldChatRepairExhausted,
@@ -1165,6 +1166,16 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     # 确定性 seed 补拍只试一次：同一候选补过仍判缺前提，说明根因不在「没落地」，
     # 再补只是反复插行（专家裁决：同一拍不重复插行）。
     premise_align_tried = False
+    # 拍落地覆盖检查（专家裁决层①）：收尾的旁观反应拍全稿无人引用，既不会触发
+    # 「缺前提」，也没有后继锚点，会在终检静默丢失。这里不等引用，按 seed 覆盖
+    # 确定性补回一次；补不动就不动（不占语义预算，也不插必挂的行）。
+    if dialogue_seed:
+        if missing_seed_rows(current.get("dialogue"), dialogue_seed):
+            covered = _try_local_premise_align(current, dialogue_seed, validate_chat)
+            if covered is not None:
+                current = covered
+                premise_align_tried = True
+                logger.info("gold_chat final beat coverage close applied")
     while True:
         try:
             try:
@@ -1182,6 +1193,29 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                     dialogue_total_chars(current),
                 )
                 _validate_chat_or_repairable(validate_chat, current)
+            # 拍落地覆盖（专家裁决层①/②）：整场缺席的角色拍必须当硬伤处理，
+            # 否则无人引用的收尾拍（家长反应）会在终检静默通过。缺口进结构化
+            # 反馈走重掷，而不是无声丢掉。
+            missing_coverage = missing_seed_rows(
+                current.get("dialogue"), dialogue_seed
+            ) if dialogue_seed else []
+            if missing_coverage:
+                raise GoldChatSemanticBlocked(
+                    "终检语义硬伤：拍未落地："
+                    + "；".join(f"{sp}（{text}）" for sp, text in missing_coverage),
+                    issues=[
+                        {
+                            "kind": "缺前提",
+                            "desc": f"整场未见{sp}的回合（{text}），该拍没落地",
+                            "fix": (
+                                f"由{sp}补一个有推进的台词回合（{text}）；"
+                                "不许用旁白或空应答占行"
+                            ),
+                            "missing_beat": {"intent": text, "speaker": sp},
+                        }
+                        for sp, text in missing_coverage
+                    ],
+                )
             scored = attach_score(current, row)
             struct = _gate_structure_or_raise(gate_score, scored)
             current = scored
