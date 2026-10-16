@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from app.config import Config
@@ -376,6 +377,65 @@ def _retry_structure_pair(
         out["payload"] = new_payload
         return out, "M3+F(parent-caught-fallback)"
     return _reroll_h3_on_retry(row)
+
+
+_GOLD_CHAT_PAIR_REMAP_KEY = "gold_chat_pair_remap"
+
+
+def _pair_label(mechanism: Any, structure_type: Any) -> str:
+    """判型标签：沿用重掷日志口径「机制+结构」（如 M12+K）。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech and st:
+        return f"{mech}+{st}"
+    return mech or st
+
+
+def _stamp_pair_remap_note(
+    row: dict[str, Any],
+    *,
+    from_mechanism: Any,
+    from_structure: Any,
+    reason: str = "",
+    attempt: int = 0,
+) -> dict[str, Any]:
+    """判型重掷留痕：payload 记结构化 from/to/原因，contract.remap_note 记短标记。
+
+    重掷（如原判型契约不可解 K_B_DISQUALIFIED）是兜底，落盘后库内只看得见结果，
+    会误判成「本来就是这一型」，故留 from→to 供审读与回溯。remap_note 只放无剧情
+    词的短标记（该字段会被家长/回忆类启发式扫描）；原因只进结构化键。
+    """
+    to_mechanism = row.get("mechanism")
+    to_structure = row.get("structure_type")
+    from_label = _pair_label(from_mechanism, from_structure)
+    to_label = _pair_label(to_mechanism, to_structure)
+    if not from_label or from_label == to_label:
+        return row
+    marker = f"判型重掷 {from_label}→{to_label}"
+    out = dict(row)
+    payload = dict(cast(dict[str, Any], row.get("payload") or {}))
+    scene_contract = payload.get("scene_contract")
+    if isinstance(scene_contract, dict):
+        contract = dict(scene_contract)
+        note = str(contract.get("remap_note") or "").strip()
+        if marker not in note:
+            contract["remap_note"] = f"{note}；{marker}".strip("；")
+        payload["scene_contract"] = contract
+    payload[_GOLD_CHAT_PAIR_REMAP_KEY] = {
+        "from": {
+            "mechanism": str(from_mechanism or "").strip(),
+            "structure_type": str(from_structure or "").strip(),
+        },
+        "to": {
+            "mechanism": str(to_mechanism or "").strip(),
+            "structure_type": str(to_structure or "").strip(),
+        },
+        "reason": str(reason or "")[:160],
+        "attempt": int(attempt or 0),
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+    out["payload"] = payload
+    return out
 
 
 def _is_retryable_draft_failure(exc: Exception) -> bool:
@@ -1797,10 +1857,19 @@ def convert_gold_chat(
         draft_attempts = GOLD_CHAT_DRAFT_ATTEMPTS
         retry_feedback: list[dict[str, str]] = []
         missing_beat_retry_used = False
+        # 首次重掷前的判型（原判型）与触发原因，成功落盘时留痕
+        pair_before: tuple[str, str] | None = None
+        pair_remap_reason = ""
         for draft_attempt in range(1, GOLD_CHAT_DRAFT_ATTEMPTS + 1):
             if draft_attempt > 1:
                 # 重掷：换一次 H3 判型（机制/结构），再重跑 H3a/H3b 换契约，
                 # 避免同一条 prompt 反复撞同一硬卡
+                if pair_before is None:
+                    pair_before = (
+                        str(row.get("mechanism") or ""),
+                        str(row.get("structure_type") or ""),
+                    )
+                    pair_remap_reason = str(last_exc or "")
                 try:
                     row, rerolled = _retry_structure_pair(
                         row, attempt=draft_attempt
@@ -1868,6 +1937,14 @@ def convert_gold_chat(
         if draft_attempt > 1:
             # 重掷后生成的判型才是本篇真正可落地的判型，落盘供后续沿用
             gid = int(row.get("id") or 0)
+            if pair_before is not None:
+                row = _stamp_pair_remap_note(
+                    row,
+                    from_mechanism=pair_before[0],
+                    from_structure=pair_before[1],
+                    reason=pair_remap_reason,
+                    attempt=draft_attempt,
+                )
             if gid > 0:
                 try:
                     repo_gold_story.update_mechanism_and_structure(
@@ -1881,6 +1958,23 @@ def convert_gold_chat(
                         gid,
                         persist_exc,
                     )
+                remap_patch: dict[str, Any] = {}
+                reroll_payload = cast(dict[str, Any], row.get("payload") or {})
+                if isinstance(reroll_payload.get(_GOLD_CHAT_PAIR_REMAP_KEY), dict):
+                    remap_patch[_GOLD_CHAT_PAIR_REMAP_KEY] = reroll_payload[
+                        _GOLD_CHAT_PAIR_REMAP_KEY
+                    ]
+                if isinstance(reroll_payload.get("scene_contract"), dict):
+                    remap_patch["scene_contract"] = reroll_payload["scene_contract"]
+                if remap_patch:
+                    try:
+                        repo_gold_story.patch_story_payload(gid, remap_patch)
+                    except Exception as remap_exc:
+                        logger.warning(
+                            "[GOLD_CHAT] persist pair remap note failed id=%s: %s",
+                            gid,
+                            remap_exc,
+                        )
 
         current_stage = "export_backfill"
         cfg = config or Config()

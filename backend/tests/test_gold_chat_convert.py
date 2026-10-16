@@ -3187,3 +3187,139 @@ def test_seed_premise_patch_respects_parent_quota():
     )
     assert changed2 is False
     assert out2["dialogue"] == dlg
+
+
+def test_pair_remap_note_records_from_to_and_reason():
+    """LS: 判型重掷留痕 —— 原判型 K/M12 因契约不可解重掷到 J/M8 后必须可追溯。
+
+    只加记录、不动判型逻辑：remap_note 放短标记（该字段会被家长类启发式扫描），
+    原因与 from/to 进结构化键；重复落盘不得叠加标记。
+    """
+    row = {
+        "id": 32,
+        "mechanism": "M8",
+        "structure_type": "J",
+        "payload": {
+            "scene_contract": {
+                "story_type": "J",
+                "beat_chain": [{"beat": 1, "speaker": "昭昭", "intent": "占物挑衅"}],
+                "remap_note": "站外角色映射",
+            },
+            "dialogue_seed": [{"speaker": "昭昭", "intent": "抢笔"}],
+        },
+    }
+    reason = "K_B_DISQUALIFIED：beat 4 孩子对家长的攻击目标：攻击解说员"
+    out = gc._stamp_pair_remap_note(
+        row,
+        from_mechanism="M12",
+        from_structure="K",
+        reason=reason,
+        attempt=2,
+    )
+    contract = out["payload"]["scene_contract"]
+    assert contract["remap_note"] == "站外角色映射；判型重掷 M12+K→M8+J"
+    # 短标记不含剧情词，避免被 _contract_has_parent 等启发式误判
+    assert "家长" not in contract["remap_note"]
+    # 契约其余字段原样保留
+    assert contract["beat_chain"] == row["payload"]["scene_contract"]["beat_chain"]
+    assert out["payload"]["dialogue_seed"] == row["payload"]["dialogue_seed"]
+    remap = out["payload"][gc._GOLD_CHAT_PAIR_REMAP_KEY]
+    assert remap["from"] == {"mechanism": "M12", "structure_type": "K"}
+    assert remap["to"] == {"mechanism": "M8", "structure_type": "J"}
+    assert remap["reason"] == reason
+    assert remap["attempt"] == 2
+    assert remap["at"]
+
+    again = gc._stamp_pair_remap_note(
+        out,
+        from_mechanism="M12",
+        from_structure="K",
+        reason=reason,
+        attempt=2,
+    )
+    assert again["payload"]["scene_contract"]["remap_note"].count("判型重掷") == 1
+
+    # 判型没变就不留痕（正常一次过的稿子不得多出标记）
+    same = gc._stamp_pair_remap_note(
+        row,
+        from_mechanism="M8",
+        from_structure="J",
+        reason="",
+    )
+    assert same is row
+    assert "判型重掷" not in same["payload"]["scene_contract"]["remap_note"]
+
+
+def test_convert_persists_pair_remap_note_after_reroll(monkeypatch):
+    """LS: 重掷换判型成功落盘时，出来源判型与原因（可追溯，不改判型逻辑）。"""
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairExhausted
+    from app.repositories import repo_gold_story
+
+    row = _sample_row()
+    row["source_id"] = "BV1PAIRREMAP"
+    row["id"] = 32
+    row["mechanism"] = "M12"
+    row["structure_type"] = "K"
+    row["payload"]["scene_contract"] = {"story_type": "K", "beat_chain": []}
+    _bypass_structure_gate(monkeypatch)
+    monkeypatch.setattr(gc, "_rebuild_h3a_h3b_on_convert", lambda r: r)
+    monkeypatch.setattr(gc, "_persist_structure_correction", lambda r, _n: r)
+    monkeypatch.setattr(gc, "_resolve_structure_row", lambda r: (r, []))
+    monkeypatch.setattr(gc, "_persist_m5_h_contract_if_needed", lambda r: r)
+    monkeypatch.setattr(
+        gc, "apply_gold_chat_normalizations", lambda chat, **_kw: (chat, [])
+    )
+    monkeypatch.setattr(gc, "_refine_after_normalize", lambda chat, _row, **_kw: chat)
+    monkeypatch.setattr(gc, "_ensure_gold_chat_min_chars", lambda chat, **_kw: (chat, []))
+    monkeypatch.setattr(gc, "_attach_retry_missing_events", lambda r, _f: r)
+
+    def _reroll(r, attempt=0):
+        out = dict(r)
+        out["mechanism"] = "M8"
+        out["structure_type"] = "J"
+        return out, "M8+J"
+
+    monkeypatch.setattr(gc, "_retry_structure_pair", _reroll)
+    monkeypatch.setattr(gc, "gold_story_to_gold_chat", lambda _row, **_kw: _sample_chat())
+
+    finalize_calls: list[int] = []
+
+    def _finalize(chat, _row, **_kw):
+        finalize_calls.append(1)
+        if len(finalize_calls) == 1:
+            raise GoldChatRepairExhausted(
+                stage="final_acceptance",
+                reason="K_B_DISQUALIFIED：beat 4 孩子对家长的攻击目标：攻击解说员",
+                candidate=_sample_chat(),
+            )
+        return chat, 80
+
+    monkeypatch.setattr(gcf, "run_gold_chat_finalize", _finalize)
+    monkeypatch.setattr(gc, "export_gold_chat_files", lambda **_kw: {"json": "x"})
+    monkeypatch.setattr(gc, "_backfill_gold_story_after_export", lambda *_a, **_kw: None)
+
+    persisted: dict = {}
+    monkeypatch.setattr(
+        repo_gold_story,
+        "update_mechanism_and_structure",
+        lambda gid, **_kw: persisted.setdefault("structure", (gid, _kw)),
+    )
+    monkeypatch.setattr(
+        repo_gold_story,
+        "patch_story_payload",
+        lambda gid, patch: persisted.setdefault("payload", (gid, patch)),
+    )
+
+    result = gc.convert_gold_chat(row)
+
+    assert result["ok"] is True
+    assert len(finalize_calls) == 2
+    assert persisted["structure"][0] == 32
+    assert persisted["structure"][1]["structure_type"] == "J"
+    gid, patch = persisted["payload"]
+    assert gid == 32
+    remap = patch[gc._GOLD_CHAT_PAIR_REMAP_KEY]
+    assert remap["from"] == {"mechanism": "M12", "structure_type": "K"}
+    assert remap["to"] == {"mechanism": "M8", "structure_type": "J"}
+    assert "K_B_DISQUALIFIED" in remap["reason"]
+    assert patch["scene_contract"]["remap_note"] == "判型重掷 M12+K→M8+J"
