@@ -1585,12 +1585,20 @@ def stamp_gold_chat_acceptance_quality(
     chatter_signals: list[str],
     semantic_pass: bool,
     review_contract: dict[str, Any] | None = None,
+    downgraded_issues: list[dict[str, Any]] | None = None,
 ) -> None:
-    """gold_chat 终验通过后写回 quality（含语义/好笑状态）。"""
+    """gold_chat 终验通过后写回 quality（含语义/好笑状态）。
+
+    ``downgraded_issues``：evidence 不可核验但弱核验通过的观感类条目。它们不拦
+    导出，但必须在稿上留痕并标人工抽检，避免变成静默放过（专家裁决 2026-10）。
+    """
     quality = chat.get("quality")
     if not isinstance(quality, dict):
         return
     quality["review_issues"] = review_issues
+    dropped = [dict(it) for it in (downgraded_issues or []) if isinstance(it, dict)]
+    quality["review_downgraded_issues"] = dropped
+    quality["needs_manual_spotcheck"] = bool(dropped)
     reasons = [str(r) for r in (quality.get("reasons") or [])]
     for sig in chatter_signals:
         if sig not in reasons:
@@ -1602,6 +1610,11 @@ def stamp_gold_chat_acceptance_quality(
             if not str(r).startswith("语义终检")
         ]
         reasons.append("语义终检通过")
+    if dropped:
+        reasons = [
+            r for r in reasons if not str(r).startswith("审核证据待抽检")
+        ]
+        reasons.append(f"审核证据待抽检×{len(dropped)}")
     quality["reasons"] = reasons
     finalize_daily_story_total(
         quality,

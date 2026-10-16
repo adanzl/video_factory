@@ -1516,6 +1516,8 @@ def patch_k_dedupe_near_lines(story: dict) -> list[str]:
         return re.sub(r"[呀啊吧呢嘛了呗！？。!?，,\s]", "", str(text or ""))
 
     seen: set[str] = set()
+    first_of: dict[str, int] = {}
+    dup_prev: dict[int, int] = {}
     drop: set[int] = set()
     for i, item in enumerate(dialogue):
         if not isinstance(item, dict):
@@ -1528,8 +1530,10 @@ def patch_k_dedupe_near_lines(story: dict) -> list[str]:
             continue
         if key in seen:
             drop.add(i)
+            dup_prev[i] = first_of[key]
         else:
             seen.add(key)
+            first_of[key] = i
     # 同角色连说且后句含前句实义 → 留前删后
     for i in range(1, len(dialogue)):
         if i in drop:
@@ -1557,7 +1561,23 @@ def patch_k_dedupe_near_lines(story: dict) -> list[str]:
     if preserve_tail:
         _lines_after, _spk_after = _lines_and_speakers_from_dialogue(kept)
         if not kid_self_resolve_in_tail(_spk_after, _lines_after):
-            return notes
+            # 反事实：删「后出现」的重复会拆掉末段不变量时，改删同组更早的那句
+            # （保留承载不变量的后句）；两个方向都不成立才整批放弃。
+            swapped = set(drop)
+            for later, earlier in dup_prev.items():
+                if later in swapped and earlier not in swapped:
+                    swapped.discard(later)
+                    swapped.add(earlier)
+            if swapped == drop:
+                return notes
+            kept_swap = [x for i, x in enumerate(dialogue) if i not in swapped]
+            _lines_swap, _spk_swap = _lines_and_speakers_from_dialogue(kept_swap)
+            if len(kept_swap) < 12 or not kid_self_resolve_in_tail(
+                _spk_swap, _lines_swap
+            ):
+                return notes
+            drop = swapped
+            kept = kept_swap
     from app.services.daily_story.prompts import (
         DAILY_STORY_BODY_CHARS_MIN,
         dialogue_total_chars,

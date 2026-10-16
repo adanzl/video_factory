@@ -724,7 +724,8 @@ def format_beat_sequence_block(
     if chain_text:
         parts.extend(
             [
-                "须按以下 beat 顺序展开（每拍 1–3 句对白）：",
+                "须按以下 beat 顺序展开；标了「须≥N个回合」的拍必须写足 N 个有推进的回合"
+                "（一方说内容、另一方接得住），不得用「嗯/哦/行」等空应答占行：",
                 chain_text,
             ]
         )

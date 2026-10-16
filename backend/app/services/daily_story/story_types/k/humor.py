@@ -52,7 +52,7 @@ def collect_k_humor_issues(
             RE_KB_DEFIANCE_FILLER,
             RE_KB_LINE_FRAGMENT,
             RE_KB_PARENT_INCITE,
-            RE_KB_PARENT_PASSIVE,
+            RE_KB_PARENT_NON_INTERVENTION,
         )
         from app.services.daily_story.story_types.k.resolve_check import (
             kid_self_resolve_in_tail,
@@ -64,7 +64,7 @@ def collect_k_humor_issues(
             if sp in ("妈妈", "爸爸")
         )
 
-        if parent_blob and not RE_KB_PARENT_PASSIVE.search(parent_blob):
+        if parent_blob and not RE_KB_PARENT_NON_INTERVENTION.search(parent_blob):
             issues.append("K_B缺家长挡回/旁观")
         if parent_blob and RE_KB_PARENT_INCITE.search(parent_blob):
             issues.append("K_B家长勿怂恿接着打")
@@ -118,13 +118,13 @@ def score_funniness_tail(
             pros.append("僵持收场")
     elif mode == K_B_CHILD_SELF_RESOLVE:
         from app.services.daily_story.story_types.k.close_mode import (
-            RE_KB_PARENT_PASSIVE,
+            RE_KB_PARENT_NON_INTERVENTION,
         )
         from app.services.daily_story.story_types.k.resolve_check import (
             kid_self_resolve_in_tail,
         )
 
-        if RE_KB_PARENT_PASSIVE.search(body):
+        if RE_KB_PARENT_NON_INTERVENTION.search(body):
             pts += 3
             pros.append("家长旁观挡回")
         if kid_self_resolve_in_tail(spk, lines):

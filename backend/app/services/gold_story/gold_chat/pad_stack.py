@@ -43,8 +43,11 @@ RE_CLEAR_STATEMENT_HAOBU = re.compile(
 )
 
 RE_COMPOUND_PAD = re.compile(r"(?:不行了吧|真的了呢|了吧真的)")
+# 与 sanitize_pad_stack_line 的裸「不行」去尾保持同一前视排除表：
+# 「行不行」的「不行」前一字是「行」（正反问），不是垫字；两处口径不一致会
+# 判成 clear_pad 却又清理不动，终端报「句尾叠语气词/不通」的假阳性。
 RE_GLUED_BU_XING = re.compile(
-    r"(?<=[\u4e00-\u9fff])(?<![还就再真都也说])不行"
+    r"(?<=[\u4e00-\u9fff])(?<![还就再真都也说行])不行"
     r"(?=[，,！!。？?…]|$)",
 )
 

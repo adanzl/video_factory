@@ -8,11 +8,13 @@ from app.services.gold_story.gold_chat.validate import (
     validate_chat_hard,
 )
 from app.services.gold_story.scene import (
+    DIALOGUE_TURNS_MIN,
     apply_parent_role_budget,
     fact_attribution_review_required,
     filter_fact_bound_rows,
     format_scene_block,
     has_dialogue_meta_label,
+    normalize_beat_min_turns,
     normalize_dialogue_setting_for_contract,
     normalize_fact_attributions,
     normalize_k_parent_intervention_budget,
@@ -83,6 +85,59 @@ def test_validate_scene_rejects_short_chain():
     bad = {**_sample_contract(), "beat_chain": [{"speaker": "昭昭", "intent": "a"}]}
     errs = validate_scene(bad)
     assert any("beat_chain" in e for e in errs)
+
+
+def test_normalize_beat_min_turns_lifts_total_to_dialogue_floor():
+    out, notes = normalize_beat_min_turns(_sample_contract())
+    turns = [row["min_turns"] for row in out["beat_chain"]]
+    assert sum(turns) == DIALOGUE_TURNS_MIN
+    assert all(1 <= t <= 3 for t in turns)
+    assert notes and "最小回合数抬额" in notes[0]
+    assert validate_scene(out) == []
+
+
+def test_normalize_beat_min_turns_keeps_declared_when_enough():
+    contract = _sample_contract()
+    contract["beat_chain"] = [
+        {**row, "min_turns": 3} for row in contract["beat_chain"]
+    ]
+    out, notes = normalize_beat_min_turns(contract)
+    assert [row["min_turns"] for row in out["beat_chain"]] == [3, 3, 3, 3]
+    assert notes == []
+    assert validate_scene(out) == []
+
+
+def test_validate_scene_rejects_out_of_range_min_turns():
+    contract = _sample_contract()
+    contract["beat_chain"] = [
+        {**row, "min_turns": 9} for row in contract["beat_chain"]
+    ]
+    assert any(
+        "min_turns_invalid" in e for e in validate_scene(contract)
+    )
+
+
+def test_validate_scene_rejects_insufficient_declared_turns():
+    contract = _sample_contract()
+    contract["beat_chain"] = [
+        {**row, "min_turns": 1} for row in contract["beat_chain"]
+    ]
+    assert any(
+        "beat_chain_turns_insufficient" in e for e in validate_scene(contract)
+    )
+
+
+def test_format_beat_chain_marks_turn_quota():
+    from app.services.gold_story.scene import format_beat_chain
+
+    text = format_beat_chain(
+        [
+            {"speaker": "灿灿", "intent": "占物", "min_turns": 1},
+            {"speaker": "昭昭", "intent": "争抢", "min_turns": 3},
+        ]
+    )
+    assert "（须≥3个回合）" in text
+    assert "占物" in text
 
 
 def test_format_scene_block():
@@ -1327,3 +1382,43 @@ def test_resolve_parent_lines_budget_caps_but_never_below_beats():
         {"beat_chain": [{"speaker": "爸爸", "intent": "旁观"}]}
     )
     assert dad1 == 1
+
+
+def test_resolve_parent_lines_budget_lone_parent_gets_parent_quota():
+    """cast 里只有一位家长时，家长总预算归它，不被缺席家长的默认额度压死。
+
+    ``dad`` 默认 1 的前提是「妈妈主家长、爸爸至多 1 句」。若 cast 根本没有妈妈，
+    仍按 1 句卡唯一在场的家长，会让契约要求家长多说一句时任何合规稿都挂硬卡。
+    """
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    contract = {
+        "story_type": "K",
+        "characters": ["灿灿", "昭昭", "爸爸"],
+        "mom_lines_max": 2,
+        "beat_chain": [{"speaker": "爸爸", "intent": "解说拱火"}],
+    }
+    mom, dad, parent = resolve_parent_lines_budget(contract)
+    assert dad == parent == 3, "唯一在场的家长只拿到缺席家长的默认额度"
+    assert mom == 0
+
+    # 两位家长都在 cast 时口径不变：各按各的字段/默认
+    both = dict(contract, characters=["灿灿", "昭昭", "妈妈", "爸爸"])
+    mom2, dad2, parent2 = resolve_parent_lines_budget(both)
+    assert (mom2, dad2, parent2) == (2, 1, 3)
+
+    # 只有妈妈时同理让给妈妈
+    mom3, dad3, parent3 = resolve_parent_lines_budget(
+        dict(contract, characters=["灿灿", "昭昭", "妈妈"])
+    )
+    assert mom3 == parent3 == 3 and dad3 == 0
+
+
+def test_resolve_parent_lines_budget_reads_injected_gold_chat_caps():
+    """硬卡须读成稿注入的 ``_gold_chat_*`` 额度，与评分层同口径。"""
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    mom, dad, parent = resolve_parent_lines_budget(
+        {"story_type": "K", "_gold_chat_mom_lines_max": 0, "_gold_chat_dad_lines_max": 3}
+    )
+    assert (mom, dad, parent) == (0, 3, 3)

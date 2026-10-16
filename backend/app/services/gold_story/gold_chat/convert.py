@@ -213,8 +213,24 @@ from app.services.gold_story.gold_chat.refine import (  # noqa: E402
 GOLD_CHAT_DRAFT_ATTEMPTS = 3
 
 # 「缺拍耗尽」单独收窄：终检缺前提是叙事结构缺口，盲重掷换契约不改命，
-# 每次 draft 约 71s（实测 id49），重掷 3 次纯烧钱。故只给 1 次带反馈的重掷。
+# 每次 draft 约 71s（实测 id49），重掷 3 次纯烧钱。故只给 **1 次** 带反馈的
+# 重掷（在首个 draft 之上追加，而不是把总次数压成 1 次——压成 1 次等于零重掷）。
 GOLD_CHAT_MISSING_BEAT_ATTEMPTS = 1
+
+
+def _next_draft_attempt_limit(
+    *,
+    draft_attempt: int,
+    current_limit: int,
+    missing_beat_retry_used: bool,
+) -> int:
+    """缺拍失败后的 draft 上限：首个 draft 追加一次带反馈重掷，此后不再续命。
+
+    只增不改语义：``current_limit`` 更小时取更小值，绝不因重掷放宽其它失败类型的上限。
+    """
+    if missing_beat_retry_used:
+        return min(current_limit, draft_attempt)
+    return min(current_limit, draft_attempt + GOLD_CHAT_MISSING_BEAT_ATTEMPTS)
 
 
 def _is_missing_beat_exhausted(exc: Exception) -> bool:
@@ -276,6 +292,9 @@ def _missing_beat_intents_from(source: Any) -> list[dict[str, str]]:
                 entry["expected_speaker"] = speaker
             out.append(entry)
         node = getattr(node, "__cause__", None) or getattr(node, "__context__", None)
+        if node is None:
+            # 异常没挂 cause（如直接构造）时，退到根异常带在身上的候选稿
+            node = getattr(source, "candidate", None)
     return out
 
 
@@ -382,13 +401,31 @@ def patch_seed_premise_align(
     story: dict[str, Any],
     *,
     dialogue_seed: list[Any] | None = None,
+    only_speakers: set[str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """前段 seed 拍整拍缺席时补回（终检「缺前提」的确定性修复）。"""
     from app.services.gold_story.gold_chat.patch import (
         patch_seed_premise_lines,
     )
 
-    return patch_seed_premise_lines(story, dialogue_seed=dialogue_seed)
+    return patch_seed_premise_lines(
+        story,
+        dialogue_seed=dialogue_seed,
+        only_speakers=only_speakers,
+    )
+
+
+def patch_seed_order_align(
+    story: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """seed 锚点首现序倒置时前移归位（后句引用了尚未发生的前提）。"""
+    from app.services.gold_story.gold_chat.patch import (
+        patch_seed_order_monotonic,
+    )
+
+    return patch_seed_order_monotonic(story, dialogue_seed=dialogue_seed)
 
 
 def patch_seed_speaker_align(
@@ -1693,13 +1730,73 @@ def convert_gold_chat(
             row = _rebuild_h3a_h3b_on_convert(row)
         finish_stage("contract")
 
-        current_stage = "draft"
         sid = str(row.get("source_id") or "").strip()
+
+        def _normalize_and_finalize(
+            chat_in: dict[str, Any],
+            row_in: dict[str, Any],
+            repair_budget: Any,
+        ) -> tuple[dict[str, Any], int]:
+            """归一化精修 + 终检。
+
+            放进重掷循环里，好让「终检缺拍」也能带反馈重掷——终检失败原先发生在
+            循环之外，甲重掷机器永远看不到它（实测 id49 因此一次都没重掷）。
+            """
+            nonlocal current_stage
+            current_stage = "normalize_refine"
+            chat_out, norm_notes = apply_gold_chat_normalizations(chat_in, row=row_in)
+            payload_raw = row_in.get("payload")
+            payload0_in: dict[str, Any] = (
+                payload_raw if isinstance(payload_raw, dict) else {}
+            )
+            seed_in = (
+                payload0_in.get("dialogue_seed")
+                if isinstance(payload0_in.get("dialogue_seed"), list)
+                else None
+            )
+            chat_out = _realign_j_role_speakers(
+                chat_out,
+                dialogue_seed=seed_in,
+                structure_type=str(row_in.get("structure_type") or ""),
+            )
+            chat_out = _refine_after_normalize(
+                chat_out, row_in, repair_budget=repair_budget
+            )
+            st_in = str(row_in.get("structure_type") or chat_out.get("story_type") or "")
+            mech_in = str(row_in.get("mechanism") or "")
+            chat_out, _ = _ensure_gold_chat_min_chars(
+                chat_out,
+                mechanism=mech_in,
+                structure_type=st_in,
+            )
+            chat_out = _realign_j_role_speakers(
+                chat_out,
+                dialogue_seed=seed_in,
+                structure_type=str(row_in.get("structure_type") or ""),
+            )
+            finish_stage("normalize_refine")
+            current_stage = "finalize"
+            chat_out, struct_out = run_gold_chat_finalize(
+                chat_out,
+                row_in,
+                sid=sid,
+                norm_notes=list(norm_notes or []),
+                payload0=payload0_in,
+                st0=st_in,
+                mech0=mech_in,
+                repair_budget=repair_budget,
+            )
+            finish_stage("finalize")
+            return chat_out, struct_out
+
+        current_stage = "draft"
         chat = None
+        struct = 0
         last_exc: Exception | None = None
         # 「缺拍耗尽」只给 1 次带反馈的重掷；其它失败类型仍用全局 3 次（专家裁决）。
         draft_attempts = GOLD_CHAT_DRAFT_ATTEMPTS
         retry_feedback: list[dict[str, str]] = []
+        missing_beat_retry_used = False
         for draft_attempt in range(1, GOLD_CHAT_DRAFT_ATTEMPTS + 1):
             if draft_attempt > 1:
                 # 重掷：换一次 H3 判型（机制/结构），再重跑 H3a/H3b 换契约，
@@ -1729,9 +1826,11 @@ def convert_gold_chat(
                         "[GOLD_CHAT] draft retry contract rebuild skipped: %s",
                         str(rebuild_exc)[:120],
                     )
-            repair_budget = GoldChatRepairBudget(max_repairs=2)
+            repair_budget = GoldChatRepairBudget(max_repairs=2, reserve_final=1)
             try:
                 chat = gold_story_to_gold_chat(row, repair_budget=repair_budget)
+                finish_stage("draft")
+                chat, struct = _normalize_and_finalize(chat, row, repair_budget)
                 if draft_attempt > 1:
                     logger.info(
                         "[GOLD_CHAT] draft retry ok source_id=%s attempt=%s",
@@ -1742,9 +1841,14 @@ def convert_gold_chat(
             except Exception as exc:
                 last_exc = exc
                 if _is_missing_beat_exhausted(exc):
-                    draft_attempts = min(
-                        draft_attempts, GOLD_CHAT_MISSING_BEAT_ATTEMPTS
+                    # 首个 draft 撞缺拍：放行**一次**带「上一轮缺拍」反馈的重掷；
+                    # 第二次仍缺拍说明根因在契约/生成，不再续命（专家裁决）。
+                    draft_attempts = _next_draft_attempt_limit(
+                        draft_attempt=draft_attempt,
+                        current_limit=draft_attempts,
+                        missing_beat_retry_used=missing_beat_retry_used,
                     )
+                    missing_beat_retry_used = True
                     found = _missing_beat_intents_from(exc)
                     if found:
                         retry_feedback = found
@@ -1777,48 +1881,6 @@ def convert_gold_chat(
                         gid,
                         persist_exc,
                     )
-        finish_stage("draft")
-
-        current_stage = "normalize_refine"
-        chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)
-        payload_raw = row.get("payload")
-        payload0: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
-        chat = _realign_j_role_speakers(
-            chat,
-            dialogue_seed=payload0.get("dialogue_seed")
-            if isinstance(payload0.get("dialogue_seed"), list)
-            else None,
-            structure_type=str(row.get("structure_type") or ""),
-        )
-        chat = _refine_after_normalize(chat, row, repair_budget=repair_budget)
-        _st0 = str(row.get("structure_type") or chat.get("story_type") or "")
-        _mech0 = str(row.get("mechanism") or "")
-        chat, _ = _ensure_gold_chat_min_chars(
-            chat,
-            mechanism=_mech0,
-            structure_type=_st0,
-        )
-        chat = _realign_j_role_speakers(
-            chat,
-            dialogue_seed=payload0.get("dialogue_seed")
-            if isinstance(payload0.get("dialogue_seed"), list)
-            else None,
-            structure_type=str(row.get("structure_type") or ""),
-        )
-        finish_stage("normalize_refine")
-
-        current_stage = "finalize"
-        chat, struct = run_gold_chat_finalize(
-            chat,
-            row,
-            sid=sid,
-            norm_notes=list(norm_notes or []),
-            payload0=payload0,
-            st0=_st0,
-            mech0=_mech0,
-            repair_budget=repair_budget,
-        )
-        finish_stage("finalize")
 
         current_stage = "export_backfill"
         cfg = config or Config()

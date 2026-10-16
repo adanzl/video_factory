@@ -25,6 +25,7 @@ from app.services.gold_story.scene import (
     filter_fact_bound_rows,
     force_age_score_remap,
     mark_facts_ambiguous,
+    normalize_beat_min_turns,
     normalize_dialogue_setting_for_contract,
     normalize_fact_attributions,
     normalize_k_parent_intervention_budget,
@@ -386,6 +387,7 @@ source_type：{source_type}
       "addressee": "对谁说",
       "speech_act": "accuse|deny|admit|claim_compensation|echo|other",
       "claim_role": "accuser|secret_holder|claimant|…",
+      "min_turns": 2,
       "fact_ref": "F1"
     }}
   ],
@@ -450,13 +452,19 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
   →继续追问→荒诞自洽→对方接不住（可并拍）；每一拍都必须推动问答逻辑。
   **禁止**在前提与荒诞反驳之间塞“某人附和/帮腔说他说得对”这种只重复前提的拍；
   回忆型 N 可由家长首拍交代旧事，随后直接让孩子质疑/反驳/追问
-- K类 beat_chain（**须 4–6 拍**）：互打互骂升级→大人躲/叹/劝失败→僵持；
+- K类 beat_chain（**须 4–6 拍，Σmin_turns ≥ 12**）：互打互骂升级（抢占/还击/加码各算一拍）
+  →大人躲/叹/劝失败→僵持；
   禁止写成第三方和好（勿套 H 定责劝和+仪式性和好）
 - H类 beat_chain（**须 6–8 拍**，逐步写清，禁止合并跳步）：
   1 抢看/占物 → 2 拒看/推搡 → 3 **双向互毁**（谁先弄坏谁+报复，须对称）
   → 4 伤情可拍 → 5 哭腔道歉 → 6 M5拒和+加码（不原谅，妈妈介入前）
   → 7 妈妈问谁先动手+定责劝和 → 8 仪式性和好/碘伏/收场
   M5+H 时 object 须是 story_raw 争物（如画作），勿改成「抢秘密」替代互毁
+- **每拍必须声明 min_turns（1–3，整数）**：该拍至少要写出的**可落地回合数**
+  （一个回合＝一方说出有推进内容的话，另一方接得住）。Σmin_turns 必须 ≥ 12
+  （正文最少 12 句）；不足 12 时**拆拍**（把「互打互骂升级」拆成抢占/还击/加码），
+  禁止靠拉长单拍或空应答凑数。只交代结果、沉默、旁观的拍 min_turns 记 1。
+  例：K 类 5 拍可写 3/2/1/3/3。
 - **正例只允许上方金稿原文**；本稿须按 story_raw 写，禁止把金稿场景套到本稿
 - **归属自洽（硬）**：beat_chain 每拍写「谁对谁做什么、谁说哪类话」；
   身份主张、承认/否认、指认/反指认三类拍，
@@ -838,6 +846,9 @@ def build_scene_contract(
         data = apply_parent_role_budget(data, h3=h3)
         data, _k_parent_notes = normalize_k_parent_intervention_budget(data)
         data, _dialogue_notes = normalize_scene_dialogue_beats(data)
+        data, _turns_notes = normalize_beat_min_turns(data)
+        if _turns_notes:
+            logger.info("H3a beat min_turns: %s", "；".join(_turns_notes))
         data, _retro_notes = normalize_retrospective_topic_contract(data)
         data, _retro_open_notes = normalize_retrospective_n_opening_parent_beats(data)
         errors = validate_scene(data)

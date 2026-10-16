@@ -21,6 +21,15 @@ from app.services.gold_story.gold_chat.repair import (
 )
 
 
+def test_a_not_a_question_xingbuxing_not_pad():
+    """「…行不行」是正反问，不是可清理的垫字（不得报「句尾叠语气词/不通」）。"""
+    line = "等等我还没准备好，你耍赖，重来一次行不行"
+    assert classify_pad_line(line) == "none"
+    assert sanitize_pad_stack_line(line) == line
+    story = {"dialogue": [{"speaker": "昭昭", "line": line}]}
+    assert collect_pad_stack_issues(story) == []
+
+
 def test_statement_haobu_tail_stripped():
     line = "嘿嘿，我屁股Q弹，救场成功好不好呀。"
     assert not is_genuine_haobu_question(line)

@@ -18,6 +18,7 @@ from app.services.gold_story.gold_chat.export import (
 )
 from app.services.gold_story.gold_chat.status import (
     gold_chat_error_from_payload,
+    gold_chat_failed_candidate_from_payload,
     gold_chat_review_pending_from_payload,
     record_gold_chat_failure,
 )
@@ -543,6 +544,9 @@ class GoldStoryMgr:
         gold_chat_review_pending = gold_chat_review_pending_from_payload(payload)
         if gold_chat_review_pending is not None:
             out["gold_chat_review_pending"] = gold_chat_review_pending
+        gold_chat_failed = gold_chat_failed_candidate_from_payload(payload)
+        if gold_chat_failed is not None:
+            out["gold_chat_failed_candidate"] = gold_chat_failed
         return out
 
     def get_transcript(

@@ -15,6 +15,7 @@ _GOLD_CHAT_ERROR_CLEAR_KEYS = (
     "gold_chat_last_failed_at",
     "gold_chat_review_status",
     "gold_chat_review_pending_candidate",
+    "gold_chat_failed_candidate",
 )
 
 
@@ -56,6 +57,36 @@ def gold_chat_review_pending_from_payload(
     return out
 
 
+def gold_chat_failed_candidate_from_payload(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """读取终检失败时保留的候选稿（与「待审核」候选分字段，避免误认）。"""
+    if not isinstance(payload, dict):
+        return None
+    record = payload.get("gold_chat_failed_candidate")
+    if not isinstance(record, dict):
+        return None
+    candidate = record.get("candidate")
+    if not isinstance(candidate, dict):
+        return None
+    out: dict[str, Any] = {
+        "status": "candidate_failed",
+        "candidate": candidate,
+        "candidate_source": str(record.get("candidate_source") or "current"),
+        "needs_manual_review": bool(record.get("needs_manual_review")),
+    }
+    reason = str(record.get("failed_reason") or "").strip()
+    if reason:
+        out["error"] = reason
+    failed_at = str(record.get("failed_at") or "").strip()
+    if failed_at:
+        out["failed_at"] = failed_at
+    stage = str(record.get("failed_stage") or "").strip()
+    if stage:
+        out["stage"] = stage
+    return out
+
+
 def gold_chat_error_from_payload(
     payload: dict[str, Any] | None,
     *,
@@ -64,11 +95,12 @@ def gold_chat_error_from_payload(
     if not isinstance(payload, dict):
         return None
     pending = gold_chat_review_pending_from_payload(payload)
+    failed = gold_chat_failed_candidate_from_payload(payload)
     # 普通重转失败：磁盘上已有成功导出时继续隐藏，不遮挡“已导出”。
-    # 但修稿预算耗尽已保存 review_pending 候选时必须可见，方便人工确认。
+    # 但已保存候选稿（待审核 / 终检失败稿）时必须可见，方便人工确认。
     if (
         has_gold_chat or str(payload.get("gold_chat_exported_at") or "").strip()
-    ) and pending is None:
+    ) and pending is None and failed is None:
         return None
     err = str(payload.get("gold_chat_last_error") or "").strip()
     if not err:
@@ -79,6 +111,8 @@ def gold_chat_error_from_payload(
         out["failed_at"] = failed_at
     if pending is not None:
         out["review_status"] = "review_pending"
+    elif failed is not None:
+        out["review_status"] = "candidate_failed"
     return out
 
 
@@ -172,18 +206,46 @@ def record_gold_chat_failure(
     if timing is not None:
         patch["gold_chat_last_timing"] = timing
     candidate = getattr(exc, "candidate", None)
+    candidate_source = "current"
+    if not isinstance(candidate, dict):
+        # 异常未带候选时回退上一次失败候选仅作保险：它可能不是本次失败稿，
+        # 故显式标出来源，避免人工误认。
+        prev = payload.get("gold_chat_failed_candidate")
+        prev_candidate = prev.get("candidate") if isinstance(prev, dict) else None
+        if isinstance(prev_candidate, dict):
+            candidate = prev_candidate
+            candidate_source = "fallback_last_stable"
     if isinstance(candidate, dict):
-        # 修稿预算耗尽保留当前稳定候选供人工确认；不覆盖既有成功导出稿。
-        pending: dict[str, Any] = dict(candidate)
-        raw_quality = pending.get("quality")
+        kind = str(getattr(exc, "candidate_review_status", "review_pending")).strip()
+        stored: dict[str, Any] = dict(candidate)
+        raw_quality = stored.get("quality")
         quality: dict[str, Any] = (
             dict(raw_quality) if isinstance(raw_quality, dict) else {}
         )
-        quality["review_status"] = "review_pending"
-        quality["review_failure_reason"] = message
-        pending["quality"] = quality
-        patch["gold_chat_review_status"] = "review_pending"
-        patch["gold_chat_review_pending_candidate"] = pending
+        if kind == "failed":
+            # 终检失败（审读未完成/证据不可核验）：失败稿单独落字段，不与
+            # 「待审核」候选混用，并清掉旧 pending，避免混合状态被误认。
+            quality["review_status"] = "failed"
+            quality["review_failure_reason"] = message
+            stored["quality"] = quality
+            patch["gold_chat_review_status"] = "candidate_failed"
+            patch["gold_chat_failed_candidate"] = {
+                "candidate": stored,
+                "failed_stage": recorded_stage,
+                "failed_reason": message,
+                "failed_at": now,
+                "candidate_source": candidate_source,
+                "exported": False,
+                "needs_manual_review": True,
+            }
+            patch["gold_chat_review_pending_candidate"] = None
+        else:
+            # 修稿预算耗尽保留当前稳定候选供人工确认；不覆盖既有成功导出稿。
+            quality["review_status"] = "review_pending"
+            quality["review_failure_reason"] = message
+            stored["quality"] = quality
+            patch["gold_chat_review_status"] = "review_pending"
+            patch["gold_chat_review_pending_candidate"] = stored
     repo_gold_story.patch_story_payload(
         gid,
         patch,

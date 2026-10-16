@@ -2033,6 +2033,29 @@ def patch_authority_insert_resist_after_reverse(
 
 
 
+def _seed_speakable_rows(
+    dialogue_seed: list[Any] | None,
+    *,
+    max_rows: int | None = None,
+) -> list[tuple[str, str]]:
+    """seed 里「能说出口」的拍，供本地补拍与拍序归位共用。"""
+    rows: list[tuple[str, str]] = []
+    for item in dialogue_seed or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        text = str(item.get("intent") or item.get("line") or "").strip()
+        if not sp or not text:
+            continue
+        # 写作说明/约束（含括号或 勿/禁/须/不得）塞进对白会被终检判旁白，宁可不补。
+        if any(tok in text for tok in ("（", "(", "勿", "禁", "须", "不得")):
+            continue
+        rows.append((sp, text))
+    if max_rows is not None:
+        rows = rows[:max_rows]
+    return rows
+
+
 _SEED_PREMISE_MAX_INSERTS = 2
 
 
@@ -2051,33 +2074,30 @@ def patch_seed_premise_lines(
     story: dict[str, Any],
     *,
     dialogue_seed: list[Any] | None = None,
-    max_seed_rows: int = 6,
+    max_seed_rows: int | None = None,
+    only_speakers: set[str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """前段 seed 拍若在对白里整拍缺席，按序补回该拍（前提须先立）。
 
     终检「缺前提」的根因是被引用的那句（如家长压人的「我是你妈」）没真说出口，
     而 seed 里本来就有这一拍——这是落地缺失，不是生成能力问题，故确定性补回。
-    只补前 ``max_seed_rows`` 拍且最多补 ``_SEED_PREMISE_MAX_INSERTS`` 句，
-    插入位置按 seed 顺序落在后一已落地拍之前，避免打乱后续节拍。
+    最多补 ``_SEED_PREMISE_MAX_INSERTS`` 句，插入位置必须落在
+    「首个已落地的后继 seed 拍」之前；若根本找不到后继锚点则**不动**——
+    宁可留着缺前提交给重掷，也不要把前提补到引用它的句子之后。
+    ``max_seed_rows`` 默认 ``None``（扫描整条 seed），过窄的窗口会让后继锚点
+    落在视野外，从而退化成后置补叙。``only_speakers`` 给出终检点名的说话人时，
+    补拍额度只花在这些角色上（连续同角色的 seed 拍按一段记账）。
+
+    补拍还必须落在契约给的说话人额度内：``story`` 里带
+    ``_gold_chat_mom_lines_max`` / ``_gold_chat_dad_lines_max``（成稿在终检前注入）
+    时按该额度封口，额度不足就不补——seed 把一拍拆成多句是 seed 的问题，不能靠
+    补拍把硬卡撑爆（专家裁决：额度按契约元数据抬，不按 seed 行数抬）。
     """
     import copy
 
-    seed_rows: list[tuple[str, str]] = []
-    for item in dialogue_seed or []:
-        if not isinstance(item, dict):
-            continue
-        sp = str(item.get("speaker") or "").strip()
-        text = str(item.get("intent") or item.get("line") or "").strip()
-        if not sp or not text:
-            continue
-        # 只补「能说出口」的拍：写作说明/约束（含括号或 勿/禁/须/不得）
-        # 塞进对白会被终检判旁白，宁可不补。
-        if any(tok in text for tok in ("（", "(", "勿", "禁", "须", "不得")):
-            continue
-        seed_rows.append((sp, text))
+    seed_rows = _seed_speakable_rows(dialogue_seed, max_rows=max_seed_rows)
     if not seed_rows:
         return story, False
-    seed_rows = seed_rows[:max_seed_rows]
 
     out = copy.deepcopy(story)
     dialogue = out.get("dialogue")
@@ -2093,8 +2113,29 @@ def patch_seed_premise_lines(
         for item in dialogue
         if isinstance(item, dict)
     ]
+    # 补拍不得越过契约给的说话人额度：额度来自契约元数据（成稿里以
+    # `_gold_chat_*_lines_max` 注入），不是 seed 行数——按 seed 行数抬额会让脏 seed
+    # 把硬卡撑爆。额度不足时宁可不补（缺口交给带反馈重掷），也不要补出必挂的稿子。
+    quota: dict[str, int] = {}
+    for sp_name, key in (("妈妈", "mom"), ("爸爸", "dad")):
+        raw_quota = out.get(f"_gold_chat_{key}_lines_max")
+        if raw_quota is None:
+            raw_quota = out.get(f"{key}_lines_max")
+        if raw_quota is None:
+            continue
+        try:
+            quota[sp_name] = max(0, int(raw_quota))
+        except (TypeError, ValueError):
+            continue
+    used: dict[str, int] = {}
+    for item in dialogue:
+        if isinstance(item, dict):
+            sp_used = str(item.get("speaker") or "").strip()
+            if sp_used:
+                used[sp_used] = used.get(sp_used, 0) + 1
     changed = False
     inserts = 0
+    last_inserted_speaker = ""
     # 已落地的 seed 拍下标（用于决定插入位置）
     landed: list[int] = []
     for sp, text in seed_rows:
@@ -2110,41 +2151,178 @@ def patch_seed_premise_lines(
         )
         landed.append(idx)
 
+    # 终检点名的说话人：补拍的额度只花在它们身上（专家裁决：缺拍关系要作为
+    # 一等输入）。否则按 seed 顺序补，额度会被无关的前置拍吃光，真正缺失的
+    # 前提拍（如整段家长解说）反而补不回来。
+    wanted = (
+        {str(x).strip() for x in only_speakers if str(x).strip()}
+        if only_speakers
+        else None
+    )
     for pos, (sp, text) in enumerate(seed_rows):
-        if inserts >= _SEED_PREMISE_MAX_INSERTS:
+        if wanted is not None and sp not in wanted:
+            continue
+        # 连续同角色的 seed 拍是一个整体（专家裁决：seed 自身连说允许，不得拆开），
+        # 因此额度按「补了几段」记账，而不是按补了几句。
+        continuing = pos > 0 and last_inserted_speaker == sp
+        if not continuing and inserts >= _SEED_PREMISE_MAX_INSERTS:
             break
         if landed[pos] >= 0:
             continue
         if len(dialogue) >= CHAT_LINE_COUNT_MAX:
             break
-        # 落在「下一个已落地拍」之前；都没有则放在收尾前（不挤收束）
-        insert_at = next(
+        quota_left = quota.get(sp)
+        if quota_left is not None and used.get(sp, 0) + 1 > quota_left:
+            # 该角色的契约额度已满：补上去必然被硬卡判死，因此不补这一拍。
+            continue
+        # 插入窗口 [lower, upper]：上界是首个已落地的后继 seed 拍——前提必须先于
+        # 引用它的话落地；下界是最后一个已落地的前驱拍之后。找不到后继锚点说明
+        # 无法定位依赖它的句子，此时宁可不动，也不要后置补叙。
+        upper = next(
             (landed[j] for j in range(pos + 1, len(landed)) if landed[j] >= 0),
-            max(1, len(dialogue) - 2),
+            -1,
         )
-        insert_at = max(1, min(insert_at, len(dialogue)))
+        if upper < 0:
+            continue
+        lowers = [landed[j] for j in range(0, pos) if landed[j] >= 0]
+        lower = (max(lowers) + 1) if lowers else 1
+        insert_at = max(lower, min(upper, len(dialogue)))
         if insert_at <= 0:
             continue
         prev_sp = str(
             (dialogue[insert_at - 1] or {}).get("speaker") or ""
         ).strip()
-        if prev_sp == sp:
-            # 避免同角色连说：退一格仍连说就放弃该拍
-            if insert_at - 2 < 0 or str(
-                (dialogue[insert_at - 2] or {}).get("speaker") or ""
-            ).strip() == sp:
-                continue
-            insert_at -= 1
+        if prev_sp == sp and not (pos > 0 and seed_rows[pos - 1][0] == sp):
+            # seed 顺序单调优先于「不连说」：seed 自身连续同角色时允许连说，
+            # 只有草稿排版造成的连说才放弃该拍——绝不退格（退格会反转 seed 顺序）。
+            continue
         dialogue.insert(insert_at, {"speaker": sp, "line": text})
+        used[sp] = used.get(sp, 0) + 1
         for j in range(pos + 1, len(landed)):
             if landed[j] >= insert_at:
                 landed[j] += 1
         landed[pos] = insert_at
-        inserts += 1
+        if not continuing:
+            inserts += 1
+        last_inserted_speaker = sp
         changed = True
     if changed and len(dialogue) < CHAT_LINE_COUNT_MIN:
         # 句数仍不足时由后续补字链处理，这里不做假对白
         pass
+    return out, changed
+
+
+_SEED_ORDER_TAIL_GUARD = 3
+_SEED_ORDER_MAX_FIXES = 2
+_SEED_ORDER_MOVE_RATIO_DEN = 2
+
+
+def _seed_first_landing(speaker: str, text: str, dialogue: list[Any]) -> int:
+    """seed 拍在对白里的首现下标；未落地返回 -1。"""
+    return next(
+        (
+            i
+            for i, item in enumerate(dialogue)
+            if isinstance(item, dict)
+            and str(item.get("speaker") or "").strip() == speaker
+            and _seed_premise_overlap(text, str(item.get("line") or ""))
+        ),
+        -1,
+    )
+
+
+def _speaker_adjacency_count(dialogue: list[Any]) -> int:
+    spk = [str(item.get("speaker") or "").strip() for item in dialogue if isinstance(item, dict)]
+    return sum(1 for a, b in zip(spk[:-1], spk[1:], strict=False) if a and a == b)
+
+
+def _seed_order_move_safe(
+    before: list[Any],
+    after: list[Any],
+    *,
+    tail_must_hold: bool,
+) -> bool:
+    """移动前后必须同时满足：句数不变、不新增同角色连说、收束不变量不被打掉。"""
+    if len(before) != len(after) or len(before) < 6:
+        return False
+    if _speaker_adjacency_count(after) > _speaker_adjacency_count(before):
+        return False
+    if tail_must_hold:
+        from app.services.daily_story.story_types.k.resolve_check import (
+            kid_self_resolve_in_tail,
+        )
+
+        spk = [str(item.get("speaker") or "") for item in after if isinstance(item, dict)]
+        ln = [str(item.get("line") or "") for item in after if isinstance(item, dict)]
+        if not kid_self_resolve_in_tail(spk, ln):
+            return False
+    return True
+
+
+def patch_seed_order_monotonic(
+    story: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """seed 锚点首现序单调：前提锚点若落在依赖它的锚点之后，就前移归位。
+
+    抽象不变量（不绑单篇词表）：seed 里顺序在前、且已被后续拍引用的拍，其成稿
+    首现位置不得晚于那些后续拍——否则后续台词在引用一件尚未发生的事。
+    修复动作要软且有界：只动「已落地但明显倒置」的锚点，且跨距不超过整篇一半、
+    不进收束窗口（末 ``_SEED_ORDER_TAIL_GUARD`` 句）、
+    不新增同角色连说、不拆掉孩子自行恢复收束；任一条不满足就整体跳过，
+    交回重掷或定点修稿，不做硬拦。
+    """
+    import copy
+
+    seed_rows = _seed_speakable_rows(dialogue_seed)
+    if len(seed_rows) < 2:
+        return story, False
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 6:
+        return story, False
+
+    from app.services.daily_story.story_types.k.resolve_check import (
+        kid_self_resolve_in_tail,
+    )
+
+    spk0 = [str(item.get("speaker") or "") for item in dialogue if isinstance(item, dict)]
+    ln0 = [str(item.get("line") or "") for item in dialogue if isinstance(item, dict)]
+    tail_must_hold = kid_self_resolve_in_tail(spk0, ln0)
+
+    out = copy.deepcopy(story)
+    rows = list(out.get("dialogue") or [])
+    changed = False
+    for _ in range(_SEED_ORDER_MAX_FIXES):
+        positions = [_seed_first_landing(sp, text, rows) for sp, text in seed_rows]
+        protected_from = max(0, len(rows) - _SEED_ORDER_TAIL_GUARD)
+        # 跨距只挡「横穿大半篇」的极端移动，真正的保护是收束窗口/连说/收束不变量。
+        move_cap = max(2, (len(rows) + 1) // _SEED_ORDER_MOVE_RATIO_DEN)
+        fix: tuple[int, int] | None = None
+        for i, pos in enumerate(positions):
+            if pos < 0 or pos >= protected_from:
+                continue
+            dependents = [q for q in positions[i + 1 :] if 0 <= q < pos]
+            if not dependents:
+                continue
+            dst = min(dependents)
+            if dst >= protected_from or pos - dst > move_cap:
+                continue
+            fix = (pos, dst)
+            break
+        if fix is None:
+            break
+        src, dst = fix
+        probe = list(rows)
+        moved = probe.pop(src)
+        probe.insert(dst, moved)
+        if not _seed_order_move_safe(rows, probe, tail_must_hold=tail_must_hold):
+            break
+        rows = probe
+        changed = True
+    if not changed:
+        return story, False
+    out["dialogue"] = rows
     return out, changed
 
 

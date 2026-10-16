@@ -122,7 +122,7 @@ def _append_k_b_body_errors(
         RE_KB_PARENT_EXPLICIT_ADDRESSEE,
         RE_KB_PARENT_INCITE,
         RE_KB_PARENT_MEDIATE,
-        RE_KB_PARENT_PASSIVE,
+        RE_KB_PARENT_NON_INTERVENTION,
     )
     from app.services.daily_story.story_types.k.resolve_check import (
         kid_self_resolve_in_tail,
@@ -144,7 +144,7 @@ def _append_k_b_body_errors(
     if parent_lines and any(RE_KB_PARENT_MEDIATE.search(ln) for ln in parent_lines):
         errors.append("K_B：家长勿写成劝架定责或代邀和好，须挡回/旁观/立规")
     elif parent_lines and not any(
-        RE_KB_PARENT_PASSIVE.search(ln) for ln in parent_lines
+        RE_KB_PARENT_NON_INTERVENTION.search(ln) for ln in parent_lines
     ):
         errors.append("K_B：正文须有家长挡回或不评理/旁观线索")
     if parent_lines and any(RE_KB_PARENT_INCITE.search(ln) for ln in parent_lines):

@@ -12,7 +12,7 @@ from app.services.daily_story.story_types.k.close_mode import (
 )
 from app.services.daily_story.story_types.k.close_mode import (
     RE_H_RITUAL,
-    RE_KB_PARENT_PASSIVE,
+    RE_KB_PARENT_NON_INTERVENTION,
 )
 from app.services.daily_story.story_types.k.resolve_check import (
     kid_self_resolve_in_tail,
@@ -87,7 +87,7 @@ def score_punchline(
             for sp, ln in zip(speakers, lines, strict=False)
             if sp in ("妈妈", "爸爸")
         )
-        if parent_blob and RE_KB_PARENT_PASSIVE.search(parent_blob):
+        if parent_blob and RE_KB_PARENT_NON_INTERVENTION.search(parent_blob):
             bonus += 4
             details.append("家长挡回旁观")
         tail6_sp = speakers[-6:] if len(speakers) >= 6 else speakers

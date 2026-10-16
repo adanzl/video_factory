@@ -20,10 +20,22 @@ from app.services.gold_story.gold_chat.pad_stack import (
     sanitize_pad_stack_line,
 )
 from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+from app.services.gold_story.gold_chat.validate import gold_chat_effective_min_chars
 from app.services.gold_story.scene import sanitize_dialogue_meta_label_suffix
 
 # 240 是硬线；本地机械收口不再为追求 250 软余量额外灌字。
 GOLD_CHAT_LOCAL_LENGTH_TARGET = DAILY_STORY_BODY_CHARS_MIN
+
+
+def _gold_chat_length_floor_met(story: dict[str, Any]) -> bool:
+    """联合判据下已达标：句数够时字数下限放宽一行，无需再垫字数/插反应句。
+
+    本地垫字（粒子/中段反应句）只在真正低于下限时才动，否则为凑 240 补出来的
+    句尾粒子会被终检当成语病，反而多烧一轮修稿预算。
+    """
+    return dialogue_total_chars(story) >= gold_chat_effective_min_chars(
+        story.get("dialogue")
+    )
 
 
 _LINE_TRIM_SUFFIXES = (
@@ -1294,6 +1306,8 @@ def _patch_gold_chat_near_miss_chars(story: dict[str, Any]) -> tuple[dict[str, A
     """240 hard 不变；差 ≤NEAR_MISS 字时本地垫字收口。"""
     import copy
 
+    if _gold_chat_length_floor_met(story):
+        return story, False
     total = dialogue_total_chars(story)
     need = DAILY_STORY_BODY_CHARS_MIN - total
     if need <= 0 or need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX:
@@ -1355,6 +1369,8 @@ def _pad_gold_chat_to_min_chars(
     """精修改短/删尾后垫字至 hard min（不限 near_miss 3 字）。"""
     import copy
 
+    if _gold_chat_length_floor_met(story):
+        return story, False
     floor = int(min_chars or DAILY_STORY_BODY_CHARS_MIN)
     total = dialogue_total_chars(story)
     need = floor - total
@@ -1954,6 +1970,18 @@ def _ensure_gold_chat_min_chars(
     data, changed_lines = _ensure_gold_chat_min_lines(data)
     data, changed_exp = _expand_short_gold_chat_lines(data)
     changed = clutter_changed or changed_lines or changed_exp
+    # 先剥叠语气词/垫字痕迹，再按联合判据决定是否还需要垫字数：句数达标时字数
+    # 下限放宽一行，已达标就只剥不回灌，否则为凑 240 补的句尾粒子会被终检判成语病。
+    for _ in range(4):
+        data, san = patch_sanitize_c_tone_stack(data)
+        data, san2 = patch_sanitize_pad_suffix(data)
+        data, san3 = patch_sanitize_expand_clutter(data)
+        data, san4 = patch_sanitize_pad_particles(data)
+        changed = changed or san or san2 or san3 or san4
+        if not (san or san2 or san3 or san4):
+            break
+    if dialogue_total_chars(data) >= gold_chat_effective_min_chars(data.get("dialogue")):
+        return data, changed
     # 仅大缺口才插求否对；near-miss 交给句内扩写/粒子，避免一锤后拉锯灌尾
     need_now = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(data)
     changed_mid = False
@@ -2183,6 +2211,8 @@ def _gold_chat_insert_body_lines_for_min(
 
     from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
 
+    if _gold_chat_length_floor_met(story):
+        return story, False
     need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
     if need <= 0:
         return story, False
@@ -2233,6 +2263,8 @@ def _gold_chat_force_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], b
         patch_j_strip_role_mismatch_expands,
     )
 
+    if _gold_chat_length_floor_met(story):
+        return story, False
     need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
     if need <= 0:
         return story, False

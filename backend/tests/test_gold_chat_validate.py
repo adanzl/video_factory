@@ -1808,3 +1808,48 @@ def test_parent_budget_zero_still_blocks_parent_lines():
         story, mom_lines_max=0, dad_lines_max=0, parent_lines_max=0
     )
     assert [e for e in errors if "妈妈台词" in e]
+
+
+def _hard_lines(count: int, *, length: int = 22, filler: int = 0) -> list[dict]:
+    """构造句数/字数可控的候选对白；filler 个短句插在末尾（末句豁免不算空应答）。"""
+    from app.services.gold_story.gold_chat.validate import (
+        validate_chat_hard as _v,
+    )
+
+    assert _v
+    speakers = ["灿灿", "昭昭"]
+    lines: list[dict] = []
+    for i in range(count - filler):
+        text = f"{i:02d}" + "抢车还嘴不松手" * 6
+        lines.append({"speaker": speakers[i % 2], "line": text[:length]})
+    for j in range(filler):
+        lines.append({"speaker": speakers[j % 2], "line": "嗯。"})
+    return lines
+
+
+def test_length_card_allows_fewer_lines_when_chars_sufficient():
+    """联合判据：11 句但正文 ≥240 字、无空应答占行时，不再按句数硬拦。"""
+    from app.services.gold_story.gold_chat.validate import validate_chat_hard
+    dialogue = _hard_lines(11, length=22)
+    story = {"story_type": "K", "dialogue": dialogue}
+    errors = validate_chat_hard(story, mom_lines_max=0)
+    assert not [e for e in errors if "对白句数须≥" in e], errors
+    assert not [e for e in errors if "空应答占行" in e], errors
+
+
+def test_length_card_still_blocks_short_and_thin_draft():
+    """句数与字数都不达标时仍拦。"""
+    from app.services.gold_story.gold_chat.validate import validate_chat_hard
+    dialogue = _hard_lines(8, length=22)
+    story = {"story_type": "K", "dialogue": dialogue}
+    errors = validate_chat_hard(story, mom_lines_max=0)
+    assert [e for e in errors if "对白句数须≥" in e], errors
+
+
+def test_length_card_blocks_excess_empty_replies():
+    """空应答占行超过两成时判硬伤（末句豁免）。"""
+    from app.services.gold_story.gold_chat.validate import validate_chat_hard
+    dialogue = _hard_lines(14, length=22, filler=5)
+    story = {"story_type": "K", "dialogue": dialogue}
+    errors = validate_chat_hard(story, mom_lines_max=0)
+    assert [e for e in errors if "空应答占行须≤3句，当前4（第" in e], errors

@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 K_A_PARENT_FAIL_STALEMATE = "K_A_PARENT_FAIL_STALEMATE"
 K_B_CHILD_SELF_RESOLVE = "K_B_CHILD_SELF_RESOLVE"
 K_UNKNOWN = "K_UNKNOWN"
+# K-B 负向守卫命中：拍链/收束预设让家长成为孩子的攻击/迁怒目标。
+# 这是「解析结论」而非可落盘的收场模式（不进 K_CLOSE_MODES）：落盘语义仍沿旧口径
+# （normalize 归 K_UNKNOWN），避免存量稿因新常量被当成已解析而跳过守卫。
+K_B_DISQUALIFIED = "K_B_DISQUALIFIED"
 
 K_CLOSE_MODES = frozenset(
     {
@@ -43,10 +50,107 @@ RE_CLOSE_FAIL_STALE = re.compile(
     r"劝失败|管不了|僵持|不和好|劝不动|劝不了"
 )
 
+# K-B 负向守卫（抽象：目标角色 × 动作/情绪类别，不绑单篇道具/角色名）。
+# K-B 的不变量是「家长非介入 + 孩子自行收场」：家长不能是冲突的攻击/迁怒对象，
+# 收束也不能预设「家长被孩子弄伤/狼狈」这一必须落地的事件。
+_KB_PARENT_ROLE_CUES = re.compile(r"爸爸|妈妈|父亲|母亲|家长|爹|娘")
+_KB_TARGET_AGGRESSION_ACT = re.compile(
+    r"攻击|袭击|殴打|揍|踢|掐|砸|泼|撕|拽|推倒|推搡|猛推|打人|"
+    r"伤害|弄伤|摔倒|弄倒|欺负|欺压|强迫|威逼"
+)
+# 告状/评理/求助：孩子把家长当诉求对象，不是攻击目标（家长是「第三方」）。
+_KB_APPEAL_ACT = re.compile(r"告状|评理|求助|求评|喊.*评|投诉|诉苦|撒娇|求援")
+_KB_TARGET_VENT_EMOTION = re.compile(
+    r"迁怒|撒气|发泄|出气|冲家长|冲爸爸|冲妈妈|怪罪|责怪|埋怨|怨恨"
+)
+_KB_PARENT_HARM_STATE = re.compile(
+    r"狼狈|受伤|被推|被打|被砸|吃痛|倒地|趔趄|鼻青|挂彩|惨状|吃亏"
+)
+_KB_CHILD_FORCE_ACT = re.compile(r"推|打|砸|攻击|动手|揍|踢|拽|泼")
+
+
+def _beat_text(beat: Any, *keys: str) -> str:
+    if not isinstance(beat, dict):
+        return ""
+    return " ".join(str(beat.get(k) or "") for k in keys)
+
+
+def k_b_disqualification_reason(
+    *,
+    beat_chain: list[Any] | None,
+    closing_intent: str = "",
+) -> str:
+    """K-B 不合格的结构化原因；合格返回空串。
+
+    判据全部是抽象类别：说话方是不是孩子、目标（addressee/intent 提到的角色）
+    是不是家长、动作是不是攻击类、情绪是不是迁怒类，以及收束是否把
+    「家长受孩子动作伤害」当成必须落地的事件。命中即返回原因，不做静默改判。
+    """
+    for beat in beat_chain or []:
+        speaker = _beat_text(beat, "speaker")
+        if not speaker or _KB_PARENT_ROLE_CUES.search(speaker):
+            continue
+        addressee = _beat_text(beat, "addressee")
+        intent = _beat_text(beat, "intent")
+        targets_parent = bool(
+            _KB_PARENT_ROLE_CUES.search(addressee)
+            or (not addressee and _KB_PARENT_ROLE_CUES.search(intent))
+        )
+        if not targets_parent:
+            continue
+        beat_no = str(
+            (beat.get("beat") if isinstance(beat, dict) else "") or "?"
+        )
+        if _KB_TARGET_VENT_EMOTION.search(intent):
+            return f"beat {beat_no} 孩子对家长的迁怒/发泄目标：{intent}"
+        if _KB_APPEAL_ACT.search(intent):
+            continue
+        if _KB_TARGET_AGGRESSION_ACT.search(intent):
+            return f"beat {beat_no} 孩子对家长的攻击目标：{intent}"
+    closing = str(closing_intent or "")
+    if (
+        _KB_PARENT_ROLE_CUES.search(closing)
+        and _KB_PARENT_HARM_STATE.search(closing)
+        and _KB_CHILD_FORCE_ACT.search(closing)
+    ):
+        return f"closing 预设家长受孩子动作伤害：{closing.strip()[:24]}"
+    return ""
+
+
+def _k_b_or_disqualified(
+    *,
+    beat_chain: list[Any] | None,
+    closing_intent: str,
+) -> str:
+    reason = k_b_disqualification_reason(
+        beat_chain=beat_chain, closing_intent=closing_intent
+    )
+    if reason:
+        logger.info("K-B disqualified by negative guard: %s", reason)
+        return K_B_DISQUALIFIED
+    return K_B_CHILD_SELF_RESOLVE
+
 # K-B 正文硬卡（只看对白，不看 punchline）
-RE_KB_PARENT_PASSIVE = re.compile(
+_KB_PARENT_PASSIVE_CUES = (
     r"不评理|不参与|不掺和|规矩|不能哭|别找我|挡回|不介入|"
     r"不接|别评|不管你们|吃饭|吃自己的"
+)
+# 高精度预筛：命中即判为家长非介入（保留为独立常量，供打分/审计复用）
+RE_KB_PARENT_PASSIVE = re.compile(_KB_PARENT_PASSIVE_CUES)
+# K-B 家长「非介入」抽象行为不变量（词表只做高精度预筛，行为立场才是判据）。
+# 覆盖立场：WITHDRAW 退出冲突/交还孩子自理、BYSTANDER 旁观看戏、
+# BLOCK 挡回制止继续、REFUSE_JUDGE 拒绝裁判、DISTRACT 转移注意。
+RE_KB_PARENT_NON_INTERVENTION = re.compile(
+    _KB_PARENT_PASSIVE_CUES
+    + "|"
+    # WITHDRAW：退出冲突，交给孩子自己处理
+    + r"你们(?:俩|两个)?自己(?:玩|说|解决|看着办|闹|商量|处理|来)|"
+    + r"我(?:不喊|不管|不问|不看|不插手|先走|走开|回屋|做饭)|"
+    + r"别问我|"
+    # BYSTANDER：旁观/看戏/看热闹
+    + r"旁观|看戏|吃瓜|看热闹|看你们(?:打|闹|玩)|我(?:就|只)看|当没看见|"
+    # BLOCK：挡回/制止继续
+    + r"别(?:推|打|闹|吵|抢)|不(?:许|能)(?:推|打|抢)|住手|停下|松手"
 )
 RE_KB_PARENT_MEDIATE = re.compile(
     r"别闹了|快分开|评评理|谁对谁错|都错了|听妈妈的|我生气了|"
@@ -227,16 +331,22 @@ def resolve_k_close_mode(
     child_self_resolved = (child_stop_last and child_resume) or child_self_last
 
     if child_self_resolved and parent_passive and not stale_end:
-        return K_B_CHILD_SELF_RESOLVE
+        return _k_b_or_disqualified(
+            beat_chain=beat_chain, closing_intent=closing_intent
+        )
     if parent_fail and stale_end and not child_self_resolved:
         return K_A_PARENT_FAIL_STALEMATE
     if child_self_any and parent_passive:
         if not parent_fail or child_self_resolved:
-            return K_B_CHILD_SELF_RESOLVE
+            return _k_b_or_disqualified(
+                beat_chain=beat_chain, closing_intent=closing_intent
+            )
     if parent_fail and not child_self_any:
         return K_A_PARENT_FAIL_STALEMATE
     if parent_passive and child_self_any and not stale_end:
-        return K_B_CHILD_SELF_RESOLVE
+        return _k_b_or_disqualified(
+            beat_chain=beat_chain, closing_intent=closing_intent
+        )
     return K_UNKNOWN
 
 

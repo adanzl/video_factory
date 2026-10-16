@@ -9,13 +9,24 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+_FINAL_REPAIR_STAGES = frozenset({"final_acceptance", "final_semantic"})
+
+
 @dataclass
 class GoldChatRepairBudget:
-    """扩写 / 精修 / 终检共用修稿次数，不在各层重新计数。"""
+    """扩写 / 精修 / 终检共用修稿次数，不在各层重新计数。
+
+    ``reserve_final`` 是给终检留的保底额度：非终检阶段不得把它烧掉，
+    否则 align 侧的机械问题会让终检那一次语义修复机会直接消失。
+    但保底一旦由终检自己兑现（``final_reserve_served``），就不必再扣着：
+    否则重掷出的新稿在 expand_structure 侧连机械修复都用不了，保底空转。
+    """
 
     max_repairs: int = 2
+    reserve_final: int = 0
     used: int = 0
     last_failure: str = ""
+    final_reserve_served: bool = False
 
     def consume(self, *, stage: str = "repair", reason: str = "") -> bool:
         if reason:
@@ -26,7 +37,22 @@ class GoldChatRepairBudget:
                 stage, self.used, self.remaining, self.last_failure,
             )
             return False
+        is_final = str(stage or "") in _FINAL_REPAIR_STAGES
+        reserve = (
+            0
+            if (is_final or self.final_reserve_served)
+            else max(0, int(self.reserve_final))
+        )
+        if self.remaining - 1 < reserve:
+            logger.info(
+                "gold_chat repair reserved for final stage=%s used=%s "
+                "remaining=%s reserve=%s reason=%s",
+                stage, self.used, self.remaining, reserve, self.last_failure,
+            )
+            return False
         self.used += 1
+        if is_final:
+            self.final_reserve_served = True
         logger.info(
             "gold_chat repair consume stage=%s used=%s remaining=%s reason=%s",
             stage, self.used, self.remaining, self.last_failure,
@@ -162,6 +188,11 @@ def prepare_candidate_for_acceptance(
     st = str(cleaned.get("story_type") or "").strip().upper()
     if st:
         cleaned, _ = apply_gold_chat_type_patch(cleaned, structure_type=st)
+    # 分镜说明压成口语：终稿 normalize 阶段同样会做，提前到验收前做，
+    # 机械可修项不必烧掉 LLM 修稿额度。
+    from app.services.gold_story.scene import patch_dialogue_narration_to_speech
+
+    patch_dialogue_narration_to_speech(cleaned)
     errors = collect_candidate_repair_errors(
         cleaned,
         mom_lines_max=mom_lines_max,
@@ -206,6 +237,9 @@ def prepare_candidate_for_acceptance_after_local_length_close(
     st = str(cleaned.get("story_type") or "").strip().upper()
     if st:
         cleaned, _ = apply_gold_chat_type_patch(cleaned, structure_type=st)
+    from app.services.gold_story.scene import patch_dialogue_narration_to_speech
+
+    patch_dialogue_narration_to_speech(cleaned)
     cleaned, _ = _stabilize_local_length_candidate(
         cleaned,
         structure_type=structure_type,
@@ -423,19 +457,23 @@ def evaluate_repair_candidate_acceptance(
 
     base_dialogue = baseline.get("dialogue") or []
     draft_dialogue = draft.get("dialogue") or []
-    from app.services.daily_story.prompts import (
-        DAILY_STORY_BODY_CHARS_MIN,
-        dialogue_total_chars,
+    from app.services.daily_story.prompts import dialogue_total_chars
+    from app.services.gold_story.gold_chat.validate import (
+        gold_chat_effective_min_chars,
     )
 
     base_chars = dialogue_total_chars(baseline)
     draft_chars = dialogue_total_chars(draft)
-    if base_chars >= DAILY_STORY_BODY_CHARS_MIN and draft_chars < DAILY_STORY_BODY_CHARS_MIN:
+    # 联合判据：句数达标时字数下限放宽一行，压短判定同样按有效下限，避免把
+    # 222/18 句这类仍达标的修稿当成压短而白烧一轮预算。
+    base_floor = gold_chat_effective_min_chars(base_dialogue)
+    draft_floor = gold_chat_effective_min_chars(draft_dialogue)
+    if base_chars >= base_floor and draft_chars < draft_floor:
         return None, (
             f"修稿把已达标正文压短（{base_chars}→{draft_chars}，"
-            f"下限{DAILY_STORY_BODY_CHARS_MIN}）"
+            f"下限{draft_floor}）"
         )
-    if base_chars < DAILY_STORY_BODY_CHARS_MIN and draft_chars < base_chars:
+    if base_chars < base_floor and draft_chars < base_chars:
         return None, f"修稿正文继续变短（{base_chars}→{draft_chars}）"
 
     if strict_dialogue_shape:

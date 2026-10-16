@@ -88,6 +88,15 @@ def _backfill_gold_story_after_export(
                 payload_patch["gold_chat_humor_score"] = int(humor["funny_score"])
             except (TypeError, ValueError):
                 pass
+        payload_patch["needs_manual_spotcheck"] = bool(
+            quality.get("needs_manual_spotcheck")
+        )
+        downgraded = quality.get("review_downgraded_issues")
+        payload_patch["gold_chat_review_downgraded"] = (
+            [dict(it) for it in downgraded if isinstance(it, dict)]
+            if isinstance(downgraded, list)
+            else []
+        )
     repo_gold_story.patch_story_payload(gid, payload_patch)
     clear_gold_chat_failure(gid, source_id=sid)
 
@@ -100,6 +109,26 @@ def _backfill_gold_story_after_export(
         export_story_files(source_id=sid, row=fresh, config=config)
     except Exception as exc:
         logger.warning("gold_chat story export failed id=%s: %s", gid, exc)
+
+
+def _export_downgraded_issues(chat: dict[str, Any]) -> list[dict[str, Any]]:
+    """降级（证据不可核验的观感类）条目：随导出稿留档供人工抽检。"""
+    quality = chat.get("quality")
+    if not isinstance(quality, dict):
+        return []
+    raw = quality.get("review_downgraded_issues")
+    if not isinstance(raw, list):
+        return []
+    return [dict(it) for it in raw if isinstance(it, dict)]
+
+
+def _export_needs_spotcheck(chat: dict[str, Any]) -> bool:
+    quality = chat.get("quality")
+    if not isinstance(quality, dict):
+        return False
+    if quality.get("needs_manual_spotcheck"):
+        return True
+    return bool(_export_downgraded_issues(chat))
 
 
 def export_gold_chat_files(
@@ -132,6 +161,8 @@ def export_gold_chat_files(
         "chat_lines": len(chat.get("dialogue") or []),
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "k_close_mode": k_mode_export,
+        "needs_manual_spotcheck": _export_needs_spotcheck(chat),
+        "review_downgraded_issues": _export_downgraded_issues(chat),
         "daily_story": chat,
         "gold_meta": {
             "source_type": payload.get("source_type"),
@@ -158,6 +189,13 @@ def export_gold_chat_files(
         f"- 金故事 status: {row.get('status') or ''}",
         f"- 机制: {row.get('mechanism')} / 结构: {row.get('structure_type')}",
         f"- 对白: {export['chat_lines']} 句 / {export['chat_chars']} 字",
+    ]
+    if export["needs_manual_spotcheck"]:
+        md_lines.append(
+            "- ⚠️ 需人工抽检：审读有 %s 条阻断问题证据不可核验（已降级）"
+            % len(export["review_downgraded_issues"])
+        )
+    md_lines.extend([
         "",
         "## 元数据",
         f"- setting: {chat.get('setting') or ''}",
@@ -165,9 +203,17 @@ def export_gold_chat_files(
         f"- conflict_core: {chat.get('conflict_core') or ''}",
         f"- punchline_explain: {chat.get('punchline_explain') or ''}",
         "",
-        "## 对白",
-        "",
-    ]
+    ])
+    if export["review_downgraded_issues"]:
+        md_lines.append("## 待人工抽检（审读证据不可核验，已降级）")
+        md_lines.append("")
+        for item in export["review_downgraded_issues"]:
+            md_lines.append(
+                "- 第%s句·%s：%s"
+                % (item.get("lines"), item.get("kind"), item.get("desc"))
+            )
+        md_lines.append("")
+    md_lines.extend(["## 对白", ""])
     md_lines.extend(_chat_md_lines(chat.get("dialogue") or []))
     md_path.write_text("\n".join(md_lines), encoding="utf-8")
     return {"json": str(json_path), "markdown": str(md_path)}

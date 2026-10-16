@@ -382,6 +382,32 @@ _LLM_EXPORT_BLOCKING_KINDS: frozenset[str] = frozenset({
     "无效插话",
 })
 
+# 不可降级的阻断类（安全性/事实/价值观高风险）：evidence 不可核验时直接失败或
+# 转人工，绝不静默放过。其余阻断类（重复/接不上/语病/错位/旁白/无效插话）属
+# 观感类，审读引文写错只说明该条不可机器核验，不等于稿子语义失败（专家裁决 2026-10）。
+_NON_DOWNGRADABLE_EXPORT_BLOCKING_KINDS: frozenset[str] = frozenset({
+    "矛盾",
+    "称谓",
+    "引用无据",
+    "动作误说",
+    "缺前提",
+})
+
+# 单次终检可降级（证据不可核验）条目上限：总数 ≤ 此值，且不超过全部阻断条目的 1/3。
+EXPORT_DOWNGRADE_MAX_ITEMS = 2
+
+# 弱核验片段最大长度：desc 切成 2..此值 字的中文片段。
+_DESC_KEYWORD_MAX_CHARS = 6
+
+# 弱核验关键词黑名单：这些词出现在任何稿子里都不构成方向性证据。
+_DESC_KEYWORDS_IGNORED: frozenset[str] = frozenset({
+    "第", "句", "问题", "一句", "句子", "内容", "表达", "这里", "那里",
+    "需要", "应该", "建议", "明显", "完全", "就是", "还是", "一直",
+    "重复", "啰嗦", "拖沓", "生硬", "不顺", "不通", "改法", "改成",
+})
+
+_RE_DESC_KEYWORD = re.compile(r"[\u4e00-\u9fff]{2,}")
+
 
 def _relay_or_quote_ranges(line: str) -> list[tuple[int, int]]:
     """转述/引用片段：其中的哥哥妹妹不当作说话人对姐弟的称呼。"""
@@ -908,7 +934,13 @@ def _validate_export_review_raw(
     *,
     line_count: int,
 ) -> str | None:
-    """审读 JSON 形状不合法时返回错误说明，合法则 None。"""
+    """审读 JSON **结构**不合法时返回错误说明，合法则 None。
+
+    只查 JSON 骨架（键名/类型/行号是否合法）：evidence 对不上原文属于「不可核验」
+    而非「结构错」，走 ``_evidence_repair_reason`` / ``_resolve_unverifiable_evidence``
+    的证据通道，不再借这条路重试整份审读（专家裁决 2026-10：证据问题不该烧掉
+    格式纠正预算）。
+    """
     issues = raw.get("issues")
     if not isinstance(issues, list):
         return "issues 须为数组"
@@ -940,17 +972,42 @@ def _validate_export_review_raw(
             pass
         if "missing_relation" in item and missing_relation is None:
             return f"issues[{idx}].missing_relation 无效"
-        if "evidence" in item:
-            parsed_ev = _parse_issue_evidence_entries(
+    humor = raw.get("humor")
+    if humor is not None and not isinstance(humor, dict):
+        return "humor 须为对象或省略"
+    return None
+
+
+def _validate_export_review_evidence_shape(
+    raw: dict[str, Any],
+    *,
+    line_count: int,
+) -> str | None:
+    """evidence **自身形状**非法时返回说明，否则 None（与「引文对不上原文」无关）。
+
+    只查：非数组、line 非整数/越界/不在该条 lines 内、quote 非字符串或短于 2 字。
+    引文是否为该行原文的连续子串需要原文，属另一条通道，不在这里判。
+    """
+    issues = raw.get("issues")
+    if not isinstance(issues, list):
+        return None
+    for idx, item in enumerate(issues):
+        if not isinstance(item, dict):
+            continue
+        nos = _normalize_issue_line_numbers(item.get("lines"))
+        if nos is None:
+            continue
+        if item.get("evidence") is None:
+            continue
+        if (
+            _parse_issue_evidence_entries(
                 item.get("evidence"),
                 allowed_lines=frozenset(nos),
                 line_count=line_count,
             )
-            if parsed_ev is None:
-                return f"issues[{idx}].evidence 无效"
-    humor = raw.get("humor")
-    if humor is not None and not isinstance(humor, dict):
-        return "humor 须为对象或省略"
+            is None
+        ):
+            return f"issues[{idx}].evidence 无效"
     return None
 
 
@@ -990,10 +1047,115 @@ def filter_llm_export_blocking_issues(
     return valid
 
 
-class ExportSemanticReviewResult:
-    """gold_chat 导出前语义审读结果。"""
+def _desc_keywords(desc: str) -> list[str]:
+    """从 issue.desc 抽中文片段（2..N 字 n-gram，去黑名单），供弱核验定位用。
 
-    __slots__ = ("completed", "issues", "humor", "error")
+    审读的 desc 常写整句判断（「这两句都在说抢车这件事」），整句匹配原文必然失配，
+    故切成短片段：只要有一个片段落在限定行内，就说明描述方向可落地。
+    """
+    out: list[str] = []
+    for run in _RE_DESC_KEYWORD.findall(str(desc or "")):
+        for size in range(2, min(len(run), _DESC_KEYWORD_MAX_CHARS) + 1):
+            for start in range(0, len(run) - size + 1):
+                word = run[start : start + size]
+                if word in _DESC_KEYWORDS_IGNORED:
+                    continue
+                if word not in out:
+                    out.append(word)
+    return out
+
+
+def _weak_verify_desc_hits_lines(
+    issue: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> bool:
+    """弱核验：desc 里的中文片段是否出现在 issue.lines 指定的行里。
+
+    审读引文（evidence）写错时，desc 指的方向可能仍是真的。desc 按中文连续段
+    切成 ≥2 字的 n-gram（去掉「重复/问题」这类空词），只要有一个片段能在限定行
+    内落地，就认为弱核验通过；一个都对不上则按疑似幻觉处理，不降级。
+    """
+    nos = _normalize_issue_line_numbers(issue.get("lines"))
+    if not nos:
+        return False
+    keywords = _desc_keywords(str(issue.get("desc") or ""))
+    if not keywords:
+        return False
+    texts: list[str] = []
+    for n in nos:
+        idx = n - 1
+        if 0 <= idx < len(rows):
+            texts.append(str(rows[idx].get("line") or ""))
+    if not texts:
+        return False
+    joined = "".join(texts)
+    return any(word in joined for word in keywords)
+
+
+def partition_export_blocking_for_acceptance(
+    issues: list[dict[str, Any]],
+    story: dict,
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """终检阻断三分：(证据可核验, 可降级, 不可降级)。
+
+    单一事实源（专家裁决 2026-10）：降级判定只在这里做一次；审读出口与终检
+    出口都只消费本函数结果，不再各自二次裁决（同一份审读两个口径是此前的 bug）。
+    """
+    rows = _dialogue(story)
+    valid: list[dict[str, Any]] = []
+    downgradable: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    for it in issues:
+        kind = str(it.get("kind") or "")
+        if kind not in _LLM_EXPORT_BLOCKING_KINDS:
+            continue
+        if _issue_has_blocking_evidence(it, rows, beat_chain=beat_chain):
+            valid.append(it)
+            continue
+        if kind in _NON_DOWNGRADABLE_EXPORT_BLOCKING_KINDS:
+            blocked.append(it)
+            continue
+        if not _weak_verify_desc_hits_lines(it, rows):
+            blocked.append(it)
+            continue
+        downgradable.append(it)
+    total_blocking = len(valid) + len(downgradable) + len(blocked)
+    # 上限：≤2 条，且不超过全部阻断条目的 1/3（向上取整，保证只报 1 条时允许降级）。
+    cap = min(
+        EXPORT_DOWNGRADE_MAX_ITEMS,
+        (total_blocking + 2) // 3 if total_blocking > 0 else 0,
+    )
+    if len(downgradable) > cap:
+        blocked.extend(downgradable[cap:])
+        downgradable = downgradable[:cap]
+    return valid, downgradable, blocked
+
+
+def format_downgraded_issue_record(issue: dict[str, Any]) -> dict[str, Any]:
+    """降级条目留档：人工抽检要能看到原始 issue 与降级原因。"""
+    out: dict[str, Any] = {
+        "kind": str(issue.get("kind") or ""),
+        "lines": issue.get("lines"),
+        "desc": str(issue.get("desc") or ""),
+        "downgrade_reason": "invalid_evidence",
+        "weak_verified": True,
+    }
+    evidence = issue.get("evidence")
+    if evidence is not None:
+        out["invalid_evidence"] = evidence
+    return out
+
+
+class ExportSemanticReviewResult:
+    """gold_chat 导出前语义审读结果。
+
+    ``downgraded``：evidence 不可核验但弱核验通过的观感类条目（已从 issues
+    剔除）。这些条目不再拦导出，但必须随导出稿留档供人工抽检。
+    """
+
+    __slots__ = ("completed", "issues", "humor", "error", "downgraded")
 
     def __init__(
         self,
@@ -1002,11 +1164,13 @@ class ExportSemanticReviewResult:
         issues: list[dict[str, Any]] | None = None,
         humor: dict[str, Any] | None = None,
         error: str | None = None,
+        downgraded: list[dict[str, Any]] | None = None,
     ) -> None:
         self.completed = completed
         self.issues = issues or []
         self.humor = humor
         self.error = error
+        self.downgraded = downgraded or []
 
 
 def _format_beat_chain_for_review(beat_chain: list[Any] | None) -> str:
@@ -1023,6 +1187,97 @@ def _format_beat_chain_for_review(beat_chain: list[Any] | None) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
+def _evidence_repair_reason(
+    raw: dict[str, Any],
+    story: dict[str, Any],
+    *,
+    line_count: int,
+    beat_chain: list[Any] | None = None,
+) -> str:
+    """审读 JSON 里证据不可核验时返回摘要，全部可核验时返回空串。
+
+    两条子通道共用同一次定向修复机会：
+
+    - evidence 自身形状不合规（行号非整数/越界/不在 lines 内、引文短于 2 字）；
+    - 形状合规但引文对不上原文（含弱核验不通过、高风险类）。
+    """
+    shape_reason = _validate_export_review_evidence_shape(
+        raw,
+        line_count=line_count,
+    )
+    if shape_reason:
+        return shape_reason
+    parsed_issues = parse_review_issues(raw, line_count=line_count, for_export=True)
+    _valid_blocking, downgradable, blocked = partition_export_blocking_for_acceptance(
+        parsed_issues,
+        story,
+        beat_chain=beat_chain,
+    )
+    problem = [*blocked, *downgradable]
+    if not problem:
+        return ""
+    return "阻断问题 evidence 与原文不一致：" + "；".join(
+        format_export_blocking_issue_summary(it) for it in problem[:3]
+    )
+
+
+def _resolve_unverifiable_evidence(
+    raw: dict[str, Any],
+    story: dict[str, Any],
+    *,
+    line_count: int,
+    beat_chain: list[Any] | None = None,
+) -> ExportSemanticReviewResult:
+    """证据不可核验时的**唯一**出口：降级留档，或对高风险条目判未完成。
+
+    - 形状不合规的 evidence：整条剔除（``drop_unverifiable_evidence_issues``）；
+    - 形状合规但引文对不上：只有观感类且弱核验通过、数量不超限才降级；
+    - 高风险类、弱核验不过、超限：返回未完成，由终检拒绝导出。
+
+    专家裁决（2026-10）：证据写错只说明该条不可机器核验，不等于稿子语义失败；
+    但也不能静默放过，降级条目必须随导出稿留档供人工抽检。
+    """
+    cleaned, dropped_shape = drop_unverifiable_evidence_issues(
+        raw,
+        line_count=line_count,
+    )
+    parsed_issues = parse_review_issues(cleaned, line_count=line_count, for_export=True)
+    _valid_blocking, downgradable, blocked = partition_export_blocking_for_acceptance(
+        parsed_issues,
+        story,
+        beat_chain=beat_chain,
+    )
+    if blocked:
+        return ExportSemanticReviewResult(
+            completed=False,
+            error="审核证据无效（"
+            + "；".join(
+                format_export_blocking_issue_summary(it) for it in blocked[:5]
+            )
+            + "）",
+        )
+    dropped_ids = {id(it) for it in downgradable}
+    kept = [it for it in parsed_issues if id(it) not in dropped_ids]
+    downgraded = [
+        format_downgraded_issue_record(it)
+        for it in (*dropped_shape, *downgradable)
+        if str(it.get("kind") or "") in _LLM_EXPORT_BLOCKING_KINDS
+    ]
+    if downgraded:
+        logger.warning(
+            "[GOLD_CHAT] review downgraded %s unverifiable issue(s) "
+            "to manual spotcheck: %s",
+            len(downgraded),
+            "；".join(f"第{d.get('lines')}句·{d.get('kind')}" for d in downgraded[:3]),
+        )
+    return ExportSemanticReviewResult(
+        completed=True,
+        issues=kept,
+        humor=parse_humor(cleaned),
+        downgraded=downgraded,
+    )
+
+
 def run_export_semantic_review(
     theme: str,
     story: dict[str, Any],
@@ -1031,9 +1286,13 @@ def run_export_semantic_review(
 ) -> ExportSemanticReviewResult:
     """审读格式无效时纠正再试；调用异常直接返回未完成。
 
-    预算 ``EXPORT_REVIEW_MAX_CALLS``：首发 + 最多 ``-1`` 次格式纠正。
-    实测模型偶发连报两次形状漂移（缺 issues / 换键名），故留两次纠正；
-    纠正提示词带最小骨架，且每次都重申不得为过校验删问题。
+    两条通道相互独立：
+
+    - **JSON 形状**：预算 ``EXPORT_REVIEW_MAX_CALLS``（首发 + 最多 ``-1`` 次格式
+      纠正）。实测模型偶发连报两次形状漂移（缺 issues / 换键名），故留两次纠正。
+    - **证据**：整篇审读只给一次 evidence-only 修复（不占格式纠正预算），仍不可
+      核验则走 ``_resolve_unverifiable_evidence`` 单一出口降级留档，不再因引文
+      写错判整稿失败。
     """
     from app.services.llm import llm_mgr
 
@@ -1056,6 +1315,7 @@ def run_export_semantic_review(
     n_lines = len(story.get("dialogue") or [])
     review_user = user
     max_calls = EXPORT_REVIEW_MAX_CALLS
+    evidence_fix_used = False
     for attempt in range(max_calls):
         try:
             raw, _ = chat_json(
@@ -1104,97 +1364,80 @@ def run_export_semantic_review(
                 )
             else:
                 shape_err = _validate_export_review_raw(raw, line_count=n_lines)
-        parsed_issues: list[dict[str, Any]] = []
+        evidence_err = ""
         if not shape_err:
-            parsed_issues = parse_review_issues(raw, line_count=n_lines, for_export=True)
-            _valid_blocking, invalid_evidence = partition_llm_export_blocking_issues(
-                parsed_issues,
+            evidence_err = _evidence_repair_reason(
+                raw,
                 story,
+                line_count=n_lines,
                 beat_chain=beat_chain,
             )
-            if invalid_evidence:
-                # 专家裁决（2026-10）：evidence 对不上原文只说明该条不可机器核验，
-                # 不等于稿子语义失败。先用剩余预算纠正引文；预算用尽仍不合规时
-                # 降级为告警并继续导出，不再让整稿因审读写错引文而失败。
-                if attempt < max_calls - 1:
-                    shape_err = (
-                        "阻断问题 evidence 与原文不一致："
-                        + "；".join(
-                            format_export_blocking_issue_summary(it)
-                            for it in invalid_evidence[:3]
-                        )
-                    )
-                else:
-                    logger.warning(
-                        "[GOLD_CHAT] review blocking issues dropped for invalid "
-                        "evidence (%s): %s",
-                        len(invalid_evidence),
-                        "；".join(
-                            format_export_blocking_issue_summary(it)
-                            for it in invalid_evidence[:3]
-                        ),
-                    )
-        if not shape_err:
+        if not shape_err and not evidence_err:
             return ExportSemanticReviewResult(
                 completed=True,
-                issues=parsed_issues,
+                issues=parse_review_issues(raw, line_count=n_lines, for_export=True),
                 humor=parse_humor(raw),
             )
-        if attempt >= max_calls - 1:
-            # 专家裁决：格式问题不阻断整稿。最后一轮把 evidence 不可核验的条目
-            # 剔除（记日志）后继续，仍合规则按通过返回。
-            cleaned, dropped = drop_unverifiable_evidence_issues(
-                raw if isinstance(raw, dict) else {},
-                line_count=n_lines,
-            )
-            if dropped:
-                residual = _validate_export_review_raw(
-                    cleaned, line_count=n_lines
+        if shape_err:
+            if attempt >= max_calls - 1:
+                return ExportSemanticReviewResult(
+                    completed=False,
+                    error=f"审读 JSON 格式无效：{shape_err}",
                 )
-                if not residual:
-                    logger.warning(
-                        "[GOLD_CHAT] review dropped %s unverifiable issue(s): %s",
-                        len(dropped),
-                        "；".join(
-                            f"第{d.get('lines')}句·{d.get('kind')}"
-                            for d in dropped[:3]
-                        ),
-                    )
-                    return ExportSemanticReviewResult(
-                        completed=True,
-                        issues=parse_review_issues(
-                            cleaned, line_count=n_lines, for_export=True
-                        ),
-                        humor=parse_humor(cleaned),
-                    )
-            return ExportSemanticReviewResult(
-                completed=False,
-                error=f"审读 JSON 格式无效：{shape_err}",
+            logger.warning(
+                "[GOLD_CHAT] review format correction %s/%s: %s",
+                attempt + 1,
+                max_calls - 1,
+                shape_err,
             )
-        logger.warning(
-            "[GOLD_CHAT] review format correction %s/%s: %s",
-            attempt + 1,
-            max_calls - 1,
-            shape_err,
-        )
-        review_user = (
-            user
-            + f"\n【审核格式纠正 {attempt + 1}/{max_calls - 1}】\n"
-            + f"上一份审核未通过格式校验：{shape_err}\n"
-            + "稿件未改变。请纠正审核 JSON，保持审核标准，勿为通过校验删除问题。"
-            + '**顶层必须是对象且必须带 issues 数组**；没问题就是 `{"issues": []}`，'
-            + "不要省略 issues，也不要用 problems/findings/results 等别的键名或只返回数组。"
-            + "每个 issue 须有 kind/lines/desc；"
-            + "evidence 的 line 必须为 issues.lines 内的整数，quote 必须从该行原样摘录至少两个字。"
-            + "kind=缺前提 时必须说明 missing_relation；若对应 beat_chain 缺拍，再输出 missing_beat 对象"
-            + '{"beat":1,"intent":"对应 beat_chain 的 intent 原文"}，'
-            + "beat 必须是 beat_chain 的 1-based JSON 整数，不能是字符串、小数或 null；"
-            + "其他 kind 不要输出 missing_beat；missing_relation 必须是简短字符串。"
-            + "输出完整审核 JSON，不要改写稿件。\n上一份审核：\n"
-            + json.dumps(
-                {k: v for k, v in raw.items() if not str(k).startswith("_")},
-                ensure_ascii=False,
+            review_user = (
+                user
+                + f"\n【审核格式纠正 {attempt + 1}/{max_calls - 1}】\n"
+                + f"上一份审核未通过格式校验：{shape_err}\n"
+                + "稿件未改变。请纠正审核 JSON，保持审核标准，勿为通过校验删除问题。"
+                + '**顶层必须是对象且必须带 issues 数组**；没问题就是 `{"issues": []}`，'
+                + "不要省略 issues，也不要用 problems/findings/results 等别的键名或只返回数组。"
+                + "每个 issue 须有 kind/lines/desc；"
+                + "kind=缺前提 时必须说明 missing_relation；若对应 beat_chain 缺拍，再输出 missing_beat 对象"
+                + '{"beat":1,"intent":"对应 beat_chain 的 intent 原文"}，'
+                + "beat 必须是 beat_chain 的 1-based JSON 整数，不能是字符串、小数或 null；"
+                + "其他 kind 不要输出 missing_beat；missing_relation 必须是简短字符串。"
+                + "输出完整审核 JSON，不要改写稿件。\n上一份审核：\n"
+                + json.dumps(
+                    {k: v for k, v in raw.items() if not str(k).startswith("_")},
+                    ensure_ascii=False,
+                )
             )
+            continue
+        # 证据通道：与 JSON 形状纠正分开，整篇审读只给一次 evidence-only 修复，
+        # 且不占格式纠正预算（专家裁决 2026-10：证据问题不该烧掉格式纠正预算）。
+        if not evidence_fix_used and attempt < max_calls - 1:
+            evidence_fix_used = True
+            logger.warning(
+                "[GOLD_CHAT] review evidence repair 1/1: %s",
+                evidence_err,
+            )
+            review_user = (
+                user
+                + "\n【审核证据纠正 1/1】\n"
+                + f"上一份审核的 evidence 无法核验：{evidence_err}\n"
+                + "稿件未改变，问题判断本身也不必改。请只纠正 evidence："
+                + "line 必须是该 issue.lines 内的 JSON 整数，"
+                + "quote 必须从该行原文原样摘录至少两个字。"
+                + "若确实无法从原文摘出引文，就删除该条问题，"
+                + "不要编造引文，也不要为了通过校验而保留。"
+                + "其他条目原样保留，输出完整审核 JSON，不要改写稿件。\n上一份审核：\n"
+                + json.dumps(
+                    {k: v for k, v in raw.items() if not str(k).startswith("_")},
+                    ensure_ascii=False,
+                )
+            )
+            continue
+        return _resolve_unverifiable_evidence(
+            raw,
+            story,
+            line_count=n_lines,
+            beat_chain=beat_chain,
         )
     return ExportSemanticReviewResult(completed=False, error="审核格式纠正未完成")
 

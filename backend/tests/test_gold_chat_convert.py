@@ -457,9 +457,12 @@ def test_n_local_semantic_mid_pair_recovers_clean_q96_shape():
     )
 
 
-def test_n_229_near_miss_closes_locally_without_llm_regen():
-    """N 已有理由链但可扩行顶格时，229→240 应走实义补位，不把 11 字缺口交给 LLM。"""
-    from app.services.gold_story.gold_chat.length import _ensure_gold_chat_min_chars
+def test_n_222_near_miss_accepted_without_local_pad():
+    """联合判据：12 句已达标，222 字落在放宽后的下限内，本地不再垫字。"""
+    from app.services.gold_story.gold_chat.length import (
+        _ensure_gold_chat_min_chars,
+        gold_chat_effective_min_chars,
+    )
 
     def full_line(text: str) -> str:
         return (text + "真" * 24)[:24]
@@ -476,10 +479,10 @@ def test_n_229_near_miss_closes_locally_without_llm_regen():
         {"speaker": "灿灿", "line": full_line("行那我再听听你还能怎么解释")},
         {"speaker": "妈妈", "line": "先听你们说完"},
         {"speaker": "妈妈", "line": "我还在听"},
-        {"speaker": "妈妈", "line": "嗯" * 16},
+        {"speaker": "妈妈", "line": "我在听你们把话说完"},
     ]
     story = {"story_type": "N", "dialogue": dialogue}
-    assert gc.dialogue_total_chars(story) == 229
+    assert gc.dialogue_total_chars(story) < gc.DAILY_STORY_BODY_CHARS_MIN
 
     out, changed = _ensure_gold_chat_min_chars(
         story,
@@ -487,10 +490,12 @@ def test_n_229_near_miss_closes_locally_without_llm_regen():
         mechanism="M6",
     )
 
-    assert changed
-    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
-    assert len(out["dialogue"]) == len(story["dialogue"]) + 2
-    assert any("照这个道理认真想" in row["line"] for row in out["dialogue"])
+    assert not changed
+    assert gc.dialogue_total_chars(out) == gc.dialogue_total_chars(story)
+    assert len(out["dialogue"]) == len(story["dialogue"])
+    assert gc.dialogue_total_chars(out) >= gold_chat_effective_min_chars(
+        out["dialogue"]
+    )
 
 
 def test_validate_expand_n_221_uses_contract_for_local_length_close(monkeypatch):
@@ -674,7 +679,8 @@ def test_n_contract_length_fallback_rejects_ambiguous_reasoner():
     assert insert_at is None
 
 
-def test_shared_local_length_close_leaves_clean_shortage_for_repair():
+def test_shared_local_length_close_accepts_clean_near_miss():
+    """句数达标的边际稿（< 240 字但在一行之内的缺口）不再判死，也不灌垫字。"""
     from app.services.gold_story.gold_chat.length import (
         _stabilize_local_length_candidate,
     )
@@ -692,15 +698,19 @@ def test_shared_local_length_close_leaves_clean_shortage_for_repair():
         structure_type="A",
         mechanism="M6",
     )
-    assert changed
+    # 联合判据达标（18 句 / 218 字 ≥ 放宽下限），本地不再为凑 240 垫字。
+    assert not changed
+    assert gc.dialogue_total_chars(closed) == gc.dialogue_total_chars(story)
     prepared, errors = prepare_candidate_for_acceptance(
         closed,
         mom_lines_max=3,
         banned_literals=[],
     )
 
-    assert gc.dialogue_total_chars(prepared) < gc.DAILY_STORY_BODY_CHARS_MIN
-    assert any("正文总字数须≥" in error for error in errors)
+    total = gc.dialogue_total_chars(prepared)
+    assert total < gc.DAILY_STORY_BODY_CHARS_MIN
+    # 联合判据：句数达标时字数下限放宽一行，故此处不再报字数缺口。
+    assert not [error for error in errors if "正文总字数须≥" in error]
     assert not [
         error
         for error in errors
@@ -1187,6 +1197,80 @@ def test_convert_failure_preserves_existing_export(tmp_path, monkeypatch):
     assert timing["stage"] == "finalize"
     assert set(timing["stages_ms"]) == {"contract", "draft", "normalize_refine", "finalize"}
     assert "export_backfill" not in timing["stages_ms"]
+
+
+def test_convert_retries_on_finalize_missing_beat(monkeypatch):
+    """终检缺拍也要能带反馈重掷：终检原先在重掷循环之外，机器一次都看不到。"""
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairExhausted
+
+    row = _sample_row()
+    row["source_id"] = "BV1FINALRETRY"
+    row["id"] = 0
+    _bypass_structure_gate(monkeypatch)
+    monkeypatch.setattr(gc, "_rebuild_h3a_h3b_on_convert", lambda r: r)
+    monkeypatch.setattr(gc, "_persist_structure_correction", lambda r, _n: r)
+    monkeypatch.setattr(gc, "_resolve_structure_row", lambda r: (r, []))
+    monkeypatch.setattr(gc, "_persist_m5_h_contract_if_needed", lambda r: r)
+    monkeypatch.setattr(
+        gc, "apply_gold_chat_normalizations", lambda chat, **_kw: (chat, [])
+    )
+    monkeypatch.setattr(gc, "_refine_after_normalize", lambda chat, _row, **_kw: chat)
+    monkeypatch.setattr(gc, "_ensure_gold_chat_min_chars", lambda chat, **_kw: (chat, []))
+    monkeypatch.setattr(gc, "_retry_structure_pair", lambda r, attempt=0: (r, "M3+F"))
+
+    feedback_seen: list[list[dict]] = []
+
+    def _attach(r, feedback):
+        feedback_seen.append(list(feedback))
+        return r
+
+    monkeypatch.setattr(gc, "_attach_retry_missing_events", _attach)
+
+    drafts: list[int] = []
+
+    def _draft(_row, **_kw):
+        drafts.append(1)
+        return _sample_chat()
+
+    monkeypatch.setattr(gc, "gold_story_to_gold_chat", _draft)
+
+    finalize_calls: list[int] = []
+
+    def _finalize(chat, _row, **_kw):
+        finalize_calls.append(1)
+        if len(finalize_calls) == 1:
+            raise GoldChatRepairExhausted(
+                stage="final_acceptance",
+                reason="终检语义硬伤：第[5]句·缺前提",
+                candidate={
+                    "dialogue": [{"speaker": "爸爸", "line": "测试"}],
+                    "quality": {
+                        "review_issues": [
+                            {
+                                "kind": "缺前提",
+                                "line": 5,
+                                "missing_beat": {
+                                    "intent": "爸爸旁观解说",
+                                    "speaker": "爸爸",
+                                },
+                            }
+                        ]
+                    },
+                },
+            )
+        return chat, 80
+
+    monkeypatch.setattr(gcf, "run_gold_chat_finalize", _finalize)
+    monkeypatch.setattr(gc, "export_gold_chat_files", lambda **_kw: {"json": "x"})
+    monkeypatch.setattr(gc, "_backfill_gold_story_after_export", lambda *_a, **_kw: None)
+
+    result = gc.convert_gold_chat(row)
+
+    assert result["ok"] is True
+    assert len(drafts) == 2
+    assert len(finalize_calls) == 2
+    assert feedback_seen
+    assert feedback_seen[0][0]["original_intent"] == "爸爸旁观解说"
 
 
 def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
@@ -2396,6 +2480,9 @@ def test_expand_local_length_close_avoids_second_llm_repair(monkeypatch, caplog)
     import copy
     import logging
     from app.services.gold_story.gold_chat import repair
+    from app.services.gold_story.gold_chat.validate import (
+        gold_chat_effective_min_chars,
+    )
 
     real_gate = gc._gate_gold_chat_structure_score
     _bypass_structure_gate(monkeypatch)
@@ -2415,9 +2502,9 @@ def test_expand_local_length_close_avoids_second_llm_repair(monkeypatch, caplog)
     def fix(chat, prompt, **kwargs):
         repair_inputs.append((chat.get("revision", 0), prompt))
         result = copy.deepcopy(chat)
-        # 模拟第 1 次结构修稿已把结构分修到 80，但正文被压到 233 字。
+        # 模拟第 1 次结构修稿已把结构分修到 80，但正文被压到 205 字（低于放宽下限）。
         for line in result["dialogue"]:
-            while len(line["line"]) > 1 and gc.dialogue_total_chars(result) > 233:
+            while len(line["line"]) > 1 and gc.dialogue_total_chars(result) > 205:
                 line["line"] = line["line"][:-1]
         result["revision"] = len(repair_inputs)
         return result
@@ -2439,13 +2526,16 @@ def test_expand_local_length_close_avoids_second_llm_repair(monkeypatch, caplog)
 
     assert result["revision"] == 1
     assert result["quality"]["structure_score"] == 80
-    assert gc.dialogue_total_chars(result) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    # 本地收口后仍在下限之内即可（联合判据：18 句达标则字数下限放宽一行）。
+    assert gc.dialogue_total_chars(result) >= gold_chat_effective_min_chars(
+        result["dialogue"]
+    )
     assert len(generations) == 1
     assert [revision for revision, _ in repair_inputs] == [0]
     assert budget.used == 1
     assert budget.remaining == 1
     assert "candidate rejected stage=expand_structure score=65" in caplog.text
-    assert "repair post-hard length close chars=233->" in caplog.text
+    assert "repair post-hard length close chars=205->" in caplog.text
 
 
 def test_expand_structure_restores_accidental_parent_speaker_without_deleting_body():
@@ -2721,6 +2811,30 @@ def test_missing_beat_retry_limit_is_one():
     assert gc.GOLD_CHAT_DRAFT_ATTEMPTS == 3
 
 
+def test_missing_beat_retry_grants_exactly_one_extra_draft():
+    """首个 draft 撞缺拍 → 上限抬到下一次；第二次仍缺拍不再续命。"""
+    assert (
+        gc._next_draft_attempt_limit(
+            draft_attempt=1, current_limit=3, missing_beat_retry_used=False
+        )
+        == 2
+    )
+    # 第二次仍缺拍：上限收回本次，循环随即结束
+    assert (
+        gc._next_draft_attempt_limit(
+            draft_attempt=2, current_limit=3, missing_beat_retry_used=True
+        )
+        == 2
+    )
+    # 不放宽既有更小上限
+    assert (
+        gc._next_draft_attempt_limit(
+            draft_attempt=2, current_limit=2, missing_beat_retry_used=False
+        )
+        == 2
+    )
+
+
 def test_extract_missing_beat_intents_keeps_semantics_only():
     """抽取的反馈只带语义事件与说话人，不带 beat 编号/行号。"""
     exc = _SemanticBlocked("终检语义硬伤：缺前提", _missing_beat_issues())
@@ -2784,3 +2898,292 @@ def test_carry_retry_feedback_survives_db_reload():
     assert gc.carry_retry_feedback({"id": 49}, {"id": 49}) == {"id": 49}
     assert gc.carry_retry_feedback(None, stale) is stale
     assert gc.carry_retry_feedback(fresh, fresh) is fresh
+
+
+def _order_seed() -> list[dict[str, str]]:
+    return [
+        {"speaker": "灿灿", "intent": "我先骑，你松手"},
+        {"speaker": "爸爸", "intent": "看这招，昭昭无影脚"},
+        {"speaker": "灿灿", "intent": "别光看，你倒是管管"},
+        {"speaker": "昭昭", "intent": "我还没骑完呢"},
+    ]
+
+
+def _order_dialogue() -> list[dict[str, str]]:
+    return [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "昭昭", "line": "我还没骑完呢。"},
+        {"speaker": "灿灿", "line": "你放手，别拽车把。"},
+        {"speaker": "昭昭", "line": "那你先松脚。"},
+        {"speaker": "灿灿", "line": "别光看，你倒是管管。"},
+        {"speaker": "昭昭", "line": "我扶你。"},
+        {"speaker": "爸爸", "line": "我这不是怕你们摔着嘛。"},
+        {"speaker": "爸爸", "line": "看这招，昭昭无影脚。"},
+        {"speaker": "昭昭", "line": "咱俩先不抢了。"},
+        {"speaker": "灿灿", "line": "行，我推你一把。"},
+        {"speaker": "昭昭", "line": "你别推我。"},
+        {"speaker": "灿灿", "line": "好啦。"},
+        {"speaker": "爸爸", "line": "嗯。"},
+        {"speaker": "昭昭", "line": "一起看吧。"},
+        {"speaker": "灿灿", "line": "那行。"},
+        {"speaker": "爸爸", "line": "我不掺和了。"},
+    ]
+
+
+def test_seed_order_monotonic_moves_premise_before_dependent():
+    """后句引用了尚未发生的前提时，把前提句前移归位（句数不变）。"""
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    out, changed = gcp.patch_seed_order_monotonic(
+        {"dialogue": _order_dialogue()}, dialogue_seed=_order_seed()
+    )
+    assert changed is True
+    lines = [r["line"] for r in out["dialogue"]]
+    assert len(lines) == len(_order_dialogue())
+    assert lines.index("看这招，昭昭无影脚。") < lines.index("别光看，你倒是管管。")
+
+
+def test_seed_order_monotonic_skips_when_move_crosses_half_the_draft():
+    """跨距超过整篇一半的移动不做，交回重掷/定点修稿。"""
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    dlg = [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "灿灿", "line": "别光看，你倒是管管。"},
+        {"speaker": "昭昭", "line": "我还没骑完呢。"},
+        {"speaker": "灿灿", "line": "你放手，别拽车把。"},
+        {"speaker": "昭昭", "line": "那你先松脚。"},
+        {"speaker": "昭昭", "line": "我扶你。"},
+        {"speaker": "爸爸", "line": "我这不是怕你们摔着嘛。"},
+        {"speaker": "昭昭", "line": "咱俩先不抢了。"},
+        {"speaker": "灿灿", "line": "行，我推你一把。"},
+        {"speaker": "昭昭", "line": "你别推我。"},
+        {"speaker": "灿灿", "line": "好啦。"},
+        {"speaker": "爸爸", "line": "嗯。"},
+        {"speaker": "爸爸", "line": "看这招，昭昭无影脚。"},
+        {"speaker": "昭昭", "line": "一起看吧。"},
+        {"speaker": "灿灿", "line": "那行。"},
+        {"speaker": "爸爸", "line": "我不掺和了。"},
+    ]
+    out, changed = gcp.patch_seed_order_monotonic(
+        {"dialogue": dlg}, dialogue_seed=_order_seed()[:3]
+    )
+    assert changed is False
+    assert out == {"dialogue": dlg}
+
+
+def test_seed_order_monotonic_keeps_closing_window():
+    """收束窗口（末 3 句）里的锚点不动，避免把收尾提前。"""
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    dlg = [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "灿灿", "line": "别光看，你倒是管管。"},
+        {"speaker": "昭昭", "line": "我还没骑完呢。"},
+        {"speaker": "灿灿", "line": "你放手，别拽车把。"},
+        {"speaker": "昭昭", "line": "那你先松脚。"},
+        {"speaker": "昭昭", "line": "我扶你。"},
+        {"speaker": "爸爸", "line": "我这不是怕你们摔着嘛。"},
+        {"speaker": "昭昭", "line": "咱俩先不抢了。"},
+        {"speaker": "灿灿", "line": "行，我推你一把。"},
+        {"speaker": "昭昭", "line": "你别推我。"},
+        {"speaker": "灿灿", "line": "好啦。"},
+        {"speaker": "爸爸", "line": "嗯。"},
+        {"speaker": "昭昭", "line": "一起看吧。"},
+        {"speaker": "灿灿", "line": "那行。"},
+        {"speaker": "爸爸", "line": "看这招，昭昭无影脚。"},
+        {"speaker": "爸爸", "line": "我不掺和了。"},
+    ]
+    out, changed = gcp.patch_seed_order_monotonic(
+        {"dialogue": dlg}, dialogue_seed=_order_seed()[:3]
+    )
+    assert changed is False
+    assert out == {"dialogue": dlg}
+
+
+def test_seed_order_monotonic_noop_without_seed():
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    dlg = _order_dialogue()
+    out, changed = gcp.patch_seed_order_monotonic({"dialogue": dlg}, dialogue_seed=None)
+    assert changed is False
+    assert out == {"dialogue": dlg}
+
+
+def test_seed_premise_patch_lands_before_first_landed_successor():
+    """缺席的前提拍必须补到「首个已落地的后继 seed 拍」之前，不许后置补叙。"""
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    seed = [
+        {"speaker": "灿灿", "intent": "我先骑，你松手"},
+        {"speaker": "爸爸", "intent": "看这招，昭昭无影脚"},
+        {"speaker": "灿灿", "intent": "让你解说，你上来打"},
+        {"speaker": "昭昭", "intent": "我还没骑完呢"},
+        {"speaker": "灿灿", "intent": "行，我推你一把"},
+        {"speaker": "昭昭", "intent": "你别推我"},
+        {"speaker": "灿灿", "intent": "好啦"},
+        {"speaker": "爸爸", "intent": "我不掺和了"},
+    ]
+    dlg = [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "昭昭", "line": "我还没骑完呢。"},
+        {"speaker": "灿灿", "line": "让你解说，你上来打。"},
+        {"speaker": "昭昭", "line": "你别推我。"},
+        {"speaker": "灿灿", "line": "行，我推你一把。"},
+        {"speaker": "灿灿", "line": "好啦。"},
+        {"speaker": "爸爸", "line": "我不掺和了。"},
+    ]
+    out, changed = gcp.patch_seed_premise_lines({"dialogue": dlg}, dialogue_seed=seed)
+    assert changed is True
+    lines = [r["line"] for r in out["dialogue"]]
+    assert lines.index("看这招，昭昭无影脚") < lines.index("让你解说，你上来打。")
+
+
+def test_seed_premise_patch_skips_without_landed_successor():
+    """找不到后继锚点时不补（旧行为是补到收尾前，等于把前提放到引用之后）。"""
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    seed = [
+        {"speaker": "灿灿", "intent": "我先骑，你松手"},
+        {"speaker": "爸爸", "intent": "看这招，昭昭无影脚"},
+        {"speaker": "灿灿", "intent": "行，我推你一把"},
+    ]
+    dlg = [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "昭昭", "line": "我不管。"},
+        {"speaker": "灿灿", "line": "随便你。"},
+        {"speaker": "昭昭", "line": "嗯。"},
+        {"speaker": "灿灿", "line": "好吧。"},
+    ]
+    out, changed = gcp.patch_seed_premise_lines({"dialogue": dlg}, dialogue_seed=seed)
+    assert changed is False
+    assert out == {"dialogue": dlg}
+
+
+def test_seed_premise_patch_allows_seed_consecutive_same_speaker():
+    """seed 自身连续同角色时应保持顺序（允许连说），不得退格反序。"""
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    seed = [
+        {"speaker": "灿灿", "intent": "我先骑，你松手"},
+        {"speaker": "爸爸", "intent": "看这招，昭昭无影脚"},
+        {"speaker": "爸爸", "intent": "灿灿泰山压顶，漂亮"},
+        {"speaker": "灿灿", "intent": "让你解说，你上来打"},
+        {"speaker": "昭昭", "intent": "我还没骑完呢"},
+    ]
+    dlg = [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "昭昭", "line": "我还没骑完呢。"},
+        {"speaker": "灿灿", "line": "让你解说，你上来打。"},
+        {"speaker": "昭昭", "line": "嗯。"},
+    ]
+    out, changed = gcp.patch_seed_premise_lines({"dialogue": dlg}, dialogue_seed=seed)
+    assert changed is True
+    lines = [r["line"] for r in out["dialogue"]]
+    assert (
+        lines.index("看这招，昭昭无影脚")
+        < lines.index("灿灿泰山压顶，漂亮")
+        < lines.index("让你解说，你上来打。")
+    )
+
+
+def test_seed_premise_patch_scopes_inserts_to_named_speakers():
+    """终检点名某角色缺拍时，补拍额度只花在该角色上，且整段连说不被拆开。
+
+    反例（id49 实测）：按 seed 顺序补，额度先被无关前置拍吃光，真正缺失的
+    整段家长解说补不回来，终检「缺前提」照旧。
+    """
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    seed = [
+        {"speaker": "灿灿", "intent": "我先骑，你松手"},
+        {"speaker": "昭昭", "intent": "我还没骑完呢"},
+        {"speaker": "灿灿", "intent": "你腿短够不着"},
+        {"speaker": "爸爸", "intent": "看这招，昭昭无影脚"},
+        {"speaker": "爸爸", "intent": "灿灿泰山压顶来了"},
+        {"speaker": "爸爸", "intent": "好，昭昭反击"},
+        {"speaker": "灿灿", "intent": "你站哪边的"},
+        {"speaker": "昭昭", "intent": "行啊，一起玩"},
+    ]
+    dlg = [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "昭昭", "line": "我还没骑完呢。"},
+        {"speaker": "灿灿", "line": "爸你站哪边的，倒是拉架啊！"},
+        {"speaker": "昭昭", "line": "你别喊爸。"},
+        {"speaker": "灿灿", "line": "一起玩吧。"},
+        {"speaker": "昭昭", "line": "行啊，一起玩。"},
+    ]
+    out, changed = gcp.patch_seed_premise_lines(
+        {"dialogue": dlg},
+        dialogue_seed=seed,
+        only_speakers={"爸爸"},
+    )
+    assert changed is True
+    lines = [str(r["line"]) for r in out["dialogue"]]
+    assert "你腿短够不着" not in lines
+    # 连续三拍整段补回，未被 _SEED_PREMISE_MAX_INSERTS 拆断
+    assert "看这招，昭昭无影脚" in lines
+    assert "灿灿泰山压顶来了" in lines
+    assert "好，昭昭反击" in lines
+    # 全部落在引用「爸你站哪边的」之前
+    cite = lines.index("爸你站哪边的，倒是拉架啊！")
+    assert lines.index("看这招，昭昭无影脚") < cite
+    assert lines.index("好，昭昭反击") < cite
+
+
+def test_seed_premise_patch_respects_parent_quota():
+    """补拍不得越过契约给的说话人额度（额度按契约抬，不按 seed 行数抬）。
+
+    反例（id49 实测）：seed 把一拍家长解说拆成三句，补拍照单全收后硬卡报
+    「爸爸台词须≤3句，当前4」，整篇候选直接判死。额度是契约元数据，补拍只能
+    在额度内落地：超出额度的 seed 行不补，缺口交给带反馈重掷。
+    """
+    from app.services.gold_story.gold_chat import patch as gcp
+
+    seed = [
+        {"speaker": "灿灿", "intent": "我先骑，你松手"},
+        {"speaker": "爸爸", "intent": "看这招，昭昭无影脚"},
+        {"speaker": "爸爸", "intent": "灿灿泰山压顶来了"},
+        {"speaker": "爸爸", "intent": "好，昭昭反击"},
+        {"speaker": "灿灿", "intent": "你站哪边的"},
+        {"speaker": "昭昭", "intent": "行啊，一起玩"},
+    ]
+    dlg = [
+        {"speaker": "灿灿", "line": "我先骑，你松手。"},
+        {"speaker": "灿灿", "line": "爸你站哪边的，倒是拉架啊！"},
+        {"speaker": "爸爸", "line": "我不掺和，你们自己玩。"},
+        {"speaker": "昭昭", "line": "行啊，一起玩。"},
+    ]
+    # 契约：唯一在场的家长额度 3，稿内已有 1 句 -> 只容得下 2 句
+    out, changed = gcp.patch_seed_premise_lines(
+        {
+            "dialogue": dlg,
+            "story_type": "K",
+            "_gold_chat_mom_lines_max": 0,
+            "_gold_chat_dad_lines_max": 3,
+        },
+        dialogue_seed=seed,
+        only_speakers={"爸爸"},
+    )
+    assert changed is True
+    out_lines = out["dialogue"]
+    assert sum(1 for r in out_lines if r["speaker"] == "爸爸") == 3
+    # 额度用尽后不再补：第三句家长解说不得入稿
+    assert "好，昭昭反击" not in [str(r["line"]) for r in out_lines]
+    # 补进来的前提仍在引用句之前
+    texts = [str(r["line"]) for r in out_lines]
+    assert texts.index("看这招，昭昭无影脚") < texts.index("爸你站哪边的，倒是拉架啊！")
+
+    # 额度为 1（且已被收尾句占满）时宁可不补，也不补出必挂的稿子
+    out2, changed2 = gcp.patch_seed_premise_lines(
+        {
+            "dialogue": dlg,
+            "story_type": "K",
+            "_gold_chat_mom_lines_max": 0,
+            "_gold_chat_dad_lines_max": 1,
+        },
+        dialogue_seed=seed,
+        only_speakers={"爸爸"},
+    )
+    assert changed2 is False
+    assert out2["dialogue"] == dlg

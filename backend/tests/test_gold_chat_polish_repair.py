@@ -837,3 +837,43 @@ def test_consecutive_notes_do_not_become_new_hard_gate(monkeypatch):
     )
     assert "当前硬校验与垫字问题：（无）" in feedback
     assert "连说提示（按结构分门控）：第1、2句同人连说" in feedback
+
+
+def test_repair_budget_reserves_final_semantic_repair(caplog, monkeypatch):
+    import logging
+
+    from app.services.gold_story.gold_chat import repair
+
+    monkeypatch.setattr(repair.logger, "handlers", [caplog.handler])
+    budget = GoldChatRepairBudget(max_repairs=2, reserve_final=1)
+    with caplog.at_level(logging.INFO):
+        assert budget.consume(stage="align", reason="终检语义前提缺失")
+        # align 不得把终检的保底额度烧掉
+        assert not budget.consume(stage="align", reason="又一次语义失败")
+        assert budget.consume(stage="final_acceptance", reason="终检缺前提")
+    assert budget.used == 2
+    assert "reserved for final stage=align" in caplog.text
+
+
+def test_repair_budget_releases_reserve_after_final_stage_served():
+    """终检已兑现保底后，剩余额度要允许 expand_structure 用掉，避免保底空转。"""
+    budget = GoldChatRepairBudget(max_repairs=2, reserve_final=1)
+    assert budget.consume(stage="final_acceptance", reason="终检缺前提")
+    assert budget.final_reserve_served is True
+    assert budget.consume(stage="expand_structure", reason="正文总字数须≥240")
+    assert budget.used == 2
+    assert budget.exhausted is True
+
+
+def test_local_length_ok_treats_mechanical_length_as_closed():
+    from app.services.gold_story.gold_chat.refine import _local_length_ok
+
+    closed = {"dialogue": [{"speaker": "昭昭", "line": "行" * 24} for _ in range(11)]}
+    assert _local_length_ok(closed) is True
+    short = {"dialogue": [{"speaker": "昭昭", "line": "行" * 24} for _ in range(9)]}
+    assert _local_length_ok(short) is False
+    overlong = dict(closed)
+    overlong["dialogue"] = list(closed["dialogue"]) + [
+        {"speaker": "昭昭", "line": "行" * 25}
+    ]
+    assert _local_length_ok(overlong) is False

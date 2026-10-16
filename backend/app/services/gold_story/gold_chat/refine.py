@@ -82,6 +82,17 @@ def _only_local_length_errors(errors: list[str]) -> bool:
     )
 
 
+def _local_length_ok(candidate: dict[str, Any]) -> bool:
+    """正文已经满足字数下限且无单句过长（机械长度问题已闭合）。"""
+    rows = [
+        item for item in (candidate.get("dialogue") or []) if isinstance(item, dict)
+    ]
+    return dialogue_total_chars(candidate) >= DAILY_STORY_BODY_CHARS_MIN and all(
+        len(str(item.get("line") or "").strip()) <= CHAT_MAX_LINE_CHARS
+        for item in rows
+    )
+
+
 def _stabilize_align_length_candidate(
     candidate: dict[str, Any],
     *,
@@ -582,18 +593,7 @@ def refine_gold_chat_align(
                 mom_lines_max=mom_max,
                 dialogue_seed=dialogue_seed,
             )
-            rows_now = [
-                item
-                for item in (candidate_base.get("dialogue") or [])
-                if isinstance(item, dict)
-            ]
-            local_length_ok = (
-                dialogue_total_chars(candidate_base) >= DAILY_STORY_BODY_CHARS_MIN
-                and all(
-                    len(str(item.get("line") or "").strip()) <= CHAT_MAX_LINE_CHARS
-                    for item in rows_now
-                )
-            )
+            local_length_ok = _local_length_ok(candidate_base)
             if local_length_ok:
                 try:
                     local_prepared = _prepare_chat_for_validate_after_local_length_close(
@@ -652,6 +652,20 @@ def refine_gold_chat_align(
                 if ok:
                     candidate_base = _normalize_chat_speakers(patched)
                     continue
+            if _only_local_length_errors(val_errors) and _local_length_ok(candidate_base):
+                # 机械长度问题已被确定性回补闭合，这里的理由只是 polish 拒收留下的
+                # 陈旧报错：不能拿它烧共享语义预算，把额度留给终检语义修复。
+                logger.info(
+                    "gold_chat refine stale length rejection skipped: %s",
+                    "；".join(val_errors)[:120],
+                )
+                rejected = []
+                polish_result = PolishResult(
+                    candidate=candidate_base,
+                    accepted=set(polish_result.accepted),
+                    errors=[],
+                )
+                continue
             if budget is not None and budget.consume(stage="align", reason="；".join(val_errors)):
                 from app.services.gold_story.gold_chat.convert import (
                     _fix_chat_with_llm,

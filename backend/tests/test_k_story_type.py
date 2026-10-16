@@ -379,6 +379,97 @@ def test_resolve_k_close_mode_b_from_beats():
     assert mode == K_B_CHILD_SELF_RESOLVE
 
 
+def _k_b_beat_chain_with_parent_as_target() -> list[dict[str, str]]:
+    """家长被孩子迁怒：孩子拍的目标是家长。"""
+    chain = _k_b_beat_chain()
+    chain[3] = {"beat": 4, "speaker": "灿灿", "intent": "迁怒：冲爸爸发火", "addressee": "爸爸"}
+    return chain
+
+
+def test_resolve_k_close_mode_disqualifies_b_when_child_targets_parent():
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_DISQUALIFIED,
+        resolve_k_close_mode,
+    )
+
+    mode = resolve_k_close_mode(
+        beat_chain=_k_b_beat_chain_with_parent_as_target(),
+        closing_intent="两个孩子停手，看着爸爸狼狈的样子笑了。",
+    )
+    assert mode == K_B_DISQUALIFIED
+
+
+def test_resolve_k_close_mode_disqualifies_b_when_closing_presets_parent_harm():
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_DISQUALIFIED,
+        resolve_k_close_mode,
+    )
+
+    mode = resolve_k_close_mode(
+        beat_chain=_k_b_beat_chain(),
+        closing_intent="孩子推了妈妈一把，妈妈狼狈地坐在地上。",
+    )
+    assert mode == K_B_DISQUALIFIED
+
+
+def test_k_b_guard_ignores_parent_to_child_direction():
+    """反向（家长拍的目标是孩子）不由 K-B 负向守卫负责，仍按收场判 K-B。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        resolve_k_close_mode,
+    )
+
+    chain = _k_b_beat_chain()
+    chain[1] = {"beat": 2, "speaker": "妈妈", "intent": "挡回：把枕头推回给灿灿"}
+    mode = resolve_k_close_mode(
+        beat_chain=chain,
+        closing_intent="妈妈对爸爸说：不掺和就对了。",
+    )
+    assert mode == K_B_CHILD_SELF_RESOLVE
+
+
+def test_k_b_guard_ignores_appeal_to_parent():
+    """告状/评理把家长当诉求对象，不是攻击目标（家长是第三方）。"""
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        resolve_k_close_mode,
+    )
+
+    chain = _k_b_beat_chain()
+    chain[2] = {
+        "beat": 3,
+        "speaker": "昭昭",
+        "intent": "告状：喊妈妈他先动手",
+        "addressee": "妈妈",
+    }
+    mode = resolve_k_close_mode(
+        beat_chain=chain,
+        closing_intent="妈妈对爸爸说：不掺和就对了。",
+    )
+    assert mode == K_B_CHILD_SELF_RESOLVE
+
+
+def test_repair_k_row_contract_rejects_k_b_parent_targeted_chain():
+    import pytest
+
+    from app.services.gold_story.gold_chat.expand import _repair_k_row_contract
+
+    row = {
+        "id": 0,
+        "structure_type": "K",
+        "mechanism": "M12",
+        "payload": {
+            "closing_intent": "两个孩子停手，看着爸爸狼狈的样子笑了。",
+            "scene_contract": {
+                "beat_chain": _k_b_beat_chain_with_parent_as_target(),
+                "closing_intent": "两个孩子停手，看着爸爸狼狈的样子笑了。",
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="K_B_DISQUALIFIED"):
+        _repair_k_row_contract(row)
+
+
 def test_k_unknown_patch_does_not_inject_advise_fail():
     from app.services.daily_story.story_types.k.patch import patch_k_body
 
@@ -971,12 +1062,13 @@ def _k_b_tail_duplicate_dialogue() -> list[dict[str, str]]:
     return [{"speaker": sp, "line": ln} for sp, ln in lines]
 
 
-def test_k_b_dedupe_does_not_break_self_resolve_tail():
+def test_k_b_dedupe_keeps_self_resolve_tail_by_dropping_earlier_duplicate():
     """近义句去重不得拆掉已成立的 K-B「孩子自行恢复互动」末段。
 
     该补丁跑在 patch_k_b_ensure_self_resolve_tail 之后，会按归一化整句去重；
-    末段的接住句若与更早某句重复，会被删掉，只剩邀约句 → punchline 归零。
-    与「字数过砍就不改」同构：优化补丁不得破坏已成立的收束不变量。
+    末段的接住句若与更早某句重复，删「后出现」会只剩邀约句 → punchline 归零。
+    与「字数过砍就不改」同构：优化补丁不得破坏已成立的收束不变量——正确做法是
+    改删同组更早的那句（保留承载不变量的后句），而不是整批放弃留下重复句。
     """
     from app.services.daily_story.story_types.k.patch import (
         patch_k_dedupe_near_lines,
@@ -1002,9 +1094,15 @@ def test_k_b_dedupe_does_not_break_self_resolve_tail():
 
     notes = patch_k_dedupe_near_lines(story)
 
-    assert notes == [], "为保末段不变量应整体跳过删除"
-    assert _tail_ok(story["dialogue"])
-    assert len(story["dialogue"]) == len(dialogue)
+    assert notes == ["K近义句去重×1"], "应改删更早的重复句，而不是整批跳过"
+    assert _tail_ok(story["dialogue"]), "末段不变量必须保持成立"
+    assert len(story["dialogue"]) == len(dialogue) - 1
+    # 保留的是承载不变量的「后出现」接住句，删掉的是更早的孤儿同义句
+    carriers = [
+        i for i, row in enumerate(story["dialogue"]) if row["line"] == "行啊！一起玩！"
+    ]
+    assert len(carriers) == 1
+    assert story["dialogue"][carriers[0] - 1]["line"].startswith("……姐姐，还玩不玩")
 
 
 def test_k_a_dedupe_still_drops_duplicate_lines():
@@ -1034,3 +1132,57 @@ def test_k_a_dedupe_still_drops_duplicate_lines():
         [row["line"] for row in story["dialogue"]],
     )
 
+
+
+# K-B 家长立场回归集（专家裁决：词表只做高精度预筛，抽象行为立场才是判据）。
+# 正/负例只断言不变量，不绑定任何单篇剧情字面。
+_KB_PARENT_STANCE_PASS_CASES = [
+    "我不喊了，你们自己玩",
+    "我当没看见",
+    "我不裁判，谁对谁错你们自己说",
+    "我吃瓜，别问我",
+    "我退出，别找我",
+    "别推了，我拉架",
+    "你们俩自己看着办",
+]
+
+_KB_PARENT_STANCE_FAIL_CASES = [
+    "灿灿你不对，道歉",
+    "昭昭你赢了",
+    "我也来推",
+    "看我不收拾你",
+]
+
+
+def _k_b_dialogue_with_parent_line(parent_line: str) -> list[dict[str, str]]:
+    dialogue = [
+        dict(item)
+        for item in _k_b_dialogue_ok()
+        if item["speaker"] not in ("妈妈", "爸爸")
+    ]
+    dialogue.insert(4, {"speaker": "妈妈", "line": parent_line})
+    return dialogue
+
+
+def _k_b_parent_body_errors(parent_line: str) -> list[str]:
+    story = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "punchline_explain": "K类：孩子自行恢复互动",
+        "dialogue": _k_b_dialogue_with_parent_line(parent_line),
+    }
+    errors: list[str] = []
+    append_k_body_errors(story, errors)
+    return errors
+
+
+def test_k_b_parent_non_intervention_stance_accepts_synonyms():
+    for parent_line in _KB_PARENT_STANCE_PASS_CASES:
+        errors = _k_b_parent_body_errors(parent_line)
+        assert not any("正文须有家长挡回" in e for e in errors), parent_line
+
+
+def test_k_b_parent_adjudication_stance_still_rejected():
+    for parent_line in _KB_PARENT_STANCE_FAIL_CASES:
+        errors = _k_b_parent_body_errors(parent_line)
+        assert any("正文须有家长挡回" in e for e in errors), parent_line

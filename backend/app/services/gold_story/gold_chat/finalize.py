@@ -56,6 +56,7 @@ _REPAIRABLE_VALIDATE_MARKERS = (
     "妈妈台词须≤",
     "爸爸台词须≤",
     "家长台词须≤",
+    "空应答占行须≤",
     "opening_causality:",
 )
 
@@ -97,7 +98,23 @@ class GoldChatValidationRepairableError(GoldChatRepairableError):
 
 
 class GoldChatAcceptanceIncomplete(Exception):
-    """语义审核未完成（超时/解析失败），非稿子过错。"""
+    """语义审核未完成（超时/解析失败）或阻断证据不可核验，非稿子过错。
+
+    ``candidate``：失败时的稳定候选稿。带上它才能落库供人工复核——此前该类异常
+    不带候选，失败稿只剩日志，无法复算（专家裁决 2026-10）。
+    """
+
+    # 落库口径：failed 走 gold_chat_failed_candidate（不与「待审核」候选混用）
+    candidate_review_status = "failed"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        candidate: dict[str, Any] | None = None,
+    ) -> None:
+        self.candidate = dict(candidate) if isinstance(candidate, dict) else None
+        super().__init__(message)
 
 
 def _gate_structure_or_raise(
@@ -352,6 +369,15 @@ def _semantic_missing_beat_entries(
         if isinstance(missing, dict):
             out.append(missing)
     return out
+
+
+def _semantic_missing_beat_speakers(exc: GoldChatSemanticBlocked) -> set[str]:
+    """终检「缺前提」点名的缺拍说话人（确定性补拍的额度只花在他们身上）。"""
+    return {
+        str(entry.get("speaker") or "").strip()
+        for entry in _semantic_missing_beat_entries(exc)
+        if str(entry.get("speaker") or "").strip()
+    }
 
 
 def _semantic_earliest_target_line(exc: GoldChatSemanticBlocked) -> int:
@@ -711,7 +737,7 @@ def _build_export_repair_feedback(
         )
 
     if isinstance(exc, GoldChatLocalDuplicateBlocked):
-        targets = sorted(_duplicate_repair_target_lines(exc))
+        targets = sorted(_duplicate_repair_target_lines(exc, chat))
         scope = ""
         if targets:
             labels = "、".join(f"第{no}句" for no in targets)
@@ -755,8 +781,57 @@ def _sanitize_repaired_chat(
     return out
 
 
-def _duplicate_repair_target_lines(exc: GoldChatLocalDuplicateBlocked) -> set[int]:
-    """每组重复只允许改较后的那一句；行号为 1-based。"""
+def _duplicate_orphan_line(
+    lines: list[int],
+    chat: dict[str, Any] | None,
+) -> int | None:
+    """K-B：重复组里「删掉后末段不变量仍成立」的那句优先当改写目标。
+
+    孤儿接住句（早于最后一次邀约的同义句）删掉不破坏「孩子自行恢复」，
+    而承载句删掉会让硬卡失效。改写前者才能既消重又保住收束。
+    """
+    if not isinstance(chat, dict):
+        return None
+    rows = chat.get("dialogue")
+    if not isinstance(rows, list) or len(rows) < 2:
+        return None
+    from app.services.daily_story.story_types.k.close_mode import (
+        K_B_CHILD_SELF_RESOLVE,
+        k_close_mode_from_story,
+    )
+    from app.services.daily_story.story_types.k.resolve_check import (
+        kid_self_resolve_in_tail,
+    )
+
+    if k_close_mode_from_story(chat) != K_B_CHILD_SELF_RESOLVE:
+        return None
+    speakers: list[str] = []
+    texts: list[str] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            return None
+        speakers.append(str(item.get("speaker") or ""))
+        texts.append(str(item.get("line") or ""))
+    if not kid_self_resolve_in_tail(speakers, texts):
+        # 不变量本来就没落位：不做特殊选择，交给默认策略。
+        return None
+    orphans: list[int] = []
+    for no in lines:
+        idx = no - 1
+        if idx < 0 or idx >= len(rows):
+            continue
+        kept_speakers = [sp for i, sp in enumerate(speakers) if i != idx]
+        kept_texts = [tx for i, tx in enumerate(texts) if i != idx]
+        if kid_self_resolve_in_tail(kept_speakers, kept_texts):
+            orphans.append(no)
+    return orphans[0] if len(orphans) == 1 else None
+
+
+def _duplicate_repair_target_lines(
+    exc: GoldChatLocalDuplicateBlocked,
+    chat: dict[str, Any] | None = None,
+) -> set[int]:
+    """每组重复只允许改一句：优先改不承载末段不变量的孤儿句；行号 1-based。"""
     targets: set[int] = set()
     for item in exc.issues:
         raw_lines = item.get("lines")
@@ -768,7 +843,7 @@ def _duplicate_repair_target_lines(exc: GoldChatLocalDuplicateBlocked) -> set[in
             if isinstance(no, int) and not isinstance(no, bool) and int(no) > 0
         ]
         if len(lines) >= 2:
-            targets.add(max(lines))
+            targets.add(_duplicate_orphan_line(lines, chat) or max(lines))
     return targets
 
 
@@ -956,6 +1031,7 @@ def run_gold_chat_final_acceptance(
         raise GoldChatAcceptanceIncomplete(
             review.error
             or "语义审核未完成（LLM 超时或解析失败），已保留上次导出稿",
+            candidate=chat,
         )
 
     llm_block, bad_evidence = partition_llm_export_blocking_issues(
@@ -964,6 +1040,8 @@ def run_gold_chat_final_acceptance(
         beat_chain=beat_chain,
     )
     if bad_evidence:
+        # 残留兜底：观感类证据不可核验的条目已在审查侧降级并从 issues 剔除，
+        # 这里只可能是高风险类（事实/称谓/价值观）或弱核验不通过的条目。
         parts = [
             format_export_blocking_issue_summary(it)
             for it in bad_evidence[:5]
@@ -972,6 +1050,7 @@ def run_gold_chat_final_acceptance(
             "审核证据无效（"
             + "；".join(parts)
             + "），已保留上次导出稿",
+            candidate=chat,
         )
     if llm_block:
         parts = [
@@ -991,7 +1070,15 @@ def run_gold_chat_final_acceptance(
         chatter_signals=signals,
         semantic_pass=True,
         review_contract=gold_story_review_contract(row, chat),
+        downgraded_issues=review.downgraded,
     )
+    if review.downgraded:
+        logger.warning(
+            "[GOLD_CHAT] final acceptance ok with %s downgraded issue(s) "
+            "needing manual spotcheck %s",
+            len(review.downgraded),
+            sid,
+        )
     logger.info(
         "[GOLD_CHAT] final acceptance ok %s issues=%s humor=%s",
         sid,
@@ -999,6 +1086,39 @@ def run_gold_chat_final_acceptance(
         bool(review.humor),
     )
     return chat
+
+
+def _try_local_premise_align(
+    current: dict[str, Any],
+    dialogue_seed: list[Any] | None,
+    validate_chat,
+    *,
+    only_speakers: set[str] | None = None,
+) -> dict[str, Any] | None:
+    """终检缺前提时先试确定性 seed 补拍；不合法就不动。
+
+    缺前提的根因常是 seed 里本就有的前提拍没落地（生成遗漏），属机械缺陷：
+    交由 LLM 语义修稿既烧预算又常补不出（专家裁决：机械问题机械修，不占语义预算）。
+    这里用与 expand 前置对齐同一套 ``patch_seed_premise_align``，只在补出的稿子
+    仍通过硬校验时采用；否则返回 ``None``，保持原候选不动。
+    ``only_speakers`` 是终检点名的缺拍说话人，用于把补拍额度锁在真正缺的角色上。
+    """
+    if not dialogue_seed:
+        return None
+    from app.services.gold_story.gold_chat.convert import patch_seed_premise_align
+
+    patched, changed = patch_seed_premise_align(
+        dict(current),
+        dialogue_seed=dialogue_seed,
+        only_speakers=only_speakers,
+    )
+    if not changed:
+        return None
+    try:
+        _validate_chat_or_repairable(validate_chat, patched)
+    except Exception:
+        return None
+    return patched
 
 
 def run_gold_chat_final_acceptance_with_semantic_repair(
@@ -1042,6 +1162,9 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     # 不是措辞问题，禁止反复插行（专家裁决）。按"尝试"记账而非"成功"，
     # 否则补行被拒（超上限/speaker 不符）时会每轮重试到天荒地老。
     attempted_beats: set[int] = set()
+    # 确定性 seed 补拍只试一次：同一候选补过仍判缺前提，说明根因不在「没落地」，
+    # 再补只是反复插行（专家裁决：同一拍不重复插行）。
+    premise_align_tried = False
     while True:
         try:
             try:
@@ -1069,6 +1192,27 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
         except BaseException as exc:
             if not _is_export_repairable(exc):
                 raise
+            if (
+                not premise_align_tried
+                and isinstance(exc, GoldChatSemanticBlocked)
+                and _semantic_missing_beat_entries(exc)
+            ):
+                # 机械缺陷（seed 前提拍没落地）先做确定性补拍：不消耗语义预算，
+                # 补出的稿子若仍不合法则放弃，落回原有预算修稿/重掷链路。
+                premise_align_tried = True
+                relocated = _try_local_premise_align(
+                    current,
+                    dialogue_seed,
+                    validate_chat,
+                    only_speakers=_semantic_missing_beat_speakers(exc),
+                )
+                if relocated is not None:
+                    current = relocated
+                    logger.info(
+                        "gold_chat final local premise align applied beats=%s",
+                        _semantic_missing_beat_entries(exc),
+                    )
+                    continue
             if budget is not None:
                 consumed = budget.consume(stage="final_acceptance", reason=str(exc))
                 if not consumed:

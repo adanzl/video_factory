@@ -6,6 +6,7 @@ from app.repositories import repo_gold_story
 from app.services.gold_story.gold_chat.status import (
     clear_gold_chat_failure,
     gold_chat_error_from_payload,
+    gold_chat_failed_candidate_from_payload,
     gold_chat_review_pending_from_payload,
     record_gold_chat_failure,
     record_gold_chat_success_timing,
@@ -138,3 +139,119 @@ def test_review_pending_failure_visible_even_with_old_export():
     assert "预算耗尽" in pending["error"]
     bare_fail = {"gold_chat_last_error": "structure_score:60"}
     assert gold_chat_error_from_payload(bare_fail)["error"] == "structure_score:60"
+
+
+def test_finalize_failure_stores_failed_candidate_separately(app_ctx):
+    """终检失败稿落 gold_chat_failed_candidate，并清掉旧「待审核」混合状态。"""
+    from app.services.gold_story.gold_chat.finalize import GoldChatAcceptanceIncomplete
+
+    gid = _insert_row(app_ctx)
+    stale_pending = {
+        "scene_title": "旧候选",
+        "dialogue": [{"speaker": "昭昭", "line": "这是上一版遗留的待审核稿。"}],
+    }
+    with app_ctx.app_context():
+        repo_gold_story.patch_story_payload(
+            gid,
+            {
+                "gold_chat_review_status": "review_pending",
+                "gold_chat_review_pending_candidate": stale_pending,
+            },
+        )
+        exc = GoldChatAcceptanceIncomplete(
+            "审核证据无效（第[6-11]句·重复），已保留上次导出稿",
+            candidate={
+                "scene_title": "终检失败稿",
+                "dialogue": [{"speaker": "昭昭", "line": "这版终检没过。"}],
+            },
+        )
+        record_gold_chat_failure(gid, exc, stage="finalize")
+        payload = repo_gold_story.get_story(gid).get("payload") or {}
+
+    assert payload["gold_chat_review_status"] == "candidate_failed"
+    assert payload["gold_chat_review_pending_candidate"] is None
+    record = payload["gold_chat_failed_candidate"]
+    assert record["candidate_source"] == "current"
+    assert record["exported"] is False
+    assert record["needs_manual_review"] is True
+    assert record["failed_stage"] == "finalize"
+    assert "审核证据无效" in record["failed_reason"]
+    assert record["candidate"]["scene_title"] == "终检失败稿"
+    assert record["candidate"]["quality"]["review_status"] == "failed"
+
+    assert gold_chat_review_pending_from_payload(payload) is None
+    failed = gold_chat_failed_candidate_from_payload(payload)
+    assert failed is not None
+    assert failed["candidate_source"] == "current"
+    assert failed["candidate"]["scene_title"] == "终检失败稿"
+
+
+def test_failed_candidate_visible_even_with_old_export(app_ctx):
+    payload = {
+        "gold_chat_last_error": "审核证据无效（第[6-11]句·重复），已保留上次导出稿",
+        "gold_chat_last_failed_at": "2026-10-16T06:00:00+00:00",
+        "gold_chat_exported_at": "2026-10-15T07:00:00+00:00",
+        "gold_chat_review_status": "candidate_failed",
+        "gold_chat_failed_candidate": {
+            "candidate": {
+                "scene_title": "终检失败稿",
+                "dialogue": [{"speaker": "昭昭", "line": "这版终检没过。"}],
+                "quality": {"review_status": "failed"},
+            },
+            "failed_stage": "finalize",
+            "failed_reason": "审核证据无效（第[6-11]句·重复），已保留上次导出稿",
+            "failed_at": "2026-10-16T06:00:00+00:00",
+            "candidate_source": "current",
+            "exported": False,
+            "needs_manual_review": True,
+        },
+    }
+    err = gold_chat_error_from_payload(payload, has_gold_chat=True)
+    assert err is not None
+    assert err["review_status"] == "candidate_failed"
+
+
+def test_failed_candidate_falls_back_to_last_stable(app_ctx):
+    """异常未带候选时回退上一次失败候选，并显式标出来源避免误认。"""
+    from app.services.gold_story.gold_chat.finalize import GoldChatAcceptanceIncomplete
+
+    gid = _insert_row(app_ctx)
+    with app_ctx.app_context():
+        repo_gold_story.patch_story_payload(
+            gid,
+            {
+                "gold_chat_failed_candidate": {
+                    "candidate": {
+                        "scene_title": "上次失败稿",
+                        "dialogue": [{"speaker": "昭昭", "line": "保留上一版。"}],
+                    },
+                    "candidate_source": "current",
+                },
+            },
+        )
+        exc = GoldChatAcceptanceIncomplete(
+            "语义审核未完成（LLM 超时或解析失败）"
+        )
+        record_gold_chat_failure(gid, exc, stage="finalize")
+        payload = repo_gold_story.get_story(gid).get("payload") or {}
+
+    record = payload["gold_chat_failed_candidate"]
+    assert record["candidate_source"] == "fallback_last_stable"
+    assert record["candidate"]["scene_title"] == "上次失败稿"
+
+
+def test_clear_gold_chat_failure_drops_failed_candidate(app_ctx):
+    gid = _insert_row(app_ctx)
+    with app_ctx.app_context():
+        payload = {
+            "gold_chat_failed_candidate": {
+                "candidate": {"scene_title": "失败稿"},
+            },
+        }
+        repo_gold_story.patch_story_payload(gid, payload)
+        record_gold_chat_failure(gid, RuntimeError("对白不足"))
+        clear_gold_chat_failure(gid, source_id="BV1STATFAIL01")
+        payload = repo_gold_story.get_story(gid).get("payload") or {}
+
+    assert gold_chat_failed_candidate_from_payload(payload) is None
+    assert gold_chat_error_from_payload(payload) is None

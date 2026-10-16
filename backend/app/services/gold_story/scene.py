@@ -78,6 +78,10 @@ CHAT_MAX_LINE_CHARS = DAILY_STORY_LINE_CHARS_MAX
 CHAT_AVG_LINE_CHARS_MAX = 22
 SEED_MIN = 4
 BEAT_CHAIN_MIN = 4
+# 每拍声明的「可落地最小回合数」上下界，以及正文回合数下限（= 正文最少句数）。
+BEAT_MIN_TURNS_MIN = 1
+BEAT_MIN_TURNS_MAX = 3
+DIALOGUE_TURNS_MIN = CHAT_LINE_COUNT_MIN
 
 
 _TERMINAL_NO_REPLY_RE = re.compile(
@@ -264,6 +268,61 @@ def normalize_retrospective_n_opening_parent_beats(
     return out, [f"合并N回忆开场连续家长拍:{speaker1}"]
 
 
+def _beat_min_turns(raw: Any) -> int:
+    """单拍声明的 min_turns，非法值按 1 处理。"""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return BEAT_MIN_TURNS_MIN
+    return max(BEAT_MIN_TURNS_MIN, min(BEAT_MIN_TURNS_MAX, value))
+
+
+def normalize_beat_min_turns(
+    contract: dict[str, Any],
+    *,
+    min_total: int = DIALOGUE_TURNS_MIN,
+) -> tuple[dict[str, Any], list[str]]:
+    """给每拍补 ``min_turns``（可落地最小回合数），并保证 Σ ≥ 正文句数下限。
+
+    契约拍数（4–6）天然少于正文最少句数（12）；若不让每拍声明最小回合数，
+    模型只能靠空应答/换词重复凑句数。声明值缺省 1，总和不足 ``min_total`` 时
+    按拍轮转抬到上限 ``BEAT_MIN_TURNS_MAX``，让每拍都拿到明确回合额度。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return contract, []
+    rows: list[Any] = []
+    declared: list[int] = []
+    for row in chain:
+        if isinstance(row, dict):
+            item = dict(row)
+            turn = _beat_min_turns(item.get("min_turns"))
+            item["min_turns"] = turn
+            rows.append(item)
+            declared.append(turn)
+        else:
+            rows.append(row)
+            declared.append(BEAT_MIN_TURNS_MIN)
+    notes: list[str] = []
+    total = sum(declared)
+    if total < min_total and any(v < BEAT_MIN_TURNS_MAX for v in declared):
+        slot = 0
+        while total < min_total:
+            if declared[slot] < BEAT_MIN_TURNS_MAX:
+                declared[slot] += 1
+                total += 1
+            slot = (slot + 1) % len(declared)
+            if all(v >= BEAT_MIN_TURNS_MAX for v in declared):
+                break
+        for pos, row in enumerate(rows):
+            if isinstance(row, dict):
+                row["min_turns"] = declared[pos]
+        notes.append(f"最小回合数抬额:{sum(declared)}")
+    return {**contract, "beat_chain": rows}, notes
+
+
 def normalize_dialogue_setting_for_contract(
     setting: str,
     contract: dict[str, Any] | None,
@@ -335,7 +394,11 @@ def format_beat_chain(chain: list[Any]) -> str:
         sp = str(item.get("speaker") or "").strip()
         intent = str(item.get("intent") or item.get("beat") or "").strip()
         if sp and intent:
-            lines.append(f"{i}. {sp}：{intent}")
+            turn = item.get("min_turns")
+            quota = ""
+            if isinstance(turn, int) and not isinstance(turn, bool) and turn > 1:
+                quota = f"（须≥{turn}个回合）"
+            lines.append(f"{i}. {sp}：{intent}{quota}")
     return "\n".join(lines)
 
 
@@ -888,6 +951,10 @@ def resolve_parent_lines_budget(
     只挡脏契约（拍数异常膨胀），不会挡任何合法稿，也就不可能重新引入死锁。
     注意封顶用 ``min(max(契约值, 拍数), 上限)``：若写成 ``min(契约值, 拍数)``
     会反而把额度压到低于拍数，死锁复现。
+
+    额度优先读 ``source`` 的显式字段，其次读 gold_chat 成稿注入的
+    ``_gold_chat_<key>``（硬卡与评分层必须同口径）；cast 里只有一位家长时，
+    把家长总预算让给在场的那一位，不让缺席家长的默认额度闲置。
     """
 
     def _pick(key: str, explicit: int | None, fallback: int) -> tuple[int, bool]:
@@ -898,6 +965,11 @@ def resolve_parent_lines_budget(
                 return fallback, False
         if isinstance(source, dict):
             raw = source.get(key)
+            if raw is None:
+                # gold_chat 成稿会把契约额度以 `_gold_chat_*` 注入 chat，
+                # 硬卡与评分层须读同一份口径，否则「评分按契约、硬卡按默认」
+                # 的错开会把合规稿判死。
+                raw = source.get(f"_gold_chat_{key}")
             if raw is not None:
                 try:
                     return max(0, int(raw)), True
@@ -924,6 +996,27 @@ def resolve_parent_lines_budget(
     mom = min(max(mom, mom_beats), cap)
     dad = min(max(dad, dad_beats), cap)
     parent = min(max(parent, mom, dad, parent_beats), cap)
+
+    # 只到一位家长时，另一位家长的默认额度不该继续占着家长总预算：``dad`` 默认 1 的
+    # 前提是「妈妈是主家长、爸爸最多 1 句」。若 cast 里根本没有妈妈，唯一在场的家长仍被
+    # 这个默认压到 1 句，而 parent 预算（如 3）白白闲置——只要契约要求这位家长多说一句
+    # （解说、挡回、旁观表态），任何合规稿都过不了硬卡，属于死锁。按 cast 把额度让给在场
+    # 的那一位，仍封顶到 ``cap``，不按剧情猜词。
+    cast_raw = source.get("characters") if isinstance(source, dict) else None
+    present = {
+        str(x).strip()
+        for x in (cast_raw if isinstance(cast_raw, (list, tuple, set)) else [])
+        if str(x).strip()
+    }
+    lone = sorted(present & _PARENT_SPEAKERS)
+    if len(lone) == 1:
+        if lone[0] == "爸爸":
+            dad = min(max(dad, parent), cap)
+            mom = 0
+        else:
+            mom = min(max(mom, parent), cap)
+            dad = 0
+        parent = min(max(parent, mom, dad), cap)
     return mom, dad, parent
 
 
@@ -1001,6 +1094,7 @@ def validate_scene(contract: dict[str, Any] | None) -> list[str]:
             f"{len(chain) if isinstance(chain, list) else 0}"
         )
     else:
+        declared_turns: list[int] = []
         for i, row in enumerate(chain):
             if not isinstance(row, dict):
                 errors.append(f"beat_chain[{i}]_invalid")
@@ -1008,6 +1102,26 @@ def validate_scene(contract: dict[str, Any] | None) -> list[str]:
             sp = str(row.get("speaker") or "").strip()
             if sp not in ALLOWED_SPEAKERS:
                 errors.append(f"beat_chain[{i}]_speaker_illegal:{sp!r}")
+            if "min_turns" in row:
+                turn = row.get("min_turns")
+                if not isinstance(turn, int) or isinstance(turn, bool):
+                    errors.append(f"beat_chain[{i}]_min_turns_invalid:{turn!r}")
+                elif not BEAT_MIN_TURNS_MIN <= turn <= BEAT_MIN_TURNS_MAX:
+                    errors.append(f"beat_chain[{i}]_min_turns_invalid:{turn!r}")
+                else:
+                    declared_turns.append(turn)
+        # 归一化后每拍都带 min_turns；此时校验契约能否撑起正文最少句数。
+        if len(declared_turns) == len(chain):
+            total_turns = sum(declared_turns)
+            if total_turns < DIALOGUE_TURNS_MIN:
+                errors.append(
+                    f"beat_chain_turns_insufficient:"
+                    f"{total_turns}<{DIALOGUE_TURNS_MIN}"
+                )
+            elif total_turns > CHAT_LINE_COUNT_MAX:
+                errors.append(
+                    f"beat_chain_turns_exceed:{total_turns}>{CHAT_LINE_COUNT_MAX}"
+                )
         last = chain[-1] if chain else None
         if isinstance(last, dict):
             last_intent = str(last.get("intent") or last.get("beat") or "").strip()

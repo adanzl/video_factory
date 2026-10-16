@@ -2396,6 +2396,37 @@ def opening_causality_passes(
     )
 
 
+def gold_chat_low_info_indexes(dialogue: Any) -> list[int]:
+    """低信息行（1-based）：去空白后 ≤2 字，末句豁免（短收场属正常结构）。"""
+    rows = [
+        x for x in (dialogue or []) if isinstance(x, dict) and str(x.get("line") or "").strip()
+    ]
+    count = len(rows)
+    return [
+        i + 1
+        for i, item in enumerate(rows)
+        if i < count - 1 and len(str(item.get("line") or "").strip()) <= 2
+    ]
+
+
+def gold_chat_effective_min_chars(dialogue: Any) -> int:
+    """联合判据下的正文总字数下限：句数达标时放宽一行，余量给自然波动。
+
+    与 ``validate_chat_hard`` 同一口径，供本地补字链路复用，避免「为凑 240
+    字回灌句尾粒子」反而被终检判成语病。
+    """
+    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN, CHAT_MAX_LINE_CHARS
+
+    rows = [
+        x for x in (dialogue or []) if isinstance(x, dict) and str(x.get("line") or "").strip()
+    ]
+    low_info = len(gold_chat_low_info_indexes(rows))
+    if len(rows) - low_info >= CHAT_LINE_COUNT_MIN:
+        return DAILY_STORY_BODY_CHARS_MIN - CHAT_MAX_LINE_CHARS
+    return DAILY_STORY_BODY_CHARS_MIN
+
+
 def validate_chat_hard(
     story: dict[str, Any],
     *,
@@ -2477,13 +2508,36 @@ def validate_chat_hard(
     if not mom_over and not dad_over and parent_count > parent_max:
         errors.append(f"家长台词须≤{parent_max}句，当前{parent_count}")
 
-    line_count = len([x for x in dialogue if isinstance(x, dict) and str(x.get("line") or "").strip()])
+    rows = [
+        x for x in dialogue if isinstance(x, dict) and str(x.get("line") or "").strip()
+    ]
+    line_count = len(rows)
     st = str(story.get("story_type") or "").strip().upper()
     line_max = chat_line_cap(st)
-    if line_count < CHAT_LINE_COUNT_MIN:
-        errors.append(f"对白句数须≥{CHAT_LINE_COUNT_MIN}，当前{line_count}")
+    total = dialogue_total_chars(story)
+    # 联合判据：句数与字数达标其一即可，避免为凑句数灌空应答；但空应答占行仍有上限。
+    # 末句豁免（各类型末句都是「哼/行/算了」级短收场，属正常结构）。
+    low_info_idx = gold_chat_low_info_indexes(rows)
+    low_info = len(low_info_idx)
+    informative = line_count - low_info
+    # 联合判据（专家方案）：句数与字数达标其一即可，避免为凑字数灌空应答/垫字。
+    # 句数已达标时字数下限放宽一行（CHAT_MAX_LINE_CHARS），让 234/240 这类边际稿
+    # 由本地补字/重掷的自然波动过门，而不是空掷一次重生成。
+    char_floor = gold_chat_effective_min_chars(rows)
+    if informative < CHAT_LINE_COUNT_MIN and total < DAILY_STORY_BODY_CHARS_MIN:
+        errors.append(f"对白句数须≥{CHAT_LINE_COUNT_MIN}，当前{informative}")
+    if total < char_floor:
+        errors.append(f"正文总字数须≥{char_floor}，当前{total}")
     if line_count > line_max:
         errors.append(f"对白句数须≤{line_max}，当前{line_count}")
+    # 低信息行不超过两成（至少 2 句）：按比例而非固定除数，长稿不会因固定小额度
+    # 被单句「嗯。」卡死；四舍五入到整数，18 句稿允许 4 句应答节拍。
+    low_info_allow = max(2, int(line_count * 0.2 + 0.5))
+    if low_info > low_info_allow:
+        marks = "/".join(str(i) for i in low_info_idx)
+        errors.append(
+            f"空应答占行须≤{low_info_allow}句，当前{low_info}（第{marks}句）"
+        )
 
     lenses = _line_lens(dialogue if isinstance(dialogue, list) else [])
     if lenses:
@@ -2493,9 +2547,6 @@ def validate_chat_hard(
         if avg > CHAT_AVG_LINE_CHARS_MAX:
             errors.append(f"均句过长({avg:.1f}>{CHAT_AVG_LINE_CHARS_MAX})")
 
-    total = dialogue_total_chars(story)
-    if total < DAILY_STORY_BODY_CHARS_MIN:
-        errors.append(f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前{total}")
     if total > DAILY_STORY_BODY_CHARS_MAX:
         errors.append(f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total}")
 

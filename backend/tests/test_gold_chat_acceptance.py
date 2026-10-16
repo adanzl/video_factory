@@ -18,6 +18,7 @@ from app.services.daily_story.review import (
     ExportSemanticReviewResult,
     _normalize_missing_beat,
     _normalize_missing_relation,
+    _validate_export_review_evidence_shape,
     _validate_export_review_raw,
     collect_escalation_chatter_signals,
     collect_export_blocking_local_issues,
@@ -593,35 +594,41 @@ def test_review_raw_invalid_issues_not_completed():
         )
         is not None
     )
-    assert (
-        _validate_export_review_raw(
+    # evidence 不合规不再算「结构错」：形状校验放行，交给证据通道处理（专家裁决
+    # 2026-10：证据问题不该烧掉 JSON 格式纠正预算）。
+    evidence_out_of_lines = {
+        "issues": [
             {
-                "issues": [
-                    {
-                        "lines": [1],
-                        "kind": "矛盾",
-                        "desc": "x",
-                        "evidence": [{"line": 2, "quote": "越界"}],
-                    },
-                ],
+                "lines": [1],
+                "kind": "矛盾",
+                "desc": "x",
+                "evidence": [{"line": 2, "quote": "越界"}],
             },
-            line_count=1,
-        )
-        is not None
+        ],
+    }
+    assert (
+        _validate_export_review_raw(evidence_out_of_lines, line_count=1) is None
     )
     assert (
-        _validate_export_review_raw(
+        _validate_export_review_evidence_shape(evidence_out_of_lines, line_count=1)
+        is not None
+    )
+    evidence_partial_coverage = {
+        "issues": [
             {
-                "issues": [
-                    {
-                        "lines": [1, 2],
-                        "kind": "接不上",
-                        "desc": "x",
-                        "evidence": [{"line": 1, "quote": "a"}],
-                    },
-                ],
+                "lines": [1, 2],
+                "kind": "接不上",
+                "desc": "x",
+                "evidence": [{"line": 1, "quote": "a"}],
             },
-            line_count=2,
+        ],
+    }
+    assert (
+        _validate_export_review_raw(evidence_partial_coverage, line_count=2) is None
+    )
+    assert (
+        _validate_export_review_evidence_shape(
+            evidence_partial_coverage, line_count=2
         )
         is not None
     )
@@ -1836,7 +1843,6 @@ def test_contract_gap_not_downgraded_by_name_or_prop_substring():
 @pytest.mark.parametrize("recovered", [True, False])
 def test_export_review_corrects_invalid_evidence_bounded(monkeypatch, recovered):
     from app.services.llm import llm_mgr
-    from app.services.daily_story.review import EXPORT_REVIEW_MAX_CALLS
 
     invalid = {"issues": [{"kind": "语病", "lines": [1], "desc": "语句不通",
                            "evidence": [{"line": 1.9, "quote": "姐姐"}]}]}
@@ -1852,17 +1858,45 @@ def test_export_review_corrects_invalid_evidence_bounded(monkeypatch, recovered)
     monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
     story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
     result = run_export_semantic_review("测试", story)
-    # 预算内纠正：改好即停；一直不合规则用满预算
-    assert len(calls) == (2 if recovered else EXPORT_REVIEW_MAX_CALLS)
+    # 证据通道只给一次定向修复（不占 JSON 格式纠正预算）：改好即停；仍不合规即降级。
+    assert len(calls) == 2
     assert "issues[0].evidence" in calls[1]
     assert "姐姐好。" in calls[0] and "姐姐好。" in calls[1]
     # 专家裁决：evidence 不可核验不阻断整稿——剔除该条后继续导出
     assert result.completed, "证据不合规应剔除该条并继续，不再整稿失败"
     if recovered:
         assert len(filter_llm_export_blocking_issues(result.issues, story)) == 1
+        assert result.downgraded == []
     else:
         assert result.issues == [], "不可核验的条目须被剔除"
-        assert len(calls) == EXPORT_REVIEW_MAX_CALLS
+        assert [it["kind"] for it in result.downgraded] == ["语病"]
+
+
+def test_export_review_evidence_channel_survives_format_budget(monkeypatch):
+    """先格式纠正、再证据纠正：证据通道仍能收尾，不因预算用尽判未完成。"""
+    from app.services.llm import llm_mgr
+
+    shape_bad = {"issues": [{"lines": [1], "desc": "x"}]}  # 缺 kind
+    evidence_bad = {
+        "issues": [
+            {"kind": "语病", "lines": [1], "desc": "语句不通",
+             "evidence": [{"line": 1.9, "quote": "姐姐"}]},
+        ]
+    }
+    calls = []
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            calls.append(user)
+            return (shape_bad if len(calls) == 1 else evidence_bad), None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    result = run_export_semantic_review("测试", story)
+    assert len(calls) == 3
+    assert result.completed
+    assert result.issues == []
+    assert [it["kind"] for it in result.downgraded] == ["语病"]
 
 
 def test_export_review_drops_only_unverifiable_issue(monkeypatch):
@@ -1890,6 +1924,170 @@ def test_export_review_drops_only_unverifiable_issue(monkeypatch):
     result = run_export_semantic_review("测试", story)
     assert result.completed
     assert [it["kind"] for it in result.issues] == ["语病"]
+    # 剔除不是静默放过：降级条目须随稿留档供人工抽检
+    assert [it["kind"] for it in result.downgraded] == ["重复"]
+    assert result.downgraded[0]["downgrade_reason"] == "invalid_evidence"
+    assert result.downgraded[0]["weak_verified"] is True
+
+
+def test_export_review_downgrades_mismatched_quote_style_issue(monkeypatch):
+    """观感类引文对不上原文：降级并登记，不再让整稿失败。"""
+    from app.services.llm import llm_mgr
+
+    payload = {
+        "issues": [
+            {"kind": "重复", "lines": [2, 3], "desc": "两句都在说这事，反复说事",
+             "evidence": [{"line": 2, "quote": "这句原文里没有"}]},
+        ]
+    }
+    calls = []
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            calls.append(user)
+            return payload, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    story = _story([
+        {"speaker": "昭昭", "line": "姐姐好。"},
+        {"speaker": "灿灿", "line": "这事我说过了。"},
+        {"speaker": "昭昭", "line": "这事你又说一遍。"},
+    ])
+    result = run_export_semantic_review("测试", story)
+    assert len(calls) == 2, "证据通道只给一次定向修复"
+    assert result.completed
+    assert result.issues == []
+    assert [it["kind"] for it in result.downgraded] == ["重复"]
+    assert result.downgraded[0]["lines"] == [2, 3]
+    assert result.downgraded[0]["invalid_evidence"] == [
+        {"line": 2, "quote": "这句原文里没有"}
+    ]
+
+
+def test_export_review_keeps_high_risk_issue_with_mismatched_quote(monkeypatch):
+    """高风险类（事实/称谓）引文对不上：不许降级，仍判审读未完成。"""
+    from app.services.llm import llm_mgr
+
+    payload = {
+        "issues": [
+            {"kind": "矛盾", "lines": [1], "desc": "前后矛盾：孩子先说去过又说没去过",
+             "evidence": [{"line": 1, "quote": "原文里没有的句子"}]},
+        ]
+    }
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            return payload, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    result = run_export_semantic_review("测试", story)
+    assert not result.completed
+    assert result.downgraded == []
+
+
+def test_export_review_keeps_style_issue_when_weak_verify_fails(monkeypatch):
+    """观感类引文对不上且 desc 方向也核不上：疑似幻觉，不许降级。"""
+    from app.services.llm import llm_mgr
+
+    payload = {
+        "issues": [
+            {"kind": "重复", "lines": [1], "desc": "这两句台词完全重复",
+             "evidence": [{"line": 1, "quote": "原文里没有的句子"}]},
+        ]
+    }
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            return payload, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    result = run_export_semantic_review("测试", story)
+    assert not result.completed
+    assert result.downgraded == []
+
+
+def test_export_review_caps_downgraded_items(monkeypatch):
+    """降级条目数受上限约束，超限的沿用「不可核验即不放行」。"""
+    from app.services.llm import llm_mgr
+
+    payload = {
+        "issues": [
+            {"kind": "重复", "lines": [1], "desc": "这两句台词来回说同一件事",
+             "evidence": [{"line": 1, "quote": "原文里没有的句子A"}]},
+            {"kind": "讲不通", "lines": [1], "desc": "这两句台词来回说同一件事",
+             "evidence": [{"line": 1, "quote": "原文里没有的句子B"}]},
+            {"kind": "接不上", "lines": [1], "desc": "这两句台词来回说同一件事",
+             "evidence": [{"line": 1, "quote": "原文里没有的句子C"}]},
+            {"kind": "语病", "lines": [1], "desc": "这两句台词来回说同一件事",
+             "evidence": [{"line": 1, "quote": "原文里没有的句子D"}]},
+        ]
+    }
+
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            return payload, None
+
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: Client())
+    story = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    result = run_export_semantic_review("测试", story)
+    assert not result.completed, "4 条不可核验超过 1/3 上限，不得整批降级"
+
+
+def test_final_acceptance_marks_spotcheck_for_downgraded(monkeypatch):
+    """降级条目不再拦导出，但质量字段须标需人工抽检并留档。"""
+    from app.services.gold_story.gold_chat import finalize as finalize_mod
+
+    downgraded = [
+        {
+            "kind": "重复",
+            "lines": [6, 7, 8, 9, 10, 11],
+            "desc": "连续六句都在说同一件事",
+            "downgrade_reason": "invalid_evidence",
+            "weak_verified": True,
+            "invalid_evidence": [{"line": 6, "quote": "对不上的引文"}],
+        }
+    ]
+    with patch(
+        "app.services.daily_story.review.run_export_semantic_review"
+    ) as mock_review:
+        mock_review.return_value = ExportSemanticReviewResult(
+            completed=True,
+            issues=[],
+            downgraded=downgraded,
+        )
+        chat = _story([{"speaker": "昭昭", "line": "姐姐，我把发卡藏进饼干了。"}])
+        row = {"title": "藏发卡"}
+        accepted = finalize_mod.run_gold_chat_final_acceptance(
+            chat,
+            row,
+            sid="BV_TEST",
+        )
+    quality = accepted["quality"]
+    assert quality["needs_manual_spotcheck"] is True
+    assert quality["review_downgraded_issues"] == downgraded
+    assert quality["semantic_pass"] is True
+    assert "审核证据待抽检×1" in quality["reasons"]
+
+
+def test_stamp_without_downgraded_keeps_spotcheck_false():
+    """无降级条目时不留下抽检标记。"""
+    from app.services.daily_story.quality import (
+        stamp_gold_chat_acceptance_quality,
+    )
+
+    chat = _story([{"speaker": "昭昭", "line": "姐姐好。"}])
+    stamp_gold_chat_acceptance_quality(
+        chat,
+        review_issues=[],
+        humor=None,
+        chatter_signals=[],
+        semantic_pass=True,
+    )
+    quality = chat["quality"]
+    assert quality["needs_manual_spotcheck"] is False
+    assert quality["review_downgraded_issues"] == []
 
 
 def test_export_review_normalizes_alias_shape(monkeypatch):
@@ -2542,7 +2740,10 @@ def test_export_repair_chars_239_then_passes(mock_acceptance):
 
 
 @patch("app.services.gold_story.gold_chat.finalize.run_gold_chat_final_acceptance")
-def test_export_actual_239_uses_local_one_char_close_without_llm(mock_acceptance):
+def test_export_actual_239_within_joint_floor_passes_without_local_close(mock_acceptance):
+    """12 句达标时字数下限放宽一行：239 字不再触发本地补字，也不烧 LLM。"""
+    from app.services.gold_story.gold_chat.length import gold_chat_effective_min_chars
+
     dialogue = [
         {
             "speaker": "昭昭" if i % 2 == 0 else "灿灿",
@@ -2559,10 +2760,13 @@ def test_export_actual_239_uses_local_one_char_close_without_llm(mock_acceptance
     def validate(candidate):
         total = dialogue_total_chars(candidate)
         validate_totals.append(total)
-        if total < DAILY_STORY_BODY_CHARS_MIN:
-            raise ValueError(
-                f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前{total}",
-            )
+        rows = [
+            x for x in candidate.get("dialogue") or []
+            if isinstance(x, dict) and str(x.get("line") or "").strip()
+        ]
+        floor = gold_chat_effective_min_chars(rows)
+        if total < floor:
+            raise ValueError(f"正文总字数须≥{floor}，当前{total}")
 
     def fake_fix(candidate, feedback, **_kw):
         fix_calls.append(feedback)
@@ -2586,9 +2790,9 @@ def test_export_actual_239_uses_local_one_char_close_without_llm(mock_acceptance
     )
 
     assert score == 80
-    assert validate_totals == [239, 240]
+    assert validate_totals == [239]
     assert not fix_calls
-    assert dialogue_total_chars(result) == DAILY_STORY_BODY_CHARS_MIN
+    assert dialogue_total_chars(result) == DAILY_STORY_BODY_CHARS_MIN - 1
 
 
 def test_export_actual_239_with_other_hard_error_still_uses_llm_repair():
@@ -3252,3 +3456,132 @@ def test_repeated_missing_beat_insertion_is_not_retried(monkeypatch):
         )
     # 第一轮允许尝试补拍；同拍第二轮必须被拦，不能每轮都插
     assert len(insert_attempts) == 1
+
+
+def _k_b_orphan_accept_dialogue() -> list[dict[str, str]]:
+    """K-B 稿：末段接住句与更早某句逐字重复（孤儿句在前、承载句在后）。"""
+    lines = [
+        ("灿灿", "这辆三轮车是我先拿到的，你别动！"),
+        ("昭昭", "行啊！一起玩！"),
+        ("灿灿", "我还没骑够呢，该轮到我骑了！"),
+        ("昭昭", "你昨天明明骑了一下午呢。"),
+        ("爸爸", "我不掺和，你们自己商量。"),
+        ("灿灿", "那你先松手，我骑一圈就下来。"),
+        ("昭昭", "你再说一遍试试，我就是不服！"),
+        ("灿灿", "还玩不玩？一起吧。"),
+        ("昭昭", "行啊！一起玩！"),
+        ("爸爸", "那个碗还端着呢，别洒了。"),
+    ]
+    return [{"speaker": sp, "line": ln} for sp, ln in lines]
+
+
+def test_duplicate_orphan_line_picks_line_that_keeps_k_b_tail():
+    """K-B 重复组里「删掉后不变量仍成立」的孤儿句才是安全改写目标。"""
+    from app.services.gold_story.gold_chat.finalize import _duplicate_orphan_line
+
+    chat = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "dialogue": _k_b_orphan_accept_dialogue(),
+    }
+    # 删第 9 句（承载句）后只剩邀约 → 不成立；删第 2 句（孤儿句）不变量保持
+    assert _duplicate_orphan_line([2, 9], chat) == 2
+
+
+def test_duplicate_orphan_line_skips_non_k_b_and_broken_tail():
+    """非 K-B、或末段本就没落位、或两个方向都成立时，不做特殊选择。"""
+    from app.services.gold_story.gold_chat.finalize import _duplicate_orphan_line
+
+    rows = _k_b_orphan_accept_dialogue()
+    assert _duplicate_orphan_line([2, 9], {"k_close_mode": "K_A_PARENT_FAIL_STALEMATE", "dialogue": rows}) is None
+    assert _duplicate_orphan_line([2, 9], {"k_close_mode": "K_B_CHILD_SELF_RESOLVE", "dialogue": rows[:8]}) is None
+    assert _duplicate_orphan_line([2, 9], None) is None
+
+
+def test_duplicate_repair_target_prefers_orphan_for_k_b():
+    """重复定点范围给孤儿句：改它既消重又保住末段收束。"""
+    from app.services.gold_story.gold_chat.finalize import (
+        _duplicate_repair_target_lines,
+    )
+
+    chat = {
+        "story_type": "K",
+        "k_close_mode": "K_B_CHILD_SELF_RESOLVE",
+        "dialogue": _k_b_orphan_accept_dialogue(),
+    }
+    exc = GoldChatLocalDuplicateBlocked(
+        "终检本地硬伤：第[2, 9]句·重复",
+        issues=[{"kind": "重复", "lines": [2, 9], "desc": "两句逐字重复"}],
+    )
+    assert _duplicate_repair_target_lines(exc, chat) == {2}
+    # 非 K-B 走默认：改较后那一句
+    assert _duplicate_repair_target_lines(exc, {"dialogue": chat["dialogue"]}) == {9}
+
+
+def test_final_acceptance_premise_align_runs_before_semantic_budget(monkeypatch):
+    """终检缺前提且 seed 前提拍没落地时：先确定性补拍复验，不烧语义预算。
+
+    失败稿会拿「缺前提」硬伤去消耗终检那唯一一次语义修稿额度，而这类缺陷是
+    seed 拍没落地的机械问题，机械修复即可——预算为零时也应能过。
+    """
+    from app.services.daily_story import review
+    from app.services.gold_story.gold_chat import finalize
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+
+    dialogue = [
+        {"speaker": "灿灿", "line": "我先骑，你松手！"},
+        {"speaker": "昭昭", "line": "我还没骑完呢。"},
+        {"speaker": "灿灿", "line": "爸你站哪边的，倒是拉架啊！"},
+        {"speaker": "昭昭", "line": "你别喊爸，他在解说呢。"},
+        {"speaker": "灿灿", "line": "一起玩吧。"},
+        {"speaker": "昭昭", "line": "行啊！一起玩！"},
+    ]
+    dialogue_seed = [
+        {"speaker": "灿灿", "intent": "我先骑，你松手"},
+        {"speaker": "昭昭", "intent": "我还没骑完呢"},
+        {"speaker": "爸爸", "intent": "看这招，昭昭无影脚"},
+        {"speaker": "灿灿", "intent": "你站哪边的"},
+        {"speaker": "灿灿", "intent": "一起玩吧"},
+        {"speaker": "昭昭", "intent": "行啊，一起玩"},
+    ]
+    seen: list[list[str]] = []
+
+    def local(story):
+        return []
+
+    def semantic(theme, chat, **kwargs):
+        seen.append([str(item.get("line") or "") for item in chat["dialogue"]])
+        if len(seen) == 1:
+            raise _missing_beat_exc(3, 3, "爸爸", "旁观解说")
+        return ExportSemanticReviewResult(completed=True)
+
+    def fix(story, feedback, **kwargs):  # pragma: no cover - 不应被调用
+        raise AssertionError("缺前提必须先走确定性 seed 补拍")
+
+    monkeypatch.setattr(review, "collect_export_blocking_local_issues", local)
+    monkeypatch.setattr(review, "run_export_semantic_review", semantic)
+    budget = GoldChatRepairBudget(max_repairs=0)
+
+    result, score = finalize.run_gold_chat_final_acceptance_with_semantic_repair(
+        _story(dialogue),
+        {},
+        sid="TEST",
+        st_final="N",
+        banned=[],
+        mom_max=1,
+        source_type="field",
+        attach_score=lambda c, r: c,
+        gate_score=lambda c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fix,
+        validate_chat=lambda c: None,
+        repair_budget=budget,
+        dialogue_seed=dialogue_seed,
+    )
+
+    assert len(seen) == 2
+    assert seen[0] == [item["line"] for item in dialogue]
+    assert "看这招，昭昭无影脚" in seen[1][2]
+    assert seen[1][3].startswith("爸你站哪边的")
+    assert score == 80
+    assert budget.used == 0

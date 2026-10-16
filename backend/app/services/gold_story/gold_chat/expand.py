@@ -277,22 +277,30 @@ def _repair_k_row_contract(row: dict[str, Any]) -> dict[str, Any]:
         payload.get("scene_contract"), dict
     ) else {}
     from app.services.daily_story.story_types.k.close_mode import (
+        K_B_DISQUALIFIED,
         K_UNKNOWN,
+        k_b_disqualification_reason,
         stamp_k_close_mode_on_payload,
     )
 
+    chain = sc.get("beat_chain") if isinstance(sc.get("beat_chain"), list) else []
+    closing = str(payload.get("closing_intent") or sc.get("closing_intent") or "")
+    reason = k_b_disqualification_reason(beat_chain=chain, closing_intent=closing)
+    if reason:
+        # 契约期 fail-fast：K-B 的不变量是家长非介入、孩子自行收场；拍链把家长
+        # 当成孩子的攻击/迁怒目标时，K-B 稿子形态与拍链结构性冲突，生成出来必挂终检。
+        # 不静默改判（K-A 要求劝失败僵持、其它类型契约不同），带结构化原因拒绝。
+        raise ValueError(f"K_B_DISQUALIFIED：{reason}；须先重建拍链/收束意图")
     new_payload = dict(payload)
     mode, changed = stamp_k_close_mode_on_payload(
         new_payload,
-        beat_chain=sc.get("beat_chain") if isinstance(sc.get("beat_chain"), list) else [],
-        closing_intent=str(
-            payload.get("closing_intent") or sc.get("closing_intent") or ""
-        ),
+        beat_chain=chain,
+        closing_intent=closing,
         mechanism_text=str(
             sc.get("mechanism") or row.get("mechanism") or ""
         ),
     )
-    if mode == K_UNKNOWN:
+    if mode == K_UNKNOWN or mode == K_B_DISQUALIFIED:
         # 契约期 fail-fast：解析器跑过却判不出轨，勿进正文生成。
         # 否则 K-A/K-B 两条硬卡都不生效（且正文已烧完 16 句才在终检失败）。
         # 在落盘之前抛：勿把历史空值行写成显式 K_UNKNOWN（重算只作诊断）。
@@ -1668,7 +1676,7 @@ def gold_story_to_gold_chat(
     budget: GoldChatRepairBudget = (
         repair_budget
         if isinstance(repair_budget, GoldChatRepairBudget)
-        else GoldChatRepairBudget(max_repairs=2)
+        else GoldChatRepairBudget(max_repairs=2, reserve_final=1)
     )
     row = _repair_i_row_contract(row)
     row = _repair_k_row_contract(row)
@@ -1680,6 +1688,15 @@ def gold_story_to_gold_chat(
     scene_contract = payload.get("scene_contract") or {}
     if not isinstance(scene_contract, dict):
         scene_contract = {}
+    # 每拍补 min_turns（可落地最小回合数），保证契约能撑起正文最少句数；
+    # 旧存量契约没有该字段，读出来时统一补齐，生成侧才有明确回合额度。
+    from app.services.gold_story.scene import normalize_beat_min_turns
+
+    scene_contract, _turns_notes = normalize_beat_min_turns(scene_contract)
+    if _turns_notes:
+        logger.info("gold_chat beat min_turns: %s", "；".join(_turns_notes))
+        if isinstance(payload.get("scene_contract"), dict):
+            payload["scene_contract"] = scene_contract
     # 优先用契约 conflict（迁龄后），避免旧 conflict_core 把 383 等写回成稿
     conflict_core = str(
         scene_contract.get("conflict") or row.get("conflict_core") or ""
@@ -1973,6 +1990,7 @@ def gold_story_to_gold_chat(
             patch_break_consecutive_keep_seed,
             patch_collapse_empty_sibling_repeats,
             patch_score_propaganda_speakers,
+            patch_seed_order_align,
             patch_seed_premise_align,
             patch_seed_speaker_align,
         )
@@ -1985,6 +2003,9 @@ def gold_story_to_gold_chat(
         )
         if premise_changed:
             type_notes = list(type_notes) + ["seed前提补回"]
+        data, order_changed = patch_seed_order_align(data, dialogue_seed=seed)
+        if order_changed:
+            type_notes = list(type_notes) + ["seed拍序归位"]
         data, prop_changed = patch_score_propaganda_speakers(
             data, conflict_text=conflict_text
         )
