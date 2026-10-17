@@ -1202,15 +1202,52 @@ def _format_dialogue_seed(seed: list[Any]) -> str:
         )
     return body
 
+def _snippet_for_contract(
+    scene_contract: dict[str, Any],
+    source_id: str,
+) -> str:
+    """金稿正例注入：两人手契约下不注入。
+
+    金稿正例是另一部片子（《画作争夺战》），人物固定为灿灿/昭昭 双孩交替。
+    两人手契约（家长 × 单孩）下把这段摆给模型，等于同时教它「加一个孩子」
+    和「两人交替」——实测成稿会反复冒出契约外的灿灿，随后被角色表闸门拦死。
+    两人手不需要学双孩节奏，直接不注入。
+    """
+    cast = [
+        str(c).strip()
+        for c in (scene_contract.get("characters") or [])
+        if str(c).strip()
+    ]
+    beat_speakers = {
+        str(row.get("speaker") or "").strip()
+        for row in (scene_contract.get("beat_chain") or [])
+        if isinstance(row, dict) and str(row.get("speaker") or "").strip()
+    }
+    if cast and beat_speakers:
+        cast = [c for c in cast if c in beat_speakers] or cast
+    parents = {"妈妈", "爸爸"}
+    kids = [c for c in cast if c not in parents]
+    if len(kids) == 1 and any(c in parents for c in cast):
+        return ""
+    return resolve_gold_chat_snippet(source_id)
+
+
 def _expand_seed_for_line_floor(
     seed: list[Any] | None,
     *,
     structure_type: str = "",
     mechanism: str = "",
+    characters: list[Any] | None = None,
+    mom_lines_max: int | None = None,
 ) -> list[Any]:
     """seed 条数 <12 时，在收束前插入抽象加码拍，迫使扩写写满句数。
 
     只改 prompt 用 seed，不写回 DB；intent 抽象，不按单篇物件造句。
+
+    补位说话人**只能用契约 `characters` 里的角色**，且家长条数不超
+    ``mom_lines_max``：先前的兜底分支写死「昭昭/灿灿 交替」，在两人手
+    契约（家长 × 单孩）里等于让提示词教模型去写一个契约外角色，
+    成稿随后被角色表闸门拦死，修稿预算来回空转（#87 实测）。
     """
     from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
 
@@ -1228,28 +1265,78 @@ def _expand_seed_for_line_floor(
         return out
 
     st = str(structure_type or "").strip().upper()
-    extras: list[dict[str, str]]
+
+    # ── 可用说话人：只认契约角色；契约缺失时退回 seed 已有说话人 ──
+    cast = [
+        str(c).strip() for c in (characters or []) if str(c).strip()
+    ]
+    if not cast:
+        cast = list(
+            dict.fromkeys(
+                str(x.get("speaker") or "").strip()
+                for x in out
+                if isinstance(x, dict) and str(x.get("speaker") or "").strip()
+            )
+        )
+    parent_names = {"妈妈", "爸爸"}
+    kids = [c for c in cast if c not in parent_names]
+    parents = [c for c in cast if c in parent_names]
+    # 主孩子 = seed 里台词最多的那个孩子（机制主体），其余孩子不参与补位
+    kid_lines: dict[str, int] = {}
+    for x in out:
+        if not isinstance(x, dict):
+            continue
+        sp = str(x.get("speaker") or "").strip()
+        if sp in kids:
+            kid_lines[sp] = kid_lines.get(sp, 0) + 1
+    main_kid = max(kid_lines, key=lambda k: kid_lines[k]) if kid_lines else (
+        kids[0] if kids else ""
+    )
+    # 家长额度：已用条数 ≥ 额度时不再插家长拍
+    parent_used = sum(
+        1
+        for x in out
+        if isinstance(x, dict)
+        and str(x.get("speaker") or "").strip() in parent_names
+        and str(x.get("intent") or x.get("line") or "").strip()
+    )
+    try:
+        parent_cap = (
+            int(mom_lines_max) if mom_lines_max is not None else parent_used
+        )
+    except (TypeError, ValueError):
+        parent_cap = parent_used
+    parent_room = max(0, parent_cap - parent_used)
+    main_parent = parents[0] if parents else ""
+
     if is_m8_j_domination(mechanism=mechanism, structure_type=st):
         extras = [
-            {"speaker": "昭昭", "intent": "不服继续顶撞/扭打升级"},
-            {"speaker": "灿灿", "intent": "重申谁赢谁说了算"},
-            {"speaker": "昭昭", "intent": "嘴硬应战要对方出招"},
-            {"speaker": "灿灿", "intent": "一锤前放狠话或气势铺垫"},
+            {"speaker": main_kid, "intent": "不服继续顶撞/扭打升级"},
+            {"speaker": main_kid, "intent": "嘴硬应战要对方出招"},
         ]
     elif st == "J":
         extras = [
-            {"speaker": "昭昭", "intent": "换个理由再求一次"},
-            {"speaker": "灿灿", "intent": "换个说法继续压住"},
-            {"speaker": "昭昭", "intent": "再保证一次求放行"},
-            {"speaker": "灿灿", "intent": "再否决一次不松口"},
+            {"speaker": main_kid, "intent": "换个理由再求一次"},
+            {"speaker": main_kid, "intent": "再保证一次求放行"},
+        ]
+    elif st == "N":
+        # N 公式内推进：每条必须是**不同的说话动作**（新信息），
+        # 不能是「把同一定义换词再说」——那样成稿会被终检判换词重复。
+        extras = [
+            {"speaker": main_kid, "intent": "说出这个词是从谁那儿听来的（具体的一个人或一个场合）"},
+            {"speaker": main_kid, "intent": "补一个能看见的画面细节，让这套说法显得更像真的"},
+            {"speaker": main_kid, "intent": "说一句不许对方反驳的结论，把话说死"},
+            {"speaker": main_kid, "intent": "把话头交给对方，让对方自己去看"},
         ]
     else:
         extras = [
-            {"speaker": "昭昭", "intent": "换个理由再顶一句"},
-            {"speaker": "灿灿", "intent": "换个说法再堵一句"},
-            {"speaker": "昭昭", "intent": "加码争一次"},
-            {"speaker": "灿灿", "intent": "加码守一次"},
+            {"speaker": main_kid, "intent": "换个理由再顶一句"},
+            {"speaker": main_kid, "intent": "加码争一次"},
         ]
+    extras = [e for e in extras if e["speaker"]]
+    if not extras:
+        return out
+
     insert_at = max(2, len(out) - 2)
     ei = 0
     guard = 0
@@ -1257,6 +1344,10 @@ def _expand_seed_for_line_floor(
         guard += 1
         extra = dict(extras[ei % len(extras)])
         ei += 1
+        # 家长额度还有余量时，插一句家长追问而不是让孩子自言自语
+        if parent_room > 0 and main_parent and ei % 3 == 0:
+            extra = {"speaker": main_parent, "intent": "继续追问细节，逼他讲清"}
+            parent_room -= 1
         out.insert(insert_at, extra)
         insert_at += 1
         n += 1
@@ -1861,6 +1952,8 @@ def gold_story_to_gold_chat(
             seed,
             structure_type=structure_type,
             mechanism=mechanism,
+            characters=scene_contract.get("characters") or [],
+            mom_lines_max=mom_int,
         )
         user = _USER.format(
             title=str(row.get("title") or ""),
@@ -1907,7 +2000,7 @@ def gold_story_to_gold_chat(
                 contract=scene_contract,
             ),
             align_block=align_block,
-            gold_chat_snippet=resolve_gold_chat_snippet(str(row.get("source_id") or "")),
+            gold_chat_snippet=_snippet_for_contract(scene_contract, str(row.get("source_id") or "")),
             **_prompt_budget_kwargs(),
         )
         candidates: list[dict[str, Any]] = []

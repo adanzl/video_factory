@@ -606,8 +606,45 @@ def _consecutive_sibling_is_forced(
         if isinstance(item, dict) and str(item.get("speaker") or "").strip()
     }
     kids = {name for name in cast if name in ("昭昭", "灿灿")}
-    # 只有恰好两个孩子 + 家长额度已满，才算「被逼出来」
+    # 只有恰好一个孩子 + 家长额度已满，才算「被逼出来」
     return len(kids) == 1 and parent_lines >= cap
+
+
+def _consecutive_run_is_redundant(dialogue: list) -> bool:
+    """同人连说是否属于「换词重复/空转」——只有这种才该扣分。
+
+    两人手 + 家长额度封顶时，孩子连说是数学必然（12 句 / 妈妈 3 句 →
+    孩子 9 句被分成最多 4 段，必有连续 3 句），专家口径：罚则应对两人手
+    豁免，改为要求「连说里每句都推进新信息」。所以这里只在连说句之间
+    确实没有新信息（换词重复/同义空转）时才判冗余。
+    """
+    def _norm(text: str) -> str:
+        return re.sub(r"[^\w\u4e00-\u9fff]", "", text)
+
+    prev_sp = ""
+    run_prev_line = ""
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if sp not in ("昭昭", "灿灿") or not line:
+            prev_sp, run_prev_line = sp, ""
+            continue
+        if sp == prev_sp and run_prev_line:
+            a, b = _norm(run_prev_line), _norm(line)
+            if not a or not b:
+                run_prev_line = line
+                continue
+            # 归一后互相包含、或字符重合度过高，即视为换词重复
+            if a in b or b in a:
+                return True
+            shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+            overlap = sum(1 for ch in shorter if ch in longer)
+            if len(shorter) >= 8 and overlap / len(shorter) >= 0.85:
+                return True
+        prev_sp, run_prev_line = sp, line
+    return False
 
 
 def _score_escalation(
@@ -1248,12 +1285,16 @@ def score_daily_story(
                 cons.append(f"{who}裁判式收场（{pat}）")
                 break
 
-    if _has_consecutive_sibling(dialogue) and not _consecutive_sibling_is_forced(  # type: ignore[arg-type]
-        dialogue,  # type: ignore[arg-type]
-        mom_lines_max=story.get("_gold_chat_mom_lines_max"),  # type: ignore[union-attr]
-    ):
-        score -= 15
-        cons.append("存在同人连说")
+    if _has_consecutive_sibling(dialogue):  # type: ignore[arg-type]
+        forced = _consecutive_sibling_is_forced(
+            dialogue,  # type: ignore[arg-type]
+            mom_lines_max=story.get("_gold_chat_mom_lines_max"),  # type: ignore[union-attr]
+        )
+        # 两人手额度封顶时连说是数学必然（专家裁决）：只在连说句之间真的
+        # 没有新信息（换词重复/同义空转）时才扣分，否则放行。
+        if not forced or _consecutive_run_is_redundant(dialogue):  # type: ignore[arg-type]
+            score -= 15
+            cons.append("存在同人连说")
 
     # ── 事故道具凭空（B 类翻车连锁）──
     if profile.code == "B":
