@@ -13,7 +13,7 @@ _RE_KID_TYPO_LINE = re.compile(r"听听不懂|你真是呢")
 # review._RE_PARTICLE_STACK 与 length._RE_PAD_SUFFIX_STACK 并集（不含裸「好不好呀」）
 RE_PARTICLE_STACK = re.compile(
     r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|"
-    r"真的呀真的|嘛呀|了呢|不行嘛|活该了呢|"
+    r"真的呀真的|嘛呀|不行嘛|活该了呢|不行了呢|"
     r"(?:真的(?:呀|呢|吧)){2,}|嘛不行嘛|"
     r"(?:不行吧|真的啊|你听着|你听着了呀|真的嘛了呀|嘛了呀){2,}|"
     r"(?:不行(?:真的|了?[啊吧呀呢嘛])?){2,}|"
@@ -125,7 +125,8 @@ def sanitize_pad_stack_line(line: str) -> str:
         out,
     )
     out = re.sub(r"不行了呢([！。？…!?]?)$", r"不行\1", out)
-    out = re.sub(r"([^不])了呢([！。？…!?])$", r"\1\2", out)
+    # 「…了呢」是标准口语（才热闹了呢 / 懂了呢），只剥真叠尾「了呢呀」「了呢了呀」
+    out = re.sub(r"了呢(?:呀|了呀)", "了", out)
     for old, new in (
         ("呢呢", "呢"),
         ("啊呢", "啊"),

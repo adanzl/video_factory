@@ -1320,13 +1320,15 @@ def _expand_seed_for_line_floor(
             {"speaker": main_kid, "intent": "再保证一次求放行"},
         ]
     elif st == "N":
-        # N 公式内推进：每条必须是**不同的说话动作**（新信息），
-        # 不能是「把同一定义换词再说」——那样成稿会被终检判换词重复。
+        # N 公式内推进：补位必须是**上一句的具体化**（同一拍的第二句），
+        # 不是另起话题。此前写抽象新动作，模型只能凭空编，产出的句子
+        # 没有文本依据，终检稳定判「接不上/缺前提/因果不成立」（#87 实测）。
+        # 锚定上一句 + 只允许「谁/在哪/什么时候」这类可落地细节，语义必然咬合。
         extras = [
-            {"speaker": main_kid, "intent": "说出这个词是从谁那儿听来的（具体的一个人或一个场合）"},
-            {"speaker": main_kid, "intent": "补一个能看见的画面细节，让这套说法显得更像真的"},
-            {"speaker": main_kid, "intent": "说一句不许对方反驳的结论，把话说死"},
-            {"speaker": main_kid, "intent": "把话头交给对方，让对方自己去看"},
+            {"speaker": main_kid, "intent": "接着上一句往细里说：那个人具体是谁（称呼即可）"},
+            {"speaker": main_kid, "intent": "接着上一句往细里说：在什么地方看见的"},
+            {"speaker": main_kid, "intent": "接着上一句往细里说：当时他手里/身上是什么样子"},
+            {"speaker": main_kid, "intent": "接着上一句往细里说：这件事是什么时候发生的"},
         ]
     else:
         extras = [
@@ -1337,20 +1339,56 @@ def _expand_seed_for_line_floor(
     if not extras:
         return out
 
-    insert_at = max(2, len(out) - 2)
+    # 补位**分散到每个孩子拍之后**（每拍落地两句：说一句 + 补一个细节），
+    # 不再集中堆在结尾。堆在结尾等于让孩子突然连说四句新话，语义必然接不上；
+    # 分散后每条都紧跟上一条，是同一拍的继续，天然咬合。
     ei = 0
     guard = 0
-    while n < CHAT_LINE_COUNT_MIN and guard < 8:
+    while n < CHAT_LINE_COUNT_MIN and guard < 20:
         guard += 1
-        extra = dict(extras[ei % len(extras)])
-        ei += 1
-        # 家长额度还有余量时，插一句家长追问而不是让孩子自言自语
-        if parent_room > 0 and main_parent and ei % 3 == 0:
-            extra = {"speaker": main_parent, "intent": "继续追问细节，逼他讲清"}
-            parent_room -= 1
-        out.insert(insert_at, extra)
-        insert_at += 1
+        anchored = False
+        for idx in range(len(out) - 1, 1, -1):
+            row = out[idx]
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("speaker") or "").strip() != main_kid:
+                continue
+            # 补位行自身也是孩子说的，不能再当成孩子拍继续往后插
+            if str(row.get("_n_pad") or ""):
+                continue
+            # 该拍后面最多再跟两条补位（说一句 + 补两个不同维度的细节）
+            pad_after = 0
+            for k in range(idx + 1, len(out)):
+                row_k = out[k]
+                if isinstance(row_k, dict) and str(row_k.get("_n_pad") or ""):
+                    pad_after += 1
+                else:
+                    break
+            if pad_after >= 2:
+                continue
+            # 收束拍（最后一个家长拍）之前不再塞
+            extra = dict(extras[ei % len(extras)])
+            ei += 1
+            extra["_n_pad"] = "1"
+            out.insert(idx + 1, extra)
+            n += 1
+            anchored = True
+            break
+        if not anchored:
+            break
+    # 兜底：孩子拍都扩过一遍还不够，用家长额度（有余额时）补追问
+    while n < CHAT_LINE_COUNT_MIN and parent_room > 0 and main_parent:
+        out.insert(max(2, len(out) - 2), {
+            "speaker": main_parent,
+            "intent": "追问一个具体细节，逼他把话说清",
+            "_n_pad": "1",
+        })
+        parent_room -= 1
         n += 1
+    # 清理内部标记，不污染提示词
+    for row in out:
+        if isinstance(row, dict):
+            row.pop("_n_pad", None)
     return out
 
 def _is_short_content_error(msg: str) -> bool:
