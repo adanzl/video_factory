@@ -92,6 +92,7 @@ STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
         "保真-N收束归属",
         "保真-N机制词槽",
         "保真-角色表外台词",
+        "保真-N词槽语法",
     }
 )
 
@@ -1643,6 +1644,68 @@ def _append_n_contract_role_issues(
     )
 
 
+_RE_N_TOKEN_AS_PREDICATE = re.compile(
+    r"(?:会|要|去|在|是|叫|有|做|干|弄|搞)\s*[A-Za-z]{2,15}"
+    r"|[A-Za-z]{2,15}[了着过地得]"
+    r"|[A-Za-z]{2,15}(?:呀|呢|吧|啊)"
+)
+
+
+def _append_n_token_grammar_issues(
+    rows: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+    *,
+    beat_chain: list[Any] | None,
+) -> None:
+    """N 类：机制怪词只能独立出现，不得当动词/形容词/名字用。
+
+    N 的机制是「孩子蹦出一个无本义的词，再一本正经解释它」。模型很容易
+    把这个词当谓语塞进句子（「好人会waka」「waka了呀」），一句话就把机制
+    塌成病句——观众听到的是错话而不是笑点（#87 实测，专家两轮都点出这条）。
+
+    这里只查**词形位置**这个抽象特征：词后面紧跟「了/着/过/地/得」，
+    或前面紧跟「会/要/去/在/是/叫/有/做/干/弄/搞」，即视为当谓语使用。
+    不查剧情词、不查数量。
+    """
+    entries = _beat_chain_entries(list(beat_chain or []))
+    if not entries:
+        return
+    tokens = {
+        tok.lower()
+        for _n, entry in entries
+        for tok in [_n_declared_word_token(
+            str(entry.get("intent") or entry.get("beat") or "")
+        )]
+        if tok
+    }
+    if not tokens:
+        return
+    offenders: list[int] = []
+    for i, row in enumerate(rows, 1):
+        line = str(row.get("line") or "")
+        if not line:
+            continue
+        for m in _RE_N_TOKEN_AS_PREDICATE.finditer(line):
+            chunk = m.group(0)
+            if any(tok in chunk.lower() for tok in tokens):
+                offenders.append(i)
+                break
+    if offenders:
+        issues.append(
+            _issue(
+                lines=offenders,
+                kind="保真-N词槽语法",
+                desc=(
+                    f"第{offenders}句把怪词当谓语/名字用了（如「会waka」「waka了」）"
+                ),
+                fix=(
+                    "怪词只能原样独立出现一次，之后用「这个词」或「它」指代；"
+                    "禁止给它加「了/着/过」或放在「会/要/是/叫」后面"
+                ),
+            ),
+        )
+
+
 def _append_cast_membership_issues(
     rows: list[dict[str, Any]],
     issues: list[dict[str, Any]],
@@ -1942,6 +2005,9 @@ def collect_align_issues(
 
     if st == "N":
         _append_n_contract_role_issues(rows, issues, beat_chain=beat_chain)
+
+    if st == "N":
+        _append_n_token_grammar_issues(rows, issues, beat_chain=beat_chain)
 
     _append_cast_membership_issues(rows, issues, beat_chain=beat_chain)
 
