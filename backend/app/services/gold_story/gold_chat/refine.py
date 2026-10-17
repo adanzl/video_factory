@@ -409,6 +409,19 @@ def refine_gold_chat_align(
     data = _normalize_chat_speakers(dict(story))
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
+    if not dialogue_seed and isinstance(row, dict):
+        # 调用方漏传 seed 时从行里补：seed 类机审/补拍都靠它，缺了会静默失效
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        payload_seed = (payload or {}).get("dialogue_seed")
+        if isinstance(payload_seed, list) and payload_seed:
+            dialogue_seed = payload_seed
+    if not beat_chain and isinstance(row, dict):
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        scene_contract = (payload or {}).get("scene_contract")
+        if isinstance(scene_contract, dict) and isinstance(
+            scene_contract.get("beat_chain"), list
+        ):
+            beat_chain = scene_contract["beat_chain"]
     repair_feedback: list[dict[str, Any]] = []
     budget = repair_budget
     if row:

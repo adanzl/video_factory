@@ -2827,6 +2827,41 @@ def apply_n_token_slot_local_patch(
     return story, False
 
 
+def _ask_line_from_intent(intent: str) -> str:
+    """没有 seed 时，用契约追问拍自己的话要点拼出可问出口的一句。
+
+    只搬契约里已写的语义（冒号后的部分，或去掉「追问/质问」等标签的部分），
+    不新增剧情事实；拼不出可说问句时返回空串，交上层重掷。
+    """
+    from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+    from app.services.gold_story.scene import looks_like_narration_line
+
+    text = str(intent or "").strip()
+    if not text:
+        return ""
+    if "：" in text or ":" in text:
+        tail = re.split(r"[：:]", text, maxsplit=1)[1]
+        candidate = re.sub(r"^(?:追问|质问|反问|发问|设问|问)", "", tail.strip())
+    else:
+        candidate = re.sub(
+            r"^(?:震惊|皱眉|愣住|继续|再|当场|立刻|马上|一本正经)*"
+            r"(?:追问|质问|反问|发问|设问|问)",
+            "",
+            text,
+        )
+    candidate = candidate.strip("，。；;、 ")
+    # 并列的第二拍标签（如「震惊追问谁教的、皱眉追问：…」）只留后半句
+    if "、" in candidate:
+        candidate = re.split(r"[、，]", candidate)[-1].strip("，。；; ")
+    if not candidate or len(candidate) > CHAT_MAX_LINE_CHARS:
+        return ""
+    if not candidate.endswith(("？", "?", "！", "!")):
+        candidate += "？"
+    if looks_like_narration_line(candidate):
+        return ""
+    return candidate
+
+
 def _close_line_index(
     dlg: list[dict[str, Any]],
     entries: list[tuple[int, dict[str, Any]]],
@@ -3069,8 +3104,8 @@ def apply_n_ask_beat_local_patch(
     if not isinstance(seed, list):
         embedded = story.get("dialogue_seed")
         seed = embedded if isinstance(embedded, list) else []
-    if not seed:
-        return story, False
+    # seed 为空也要继续：追问拍可以用契约自己的话要点补（见 _ask_line_from_intent），
+    # 否则「保真-N家长追问拍」会静默无解、把整篇反复打回重掷。
     mom_max = None if mom_lines_max is None else max(0, int(mom_lines_max))
     changed = False
 
@@ -3121,6 +3156,11 @@ def apply_n_ask_beat_local_patch(
         ):
             continue
         ask_line = _seed_ask_line(entry_index, speaker)
+        if not ask_line:
+            # seed 缺失时用契约自己的追问要点拼一句，别让追问拍静默落空
+            ask_line = _ask_line_from_intent(
+                str(entry.get("intent") or entry.get("beat") or "")
+            )
         if not ask_line:
             continue
         # 落点：紧跟前一拍已落地的台词；找不到就放在收束前。
