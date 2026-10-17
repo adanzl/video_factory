@@ -3281,10 +3281,28 @@ def apply_n_alternation_local_patch(
                 continue
             beats = _beats_of(dlg[j])
             exact_dup = core == other
-            if not exact_dup and not beats:
+            # 「后者只是前者的加长版」：内容已被前句说完，不算新落地。
+            # 这种句子即使挂着某个拍，也只是同一拍的重复写法，
+            # 留着会被结构分判「存在同人连说」并扣 15 分（#87 实测）。
+            superset_repeat = core in other and len(core) / max(len(other), 1) >= 0.5
+            if not exact_dup and not beats and not superset_repeat:
                 continue
-            if beats and any(beat_hits.get(b, 0) <= 1 for b in beats):
+            if (
+                beats
+                and not superset_repeat
+                and any(beat_hits.get(b, 0) <= 1 for b in beats)
+            ):
                 continue
+            # 删完不能让正文明显变短（相对保护，避免把篇幅砍穿）
+            if superset_repeat:
+                total_now = sum(len(str(r.get("line") or "")) for r in dlg)
+                remain = sum(
+                    len(str(r.get("line") or ""))
+                    for k, r in enumerate(dlg)
+                    if k not in drop and k != j
+                )
+                if remain < total_now * 0.8:
+                    continue
             for b in beats:
                 beat_hits[b] = max(0, beat_hits.get(b, 1) - 1)
             drop.add(j)
