@@ -520,6 +520,70 @@ def normalize_n_two_hander_contract(
     return out, notes
 
 
+_N_TOKEN_ONLY_SPLIT_RE = re.compile(r"[A-Za-z][A-Za-z0-9'\-_]{1,15}")
+
+
+def split_n_token_from_explanation(
+    seed: list[Any] | None,
+    *,
+    contract: dict[str, Any] | None = None,
+) -> tuple[list[Any], list[str]]:
+    """N 类：把「怪词 + 解释」同塞一句的 seed 拆成两条。
+
+    N 的机制是「孩子先蹦出怪词 → 立规方追问 → 孩子再解释」。seed 把两件事
+    写进同一句（「banana！就是你在街上工作别人给钱」）时，模型会把怪词当
+    谓语塞进因果句（「好人会banana」「她天天在那儿banana」），机制塌成语法
+    错误（#87 实测，专家也点出这一条）。
+
+    拆成「只说出这个词」+「解释这个词的意思」两条，模型自然分开写。
+    只拆不去：解释内容原样保留，不新造剧情。
+    """
+    sc = contract if isinstance(contract, dict) else {}
+    if str(sc.get("story_type") or "").strip().upper() != "N":
+        return seed or [], []
+    rows = seed if isinstance(seed, list) else []
+    if not rows:
+        return rows, []
+    out: list[Any] = []
+    notes: list[str] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+        intent = str(item.get("intent") or item.get("line") or "").strip()
+        speaker = str(item.get("speaker") or "").strip()
+        # 只拆孩子的「说词 + 解释」；家长的追问句照原样留着
+        if speaker in {"妈妈", "爸爸"}:
+            out.append(item)
+            continue
+        # 追问/设问句不是解释，不能拆
+        if re.search(r"什么|啥|谁教|哪来|怎么|问", intent):
+            out.append(item)
+            continue
+        tokens = _N_TOKEN_ONLY_SPLIT_RE.findall(intent)
+        if not tokens:
+            out.append(item)
+            continue
+        token = tokens[0]
+        # 怪词后面还有中文解释内容 → 拆
+        idx = intent.find(token)
+        tail = intent[idx + len(token):].lstrip("！!，,。：: 　")
+        head = intent[:idx].rstrip("！!，,。：: 　")
+        if len(tail) < 4:
+            out.append(item)
+            continue
+        # 只保留「说出这个词」那一句：head 若已是句子则保留，否则只给词
+        first = dict(item)
+        first["intent"] = f"只说出这个词（不解释）：{token}"
+        if head and len(head) >= 4 and token not in head:
+            first["intent"] = f"{head}，然后只说出这个词（不解释）：{token}"
+        second = dict(item)
+        second["intent"] = f"解释这个词是什么意思：{tail}"
+        out.extend([first, second])
+        notes.append(f"拆分怪词与解释:{token}")
+    return out, notes
+
+
 def trim_n_decorative_kid_seed(
     seed: list[Any] | None,
     *,

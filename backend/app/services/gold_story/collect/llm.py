@@ -42,6 +42,7 @@ from app.services.gold_story.scene import (
     remap_story_raw_scores_for_prompt,
     sanitize_banned_literals,
     seed_from_beat_chain,
+    split_n_token_from_explanation,
     trim_n_decorative_kid_seed,
     trim_terminal_no_reply_rows,
     validate_scene,
@@ -1045,6 +1046,13 @@ def build_dialogue_seed(
     )
     if _n_asker_notes:
         logger.info("H3b N viewer question realign=%s", _n_asker_notes[:4])
+    # N 类：怪词必须独占一句，别和解释塞在一起（否则模型把怪词当谓语）
+    seed, _token_split_notes = split_n_token_from_explanation(
+        seed,
+        contract=contract,
+    )
+    if _token_split_notes:
+        logger.info("H3b N token split=%s", _token_split_notes[:4])
     seed, _silent_seed_notes2 = trim_terminal_no_reply_rows(seed)
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])
