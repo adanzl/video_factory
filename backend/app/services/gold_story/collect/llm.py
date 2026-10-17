@@ -31,6 +31,7 @@ from app.services.gold_story.scene import (
     normalize_k_parent_intervention_budget,
     needs_second_kid,
     normalize_cast_to_beats,
+    neutralize_mechanism_token,
     normalize_n_formula_slots,
     normalize_n_two_hander_contract,
     normalize_parent_beat_ownership,
@@ -897,6 +898,10 @@ def build_scene_contract(
         data, _formula_notes = normalize_n_formula_slots(data)
         if _formula_notes:
             logger.info("H3a N formula slots=%s", _formula_notes[:4])
+        # 怪词中性化：有实物含义的词（水果/品牌）会和剧情物件打架
+        data, _neutral_notes = neutralize_mechanism_token(data)
+        if _neutral_notes:
+            logger.info("H3a token neutralize=%s", _neutral_notes[:3])
         data, _dialogue_notes = normalize_scene_dialogue_beats(data)
         data, _turns_notes = normalize_beat_min_turns(data)
         if _turns_notes:

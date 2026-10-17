@@ -565,6 +565,41 @@ def normalize_n_two_hander_contract(
 
 
 _N_TOKEN_ONLY_SPLIT_RE = re.compile(r"[A-Za-z][A-Za-z0-9'\-_]{1,15}")
+# 合规替换：源素材里的成人词必须换成「无本义音节词」。有实物含义的词
+# （水果/动物/品牌）会和剧情里的物件打架——观众一听就出戏，终检也判
+# 「语义混乱」（#87 实测：banana 被解释成「站街上干活」，又与「买苹果」冲突）。
+# 这里给一个**可复用**的替换表：只换词，不动因果链。
+_GOLD_CHAT_NEUTRAL_TOKEN_MAP: dict[str, str] = {
+    "banana": "waka",
+    "job": "waka",
+    "work": "waka",
+}
+
+
+def neutralize_mechanism_token(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """把契约里的怪词替换成无本义音节词（幂等，只换词不改剧情）。"""
+    sc = contract if isinstance(contract, dict) else {}
+    if not sc:
+        return contract, []
+    import json as _json
+
+    raw = _json.dumps(sc, ensure_ascii=False)
+    replaced: list[str] = []
+    out_text = raw
+    for old, new in _GOLD_CHAT_NEUTRAL_TOKEN_MAP.items():
+        pat = re.compile(r"(?<![A-Za-z])" + re.escape(old) + r"(?![A-Za-z])", re.I)
+        if pat.search(out_text):
+            out_text = pat.sub(new, out_text)
+            replaced.append(f"{old}→{new}")
+    if not replaced:
+        return contract, []
+    try:
+        out = _json.loads(out_text)
+    except Exception:
+        return contract, []
+    return (out if isinstance(out, dict) else contract), ["怪词中性化:" + "、".join(replaced)]
+
+
 _N_TOKEN_SPLIT_PREFIXES = ("只说出这个词（不解释）：", "解释这个词是什么意思：")
 
 
