@@ -91,6 +91,7 @@ STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
         "保真-N家长追问拍",
         "保真-N收束归属",
         "保真-N机制词槽",
+        "保真-角色表外台词",
     }
 )
 
@@ -1493,10 +1494,6 @@ def _n_ask_beat_landed(
             return True
         if "generic" in funcs:
             return True
-        # 归属对、措辞不同（契约写「追问谁教的」，正文问「这什么意思」）：认落地。
-        # 旁观者代问由「旁观占场」判据单独拦，不靠功能词比对。
-        if {"origin", "meaning"} & funcs:
-            return True
     return any(_line_fulfills_beat(speaker, line, entry) for line in lines)
 
 
@@ -1644,6 +1641,57 @@ def _append_n_contract_role_issues(
             fix=f"把收束的愣住/接不住句改由{asker}说，再收场",
         ),
     )
+
+
+def _append_cast_membership_issues(
+    rows: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+    *,
+    beat_chain: list[Any] | None,
+) -> None:
+    """出场角色硬闸门：孩子说话必须有对应的契约拍。
+
+    契约 beat_chain 是本场的唯一人物真相。角色表里带着、beat 里一句没有的
+    幽灵角色，会被扩写照着写进对白（#87 实测：契约只有妈妈+昭昭，成稿里
+    灿灿却有 7 句），随后只能靠下游补丁删掉，字数随之塌方并反复震荡。
+    这里在机审层直接拦，任何一处 LLM 重新引入都过不去。
+
+    家长例外：`mom_lines_max` / `parent_lines_max` 本就是给家长的**额度**，
+    家长可以在没有独立拍的情况下说反应句（额度由 validate_chat_hard 卡），
+    所以只对孩子做「必须有拍」的判定。
+    """
+    cast = {
+        str(row.get("speaker") or "").strip()
+        for row in (beat_chain or [])
+        if isinstance(row, dict) and str(row.get("speaker") or "").strip()
+    }
+    if len(cast) < 2:
+        # 契约拍不足以判定人物真相时不拦（避免空契约把整篇误杀）
+        return
+    parent_speakers = {"妈妈", "爸爸"}
+    intruders: dict[str, list[int]] = {}
+    for i, row in enumerate(rows, 1):
+        speaker = str(row.get("speaker") or "").strip()
+        if not speaker or not str(row.get("line") or "").strip():
+            continue
+        if speaker in cast or speaker in parent_speakers:
+            continue
+        intruders.setdefault(speaker, []).append(i)
+    for speaker, line_nos in intruders.items():
+        issues.append(
+            _issue(
+                lines=line_nos,
+                kind="保真-角色表外台词",
+                desc=(
+                    f"{speaker} 在契约里没有任何拍，却在第{line_nos}句说话"
+                    f"（本场角色只有 {'、'.join(sorted(cast))}）"
+                ),
+                fix=(
+                    f"删除 {speaker} 的台词，把话留给 {'、'.join(sorted(cast))}；"
+                    "**禁止**把对白扩给契约外角色凑字数"
+                ),
+            ),
+        )
 
 
 def _append_seed_speaker_issues(
@@ -1894,6 +1942,8 @@ def collect_align_issues(
 
     if st == "N":
         _append_n_contract_role_issues(rows, issues, beat_chain=beat_chain)
+
+    _append_cast_membership_issues(rows, issues, beat_chain=beat_chain)
 
     _append_seed_speaker_issues(rows, issues, dialogue_seed=dialogue_seed)
 

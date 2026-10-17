@@ -284,8 +284,22 @@ def normalize_parent_beat_ownership(
                 if re.search(r"追问|质问|反问|设问|发问", str(row.get("intent") or ""))
             ]
             need_drop = len(parent_rows) - mom_max
+    # 契约自洽：家长拍数是机制骨架（立规 / 追问 / 收束），额度是派生约束。
+    # 合并后仍装不下时，把额度抬到拍数——否则「契约要求妈妈问、又只给 N 句额度」
+    # 是死锁，任何一稿都必然违规（#87 实测：3 拍 vs mom_lines_max=2）。
+    parent_rows = [
+        (idx, row)
+        for idx, row in enumerate(rows)
+        if str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        and str(row.get("intent") or "").strip()
+    ]
+    if parent_rows and len(parent_rows) > int(contract.get("mom_lines_max") or 0):
+        out_budget = dict(contract)
+        out_budget["mom_lines_max"] = len(parent_rows)
+        notes.append(f"家长额度抬到拍数:{contract.get('mom_lines_max')}→{len(parent_rows)}")
+        contract = out_budget
     if not changed:
-        return contract, []
+        return contract, notes if notes else []
     out = dict(contract)
     normalized: list[Any] = []
     for idx, row in enumerate(rows, 1):

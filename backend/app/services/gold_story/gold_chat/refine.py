@@ -343,6 +343,15 @@ def _stabilize_refine_repair_candidate(
     return _normalize_chat_speakers(copy.deepcopy(baseline))
 
 
+def _scene_contract_from_row(row: dict[str, Any] | None) -> dict[str, Any]:
+    """从 gold_story 行取 scene_contract（精修提示要带出场角色硬约束）。"""
+    if not isinstance(row, dict):
+        return {}
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    contract = (payload or {}).get("scene_contract")
+    return contract if isinstance(contract, dict) else {}
+
+
 def _align_refine_with_llm(
     story: dict[str, Any],
     issues: list[dict[str, Any]],
@@ -354,6 +363,7 @@ def _align_refine_with_llm(
     mechanism: str = "",
     closing_intent: str = "",
     conflict_text: str = "",
+    contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     system = format_align_refine_system(
         mechanism=mechanism,
@@ -374,6 +384,7 @@ def _align_refine_with_llm(
         structure_type=structure_type,
         closing_intent=closing_intent,
         conflict_text=conflict_text,
+        contract=contract,
     )
     # 经 expand 模块属性取用，便于测试 monkeypatch gex._chat_json
     from app.services.gold_story.gold_chat import expand as _expand
@@ -592,6 +603,7 @@ def refine_gold_chat_align(
                 mechanism=mech,
                 closing_intent=closing,
                 conflict_text=conflict_text,
+                contract=_scene_contract_from_row(row),
             )
         except ValueError as refine_exc:
             if _is_truncation_error(str(refine_exc)):

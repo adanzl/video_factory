@@ -1094,7 +1094,8 @@ def _pad_gold_chat_single_particle(
     if core[-1] in "。！？…!?":
         trail = core[-1]
         core = core[:-1]
-    if not core or core[-1] in "啦嘛呀啊呢吧哦喔咯呗":
+    # 「了/着/过」也是句末助词：再补「呢」会造出「懂了呢」这类不通的叠尾
+    if not core or core[-1] in "啦嘛呀啊呢吧哦喔咯呗了着过":
         return text, 0
     room = max(0, CHAT_MAX_LINE_CHARS - len(text))
     if room <= 0:

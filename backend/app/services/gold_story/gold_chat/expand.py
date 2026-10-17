@@ -509,9 +509,11 @@ def _fix_chat_with_llm(
     *,
     banned_literals: list[str],
     mom_lines_max: int = 1,
+    scene_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     user = _FIX_USER.format(
         errors=errors,
+        cast_block=format_cast_block(scene_contract),
         story_json=json.dumps(story, ensure_ascii=False)[:8000],
         banned_literals="、".join(banned_literals) or "（无）",
         mom_lines_max=max(0, int(mom_lines_max)),

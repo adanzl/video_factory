@@ -247,6 +247,8 @@ _FIX_SYSTEM = (
     "须改成第一人称现场对白：角色当场说，禁止转述/旁白/括号说明。\n"
     "speaker 只允许昭昭/灿灿/妈妈/爸爸（父亲/老爸/宝爸归一为爸爸；"
     "能用妈妈就用妈妈）。\n"
+    "**但只能用【出场角色】块里列出的那些**：未列出的角色一律不许出场，"
+    "也**不许**为了凑字数新增角色。\n"
     "字数不足则扩写；字数超限则压缩（可删注水/复读句）；\n"
     "缺字段则补齐。只输出完整合法 JSON。"
 )
@@ -254,10 +256,14 @@ _FIX_SYSTEM = (
 _FIX_USER = """校验错误：
 {errors}
 
+{cast_block}
+
 当前 JSON：
 {story_json}
 
 规则：
+- **出场角色（硬）**：speaker 必须在上方【出场角色】块列出的名单内；
+  契约里没有拍的角色一律删除，禁止新增角色凑字数
 - 正文 dialogue 总字数必须落在 {chars_min}–{chars_max}（目标 {chars_soft_lo}–{chars_soft_hi}）
 - **未满 {chars_min}**：必须扩写到 ≥{chars_min}（句内加 **beat 相关实词**，
   禁「你给我听好了/这回算清楚/别再装傻」等灌尾；可加必要反应句，禁复读循环）
@@ -497,6 +503,7 @@ def format_align_refine_user(
     structure_type: str = "",
     closing_intent: str = "",
     conflict_text: str = "",
+    contract: dict[str, Any] | None = None,
 ) -> str:
     """精修 user：通用硬约束 + 按类型裁剪的保真条款。"""
     type_constraints = format_align_refine_type_constraints(
@@ -505,6 +512,9 @@ def format_align_refine_user(
         closing_intent=closing_intent,
         conflict_text=conflict_text,
     )
+    cast_block = format_cast_block(contract)
+    if cast_block:
+        type_constraints = f"{cast_block}\n{type_constraints}".strip()
     return _ALIGN_REFINE_USER_BASE.format(
         issues_block=issues_block,
         align_block=align_block,
