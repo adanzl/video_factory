@@ -3023,6 +3023,59 @@ def apply_n_seed_coverage_local_patch(
     return out, True
 
 
+def apply_cast_membership_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """契约外说话人一律删除，收束句之后也不例外。
+
+    机检的「保真-角色表外台词」是无条件硬拦，而此前所有清理补丁都只处理
+    到收束句为止，收束之后的旁观句无人管——实测灿灿的句子几乎都落在
+    收束句之后（#87）。这里做一次全局收口：删掉契约 beat_chain 里没有拍
+    的孩子台词（家长按额度另管），并保证句数不低于下限、收束句仍在末尾。
+    """
+    import copy
+
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        resolve_story_beat_chain,
+    )
+
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    entries = _beat_chain_entries(chain)
+    cast = {
+        str(entry.get("speaker") or "").strip()
+        for _n, entry in entries
+        if str(entry.get("speaker") or "").strip()
+    }
+    if len(cast) < 2:
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if not dlg:
+        return story, []
+    parents = {"妈妈", "爸爸"}
+    kept: list[dict[str, Any]] = []
+    dropped: list[str] = []
+    for row in dlg:
+        speaker = str(row.get("speaker") or "").strip()
+        if speaker and speaker not in cast and speaker not in parents:
+            dropped.append(speaker)
+            continue
+        kept.append(row)
+    if not dropped:
+        return story, []
+    # 契约外台词是**无条件硬拦**，删了句数不足就交给后续补位/垫字去补，
+    # 不能因为「删完会短」就整体放行——放行等于把违规稿送进终检。
+    out = copy.deepcopy(story)
+    out["dialogue"] = kept
+    return out, [f"删除契约外说话人:{'、'.join(dict.fromkeys(dropped))}"]
+
+
 def apply_n_contract_local_patches(
     story: dict[str, Any],
     *,
@@ -3032,7 +3085,14 @@ def apply_n_contract_local_patches(
 ) -> tuple[dict[str, Any], list[str]]:
     """N 类确定性契约补丁：收旁观占场 → 补机制词槽 → 补家长关键追问拍。"""
     notes: list[str] = []
-    data, viewer_trimmed = apply_n_viewer_trim_patch(story, beat_chain=beat_chain)
+    # 先做全局收口：契约外说话人一律删除（收束句之后也不例外）
+    data, _cast_notes = apply_cast_membership_patch(
+        story,
+        beat_chain=beat_chain,
+    )
+    if _cast_notes:
+        notes.extend(_cast_notes)
+    data, viewer_trimmed = apply_n_viewer_trim_patch(data, beat_chain=beat_chain)
     if viewer_trimmed:
         notes.append("N旁观手足占场已收束")
     data, token_patched = apply_n_token_slot_local_patch(
