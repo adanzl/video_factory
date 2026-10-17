@@ -574,6 +574,42 @@ def _has_consecutive_sibling(dialogue: list) -> bool:
     return False
 
 
+def _consecutive_sibling_is_forced(
+    dialogue: list,
+    *,
+    mom_lines_max: int | None,
+) -> bool:
+    """同人连说是否被家长额度逼出来的（此时不该扣分）。
+
+    两人手（家长 × 单孩）+ 家长句数已顶到 mom_lines_max 时，
+    剩下的句数只能由同一个孩子说完——严格交替在数学上不可能。
+    这类连说是结构必然，不是「镜像复读注水」，扣分会把合格稿判死。
+    """
+    if mom_lines_max is None:
+        return False
+    try:
+        cap = max(0, int(mom_lines_max))
+    except (TypeError, ValueError):
+        return False
+    if cap <= 0:
+        return False
+    parent_lines = sum(
+        1
+        for item in dialogue
+        if isinstance(item, dict)
+        and str(item.get("speaker") or "").strip() in ("妈妈", "爸爸")
+        and str(item.get("line") or "").strip()
+    )
+    cast = {
+        str(item.get("speaker") or "").strip()
+        for item in dialogue
+        if isinstance(item, dict) and str(item.get("speaker") or "").strip()
+    }
+    kids = {name for name in cast if name in ("昭昭", "灿灿")}
+    # 只有恰好两个孩子 + 家长额度已满，才算「被逼出来」
+    return len(kids) == 1 and parent_lines >= cap
+
+
 def _score_escalation(
     lines: list[str],
     *,
@@ -1212,7 +1248,10 @@ def score_daily_story(
                 cons.append(f"{who}裁判式收场（{pat}）")
                 break
 
-    if _has_consecutive_sibling(dialogue):  # type: ignore[arg-type]
+    if _has_consecutive_sibling(dialogue) and not _consecutive_sibling_is_forced(  # type: ignore[arg-type]
+        dialogue,  # type: ignore[arg-type]
+        mom_lines_max=story.get("_gold_chat_mom_lines_max"),  # type: ignore[union-attr]
+    ):
         score -= 15
         cons.append("存在同人连说")
 
