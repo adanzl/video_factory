@@ -404,6 +404,33 @@ def normalize_n_formula_slots(
     notes: list[str] = []
     changed = False
 
+    # 收束拍缺失：N 必须有立规方的破功收束（这是机制终点，不是可选装饰）。
+    # 缺了会同时导致「收束须愣住」和「家长额度不够」两类判词（#87 实测）。
+    parent_rows_all = [
+        r for r in rows if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+    ]
+    has_close = False
+    for r in parent_rows_all:
+        c_text = str(r.get("intent") or r.get("beat") or "")
+        # 追问句里也常带「愣住」（愣住追问），那是问不是收束，必须排除，
+        # 否则缺口会被误判成「已经有收束」（#87 实测）。
+        if re.search(r"追问|质问|反问|设问|问：|谁教|什么意思", c_text):
+            continue
+        if re.search(r"收束|决定|以后|打草稿|认栽|服了|接不住", c_text):
+            has_close = True
+            break
+    if parent_rows_all and not has_close:
+        tail_kid = rows[-1]
+        tail_sp = str(tail_kid.get("speaker") or "").strip()
+        closer = {"speaker": parent_rows_all[-1].get("speaker") or "妈妈",
+                  "intent": "收束：认栽，说以后说话得先打草稿，最后只能服了/接不住"}
+        if tail_sp in _PARENT_SPEAKER_SET:
+            rows.append(closer)
+        else:
+            rows.append(closer)
+        notes.append("补N收束拍")
+        changed = True
+
     has_causal = any(
         _N_CAUSAL_INTENT_RE.search(str(r.get("intent") or r.get("beat") or ""))
         for r in rows
@@ -439,8 +466,25 @@ def normalize_n_formula_slots(
 
     if not changed:
         return contract, []
+    # 重编号并同步家长额度：额度是拍数的派生约束，拍数变了额度必须跟着变，
+    # 否则「契约要求妈妈追问 + 收束，却只给 2 句」会再次死锁。
+    for i, row in enumerate(rows, 1):
+        row["beat"] = i
     out = dict(contract)
     out["beat_chain"] = rows
+    parent_n = sum(
+        1 for r in rows
+        if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        and str(r.get("intent") or "").strip()
+    )
+    if parent_n:
+        try:
+            cur = int(out.get("mom_lines_max") or 0)
+        except (TypeError, ValueError):
+            cur = 0
+        if parent_n > cur:
+            out["mom_lines_max"] = parent_n
+            notes.append(f"家长额度抬到拍数:{cur}→{parent_n}")
     return out, notes
 
 
