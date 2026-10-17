@@ -1693,6 +1693,37 @@ def _append_n_token_grammar_issues(
             if any(tok in chunk.lower() for tok in tokens):
                 offenders.append(i)
                 break
+    # 同一怪词被反复重新定义：一次追问只要一次解释，重复定义会让观众听不懂
+    redefined: list[int] = []
+    for i, row in enumerate(rows, 1):
+        line = str(row.get("line") or "")
+        if not line:
+            continue
+        for tok in tokens:
+            if tok not in line.lower():
+                continue
+            # 形如「waka就是/是/指/意思」= 定义句
+            if re.search(
+                re.escape(tok) + r"\s*(?:就是|是|指|意思是|算是)", line, re.I
+            ):
+                redefined.append(i)
+            break
+    if len(redefined) > 1:
+        issues.append(
+            _issue(
+                lines=redefined,
+                kind="保真-N词槽语法",
+                desc=(
+                    f"怪的机制词在第{redefined}句被反复重新定义"
+                    "（同一个词一会儿指这、一会儿指那）"
+                ),
+                fix=(
+                    "只在被追问后解释一次；后面再提到一律沿用同一个意思，"
+                    "禁止每次提都换一种说法"
+                ),
+            ),
+        )
+
     if offenders:
         issues.append(
             _issue(
