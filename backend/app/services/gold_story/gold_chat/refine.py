@@ -262,6 +262,23 @@ def _stabilize_refine_candidate(
         )
         if seed_repatched:
             logger.info("gold_chat refine local seed speaker realign after contract patch")
+    # 类型补槽/裁尾/归位都可能把契约拍又冲掉：最后再跑一遍 N 契约补丁（幂等）
+    if str(structure_type or "").strip().upper() == "N":
+        from app.services.gold_story.gold_chat.patch import (
+            apply_n_contract_local_patches,
+        )
+
+        data, n_relock_notes = apply_n_contract_local_patches(
+            data,
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
+            mom_lines_max=mom_lines_max,
+        )
+        if n_relock_notes:
+            logger.info(
+                "gold_chat refine N contract relock: %s",
+                "；".join(n_relock_notes),
+            )
     return _normalize_chat_speakers(data)
 
 def _stabilize_refine_repair_candidate(

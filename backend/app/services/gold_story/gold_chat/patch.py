@@ -2827,6 +2827,33 @@ def apply_n_token_slot_local_patch(
     return story, False
 
 
+def _close_line_index(
+    dlg: list[dict[str, Any]],
+    entries: list[tuple[int, dict[str, Any]]],
+) -> int:
+    """N 收束行下标：末拍落地那一句；判不出时退回末句。
+
+    补句、补拍一律不得越过这条线（N 收束后禁续写）。
+    """
+    if not dlg:
+        return 0
+    from app.services.gold_story.gold_chat.validate import _line_fulfills_beat
+
+    idx = -1
+    if entries:
+        last_entry = entries[-1][1]
+        for i, row in enumerate(dlg):
+            if _line_fulfills_beat(
+                str(row.get("speaker") or "").strip(),
+                str(row.get("line") or "").strip(),
+                last_entry,
+            ):
+                idx = i
+    if idx < 0:
+        idx = len(dlg) - 1
+    return max(0, min(len(dlg) - 1, idx))
+
+
 def apply_n_seed_coverage_local_patch(
     story: dict[str, Any],
     *,
@@ -2950,6 +2977,7 @@ def apply_n_seed_coverage_local_patch(
                 break
         insert_at = len(dlg) - 1 if anchor < 0 else anchor + 1
         insert_at = max(0, min(len(dlg), insert_at))
+        insert_at = min(insert_at, _close_line_index(dlg, entries))
         dlg.insert(insert_at, {"speaker": speaker, "line": line})
         inserts += 1
         changed = True
@@ -3110,6 +3138,8 @@ def apply_n_ask_beat_local_patch(
                 break
         insert_at = len(dlg) - 1 if anchor < 0 else anchor + 1
         insert_at = max(0, min(len(dlg), insert_at))
+        # 收束拍之后禁止插句（N 收束后禁续写）：插句点必须早于收束行
+        insert_at = min(insert_at, _close_line_index(dlg, entries))
         if speaker in {"妈妈", "爸爸"} and mom_max is not None:
             mom_n = sum(
                 1 for item in dlg if str(item.get("speaker") or "").strip() == speaker
