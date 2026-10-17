@@ -3064,9 +3064,148 @@ def apply_n_contract_local_patches(
     )
     if budget_trimmed:
         notes.append("N家长句数超契约已收束")
+    data, alternation_fixed = apply_n_alternation_local_patch(
+        data,
+        beat_chain=beat_chain,
+    )
+    if alternation_fixed:
+        notes.append("N同人连说/换词重复已清理")
+    # 去重/去连说可能再次削掉词槽句，最后再补一次（幂等）
+    data, token_repatched = apply_n_token_slot_local_patch(
+        data,
+        beat_chain=beat_chain,
+    )
+    if token_repatched:
+        notes.append("N机制词槽再次补回")
     if not notes:
         return story, []
     return data, notes
+
+
+def apply_n_alternation_local_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """N：清掉同人连说与换词重复（补句/垫字最常见的两笔结构扣分）。
+
+    规则（抽象，不看剧情词）：
+    - 同一说话人连续 ≥2 句时，只保留第一句；若要删的那句是本拍唯一落地点，
+      则不删（保住契约拍）。
+    - 归一化后互为包含（一句是另一句的子串）视为换词重复，删后出现的那句。
+    """
+    import copy
+
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        _line_fulfills_beat,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, False
+    entries = _beat_chain_entries(
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if len(dlg) < 3:
+        return story, False
+    if not entries:
+        # 没有契约拍就无从判断哪句该保：留给篇幅/类型链处理
+        return story, False
+
+    def _norm(text: str) -> str:
+        from app.services.gold_story.gold_chat.length import _norm_pad_line
+
+        return _norm_pad_line(text)
+
+    def _beats_of(row: dict[str, Any]) -> set[int]:
+        speaker = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        return {
+            beat_no
+            for beat_no, entry in entries
+            if _line_fulfills_beat(speaker, line, entry)
+        }
+
+    beat_hits: dict[int, int] = {}
+    for row in dlg:
+        for beat_no in _beats_of(row):
+            beat_hits[beat_no] = beat_hits.get(beat_no, 0) + 1
+
+    changed = False
+    # 1) 换词重复：后出现的包含句/被包含句删掉（若其拍仍被别句覆盖）
+    drop: set[int] = set()
+    for i, row in enumerate(dlg):
+        if i in drop:
+            continue
+        core = _norm(str(row.get("line") or ""))
+        if len(core) < 4:
+            continue
+        for j in range(i + 1, len(dlg)):
+            if j in drop:
+                continue
+            other = _norm(str(dlg[j].get("line") or ""))
+            if len(other) < 4:
+                continue
+            if core not in other and other not in core:
+                continue
+            beats = _beats_of(dlg[j])
+            exact_dup = core == other
+            if not exact_dup and not beats:
+                continue
+            if beats and any(beat_hits.get(b, 0) <= 1 for b in beats):
+                continue
+            for b in beats:
+                beat_hits[b] = max(0, beat_hits.get(b, 1) - 1)
+            drop.add(j)
+            changed = True
+
+    # 2) 同人连说：每段连说里保住最有信息量的那句，其余在拍仍被覆盖时删掉
+    runs: list[list[int]] = []
+    current: list[int] = []
+    prev_speaker = ""
+    for i, row in enumerate(dlg):
+        if i in drop:
+            continue
+        speaker = str(row.get("speaker") or "").strip()
+        if speaker != prev_speaker:
+            if len(current) > 1:
+                runs.append(current)
+            current = []
+            prev_speaker = speaker
+        current.append(i)
+    if len(current) > 1:
+        runs.append(current)
+    for run in runs:
+        keeper = max(
+            run,
+            key=lambda i: (
+                len(_beats_of(dlg[i])),
+                len(str(dlg[i].get("line") or "")),
+            ),
+        )
+        for i in run:
+            if i == keeper:
+                continue
+            beats = _beats_of(dlg[i])
+            # 对不上契约拍的句子不在这里删：删它们会把正文砍空（篇幅另有闸门）
+            if not beats:
+                continue
+            if any(beat_hits.get(b, 0) <= 1 for b in beats):
+                continue
+            for b in beats:
+                beat_hits[b] = max(0, beat_hits.get(b, 1) - 1)
+            drop.add(i)
+            changed = True
+
+    if not changed:
+        return story, False
+    out = copy.deepcopy(story)
+    out["dialogue"] = [row for i, row in enumerate(dlg) if i not in drop]
+    return out, True
 
 
 def _trim_n_parent_overflow(
