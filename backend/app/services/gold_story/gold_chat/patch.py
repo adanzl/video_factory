@@ -3158,8 +3158,13 @@ def apply_n_alternation_local_patch(
         core = _norm(str(row.get("line") or ""))
         if len(core) < 4:
             continue
+        # 开场句/收束句是骨架，不参与换词重复删除
+        if i == 0:
+            continue
         for j in range(i + 1, len(dlg)):
             if j in drop:
+                continue
+            if j == len(dlg) - 1:
                 continue
             other = _norm(str(dlg[j].get("line") or ""))
             if len(other) < 4:
@@ -3254,6 +3259,9 @@ def _trim_n_parent_overflow(
         else resolve_story_beat_chain(story)
     )
     protected: set[int] = set()
+    if dlg:
+        # 开场与收束是 N 的骨架句，任何情况下都不删（锚词匹配不到也要保住）
+        protected.update({0, len(dlg) - 1})
     if entries:
         for i, row in enumerate(dlg):
             if _line_fulfills_beat(
