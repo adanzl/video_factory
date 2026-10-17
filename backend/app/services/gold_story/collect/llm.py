@@ -42,6 +42,7 @@ from app.services.gold_story.scene import (
     remap_story_raw_scores_for_prompt,
     sanitize_banned_literals,
     seed_from_beat_chain,
+    ensure_origin_ask_answerable,
     split_n_token_from_explanation,
     trim_n_decorative_kid_seed,
     trim_terminal_no_reply_rows,
@@ -1053,6 +1054,10 @@ def build_dialogue_seed(
     )
     if _token_split_notes:
         logger.info("H3b N token split=%s", _token_split_notes[:4])
+    # 契约问了出处就必须有不靠编人的答案，否则该问在契约层无解
+    seed, _origin_notes = ensure_origin_ask_answerable(seed, contract=contract)
+    if _origin_notes:
+        logger.info("H3b N origin answer=%s", _origin_notes[:3])
     seed, _silent_seed_notes2 = trim_terminal_no_reply_rows(seed)
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])

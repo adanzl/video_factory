@@ -1232,6 +1232,45 @@ def _snippet_for_contract(
     return resolve_gold_chat_snippet(source_id)
 
 
+# 补位 intent 里出现这些形态，等于要求模型凭空造一个新实体（人/地点/道具/
+# 时间），而终检对此的判词是「缺前提 / 引用无据」。补位只允许对已出口的
+# 内容做深化（坚持/反问/复述/推进一格），不允许新开事实。
+_N_PAD_NEW_ENTITY_RE = re.compile(
+    r"具体是谁|那个人|什么人|叫什么名|称呼即可|谁那儿|听来的|"
+    r"什么地方|在哪儿|哪个地方|地点|"
+    r"什么时候|哪天|几点|"
+    r"手里|身上|什么样子|模样|穿着|"
+    r"新的人|新的词|新的细节|另一个人|另一个人名"
+)
+
+
+def _pad_intent_requires_new_entity(intent: str) -> bool:
+    """补位 intent 是否在要求一个对白里还不存在的新实体。
+
+    这是防复发的机读不变量：往 seed 里塞「让他说出那个人是谁 / 在哪儿看见的」
+    这类要点，模型只能编，编完必被终检判「缺前提/引用无据」，
+    几轮下来修稿预算全部烧在解释自己编的东西上（#87 实测 19 轮仅 2 通过）。
+    补字只能靠深化，不能靠加人加物。
+    """
+    text = str(intent or "")
+    return bool(_N_PAD_NEW_ENTITY_RE.search(text))
+
+
+def _filter_pad_extras(
+    extras: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], list[str]]:
+    """滤掉会逼模型造新实体的补位要点，并回报被滤掉的条目。"""
+    kept: list[dict[str, str]] = []
+    dropped: list[str] = []
+    for item in extras:
+        intent = str(item.get("intent") or "")
+        if _pad_intent_requires_new_entity(intent):
+            dropped.append(intent)
+            continue
+        kept.append(item)
+    return kept, dropped
+
+
 def _expand_seed_for_line_floor(
     seed: list[Any] | None,
     *,
@@ -1320,15 +1359,16 @@ def _expand_seed_for_line_floor(
             {"speaker": main_kid, "intent": "再保证一次求放行"},
         ]
     elif st == "N":
-        # N 公式内推进：补位必须是**上一句的具体化**（同一拍的第二句），
-        # 不是另起话题。此前写抽象新动作，模型只能凭空编，产出的句子
-        # 没有文本依据，终检稳定判「接不上/缺前提/因果不成立」（#87 实测）。
-        # 锚定上一句 + 只允许「谁/在哪/什么时候」这类可落地细节，语义必然咬合。
+        # N 字数缺口只能靠**把同一个荒诞点往深处挖**来补，不能靠「往宽处铺」。
+        # 往宽处铺（新的人名/地点/道具/关系）会立刻触发终检的
+        # 「缺前提 / 引用无据」——新实体在对白里没有依据（#87 实测十余次）。
+        # 深度动作的共同点：不引入任何新实体，只是对已说出口的内容
+        # 坚持、反问、复述、推进一格。
         extras = [
-            {"speaker": main_kid, "intent": "接着上一句往细里说：那个人具体是谁（称呼即可）"},
-            {"speaker": main_kid, "intent": "接着上一句往细里说：在什么地方看见的"},
-            {"speaker": main_kid, "intent": "接着上一句往细里说：当时他手里/身上是什么样子"},
-            {"speaker": main_kid, "intent": "接着上一句往细里说：这件事是什么时候发生的"},
+            {"speaker": main_kid, "intent": "坚持自己没说错，让对方别打岔"},
+            {"speaker": main_kid, "intent": "反问对方：你自己不信就算了"},
+            {"speaker": main_kid, "intent": "指出对方刚才还在记，现在又不信，这不讲道理"},
+            {"speaker": main_kid, "intent": "说这话没说完，让对方等他讲完再问"},
         ]
     else:
         extras = [
@@ -1336,6 +1376,12 @@ def _expand_seed_for_line_floor(
             {"speaker": main_kid, "intent": "加码争一次"},
         ]
     extras = [e for e in extras if e["speaker"]]
+    # 机读不变量：补位一律不得要求新实体（否则模型只能编，随后被终检判无据）
+    extras, _dropped_extras = _filter_pad_extras(extras)
+    if _dropped_extras:
+        logger.info(
+            "seed floor pad: 剔除造实体补位 %s", _dropped_extras[:3],
+        )
     if not extras:
         return out
 

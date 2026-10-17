@@ -523,6 +523,84 @@ def normalize_n_two_hander_contract(
 _N_TOKEN_ONLY_SPLIT_RE = re.compile(r"[A-Za-z][A-Za-z0-9'\-_]{1,15}")
 
 
+# 契约里的「出处问」：立规方问这句话是从哪来的
+_N_ORIGIN_ASK_RE = re.compile(r"谁教|哪儿来|哪里来|哪学|跟谁学|谁告诉|从哪")
+# seed 里已有出处答案的迹象（否认外部来源也算答案）
+_N_ORIGIN_ANSWER_RE = re.compile(
+    r"没人教|自己想的|自己编|自己想的|我编的|瞎编|做梦|电视上|书上|同学说|老师"
+)
+
+
+def ensure_origin_ask_answerable(
+    seed: list[Any] | None,
+    *,
+    contract: dict[str, Any] | None = None,
+) -> tuple[list[Any], list[str]]:
+    """契约问了出处，seed 就必须有一条不靠编人的答案。
+
+    N 的机制链固定含「立规方追问出处（谁教的）」。源素材里孩子对这句
+    往往没有回答，于是生成端只有两条路：编一个具体的人当老师（终检判
+    「引用无据」），或者干脆不答（终检判「接不上」）——两条都是违规，
+    这个问在契约层就是无解的（#87 实测：19 轮里 2 次引用无据、2 次接不上）。
+
+    补一条**否认外部来源**的答案即可解套：不引入任何新实体，且本身就是
+    童言无忌的常见形态（「没人教，我自己想的」）。只在该问确实存在、
+    而 seed 确实没答案时才补，已有答案不覆盖。
+    """
+    sc = contract if isinstance(contract, dict) else {}
+    if str(sc.get("story_type") or "").strip().upper() != "N":
+        return seed or [], []
+    rows = [dict(x) if isinstance(x, dict) else x for x in (seed or [])]
+    if not rows:
+        return rows, []
+    chain = [
+        r for r in (sc.get("beat_chain") or []) if isinstance(r, dict)
+    ]
+    # 契约里谁在问出处
+    asker = ""
+    for r in chain:
+        sp = str(r.get("speaker") or "").strip()
+        intent = str(r.get("intent") or r.get("beat") or "")
+        if sp and _PARENT_SPEAKER_SET and sp in _PARENT_SPEAKER_SET:
+            if _N_ORIGIN_ASK_RE.search(intent):
+                asker = sp
+                break
+    if not asker:
+        return rows, []
+    # 机制主体（说怪词的孩子）
+    kid = ""
+    for r in chain:
+        sp = str(r.get("speaker") or "").strip()
+        if sp and sp not in _PARENT_SPEAKER_SET:
+            kid = sp
+            break
+    if not kid:
+        return rows, []
+    # seed 里已经有出处答案 → 不动
+    for row in rows:
+        if isinstance(row, dict) and _N_ORIGIN_ANSWER_RE.search(
+            str(row.get("intent") or row.get("line") or "")
+        ):
+            return rows, []
+    # 找 seed 里该家长问出处的那一行，答案紧跟其后
+    insert_at = -1
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("speaker") or "").strip() != asker:
+            continue
+        if _N_ORIGIN_ASK_RE.search(str(row.get("intent") or row.get("line") or "")):
+            insert_at = i + 1
+    if insert_at < 0:
+        # seed 没写这一问 → 不新增问题（那是契约/生成的事），直接返回
+        return rows, []
+    rows.insert(
+        insert_at,
+        {"speaker": kid, "intent": "否认有人教：没人教，自己想的"},
+    )
+    return rows, ["补出处答案:否认外部来源"]
+
+
 def split_n_token_from_explanation(
     seed: list[Any] | None,
     *,
@@ -568,19 +646,19 @@ def split_n_token_from_explanation(
         # 怪词后面还有中文解释内容 → 拆
         idx = intent.find(token)
         tail = intent[idx + len(token):].lstrip("！!，,。：: 　")
-        head = intent[:idx].rstrip("！!，,。：: 　")
-        if len(tail) < 4:
-            out.append(item)
-            continue
-        # 只保留「说出这个词」那一句：head 若已是句子则保留，否则只给词
+        # 怪词出现在句中被当前缀/谓语/名字用（「因为好人叫banana」「好人会banana」）
+        # 时，前缀本身就是病句，一律丢掉：只留「说出这个词」这一句。
         first = dict(item)
         first["intent"] = f"只说出这个词（不解释）：{token}"
-        if head and len(head) >= 4 and token not in head:
-            first["intent"] = f"{head}，然后只说出这个词（不解释）：{token}"
-        second = dict(item)
-        second["intent"] = f"解释这个词是什么意思：{tail}"
-        out.extend([first, second])
-        notes.append(f"拆分怪词与解释:{token}")
+        if len(tail) >= 4:
+            second = dict(item)
+            second["intent"] = f"解释这个词是什么意思：{tail}"
+            out.extend([first, second])
+            notes.append(f"拆分怪词与解释:{token}")
+            continue
+        if idx > 0:
+            notes.append(f"剔除怪词前缀:{intent[:idx][:12]}")
+        out.append(first)
     return out, notes
 
 

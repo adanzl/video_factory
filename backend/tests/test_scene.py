@@ -17,6 +17,8 @@ from app.services.gold_story.scene import (
     normalize_beat_min_turns,
     normalize_dialogue_setting_for_contract,
     normalize_fact_attributions,
+    ensure_origin_ask_answerable,
+    split_n_token_from_explanation,
     normalize_cast_to_beats,
     normalize_k_parent_intervention_budget,
     normalize_n_formula_slots,
@@ -1725,3 +1727,107 @@ def test_resolve_parent_lines_budget_reads_injected_gold_chat_caps():
         {"story_type": "K", "_gold_chat_mom_lines_max": 0, "_gold_chat_dad_lines_max": 3}
     )
     assert (mom, dad, parent) == (0, 3, 3)
+
+
+def test_origin_ask_answerable_invariant():
+    """契约问了出处，seed 必须有答案；答案不得引入新实体。"""
+    contract = {
+        "story_type": "N",
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规记录每句话"},
+            {"beat": 2, "speaker": "昭昭", "intent": "报出一串编的名字"},
+            {"beat": 3, "speaker": "昭昭", "intent": "说出怪词并解释"},
+            {"beat": 4, "speaker": "妈妈", "intent": "追问什么意思、谁教的"},
+            {"beat": 5, "speaker": "妈妈", "intent": "决定先打草稿"},
+        ],
+    }
+    seed = [
+        {"speaker": "妈妈", "intent": "我记下你说的每句话"},
+        {"speaker": "妈妈", "intent": "banana是什么意思？谁教的"},
+        {"speaker": "昭昭", "intent": "苹果"},
+    ]
+    out, notes = ensure_origin_ask_answerable(seed, contract=contract)
+    assert notes and "出处" in notes[0]
+    assert len(out) == len(seed) + 1
+    answer = out[2]
+    assert answer["speaker"] == "昭昭"
+    assert "没人教" in answer["intent"] or "自己想的" in answer["intent"]
+
+    # 已有答案 → 不覆盖
+    seed2 = [
+        {"speaker": "妈妈", "intent": "banana谁教的"},
+        {"speaker": "昭昭", "intent": "没人教，我自己想的"},
+    ]
+    same, no_notes = ensure_origin_ask_answerable(seed2, contract=contract)
+    assert not no_notes and same == seed2
+
+    # 契约没问出处 → 不动
+    plain = {"story_type": "N", "beat_chain": [{"beat": 1, "speaker": "妈妈", "intent": "立规"}]}
+    assert ensure_origin_ask_answerable(seed, contract=plain)[1] == []
+
+    # 非 N → 不动
+    assert ensure_origin_ask_answerable(seed, contract={"story_type": "C"})[1] == []
+
+
+def test_token_normalization_strips_bad_prefix():
+    """怪词被当前缀/名字用时，前缀属病句须剔除，且只保留独立出词那一句。"""
+    contract = {"story_type": "N"}
+
+    out, notes = split_n_token_from_explanation(
+        [{"speaker": "昭昭", "intent": "因为好人叫banana"}],
+        contract=contract,
+    )
+    assert len(out) == 1, "前缀被丢掉后只剩出词那一句"
+    assert out[0]["intent"].endswith("banana")
+    assert "因为" not in out[0]["intent"]
+    assert notes and "剔除怪词前缀" in notes[0]
+
+    # 词 + 解释同句 → 拆两句
+    out2, notes2 = split_n_token_from_explanation(
+        [{"speaker": "昭昭", "intent": "banana！就是你在街上工作别人给钱"}],
+        contract=contract,
+    )
+    assert len(out2) == 2
+    assert "banana" in out2[0]["intent"]
+    assert "街上工作" not in out2[0]["intent"], "出词那一句不得夹带解释内容"
+    assert "解释" in out2[1]["intent"]
+    assert "街上工作" in out2[1]["intent"]
+
+    # 家长追问句 / 不含怪词的行 → 不动
+    for row in (
+        {"speaker": "妈妈", "intent": "banana什么意思？谁教你的"},
+        {"speaker": "昭昭", "intent": "苹果"},
+    ):
+        kept, n = split_n_token_from_explanation([dict(row)], contract=contract)
+        assert kept == [row] and not n
+
+
+def test_pad_intent_must_not_require_new_entity():
+    """补位 intent 不得要求新实体：加了就必被终检判无据。"""
+    from app.services.gold_story.gold_chat.expand import (
+        _filter_pad_extras,
+        _pad_intent_requires_new_entity,
+    )
+
+    bad = [
+        "接着上一句往细里说：那个人具体是谁（称呼即可）",
+        "接着上一句往细里说：在什么地方看见的",
+        "接着上一句往细里说：当时他手里是什么样子",
+        "说出这个词是从谁那儿听来的",
+    ]
+    for intent in bad:
+        assert _pad_intent_requires_new_entity(intent), intent
+
+    good = [
+        "坚持自己没说错，让对方别打岔",
+        "反问对方：你自己不信就算了",
+        "说这话没说完，让对方等他讲完再问",
+        "一本正经讲圆（用因为/所以）",
+    ]
+    for intent in good:
+        assert not _pad_intent_requires_new_entity(intent), intent
+
+    kept, dropped = _filter_pad_extras(
+        [{"speaker": "昭昭", "intent": i} for i in bad + good]
+    )
+    assert len(kept) == len(good) and len(dropped) == len(bad)
