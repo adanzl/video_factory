@@ -29,6 +29,8 @@ from app.services.gold_story.scene import (
     normalize_dialogue_setting_for_contract,
     normalize_fact_attributions,
     normalize_k_parent_intervention_budget,
+    needs_second_kid,
+    normalize_cast_to_beats,
     normalize_n_two_hander_contract,
     normalize_parent_beat_ownership,
     normalize_retrospective_topic_contract,
@@ -882,6 +884,11 @@ def build_scene_contract(
         data, _n_two_notes = normalize_n_two_hander_contract(data)
         if _n_two_notes:
             logger.info("H3a N two-hander normalize=%s", _n_two_notes[:4])
+        # 角色表对齐 beat：没有拍的角色不许出场（幽灵角色会让扩写照着写、
+        # 随后被补丁删掉，字数来回震荡）
+        data, _cast_notes = normalize_cast_to_beats(data)
+        if _cast_notes:
+            logger.info("H3a cast normalize=%s", _cast_notes[:4])
         data, _dialogue_notes = normalize_scene_dialogue_beats(data)
         data, _turns_notes = normalize_beat_min_turns(data)
         if _turns_notes:
@@ -1013,11 +1020,14 @@ def build_dialogue_seed(
         mom_max,
         preserve_last=preserve_k_fail_tail,
     )
-    # 单孩+家长稿：补齐同侧第二孩，免得模型自编第二个孩子的立场
-    seed, _kid_side_notes = align_seed_two_kids_vs_parent(
-        seed,
-        characters=contract.get("characters") or [],
-    )
+    # 单孩+家长稿：补齐同侧第二孩，免得模型自编第二个孩子的立场。
+    # 例外：N 类家长当追问方时契约为两人手（家长×单孩），此时补第二孩会与契约
+    # 直接冲突——补了又被删，seed 反复增删（#87 实测）。
+    if needs_second_kid(contract):
+        seed, _kid_side_notes = align_seed_two_kids_vs_parent(
+            seed,
+            characters=contract.get("characters") or [],
+        )
     # N 类家长当追问方：不补第二孩（两人手），避免旁观接管追问稀释破功
     seed, _two_hander_notes = trim_n_decorative_kid_seed(seed, contract=contract)
     if _two_hander_notes:

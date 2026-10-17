@@ -17,6 +17,7 @@ from app.services.gold_story.scene import (
     normalize_beat_min_turns,
     normalize_dialogue_setting_for_contract,
     normalize_fact_attributions,
+    normalize_cast_to_beats,
     normalize_k_parent_intervention_budget,
     normalize_n_two_hander_contract,
     normalize_parent_beat_ownership,
@@ -29,6 +30,7 @@ from app.services.gold_story.scene import (
     seed_from_beat_chain,
     sanitize_dialogue_meta_label_suffix,
     is_terminal_no_reply_intent,
+    needs_second_kid,
     trim_n_decorative_kid_seed,
     trim_terminal_no_reply_rows,
     validate_scene,
@@ -1205,6 +1207,63 @@ def test_n_decorative_kid_seed_trimmed_for_parent_asker():
     assert notes and "灿灿" in notes[0]
     assert all(r["speaker"] != "灿灿" for r in out)
     assert len(out) == len(seed) - 1
+
+
+def test_cast_normalized_to_beats_drops_ghost_character():
+    """角色表对齐 beat：角色表里有、beat_chain 一句没有的角色必须被移除。"""
+    contract = {
+        "story_type": "N",
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规：记录每句话"},
+            {"beat": 2, "speaker": "昭昭", "intent": "胡说一串名字"},
+            {"beat": 3, "speaker": "妈妈", "intent": "追问谁教的"},
+        ],
+    }
+    out, notes = normalize_cast_to_beats(contract)
+    assert notes and "灿灿" in notes[0]
+    assert out["characters"] == ["妈妈", "昭昭"]
+
+    # 每个角色都有拍 → 原样返回
+    full = {
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规"},
+            {"beat": 2, "speaker": "昭昭", "intent": "抢"},
+            {"beat": 3, "speaker": "灿灿", "intent": "抢回"},
+        ],
+    }
+    same, no_notes = normalize_cast_to_beats(full)
+    assert not no_notes and same["characters"] == full["characters"]
+
+    # 缺角色表 / 缺 beat 时不动
+    assert normalize_cast_to_beats({"beat_chain": []})[1] == []
+    assert normalize_cast_to_beats({"characters": ["妈妈"]})[1] == []
+
+
+def test_needs_second_kid_false_for_parent_asked_n():
+    """N + 家长当追问方是两人手，不再补第二个孩子（否则补了又被删）。"""
+    two_hander = {
+        "story_type": "N",
+        "characters": ["妈妈", "昭昭"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规"},
+            {"beat": 2, "speaker": "昭昭", "intent": "胡说"},
+            {"beat": 3, "speaker": "妈妈", "intent": "追问谁教的"},
+        ],
+    }
+    assert needs_second_kid(two_hander) is False
+
+    child_asked = {
+        "story_type": "N",
+        "beat_chain": [
+            {"beat": 1, "speaker": "灿灿", "intent": "设问：爸爸掉河里先吃啥"},
+            {"beat": 2, "speaker": "昭昭", "intent": "离谱秒答"},
+            {"beat": 3, "speaker": "灿灿", "intent": "追问为什么"},
+        ],
+    }
+    assert needs_second_kid(child_asked) is True
+    assert needs_second_kid({"story_type": "C", "beat_chain": []}) is True
 
 
 def test_e_mid_pairs_support_single_kid_plus_parent():

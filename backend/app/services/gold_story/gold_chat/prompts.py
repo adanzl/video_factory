@@ -131,9 +131,11 @@ _SYSTEM = (
     "站外口播/科普/第三人称论述须 **还原成第一人称现场对白**："
     "角色当场说、当场吵、当场做，禁止转述「妈妈说/教过/曾经」。\n"
     "家长：能用妈妈就用妈妈；源稿是爸爸且妈妈代不了时保留「爸爸」；"
-    "speaker 允许昭昭/灿灿/妈妈/爸爸。\n"
-    "单孩+家长源稿须拆成昭昭+灿灿双孩戏份，家长仍配角（少台词）；"
-    "但戏核家长（责备/反问/定责/破功）须按 beat 出场，**禁止**压成两人并台词。\n"
+    "speaker 允许昭昭/灿灿/妈妈/爸爸，**但只能用【出场角色】块里列出的那些**，"
+    "未列出的角色一律不许出场（禁补旁观手足凑戏）。\n"
+    "**人数按契约定**：契约只给一个孩子时写家长×孩子两人手；"
+    "契约给了两个孩子才写双孩同侧；戏核家长（责备/反问/定责/破功）须按 beat 出场，"
+    "**禁止**压成两人并台词。\n"
     "学段与分数须贴 7–10 岁小学量级；禁止沿用中考/高考不可能总分。\n"
     "只输出一个合法 JSON 对象：无解释、无注释、无 markdown 代码围栏。\n"
     "输出 JSON 须与站内 daily_story 字段一致。\n"
@@ -144,6 +146,8 @@ _SYSTEM = (
 _USER = """金故事标题：{title}
 机制/结构：{mechanism} / {structure_type}（{structure_label}）
 冲突核：{conflict_core}
+
+{cast_block}
 
 {scene_contract_block}
 
@@ -223,15 +227,15 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 - **句尾语气词**：每句结尾最多一个（呢/嘛/呀/啊/吧）；
   禁「了呢了呀/着呢了呀/呢呀」等叠尾；禁叠「呢呢」
 - 若有上方金稿对白正例：语气/句长可参考；剧情须来自本稿 scene_contract + seed
-- 昭昭/灿灿 交替为主；妈妈配角少台词，但 mom_lines_max≥1 或 beat 含家长时须按拍出场；
+- 按【出场角色】块列出的角色交替；妈妈配角少台词，但 mom_lines_max≥1 或 beat 含家长时须按拍出场；
   爸爸更少（能用妈不用爸）；口语化、可拍
 - **迁龄**：对白中的考试/分数须是小学 7–10 岁可拍量级；禁止中考/高考不可能总分原样入戏
 - **禁止对白出现「哥哥」「弟弟」**；称呼用姐姐/昭昭/灿灿
 - **昭昭口中禁止直呼「灿灿」**，一律称「姐姐」（弟弟直呼姐姐名不礼貌）
 - line 禁止括号舞台说明（如「（从厨房走出来）」「（语塞）」）
 - 源稿是爸爸且妈妈代不了 → speaker 写「爸爸」；可替则优先妈妈
-- 单孩+家长源稿须拆成昭昭+灿灿双孩戏份，家长仍配角；戏核家长勿并进姐弟
-- 站外陌生小孩/对方家长→映射为灿灿/妈妈，**禁止**「小男孩」「对方」等第三 speaker
+- 站外陌生小孩/对方家长→映射为【出场角色】里已有的成员（通常是灿灿/妈妈），
+  **禁止**「小男孩」「对方」等第三 speaker，也**禁止**在角色表外新增名字
 - 按 beat 顺序推进，末段落实收束意图；beat 未写的新冲突线禁止另起
 - 禁止直接使用禁词列表里的词
 - 不要输出 discovery_opening / quality 等额外字段
@@ -631,6 +635,76 @@ def format_role_binding_block(conflict_text: str) -> str:
         f"- 妈妈介入前：{aggressor} 道歉/服软；{victim} 拒和 + 加码"
         "（各一句，不得同一 speaker）"
     )
+
+
+_PARENT_NAMES = frozenset({"妈妈", "爸爸"})
+_KID_NAMES = frozenset({"昭昭", "灿灿"})
+
+
+def format_cast_block(contract: dict[str, Any] | None) -> str:
+    """扩写注入：本次只允许哪些 speaker 出场、是几人戏。
+
+    人数以契约 ``characters`` 为准（契约已由归一化层收敛过）：
+    - 只给一个孩子 → 家长 × 孩子两人手，禁补旁观手足；
+    - 给两个孩子 → 双孩同侧 + 家长。
+    这条块是硬约束：先前提示里写死「单孩源须拆双孩」，与本层两人手直接冲突，
+    模型会照旧造出旁观角色，随后被清理，字数来回震荡（#87 实测）。
+    """
+    sc = contract if isinstance(contract, dict) else {}
+    cast = [
+        str(c).strip()
+        for c in (sc.get("characters") or [])
+        if str(c).strip()
+    ]
+    # 角色表对齐 beat：没有拍的角色不许出场。存量的旧契约可能仍带着幽灵角色
+    # （角色表有、beat_chain 一句没有），这里兜住，避免提示把它们又写进对白。
+    beat_speakers = {
+        str(row.get("speaker") or "").strip()
+        for row in (sc.get("beat_chain") or [])
+        if isinstance(row, dict) and str(row.get("speaker") or "").strip()
+    }
+    if cast and beat_speakers:
+        aligned = [c for c in cast if c in beat_speakers]
+        if aligned:
+            cast = aligned
+    # 角色表缺失时退回 beat_chain 的说话人，避免空块让模型自由发挥
+    if not cast:
+        cast = list(
+            dict.fromkeys(
+                str(row.get("speaker") or "").strip()
+                for row in (sc.get("beat_chain") or [])
+                if isinstance(row, dict) and str(row.get("speaker") or "").strip()
+            )
+        )
+    if not cast:
+        return ""
+    kids = [c for c in cast if c in _KID_NAMES]
+    parents = [c for c in cast if c in _PARENT_NAMES]
+    lines = [
+        "【出场角色 · 硬约束】",
+        f"- 本场 speaker 只能是：{'、'.join(cast)}；"
+        "**禁止**出现任何一个未列出的角色（不得为凑字数、凑轮次另造孩子/家长/邻居）",
+    ]
+    if len(kids) == 1 and parents:
+        lines.append(
+            f"- 本次是**两人手**：{parents[0]} × {kids[0]}。"
+            f"对白只在 {'、'.join(cast)} 之间交替，"
+            "**禁止**添加第二个孩子或旁观手足来提问/帮腔/看热闹"
+        )
+        lines.append(
+            f"- 字数靠 {kids[0]} 的荒诞解释与 {parents[0]} 的追问推进，"
+            "**禁止**用新角色注水"
+        )
+    elif len(kids) >= 2:
+        lines.append("- 本次是**双孩同侧**：两个孩子同侧齐上，家长为配角；禁止把孩子写成对立")
+    if parents:
+        mom_max = sc.get("mom_lines_max")
+        if mom_max is not None:
+            lines.append(
+                f"- 家长台词合计 ≤ {int(mom_max)} 句（句数上限，不是字数上限）："
+                "额度紧就合并措辞，**禁止**把家长的追问/责备整体挪给孩子"
+            )
+    return "\n".join(lines)
 
 
 def format_m5_h_expand_beat_block(

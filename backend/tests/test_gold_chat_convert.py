@@ -1468,6 +1468,53 @@ def test_patch_collapse_empty_sibling_repeats():
     assert out["dialogue"][1]["line"] != "别说了！"
 
 
+def test_format_cast_block_two_hander_vs_dual_kid():
+    """出场角色块：单孩契约写两人手、禁补旁观；双孩契约写同侧。"""
+    from app.services.gold_story.gold_chat.prompts import format_cast_block
+
+    two = format_cast_block(
+        {
+            "characters": ["妈妈", "昭昭"],
+            "mom_lines_max": 3,
+            "beat_chain": [
+                {"beat": 1, "speaker": "妈妈", "intent": "立规"},
+                {"beat": 2, "speaker": "昭昭", "intent": "胡说"},
+                {"beat": 3, "speaker": "妈妈", "intent": "追问"},
+            ],
+        }
+    )
+    assert "两人手" in two
+    assert "禁止" in two and "第二个孩子" in two
+    assert "≤ 3 句" in two
+
+    dual = format_cast_block(
+        {
+            "characters": ["妈妈", "昭昭", "灿灿"],
+            "mom_lines_max": 2,
+            "beat_chain": [
+                {"beat": 1, "speaker": "妈妈", "intent": "立规"},
+                {"beat": 2, "speaker": "昭昭", "intent": "抢"},
+                {"beat": 3, "speaker": "灿灿", "intent": "抢"},
+            ],
+        }
+    )
+    assert "双孩同侧" in dual
+
+    # 幽灵角色（角色表有、beat 里一句没有）不得出现在允许名单里
+    stale = format_cast_block(
+        {
+            "characters": ["妈妈", "昭昭", "灿灿"],
+            "mom_lines_max": 3,
+            "beat_chain": [
+                {"beat": 1, "speaker": "妈妈", "intent": "立规"},
+                {"beat": 2, "speaker": "昭昭", "intent": "胡说"},
+            ],
+        }
+    )
+    assert "只能是：妈妈、昭昭" in stale
+    assert "两人手" in stale
+
+
 def test_format_role_binding_block_propaganda():
     from app.services.gold_story.gold_chat.prompts import format_role_binding_block
 

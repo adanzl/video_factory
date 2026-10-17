@@ -304,6 +304,61 @@ _N_MECHANISM_CHILD_RE = re.compile(
 )
 
 
+def normalize_cast_to_beats(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """角色表只保留 beat_chain 里**真有拍**的角色。
+
+    没有拍的角色不许出场：H3a 的角色表常被「单孩源拆双孩」提示带上一个
+    全程没有拍的孩子（#87：characters 含灿灿，beat_chain 只有妈妈+昭昭）。
+    这个幽灵角色会让扩写照着角色表把她写进对白，随后又被契约补丁删除，
+    字数随之塌方、垫字与去重来回打架。角色表对齐 beat 是更上游的修法。
+    """
+    chain = contract.get("beat_chain")
+    if not isinstance(contract, dict) or not isinstance(chain, list) or not chain:
+        return contract, []
+    used = {
+        str(row.get("speaker") or "").strip()
+        for row in chain
+        if isinstance(row, dict) and str(row.get("speaker") or "").strip()
+    }
+    chars = [
+        str(c).strip()
+        for c in (contract.get("characters") or [])
+        if str(c).strip()
+    ]
+    if not chars or not used:
+        return contract, []
+    kept = [c for c in chars if c in used]
+    if not kept or kept == chars:
+        return contract, []
+    out = dict(contract)
+    out["characters"] = kept
+    removed = [c for c in chars if c not in used]
+    return out, [f"移除无拍角色:{'、'.join(removed)}"]
+
+
+def needs_second_kid(contract: dict[str, Any] | None) -> bool:
+    """契约是否应补第二个孩子（单孩源拆双孩）。
+
+    N 类家长当追问方时是两人手（家长 × 单孩），不补第二孩：
+    否则 seed 先被补、再被两人手规则删掉，来回震荡（#87 实测）。
+    """
+    sc = contract if isinstance(contract, dict) else {}
+    if str(sc.get("story_type") or "").strip().upper() == "N":
+        parent_asks = any(
+            isinstance(row, dict)
+            and str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+            and _N_MECHANISM_ASK_RE.search(
+                str(row.get("intent") or row.get("beat") or "")
+            )
+            for row in (sc.get("beat_chain") or [])
+        )
+        if parent_asks:
+            return False
+    return True
+
+
 def normalize_n_two_hander_contract(
     contract: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
