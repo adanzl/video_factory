@@ -1456,16 +1456,30 @@ def _expand_seed_for_line_floor(
                     continue
             # 补位不得插在「怪词出现之前」：孩子还没说出怪词就自我表态，
             # 会变成答非所问/因果断裂（#87 实测）。只在怪词出现之后补。
-            if _N_CHAIN_KEY_LINE_RE.search(row_intent) or True:
-                token_at = -1
-                for k2, row2 in enumerate(out):
-                    if isinstance(row2, dict) and _N_CHAIN_KEY_LINE_RE.search(
-                        str(row2.get("intent") or "")
-                    ):
-                        token_at = k2
-                        break
-                if token_at >= 0 and idx < token_at:
+            token_at = -1
+            for k2, row2 in enumerate(out):
+                if isinstance(row2, dict) and _N_CHAIN_KEY_LINE_RE.search(
+                    str(row2.get("intent") or "")
+                ):
+                    token_at = k2
+                    break
+            if token_at >= 0 and idx < token_at:
+                continue
+            # 补位不得落在收束之后：家长已经认栽收场，孩子再说新话会变成
+            # 「答非所问/硬套话头」（#87 实测：收束后孩子还在追问打草稿）。
+            close_at = -1
+            for k2, row2 in enumerate(out):
+                if not isinstance(row2, dict):
                     continue
+                host = str(row2.get("speaker") or "").strip()
+                if host in {"妈妈", "爸爸"} and re.search(
+                    r"收束|认栽|服了|打草稿|决定以后|接不住",
+                    str(row2.get("intent") or ""),
+                ):
+                    close_at = k2
+                    break
+            if close_at >= 0 and idx >= close_at:
+                continue
             # 该拍后面最多再跟两条补位（说一句 + 补两个不同维度的细节）
             pad_after = 0
             for k in range(idx + 1, len(out)):
