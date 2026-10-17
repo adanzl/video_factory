@@ -1236,6 +1236,9 @@ def _snippet_for_contract(
 # 12 句就必须每句均 20 字——口语化与字数下限互相打架，本地补字上限只有
 # 几十字，缺口稍大就必然补不满（#87 实测：12 句稿反复停在 200–230 字）。
 # 句数上限是 24，句数是零成本的杠杆，故 N 类按「儿童自然句长」反推目标句数。
+_N_CHAIN_KEY_LINE_RE = re.compile(
+    r"只说出这个词|解释这个词|苹果|怪词|蹦出|冒出"
+)
 _N_NATURAL_LINE_CHARS = 15
 _N_TARGET_LINE_COUNT = 16
 
@@ -1309,8 +1312,11 @@ def _expand_seed_for_line_floor(
         if isinstance(x, dict) and str(x.get("intent") or x.get("line") or "").strip()
     )
     st = str(structure_type or "").strip().upper()
-    # N 按儿童自然句长反推目标句数；其余类型仍用通用下限
-    line_target = _N_TARGET_LINE_COUNT if st == "N" else CHAT_LINE_COUNT_MIN
+    # seed 只负责「把要点说全」，不负责凑对白句数：把 seed 硬补到目标句数
+    # 会在「出词→解释」「追问→回答」这些必须紧邻的行对之间插话，反而打断
+    # 机制链（#87 实测：补到 16 条时成稿句序与契约错位）。
+    # 对白句数交给提示词（明确要求 16–18 句、每句 15–20 字）。
+    line_target = CHAT_LINE_COUNT_MIN
     if n >= line_target:
         return out
 
@@ -1407,15 +1413,44 @@ def _expand_seed_for_line_floor(
     while n < line_target and guard < 20:
         guard += 1
         anchored = False
-        for idx in range(len(out) - 1, 1, -1):
+        # 优先插在**家长拍之后**（孩子接话，不打断孩子的机制链）；
+        # 其次才是非关键孩子拍之后。逆序遍历保证补位落在拍序原位附近。
+        order = [
+            i for i in range(len(out) - 1, 1, -1)
+            if isinstance(out[i], dict)
+            and str(out[i].get("speaker") or "").strip()
+            in {"妈妈", "爸爸"}
+        ] + [
+            i for i in range(len(out) - 1, 1, -1)
+            if isinstance(out[i], dict)
+            and str(out[i].get("speaker") or "").strip() == main_kid
+        ]
+        for idx in order:
             row = out[idx]
             if not isinstance(row, dict):
                 continue
-            if str(row.get("speaker") or "").strip() != main_kid:
+            host_sp = str(row.get("speaker") or "").strip()
+            if host_sp not in {main_kid, "妈妈", "爸爸"}:
+                continue
+            # 家长追问拍之后紧跟的通常是孩子的回答，属 Q-A 配对，不插话
+            if host_sp in {"妈妈", "爸爸"} and re.search(
+                r"追问|问|什么意思|谁教|哪来|怎么", str(row.get("intent") or "")
+            ):
                 continue
             # 补位行自身也是孩子说的，不能再当成孩子拍继续往后插
             if str(row.get("_n_pad") or ""):
                 continue
+            # 机制链关键行（说怪词 / 解释怪词 / 补无关词）必须紧邻，
+            # 中间插话会把「怪词→解释」拆开，成稿随即被判缺前提/接不上
+            row_intent = str(row.get("intent") or "")
+            if _N_CHAIN_KEY_LINE_RE.search(row_intent):
+                continue
+            if idx + 1 < len(out):
+                nxt = out[idx + 1]
+                if isinstance(nxt, dict) and _N_CHAIN_KEY_LINE_RE.search(
+                    str(nxt.get("intent") or "")
+                ):
+                    continue
             # 该拍后面最多再跟两条补位（说一句 + 补两个不同维度的细节）
             pad_after = 0
             for k in range(idx + 1, len(out)):
