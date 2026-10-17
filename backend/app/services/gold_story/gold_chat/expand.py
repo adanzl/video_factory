@@ -1383,15 +1383,15 @@ def _expand_seed_for_line_floor(
         # 「缺前提 / 引用无据」——新实体在对白里没有依据（#87 实测十余次）。
         # 深度动作的共同点：不引入任何新实体，只是对已说出口的内容
         # 坚持、反问、复述、推进一格。
+        # 只允许「对已发生的事实做自我表态」：不描述外形（会写成旁白）、
+        # 不假设对方态度（会写成替对方安想法）、不要求对方动作（会写成指挥）。
         extras = [
-            {"speaker": main_kid, "intent": "坚持自己没说错，让对方别打岔"},
-            {"speaker": main_kid, "intent": "反问对方：你自己不信就算了"},
-            {"speaker": main_kid, "intent": "指出对方刚才还在记，现在又不信，这不讲道理"},
-            {"speaker": main_kid, "intent": "说这话没说完，让对方等他讲完再问"},
-            {"speaker": main_kid, "intent": "强调这话当着本子说的，写下来也还是这样"},
-            {"speaker": main_kid, "intent": "表示自己从来不乱说，这回格外认真"},
-            {"speaker": main_kid, "intent": "让对方先别急着下结论，等他说到底"},
-            {"speaker": main_kid, "intent": "反问对方小时候是不是也这样，别只说他"},
+            {"speaker": main_kid, "intent": "重申自己刚才那句是真的，不改口"},
+            {"speaker": main_kid, "intent": "说明自己是认真讲的，不是随口说"},
+            {"speaker": main_kid, "intent": "表示这些名字都记得住，一个都不会忘"},
+            {"speaker": main_kid, "intent": "强调自己没有乱说，也没有骗人"},
+            {"speaker": main_kid, "intent": "说明自己讲这件事的时候很确定"},
+            {"speaker": main_kid, "intent": "表示随便怎么问，答案还是这个"},
         ]
     else:
         extras = [
