@@ -1240,7 +1240,7 @@ _N_CHAIN_KEY_LINE_RE = re.compile(
     r"只说出这个词|解释这个词|苹果|怪词|蹦出|冒出"
 )
 _N_NATURAL_LINE_CHARS = 15
-_N_TARGET_LINE_COUNT = 16
+_N_TARGET_LINE_COUNT = 12
 
 
 # 补位 intent 里出现这些形态，等于要求模型凭空造一个新实体（人/地点/道具/
