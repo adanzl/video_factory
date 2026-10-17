@@ -1161,6 +1161,23 @@ def test_n_two_hander_contract_drops_decorative_viewer():
     assert not no_notes
     assert same["characters"] == ["妈妈", "昭昭", "灿灿"]
 
+    # 承担机制的孩子 + 装饰孩子（笑/质疑多拍）也算装饰 → 一并移除
+    decor_many = {
+        **contract,
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规：记录每句话"},
+            {"beat": 2, "speaker": "昭昭", "intent": "一本正经报出一串编的名字"},
+            {"beat": 3, "speaker": "灿灿", "intent": "质疑：这名字哪来的"},
+            {"beat": 4, "speaker": "妈妈", "intent": "追问谁教的"},
+            {"beat": 5, "speaker": "昭昭", "intent": "解释：街上工作别人给钱"},
+            {"beat": 6, "speaker": "灿灿", "intent": "在旁边笑得直拍腿"},
+            {"beat": 7, "speaker": "妈妈", "intent": "决定以后先打草稿"},
+        ],
+    }
+    out3, notes3 = normalize_n_two_hander_contract(decor_many)
+    assert notes3 and "灿灿" in notes3[0], "只笑/质疑的多拍装饰角色也须移除"
+    assert {r["speaker"] for r in out3["beat_chain"]} == {"妈妈", "昭昭"}
+
     # 非 N 不动
     other, _ = normalize_n_two_hander_contract({**contract, "story_type": "C"})
     assert other["characters"] == ["妈妈", "昭昭", "灿灿"]

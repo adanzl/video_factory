@@ -298,6 +298,10 @@ def normalize_parent_beat_ownership(
 
 
 _N_MECHANISM_ASK_RE = re.compile(r"追问|质问|反问|设问|发问|问：|问")
+# N 机制推进拍：孩子「一本正经回答/解释/自洽」那一侧才是机制主体
+_N_MECHANISM_CHILD_RE = re.compile(
+    r"回答|作答|解释|自洽|讲圆|理由|原因|离谱|报出|说出|嘴硬|秒答|反驳"
+)
 
 
 def normalize_n_two_hander_contract(
@@ -309,9 +313,10 @@ def normalize_n_two_hander_contract(
     被硬拆进来的第二个孩子不承担机制，实测会反复接管追问、稀释破功
     （#87：契约只给她 1 拍旁观，扩写却给她 4–7 句且大半是问句）。
 
-    只在「story_type=N + 家长承担追问拍 + 另一个孩子只有 ≤1 拍
-    （纯装饰/旁观，不承担机制）」时生效：删掉该装饰拍并从角色表移除，
-    输出两人手（家长 × 单孩）。承担机制的第三个角色不动。
+    只在「story_type=N + 家长承担追问拍 + 另有一个孩子**完全不承担机制推进拍**
+    （没有回答/解释/自洽/报出类拍，只有笑/看/质疑等装饰拍）」时生效：
+    删掉该孩子的装饰拍并从角色表移除，输出两人手（家长 × 单孩）。
+    承担机制推进的孩子不动。
     """
     if not isinstance(contract, dict):
         return contract, []
@@ -329,6 +334,7 @@ def normalize_n_two_hander_contract(
     if not parent_asks:
         return contract, []
     kids: dict[str, int] = {}
+    mechanism_kids: set[str] = set()
     for row in chain:
         if not isinstance(row, dict):
             continue
@@ -336,9 +342,13 @@ def normalize_n_two_hander_contract(
         if speaker in _PARENT_SPEAKER_SET or not speaker:
             continue
         kids[speaker] = kids.get(speaker, 0) + 1
-    if len(kids) < 2:
+        if _N_MECHANISM_CHILD_RE.search(
+            str(row.get("intent") or row.get("beat") or "")
+        ):
+            mechanism_kids.add(speaker)
+    if len(kids) < 2 or len(mechanism_kids) != 1:
         return contract, []
-    decor = [name for name, count in kids.items() if count <= 1]
+    decor = [name for name in kids if name not in mechanism_kids]
     if not decor:
         return contract, []
     keep = [
