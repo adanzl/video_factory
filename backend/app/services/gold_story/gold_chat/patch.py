@@ -3057,9 +3057,86 @@ def apply_n_contract_local_patches(
     )
     if coverage_patched:
         notes.append("N未落地拍按拍序补回")
+    data, budget_trimmed = _trim_n_parent_overflow(
+        data,
+        beat_chain=beat_chain,
+        mom_lines_max=mom_lines_max,
+    )
+    if budget_trimmed:
+        notes.append("N家长句数超契约已收束")
     if not notes:
         return story, []
     return data, notes
+
+
+def _trim_n_parent_overflow(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    mom_lines_max: int | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """N：家长句数超过 mom_lines_max 时，删掉最不承担机制的家长句。
+
+    保护顺序：立规（首句）、收束（末拍落地行）、追问句（机制拍）都不删；
+    只删中间的家长填充句（扩写灌进来的短反应）。删不动就留给上层重掷。
+    """
+    import copy
+
+    from app.services.gold_story.gold_chat.validate import (
+        _N_DIALOGUE_QUESTION_ASK,
+        _beat_chain_entries,
+        _line_fulfills_beat,
+        resolve_story_beat_chain,
+    )
+
+    if mom_lines_max is None:
+        return story, False
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, False
+    budget = max(0, int(mom_lines_max))
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    entries = _beat_chain_entries(
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    protected: set[int] = set()
+    if entries:
+        for i, row in enumerate(dlg):
+            if _line_fulfills_beat(
+                str(row.get("speaker") or "").strip(),
+                str(row.get("line") or "").strip(),
+                entries[0][1],
+            ) or _line_fulfills_beat(
+                str(row.get("speaker") or "").strip(),
+                str(row.get("line") or "").strip(),
+                entries[-1][1],
+            ):
+                protected.add(i)
+    changed = False
+    while True:
+        mom_idx = [
+            i
+            for i, row in enumerate(dlg)
+            if str(row.get("speaker") or "").strip() == "妈妈"
+        ]
+        if len(mom_idx) <= budget:
+            break
+        removable = [
+            i
+            for i in mom_idx
+            if i not in protected
+            and not _N_DIALOGUE_QUESTION_ASK.search(str(dlg[i].get("line") or ""))
+        ]
+        if not removable:
+            break
+        dlg.pop(removable[len(removable) // 2])
+        changed = True
+    if not changed:
+        return story, False
+    out = copy.deepcopy(story)
+    out["dialogue"] = dlg
+    return out, True
 
 
 def apply_n_ask_beat_local_patch(

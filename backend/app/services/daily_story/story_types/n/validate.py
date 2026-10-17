@@ -8,7 +8,10 @@ from app.services.daily_story.story_types import parse_story_type_code
 
 # 抽象不变量：追问链 + 因果自洽 + 愣住；禁单篇香蕉/苹果词表
 RE_CHALLENGE = re.compile(r"如果|还是|先吃|先|喜欢谁|怎么办|你说")
-RE_WHY = re.compile(r"为什么|为啥|怎么想|怎么会|哪有")
+# 追问＝接着问下去，不限于字面「为什么」（追问意思/出处同样算追问拍）
+RE_WHY = re.compile(
+    r"为什么|为啥|怎么想|怎么会|哪有|什么意思|啥意思|谁教|哪来|哪儿来|凭什么"
+)
 RE_SOLEMN_REASON = re.compile(r"因为|所以|这样就能|等到|长成|就能|有籽")
 RE_STUN_CLOSE = re.compile(
     r"那……|那\.\.\.|行吧|服了|说不出|无语|愣住|哭笑|"

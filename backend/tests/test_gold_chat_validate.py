@@ -1980,6 +1980,40 @@ def test_n_viewer_trim_drops_out_of_cast_kid():
     assert not [r for r in out2["dialogue"] if r["speaker"] == "灿灿"]
 
 
+def test_n_ask_patch_never_overflows_parent_budget():
+    """N 补追问拍不得让家长句数超契约；超了要收掉中间填充句。"""
+    from app.services.gold_story.gold_chat.patch import (
+        apply_n_contract_local_patches,
+    )
+
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：宣布记下每句话"},
+        {"beat": 2, "speaker": "昭昭", "intent": "报出一串编的名字"},
+        {"beat": 3, "speaker": "昭昭", "intent": "说出自造怪词「banana」，解释成街上工作"},
+        {"beat": 4, "speaker": "妈妈", "intent": "震惊追问：你说的这些到底什么意思"},
+        {"beat": 5, "speaker": "妈妈", "intent": "深吸一口气，决定以后说话先打草稿"},
+    ]
+    story = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "我拿本子记你说的每句话，看你骗不骗人。"},
+            {"speaker": "昭昭", "line": "我要找个好人来，叫小明、小红、小刚呀。"},
+            {"speaker": "昭昭", "line": "banana，就是你在街上工作别人给钱吧。"},
+            {"speaker": "妈妈", "line": "因为他说得通，所以我才一本正经。"},
+            {"speaker": "妈妈", "line": "你这孩子真是的。"},
+            {"speaker": "妈妈", "line": "我以后说话得先打草稿，不然接不住。"},
+        ],
+    }
+    out, _notes = apply_n_contract_local_patches(
+        story, beat_chain=chain, dialogue_seed=[], mom_lines_max=3
+    )
+    mom_lines = [r for r in out["dialogue"] if r["speaker"] == "妈妈"]
+    assert len(mom_lines) <= 3, f"家长句数超契约: {mom_lines}"
+    assert any(
+        "什么意思" in r["line"] or "谁教" in r["line"] for r in mom_lines
+    ), "追问拍须由家长落地"
+
+
 def test_parent_budget_zero_still_blocks_parent_lines():
     """反例：契约要求家长预算为 0 时，家长说话仍须被拦（别把兜底放宽成不设限）。"""
     from app.services.gold_story.gold_chat.validate import validate_chat_hard
