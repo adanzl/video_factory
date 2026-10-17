@@ -1725,6 +1725,34 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         or row.get("title")
         or ""
     ).strip()
+    # ── 契约复用 ───────────────────────────────────────────────────────
+    # 重转时若库内已有一份**归一化后的合格契约**，直接复用，别再从零重建。
+    # 每次重建都会让 LLM 重新决定「几个拍、妈妈几句、怪词是什么」，
+    # 拍数在 3↔5 之间漂移、词槽从 waka 退回 banana，于是同一份稿子
+    # 时好时坏（#87 实测：连续 30+ 轮里契约每次都不一样）。
+    # 只有契约缺失/校验不过时才重建。
+    existing_contract = payload.get("scene_contract")
+    if isinstance(existing_contract, dict) and existing_contract.get("beat_chain"):
+        from app.services.gold_story.scene import validate_scene
+
+        if not validate_scene(existing_contract):
+            logger.info(
+                "[GOLD_CHAT] reuse existing scene_contract id=%s beats=%s mom_max=%s",
+                row.get("id"),
+                len(existing_contract.get("beat_chain") or []),
+                existing_contract.get("mom_lines_max"),
+            )
+            existing_seed = payload.get("dialogue_seed")
+            out = dict(row)
+            out["payload"] = dict(payload)
+            out["payload"]["scene_contract"] = existing_contract
+            if not isinstance(existing_seed, list) or not existing_seed:
+                from app.services.gold_story.scene import seed_from_beat_chain
+
+                out["payload"]["dialogue_seed"] = seed_from_beat_chain(
+                    existing_contract.get("beat_chain") or []
+                )
+            return out
     try:
         h3a = build_scene_contract(
             story_raw=story_raw,
