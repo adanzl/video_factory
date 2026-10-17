@@ -29,13 +29,17 @@ from app.services.gold_story.scene import (
     normalize_dialogue_setting_for_contract,
     normalize_fact_attributions,
     normalize_k_parent_intervention_budget,
+    normalize_n_two_hander_contract,
+    normalize_parent_beat_ownership,
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
     normalize_scene_dialogue_beats,
     realign_parent_identity_rows,
+    realign_seed_viewer_questions_to_asker,
     remap_story_raw_scores_for_prompt,
     sanitize_banned_literals,
     seed_from_beat_chain,
+    trim_n_decorative_kid_seed,
     trim_terminal_no_reply_rows,
     validate_scene,
 )
@@ -224,7 +228,9 @@ _H2_USER = """视频标题：{title}
 - 口播/科普/教程：source_type=tutorial，须改写 **一个姐弟可拍现场**，禁「第几招」清单
 - 角色允许昭昭、灿灿、妈妈、爸爸；陌生小孩须映射或删除。
   源稿是爸爸且妈妈代不了时保留爸爸；能用妈妈就用妈妈；
-  单孩+家长须拆成昭昭+灿灿双孩戏份，家长仍配角。
+  单孩+家长须拆成昭昭+灿灿双孩戏份，家长仍配角
+  （**例外**：机制是「孩子一本正经胡说 → 家长追问破功」这类**家长当追问方**
+  的 N 型稿，保持**家长 × 单孩两人手**，勿硬拆第二个孩子）
   不得保留站外真名/小男孩/对方等在 story_raw
 - 优先选热评里 **整段复述**（有然后/最后/被问/嘴硬）的完整微型故事
 - has_complete_arc=false 或 extract_confidence<0.5 即失败
@@ -476,6 +482,23 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 - mom_lines_max：H 类 2–3；K 类 1–2（旁观叹气）；
   源稿/beat 含家长戏核拍（责备/反问/定责/破功/旁观）时 **至少 2**（I/E/Q 等同类）；
   纯姐弟无家长戏才可 0；最多 3；禁止为压两人强行写 0
+- **拍位所有权（硬）**：每个 beat 的 intent **只写该 beat speaker 自己的**
+  动作与意图；别人（尤其家长）的追问/反应不得塞进当前拍；
+  属于家长的动作必须另开一拍（或并入该家长的拍）。
+  例：beat「昭昭 蹦出英文词」不得写成「昭昭 蹦出英文词，妈妈追问意思」，
+  应拆成「昭昭 蹦出英文词」+「妈妈 追问：那是什么意思」两拍
+- **intent 须写成可出口的话要点（硬）**：每拍 intent 用「谁说哪类话」的功能短句，
+  不要写成行为叙述（勿写「一本正经胡言乱语，冒出一串名字」这类旁白式概括，
+  应写「昭昭 一本正经报出一串编的名字」或直接写话要点）；
+  连续两拍同 speaker 时，各拍的话要点必须能拆成两句不同台词
+- **机制词槽须字面化（硬）**：若机制靠一个词撑起（怪词/外语词/自造词，
+  合规上须替换的成人词也算），该拍 intent **必须写出替换后的字面词**，
+  用「」包裹并归属于说它的孩子，例如
+  「说出一个自造怪词「banana」，解释成在街上工作别人给钱」；
+  禁止只写「蹦出一个词」而不给字面词，也禁止把该词塞进家长拍
+- **家长拍数 ≤ mom_lines_max**：家长的功能拍（立规 / 追问 / 收束破功）
+  超出额度时**合并**（追问意思与追问出处并成同一追问拍），
+  **禁止**把家长追问外派给场上旁观孩子
 - 禁止 characters/beat_chain 出现陌生小孩/对方；爸爸仅源稿需要且妈妈代不了时保留
 - tutorial 源禁止 mechanism/conflict 含「四招/方法/应该/告诉」
 """
@@ -561,7 +584,13 @@ story_raw（背景，勿照抄）：
 - **迁龄**：intent/setting 中的分数、学段须已是小学 7–10 岁可拍量级；
   禁止沿用中考/高考不可能总分
 - 爸爸 seed 宜更少（能用妈不用爸）；单孩+家长须拆成双孩 intent
+  （**例外**：家长承担追问拍、孩子一本正经胡说的 N 型稿，保持**家长 × 单孩
+  两人手**，不要给旁观手足写 intent；她要出场也只能是笑/看/复述一句，
+  **禁**写她的追问 intent）
 - 单条 intent ≤18 字；总 seed ≥4 条
+- **机制词槽（硬）**：scene_contract 里声明了字面词槽（如自造怪词「banana」）时，
+  说这个词的孩子 intent **必须带上该字面词**，且排在他给出解释的 intent **之前**；
+  禁止把词槽并进解释句，也禁止让家长替他报出这个词
 """
 
 
@@ -845,6 +874,14 @@ def build_scene_contract(
         )
         data = apply_parent_role_budget(data, h3=h3)
         data, _k_parent_notes = normalize_k_parent_intervention_budget(data)
+        # 拍位所有权：家长动作不得塞在孩子拍里；家长追问拍不得超额度（超额合并）
+        data, _owner_notes = normalize_parent_beat_ownership(data)
+        if _owner_notes:
+            logger.info("H3a beat ownership normalize=%s", _owner_notes[:4])
+        # N + 家长当追问方：单孩源不拆双孩，装饰性旁观角色退出角色表
+        data, _n_two_notes = normalize_n_two_hander_contract(data)
+        if _n_two_notes:
+            logger.info("H3a N two-hander normalize=%s", _n_two_notes[:4])
         data, _dialogue_notes = normalize_scene_dialogue_beats(data)
         data, _turns_notes = normalize_beat_min_turns(data)
         if _turns_notes:
@@ -981,6 +1018,17 @@ def build_dialogue_seed(
         seed,
         characters=contract.get("characters") or [],
     )
+    # N 类家长当追问方：不补第二孩（两人手），避免旁观接管追问稀释破功
+    seed, _two_hander_notes = trim_n_decorative_kid_seed(seed, contract=contract)
+    if _two_hander_notes:
+        logger.info("H3b N two-hander seed=%s", _two_hander_notes[:3])
+    # N 类：追问拍只归立规方，旁观孩子的追问 seed 改派，别让扩写把立规方架空
+    seed, _n_asker_notes = realign_seed_viewer_questions_to_asker(
+        seed,
+        contract=contract,
+    )
+    if _n_asker_notes:
+        logger.info("H3b N viewer question realign=%s", _n_asker_notes[:4])
     seed, _silent_seed_notes2 = trim_terminal_no_reply_rows(seed)
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])

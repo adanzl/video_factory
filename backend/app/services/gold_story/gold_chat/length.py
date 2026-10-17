@@ -399,6 +399,11 @@ _N_NATURAL_MID_TEMPLATES: tuple[tuple[str, str], ...] = (
     ("所以你刚才不是随口乱说的？", "不是，我就是按自己的想法认真说的。"),
     ("你怎么还能一本正经继续解释？", "因为我觉得前面那个理由就是能说通。"),
 )
+# N：家长额度已满时的补字对——旁观手足只做反应式帮腔，**不得**代问关键追问
+_N_VIEWER_ECHO_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("反正我就这么说，你信不信都行。", "哈哈，妈你记下来没，他这是越说越像真的！"),
+    ("我说完了，你自己想吧。", "哎哟，这一本正经的劲儿我可学不来。"),
+)
 # O：字数不够只插「死磕过程 / 资源溜走」实义对，禁止复用抬杠反应库
 _O_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
     (
@@ -886,6 +891,7 @@ def _n_natural_mid_pairs(
     *,
     beat_chain: list[Any] | None = None,
     dialogue_seed: list[Any] | None = None,
+    parent_lines_max: int | None = None,
 ) -> tuple[
     tuple[tuple[tuple[str, str], tuple[str, str]], ...],
     int | None,
@@ -1015,8 +1021,38 @@ def _n_natural_mid_pairs(
                 reason_idx = bumped
 
     listener = "灿灿" if reasoner == "昭昭" else "昭昭"
+    # 契约把追问拍交给家长时，补位问句必须由该家长说：旁观手足代问会把
+    # 立规方挤成「立规 + 收束」两端，N 的破功主体换人（#87 实测）。
+    contract_asker = ""
+    for raw in (beat_chain or []):
+        if not isinstance(raw, dict):
+            continue
+        speaker = str(raw.get("speaker") or "").strip()
+        intent = str(raw.get("intent") or raw.get("beat") or "")
+        if speaker in {"妈妈", "爸爸"} and re.search(
+            r"追问|质问|设问|发问|问：|问什么|谁教", intent
+        ):
+            contract_asker = speaker
+            break
+    asker = contract_asker or listener
+    if contract_asker and parent_lines_max is not None:
+        # 家长额度已满时不得再用「家长追问拍」补字：改补旁观帮腔对，
+        # 也不要把追问挤给旁观手足（那正是要拦的转手）。
+        used = sum(
+            1
+            for item in dialogue
+            if isinstance(item, dict)
+            and str(item.get("speaker") or "").strip() == contract_asker
+            and str(item.get("line") or "").strip()
+        )
+        if used + 1 > max(0, int(parent_lines_max)):
+            echo_pairs = tuple(
+                ((reasoner, spoken), (listener, echo))
+                for spoken, echo in _N_VIEWER_ECHO_TEMPLATES
+            )
+            return echo_pairs, max(2, len(dialogue) - 2)
     pairs = tuple(
-        ((listener, ask), (reasoner, answer))
+        ((asker, ask), (reasoner, answer))
         for ask, answer in _N_NATURAL_MID_TEMPLATES
     )
     known_lines = {
@@ -1267,6 +1303,18 @@ def _gold_chat_pad_indices(
         and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
     ] or list(range(len(dialogue)))
     st = str(story_type or "").strip().upper()
+    if st == "N":
+        # N 两人手只有 1 个孩子可垫，字数易近失；按「可垫句位」放开到家长句
+        # （只加词不加句，不碰末句收束），专家口径：mom_lines_max 约束句数不是字数。
+        adult_ok = [
+            i
+            for i, item in enumerate(dialogue)
+            if isinstance(item, dict)
+            and str(item.get("speaker") or "") in {"妈妈", "爸爸"}
+            and i < len(dialogue) - 1
+        ]
+        merged = sorted({*indices, *adult_ok})
+        return merged or indices
     if st == "O":
         punch = _o_goal_punch_index(dialogue)
         if punch >= 0:
@@ -1500,6 +1548,11 @@ def _boost_short_with_mid_lines(
             dialogue,
             beat_chain=beat_chain,
             dialogue_seed=dialogue_seed,
+            parent_lines_max=(
+                story.get("_gold_chat_mom_lines_max")
+                if story.get("_gold_chat_mom_lines_max") is not None
+                else story.get("_gold_chat_dad_lines_max")
+            ),
         )
         if st == "N"
         else ((), None)

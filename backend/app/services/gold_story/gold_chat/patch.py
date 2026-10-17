@@ -2655,6 +2655,492 @@ def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str
     return "别磨蹭了，先把该做的事做完！"
 
 
+def apply_n_viewer_trim_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """N + 家长当追问方：旁观手足不得占场（禁代问、句数 ≤2）。
+
+    抽象不变量（专家口径）：旁观者的功能只能是笑/看/复述/补刀。
+    这里删掉旁观者的**追问句**（关键追问功能），并把残余句数收到 2 句内；
+    承担机制的孩子与家长的句子不动。
+    """
+    import copy
+
+    from app.services.gold_story.gold_chat.validate import (
+        _N_DIALOGUE_QUESTION_ASK,
+        _RE_N_ASK_BEAT_INTENT,
+        _beat_chain_entries,
+        _n_ask_beat_functions,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, False
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    entries = _beat_chain_entries(chain)
+    if not entries:
+        return story, False
+    parent_ask_entries = [
+        entry
+        for _beat_no, entry in entries
+        if str(entry.get("speaker") or "").strip() in {"妈妈", "爸爸"}
+        and _RE_N_ASK_BEAT_INTENT.search(
+            str(entry.get("intent") or entry.get("beat") or "")
+        )
+    ]
+    if not parent_ask_entries:
+        return story, False
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if len(dlg) < 4:
+        return story, False
+    speakers = [
+        str(row.get("speaker") or "").strip() for row in dlg
+    ]
+    kids = [name for name in dict.fromkeys(speakers) if name in {"昭昭", "灿灿"}]
+    if len(kids) < 2:
+        return story, False
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
+
+    chain_speakers = {
+        str(entry.get("speaker") or "").strip()
+        for _beat_no, entry in entries
+        if str(entry.get("speaker") or "").strip()
+    }
+    # 契约角色表里没有的孩子（两人手稿里被模型擅自加回来的旁观）整段删除
+    out_of_cast = [
+        i
+        for i, row in enumerate(dlg)
+        if str(row.get("speaker") or "").strip() in {"昭昭", "灿灿"}
+        and str(row.get("speaker") or "").strip() not in chain_speakers
+    ]
+    if out_of_cast and len(dlg) - len(out_of_cast) >= CHAT_LINE_COUNT_MIN:
+        out = copy.deepcopy(story)
+        out["dialogue"] = [row for i, row in enumerate(dlg) if i not in set(out_of_cast)]
+        return out, True
+    # 机制孩子 = 说怪词/解释/自洽的一方（占 line 多的一方；同数则按首现顺序）
+    counts = {name: speakers.count(name) for name in kids}
+    mechanism_kid = max(kids, key=lambda name: counts[name])
+    viewer = next((name for name in kids if name != mechanism_kid), "")
+    if not viewer:
+        return story, False
+    viewer_idx = [i for i, name in enumerate(speakers) if name == viewer]
+    if not viewer_idx:
+        return story, False
+    remove: set[int] = set()
+    for i in viewer_idx:
+        line = str(dlg[i].get("line") or "").strip()
+        funcs = _n_ask_beat_functions(
+            " ".join(
+                str(e.get("intent") or "") for e in parent_ask_entries
+            )
+        )
+        if not _N_DIALOGUE_QUESTION_ASK.search(line):
+            continue
+        if "generic" in funcs or re.search(r"什么|啥|怎么|谁|哪", line):
+            remove.add(i)
+    kept_viewer = [i for i in viewer_idx if i not in remove]
+    for i in reversed(kept_viewer[2:]):
+        remove.add(i)
+    if not remove:
+        return story, False
+    out = copy.deepcopy(story)
+    out["dialogue"] = [row for i, row in enumerate(dlg) if i not in remove]
+    return out, True
+
+
+def apply_n_token_slot_local_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """N：契约声明的机制词槽没被说出口时，把该词缀回机制孩子的那句台词。
+
+    只搬契约自己的字面词（不新造词、不新增剧情）；优先缀在落该拍的孩子句首，
+    其次缀在机制孩子的第一句。句长超限时不改，交给上层重掷。
+    """
+    import copy
+
+    from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        _line_fulfills_beat,
+        _n_declared_word_token,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, False
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    entries = _beat_chain_entries(chain)
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if not entries or not dlg:
+        return story, False
+    body_lower = "\n".join(str(row.get("line") or "") for row in dlg).lower()
+    for _beat_no, entry in entries:
+        intent = str(entry.get("intent") or entry.get("beat") or "")
+        token = _n_declared_word_token(intent)
+        if not token or token.lower() in body_lower:
+            continue
+        speaker = str(entry.get("speaker") or "").strip()
+        if not speaker:
+            continue
+        target = next(
+            (
+                i
+                for i, row in enumerate(dlg)
+                if str(row.get("speaker") or "").strip() == speaker
+                and _line_fulfills_beat(
+                    speaker, str(row.get("line") or "").strip(), entry
+                )
+            ),
+            -1,
+        )
+        if target < 0:
+            target = next(
+                (
+                    i
+                    for i, row in enumerate(dlg)
+                    if str(row.get("speaker") or "").strip() == speaker
+                ),
+                -1,
+            )
+        if target < 0:
+            continue
+        line = str(dlg[target].get("line") or "").strip()
+        merged = f"{token}，{line}" if line else f"{token}！"
+        if len(merged) > CHAT_MAX_LINE_CHARS:
+            continue
+        dlg[target] = {"speaker": speaker, "line": merged}
+        out = copy.deepcopy(story)
+        out["dialogue"] = dlg
+        return out, True
+    return story, False
+
+
+def apply_n_seed_coverage_local_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
+    mom_lines_max: int | None = None,
+    max_inserts: int = 5,
+) -> tuple[dict[str, Any], bool]:
+    """N：正文不足字数时，用 H3b seed 的**未落地拍**按拍序补回。
+
+    seed 是已生成契约，搬它不新增剧情事实、也不占 LLM 修稿预算；
+    比模板垫字更贴机制链。家长额度按 mom_lines_max 控制，
+    收束拍之后不再补（N 收束后禁续写）。
+    """
+    import copy
+
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MIN,
+        dialogue_total_chars,
+    )
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        _line_fulfills_beat,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, False
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    entries = _beat_chain_entries(chain)
+    if not entries:
+        return story, False
+    seed = dialogue_seed
+    if not isinstance(seed, list):
+        return story, False
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if not dlg:
+        return story, False
+    from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+
+    mom_max = None if mom_lines_max is None else max(0, int(mom_lines_max))
+    inserts = 0
+    changed = False
+    for entry_index, (_beat_no, entry) in enumerate(entries):
+        if inserts >= max_inserts:
+            break
+        if dialogue_total_chars({"dialogue": dlg}) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        speaker = str(entry.get("speaker") or "").strip()
+        if not speaker:
+            continue
+        if any(
+            _line_fulfills_beat(
+                str(row.get("speaker") or "").strip(),
+                str(row.get("line") or "").strip(),
+                entry,
+            )
+            for row in dlg
+        ):
+            continue
+        if speaker in {"妈妈", "爸爸"} and mom_max is not None:
+            used = sum(
+                1 for row in dlg if str(row.get("speaker") or "").strip() == speaker
+            )
+            if used >= mom_max:
+                continue
+        candidates: list[Any] = []
+        if 0 <= entry_index < len(seed):
+            candidates.append(seed[entry_index])
+        candidates.extend(
+            item for i, item in enumerate(seed[: len(entries)]) if i != entry_index
+        )
+        line = ""
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("speaker") or "").strip() != speaker:
+                continue
+            raw = str(item.get("line") or "").strip()
+            if not raw:
+                raw = str(item.get("intent") or "").strip()
+                parts = re.split(r"[：:]", raw, maxsplit=1)
+                raw = parts[1].strip() if len(parts) == 2 else raw
+            if not raw:
+                continue
+            if not raw.endswith(("。", "！", "？", "!", "?", "~")):
+                raw += "。"
+            if len(raw) > CHAT_MAX_LINE_CHARS:
+                continue
+            from app.services.gold_story.scene import looks_like_narration_line
+
+            if looks_like_narration_line(raw):
+                continue
+            from app.services.gold_story.gold_chat.length import (
+                _pad_line_is_duplicate,
+            )
+
+            if _pad_line_is_duplicate(
+                raw, [str(row.get("line") or "") for row in dlg]
+            ):
+                continue
+            line = raw
+            break
+        if not line:
+            continue
+        anchor = -1
+        for prev_index in range(entry_index - 1, -1, -1):
+            prev_entry = entries[prev_index][1]
+            for i, row in enumerate(dlg):
+                if _line_fulfills_beat(
+                    str(row.get("speaker") or "").strip(),
+                    str(row.get("line") or "").strip(),
+                    prev_entry,
+                ):
+                    anchor = max(anchor, i)
+            if anchor >= 0:
+                break
+        insert_at = len(dlg) - 1 if anchor < 0 else anchor + 1
+        insert_at = max(0, min(len(dlg), insert_at))
+        dlg.insert(insert_at, {"speaker": speaker, "line": line})
+        inserts += 1
+        changed = True
+    if not changed:
+        return story, False
+    out = copy.deepcopy(story)
+    out["dialogue"] = dlg
+    return out, True
+
+
+def apply_n_contract_local_patches(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
+    mom_lines_max: int | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """N 类确定性契约补丁：收旁观占场 → 补机制词槽 → 补家长关键追问拍。"""
+    notes: list[str] = []
+    data, viewer_trimmed = apply_n_viewer_trim_patch(story, beat_chain=beat_chain)
+    if viewer_trimmed:
+        notes.append("N旁观手足占场已收束")
+    data, token_patched = apply_n_token_slot_local_patch(
+        data,
+        beat_chain=beat_chain,
+    )
+    if token_patched:
+        notes.append("N机制词槽已补回")
+    data, ask_patched = apply_n_ask_beat_local_patch(
+        data,
+        beat_chain=beat_chain,
+        dialogue_seed=dialogue_seed,
+        mom_lines_max=mom_lines_max,
+    )
+    if ask_patched:
+        notes.append("N关键追问拍已补回")
+    data, coverage_patched = apply_n_seed_coverage_local_patch(
+        data,
+        beat_chain=beat_chain,
+        dialogue_seed=dialogue_seed,
+        mom_lines_max=mom_lines_max,
+    )
+    if coverage_patched:
+        notes.append("N未落地拍按拍序补回")
+    if not notes:
+        return story, []
+    return data, notes
+
+
+def apply_n_ask_beat_local_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
+    mom_lines_max: int | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """N：关键追问拍未落地时，用 H3b seed 的同槽问句确定性补回。
+
+    只搬已生成契约里的 seed 行，不新增剧情事实，也不占用 LLM 修稿预算。
+    家长额度已满时改为**替换**家长的非问句填充行（如扩写灌进来的
+    「因为他说得通，所以我才一本正经」），保持家长句数不超契约；
+    首尾两拍（立规 / 收束）不参与替换。
+    """
+    import copy
+
+    from app.services.gold_story.gold_chat.validate import (
+        _N_DIALOGUE_QUESTION_ASK,
+        _RE_N_ASK_BEAT_INTENT,
+        _beat_chain_entries,
+        _line_fulfills_beat,
+        _n_ask_beat_landed,
+        resolve_story_beat_chain,
+    )
+
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    if len(chain) < 2:
+        return story, False
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, False
+    entries = _beat_chain_entries(chain)
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if not dlg:
+        return story, False
+    seed = dialogue_seed
+    if not isinstance(seed, list):
+        embedded = story.get("dialogue_seed")
+        seed = embedded if isinstance(embedded, list) else []
+    if not seed:
+        return story, False
+    mom_max = None if mom_lines_max is None else max(0, int(mom_lines_max))
+    changed = False
+
+    def _seed_ask_line(entry_index: int, speaker: str) -> str:
+        candidates: list[Any] = []
+        if 0 <= entry_index < len(seed):
+            candidates.append(seed[entry_index])
+        candidates.extend(
+            item
+            for i, item in enumerate(seed[: len(entries)])
+            if i != entry_index
+        )
+        from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("speaker") or "").strip() != speaker:
+                continue
+            raw = str(item.get("line") or "").strip()
+            if not raw:
+                raw = str(item.get("intent") or "").strip()
+                parts = re.split(r"[：:]", raw, maxsplit=1)
+                raw = parts[1].strip() if len(parts) == 2 else raw
+            if not raw or not _N_DIALOGUE_QUESTION_ASK.search(raw):
+                continue
+            if not raw.endswith(("。", "！", "？", "!", "?", "~")):
+                raw += "？"
+            if len(raw) > CHAT_MAX_LINE_CHARS:
+                continue
+            from app.services.gold_story.scene import looks_like_narration_line
+
+            if looks_like_narration_line(raw):
+                continue
+            return raw
+        return ""
+
+    for entry_index, (beat_no, entry) in enumerate(entries):
+        if not _RE_N_ASK_BEAT_INTENT.search(
+            str(entry.get("intent") or entry.get("beat") or "")
+        ):
+            continue
+        speaker = str(entry.get("speaker") or "").strip()
+        if not speaker:
+            continue
+        if _n_ask_beat_landed(
+            [r for r in dlg if isinstance(r, dict)], speaker, entry
+        ):
+            continue
+        ask_line = _seed_ask_line(entry_index, speaker)
+        if not ask_line:
+            continue
+        # 落点：紧跟前一拍已落地的台词；找不到就放在收束前。
+        anchor = -1
+        for prev_index in range(entry_index - 1, -1, -1):
+            prev_entry = entries[prev_index][1]
+            for i, row in enumerate(dlg):
+                if _line_fulfills_beat(
+                    str(row.get("speaker") or "").strip(),
+                    str(row.get("line") or "").strip(),
+                    prev_entry,
+                ):
+                    anchor = max(anchor, i)
+            if anchor >= 0:
+                break
+        insert_at = len(dlg) - 1 if anchor < 0 else anchor + 1
+        insert_at = max(0, min(len(dlg), insert_at))
+        if speaker in {"妈妈", "爸爸"} and mom_max is not None:
+            mom_n = sum(
+                1 for item in dlg if str(item.get("speaker") or "").strip() == speaker
+            )
+            if mom_n >= mom_max:
+                # 额度已满：替换家长的非问句填充行（跳过首尾两拍）
+                target = -1
+                for i in range(max(1, insert_at - 1), len(dlg) - 1):
+                    row = dlg[i]
+                    if str(row.get("speaker") or "").strip() != speaker:
+                        continue
+                    line = str(row.get("line") or "").strip()
+                    if not line or _N_DIALOGUE_QUESTION_ASK.search(line):
+                        continue
+                    target = i
+                    break
+                if target < 0:
+                    continue
+                dlg[target] = {"speaker": speaker, "line": ask_line}
+                changed = True
+                continue
+        dlg.insert(insert_at, {"speaker": speaker, "line": ask_line})
+        changed = True
+
+    if not changed:
+        return story, False
+    out = copy.deepcopy(story)
+    out["dialogue"] = dlg
+    return out, True
+
+
 def apply_opening_causality_local_patch(
     story: dict[str, Any],
     *,

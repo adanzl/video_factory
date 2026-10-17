@@ -998,6 +998,26 @@ def run_gold_chat_final_acceptance(
 
     chat = apply_final_acceptance_local_patches(chat, row)
 
+    # 终检前最后一道确定性契约补丁（幂等）：重掷/LLM 修稿可能把旁观角色、
+    # 词槽或追问归属写回去，终检只审补丁后的文本（专家口径：自动管线补丁，
+    # 不是手改导出稿）。
+    if str(chat.get("story_type") or "").strip().upper() == "N":
+        from app.services.gold_story.gold_chat.patch import (
+            apply_n_contract_local_patches,
+        )
+
+        chat, pre_final_notes = apply_n_contract_local_patches(
+            chat,
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
+            mom_lines_max=mom_max,
+        )
+        if pre_final_notes:
+            logger.info(
+                "gold_chat pre-final N contract patch: %s",
+                "；".join(pre_final_notes),
+            )
+
     opening_block = collect_opening_causality_issues(
         chat,
         beat_chain,

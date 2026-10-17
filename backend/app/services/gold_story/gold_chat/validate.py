@@ -88,6 +88,9 @@ STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
         "保真-发起方倒置",
         "保真-垫字过密",
         "保真-seed角色",
+        "保真-N家长追问拍",
+        "保真-N收束归属",
+        "保真-N机制词槽",
     }
 )
 
@@ -1411,6 +1414,234 @@ def apply_n_beat_role_speaker_align(
     return out, changed
 
 
+_RE_N_ASK_BEAT_INTENT = re.compile(
+    r"追问|质问|设问|发问|问：|问什么|谁教|问出处|问来历"
+)
+_N_DIALOGUE_STUN = re.compile(
+    r"那……|那\.\.\.|行吧|服了|说不出|无语|愣|哭笑不得|接不住|被噎|算了|放弃"
+)
+# 追问句判定（只用于「追问主线在谁身上」的计数，不判断内容对错）
+_N_DIALOGUE_QUESTION_ASK = re.compile(
+    r"[？?]|为什么|为啥|凭什么|怎么(?:会|知道|想)|是不是|要不要|"
+    r"能不能|该不该|哪(?:儿|里|来|个|些)"
+)
+
+
+def _n_ask_beat_functions(intent: str) -> set[str]:
+    """把「追问」拍归一到关键追问功能集合 + 泛问。
+
+    - ``origin``：追问出处（谁教的/哪来的/出处/来历）
+    - ``meaning``：追问意思（什么意思/什么词/怎么解释）
+    - ``generic``：其余设问/追问
+
+    只看问什么，不绑剧情词：同一功能可由任意说法的问句落地。
+    合并拍（追问意思 + 追问出处合成一拍）会同时带回两个功能，
+    此时任一功能落地即算该拍落地。
+    """
+    text = str(intent or "")
+    funcs: set[str] = set()
+    if re.search(r"谁教|谁说的|哪儿来|哪里来|哪来|出处|来历|跟谁学", text):
+        funcs.add("origin")
+    if re.search(r"意思|什么词|什么叫|怎么解释|含义|啥意思", text):
+        funcs.add("meaning")
+    return funcs or {"generic"}
+
+
+def _n_question_lines_by(
+    rows: list[dict[str, Any]],
+    speaker: str,
+) -> list[str]:
+    return [
+        str(row.get("line") or "").strip()
+        for row in rows
+        if str(row.get("speaker") or "").strip() == speaker
+        and _N_DIALOGUE_QUESTION_ASK.search(str(row.get("line") or ""))
+    ]
+
+
+def _n_ask_beat_landed(
+    rows: list[dict[str, Any]],
+    speaker: str,
+    entry: dict[str, Any],
+) -> bool:
+    """关键追问拍是否由指定说话人落地。
+
+    两条判据取并集，避免叙述式 intent 因锚词不可匹配而误报缺拍：
+    1. 追问功能判据（不绑剧情词）：该说话人确有一句问句，且落在该拍的
+       origin（追问出处）/ meaning（追问意思）功能上；
+    2. 既有拍落地判据（``_line_fulfills_beat``）：该说话人的任一句能对上该拍。
+    """
+    lines = [
+        str(row.get("line") or "").strip()
+        for row in rows
+        if str(row.get("speaker") or "").strip() == speaker
+        and str(row.get("line") or "").strip()
+    ]
+    if not lines:
+        return False
+    intent = str(entry.get("intent") or entry.get("beat") or "")
+    funcs = _n_ask_beat_functions(intent)
+    ask_lines = _n_question_lines_by(rows, speaker)
+    if ask_lines:
+        if "origin" in funcs and any(
+            re.search(r"谁|哪|跟谁", line) for line in ask_lines
+        ):
+            return True
+        if "meaning" in funcs and any(
+            re.search(r"什么|啥|怎么|什么意思", line) for line in ask_lines
+        ):
+            return True
+        if "generic" in funcs:
+            return True
+    return any(_line_fulfills_beat(speaker, line, entry) for line in lines)
+
+
+_RE_N_TOKEN_BEAT_INTENT = re.compile(
+    r"蹦出|冒出|说出|说了个|一个新词|怪词|英文词|外语词|自造词|生造词|单词"
+)
+_RE_ASCII_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9'\-_]{1,15}")
+
+
+def _n_declared_word_token(intent: str) -> str:
+    """从「词槽拍」的 intent 里取契约声明的字面词（合规替换后的锚点）。
+
+    只认 ASCII 词（如 banana），避免把 intent 里常见的中文引述短语当成词槽；
+    intent 未声明字面词时返回空串，调用方即跳过该不变量（不猜、不补词）。
+    """
+    text = str(intent or "")
+    if not _RE_N_TOKEN_BEAT_INTENT.search(text):
+        return ""
+    quoted = re.search(r"[「『“\"]([A-Za-z][A-Za-z0-9'\-_]{1,15})[」』”\"]", text)
+    if quoted:
+        return quoted.group(1)
+    plain = _RE_ASCII_TOKEN.search(text)
+    return plain.group(0) if plain else ""
+
+
+def _append_n_contract_role_issues(
+    rows: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+    *,
+    beat_chain: list[Any] | None,
+) -> None:
+    """N 类：关键追问拍须由契约追问方落地，收束的愣住拍也归同一方。
+
+    抽象不变量（不数问句总量、不绑剧情词）：
+    - 机制链里的关键追问拍（追问出处 / 追问意思）必须由契约指定的追问方说；
+      由旁观孩子的问句接管即为转手——立规方被挤成「立规 + 收束」两端，
+      N 的「立规方被整懵」机制随之失效（#87 实测）。
+    - 旁观孩子的反问只算帮腔；它一旦落在关键追问功能上即打回。
+    - 收束窗的愣住/接不住拍须由追问方说；旁观孩子说会把破功主体换人。
+    """
+    entries = _beat_chain_entries(list(beat_chain or []))
+    if len(entries) < 2:
+        return
+    ask_beats = [
+        (beat_no, entry)
+        for beat_no, entry in entries
+        if _RE_N_ASK_BEAT_INTENT.search(
+            str(entry.get("intent") or entry.get("beat") or "")
+        )
+    ]
+    if not ask_beats:
+        return
+
+    for beat_no, entry in ask_beats:
+        speaker = str(entry.get("speaker") or "").strip()
+        if not speaker:
+            continue
+        if _n_ask_beat_landed(rows, speaker, entry):
+            continue
+        others = [
+            str(row.get("speaker") or "").strip()
+            for row in rows
+            if str(row.get("speaker") or "").strip() not in {"", speaker}
+            and _n_ask_beat_landed(rows, str(row.get("speaker") or "").strip(), entry)
+            and _N_DIALOGUE_QUESTION_ASK.search(str(row.get("line") or ""))
+        ]
+        taken_by = "、".join(dict.fromkeys(others)) or "无人"
+        issues.append(
+            _issue(
+                lines=[],
+                kind="保真-N家长追问拍",
+                desc=(
+                    f"{_beat_summary(entry, beat_no)}未由{speaker}落地"
+                    f"（实际由{taken_by}问）"
+                ),
+                fix=(
+                    f"该追问改由{speaker}当场问出口；旁观孩子只做帮腔/看热闹，"
+                    "禁代问关键追问（追问意思、追问出处）"
+                ),
+            ),
+        )
+
+    # 机制词槽字面保真：契约声明的怪词必须在正文里真被说出口
+    body = "\n".join(str(row.get("line") or "") for row in rows)
+    body_lower = body.lower()
+    for beat_no, entry in entries:
+        token = _n_declared_word_token(
+            str(entry.get("intent") or entry.get("beat") or "")
+        )
+        if not token or token.lower() in body_lower:
+            continue
+        speaker = str(entry.get("speaker") or "").strip() or "?"
+        issues.append(
+            _issue(
+                lines=[],
+                kind="保真-N机制词槽",
+                desc=(
+                    f"{_beat_summary(entry, beat_no)}声明的词槽「{token}」"
+                    "在正文里没有出现，笑点机制被降级"
+                ),
+                fix=(
+                    f"由{speaker}真把「{token}」说出口（先出词，再让追问方问它"
+                    "是什么意思），合规替换只换词、不删槽、不改因果顺序"
+                ),
+            ),
+        )
+
+    askers = {
+        str(entry.get("speaker") or "").strip()
+        for beat_no, entry in entries
+        if _N_BEAT_QUESTION_INTENT.search(
+            str(entry.get("intent") or entry.get("beat") or "")
+        )
+    }
+    askers.discard("")
+    if len(askers) != 1:
+        return
+    asker = next(iter(askers))
+    # 只对「立规方是家长」的稿查收束归属：家长问、孩子答，破功方必是家长。
+    # 孩子当设问方时（如 #89 昭昭问妈妈），收束常由家长旁观感叹，属正常收场。
+    if asker not in {"妈妈", "爸爸"}:
+        return
+    tail = [row for row in rows if str(row.get("line") or "").strip()][-4:]
+    if not tail:
+        return
+    stun_rows = [
+        row
+        for row in tail
+        if _N_DIALOGUE_STUN.search(str(row.get("line") or "").strip())
+        and not str(row.get("line") or "").strip().endswith(("？", "?"))
+    ]
+    if not stun_rows:
+        return
+    if any(str(row.get("speaker") or "").strip() == asker for row in stun_rows):
+        return
+    speaker = str(stun_rows[0].get("speaker") or "").strip() or "?"
+    issues.append(
+        _issue(
+            lines=[],
+            kind="保真-N收束归属",
+            desc=(
+                f"收束的愣住/接不住拍由{speaker}说，追问方是{asker}，"
+                "破功主体被换人"
+            ),
+            fix=f"把收束的愣住/接不住句改由{asker}说，再收场",
+        ),
+    )
+
+
 def _append_seed_speaker_issues(
     rows: list[dict[str, Any]],
     issues: list[dict[str, Any]],
@@ -1656,6 +1887,9 @@ def collect_align_issues(
     else:
         # 全类型拦扩写灌尾巴；B/F 仍走上面含好不好的完整版
         _append_pad_filler_issues(rows, issues, max_tail_filler=99)
+
+    if st == "N":
+        _append_n_contract_role_issues(rows, issues, beat_chain=beat_chain)
 
     _append_seed_speaker_issues(rows, issues, dialogue_seed=dialogue_seed)
 
@@ -2450,9 +2684,11 @@ def validate_chat_hard(
         CHAT_LINE_COUNT_MIN,
         CHAT_MAX_LINE_CHARS,
         MOM_BANNED_IN_LINE,
+        MOM_PREACH_JIAO_RE,
         TUTORIAL_RESIDUE,
         chat_line_cap,
         collect_voice_errors,
+        parent_line_looks_preachy,
     )
     from app.services.daily_story.prompts import (
         DAILY_STORY_BODY_CHARS_MAX,
@@ -2491,12 +2727,12 @@ def validate_chat_hard(
         if sp == "妈妈":
             mom_count += 1
             parent_count += 1
-            if any(w in line for w in MOM_BANNED_IN_LINE):
+            if parent_line_looks_preachy(line):
                 errors.append(f"dialogue[{i}] 妈妈台词像说教")
         if sp == "爸爸":
             dad_count += 1
             parent_count += 1
-            if any(w in line for w in MOM_BANNED_IN_LINE):
+            if parent_line_looks_preachy(line):
                 errors.append(f"dialogue[{i}] 爸爸台词像说教")
 
     mom_over = mom_count > mom_max

@@ -32,7 +32,17 @@ TUTORIAL_RESIDUE = (
     "告诉",
     "教会",
 )
-MOM_BANNED_IN_LINE = ("应该", "告诉", "记住", "教")
+MOM_BANNED_IN_LINE = ("应该", "告诉", "记住")
+# 「教」只在家长**说教**时算违规；追问出处（谁教你的/哪学的）是机制拍，不算说教
+MOM_PREACH_JIAO_RE = re.compile(r"(?<![谁哪])教")
+
+
+def parent_line_looks_preachy(line: str) -> bool:
+    """家长台词是否像说教（含「教」的说教用法，放过追问出处）。"""
+    text = str(line or "")
+    if any(word in text for word in MOM_BANNED_IN_LINE):
+        return True
+    return bool(MOM_PREACH_JIAO_RE.search(text))
 
 # 身份自称归属：孩子标签（逐字稿/seed 都可能用）与家长标签。
 # 只认「身份自称」这一强排他谓词，不碰任何剧情/行为词。
@@ -166,6 +176,251 @@ def is_retrospective_topic_object(value: str) -> bool:
     """object 是过去事件/回忆话题，而不是当前场景要持有的实体物。"""
     text = str(value or "").strip()
     return bool(text and _RETROSPECTIVE_TOPIC_RE.search(text))
+
+
+_PARENT_SPEAKER_SET = frozenset({"妈妈", "爸爸"})
+# 家长拍的对话动词（越权塞进孩子拍时会暴露）
+_PARENT_ASK_CLAUSE_RE = re.compile(
+    r"(?:妈妈|爸爸)[^，,。；;]{0,6}?(?:追问|质问|反问|问|震惊追问|插问)"
+    r"[^，,。；;]{0,24}"
+)
+
+
+def normalize_parent_beat_ownership(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """拍位所有权：家长动作不得塞在孩子拍里；家长追问拍数不得超额度。
+
+    两条机读不变量（抽象，不绑剧情词）：
+    - 每拍 intent 只写该拍 speaker 自己的动作。孩子拍里混入「妈妈追问…」
+      这类越权动作时剥离，并归并到相邻的家长拍（无相邻家长拍则丢弃该短语，
+      由提示词保证下次不写）。
+    - 家长功能拍数不得超过 ``mom_lines_max``：超额的追问拍按功能合并成
+      一拍（追问意思 + 追问出处并入同一问句），不把追问外派给旁观孩子。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return contract, []
+    rows: list[dict[str, Any]] = []
+    notes: list[str] = []
+    changed = False
+    orphan_clauses: list[tuple[int, str]] = []
+    for row in chain:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        speaker = str(item.get("speaker") or "").strip()
+        intent = str(item.get("intent") or "").strip()
+        if speaker and speaker not in _PARENT_SPEAKER_SET and intent:
+            clauses = _PARENT_ASK_CLAUSE_RE.findall(intent)
+            if clauses:
+                stripped = intent
+                for clause in clauses:
+                    stripped = stripped.replace(clause, "")
+                    orphan_clauses.append((len(rows), clause.strip("，,。；;")))
+                    notes.append(f"剥离越权家长动作:{clause.strip('，,。；;')}")
+                stripped = re.sub(r"[，,]{2,}", "，", stripped).strip("，,。；; ")
+                item["intent"] = stripped or intent
+                changed = True
+        rows.append(item)
+    if not rows:
+        return contract, []
+    # 剥离出的家长动作归并到**最近的**家长拍（后优先、再前），笑点链不被删除
+    for orphan_idx, clause in orphan_clauses:
+        parent_idx = [
+            idx
+            for idx, row in enumerate(rows)
+            if str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        ]
+        if not parent_idx:
+            break
+        after = [idx for idx in parent_idx if idx > orphan_idx]
+        host_idx = after[0] if after else parent_idx[-1]
+        host = rows[host_idx]
+        host_intent = str(host.get("intent") or "").strip()
+        if clause and clause not in host_intent:
+            host["intent"] = f"{host_intent}、{clause}".strip("、")
+            notes.append(f"归并家长动作到第{host_idx + 1}拍")
+    try:
+        mom_max = max(0, int(contract.get("mom_lines_max") or 0))
+    except (TypeError, ValueError):
+        mom_max = 0
+    # 预算按「家长拍总数」算（含收束拍）：超额的追问拍按功能合并成一拍
+    parent_rows = [
+        (idx, row)
+        for idx, row in enumerate(rows)
+        if str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        and str(row.get("intent") or "").strip()
+    ]
+    if mom_max and len(parent_rows) > mom_max:
+        merge_rows = [
+            (idx, row)
+            for idx, row in parent_rows
+            if re.search(r"追问|质问|反问|设问|发问", str(row.get("intent") or ""))
+        ]
+        need_drop = len(parent_rows) - mom_max
+        while need_drop > 0 and len(merge_rows) > 1:
+            # 合并到**最后一拍追问**（而非第一拍）：家长的合并追问落在孩子的
+            # 怪词/自洽之后，开场因果（孩子拍先落地）不被推到家长问句后面。
+            host_idx, host = merge_rows[-1]
+            donor_idx, donor = merge_rows[0]
+            host_intent = str(host.get("intent") or "").strip()
+            donor_intent = str(donor.get("intent") or "").strip()
+            host["intent"] = f"{host_intent}、{donor_intent}"[:120]
+            rows.pop(donor_idx)
+            notes.append(f"合并家长追问拍:{donor_intent[:16]}→{host_intent[:16]}")
+            changed = True
+            parent_rows = [
+                (idx, row)
+                for idx, row in enumerate(rows)
+                if str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+                and str(row.get("intent") or "").strip()
+            ]
+            merge_rows = [
+                (idx, row)
+                for idx, row in parent_rows
+                if re.search(r"追问|质问|反问|设问|发问", str(row.get("intent") or ""))
+            ]
+            need_drop = len(parent_rows) - mom_max
+    if not changed:
+        return contract, []
+    out = dict(contract)
+    normalized: list[Any] = []
+    for idx, row in enumerate(rows, 1):
+        item = dict(row)
+        if "beat" in item:
+            item["beat"] = idx
+        normalized.append(item)
+    out["beat_chain"] = normalized
+    return out, notes
+
+
+_N_MECHANISM_ASK_RE = re.compile(r"追问|质问|反问|设问|发问|问：|问")
+
+
+def normalize_n_two_hander_contract(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """N 类：家长当追问方时，单孩源不拆双孩，第三人只留机制内戏份。
+
+    N 的机制是「孩子一本正经胡说 → 立规方破功」，是成人与孩子的对手戏；
+    被硬拆进来的第二个孩子不承担机制，实测会反复接管追问、稀释破功
+    （#87：契约只给她 1 拍旁观，扩写却给她 4–7 句且大半是问句）。
+
+    只在「story_type=N + 家长承担追问拍 + 另一个孩子只有 ≤1 拍
+    （纯装饰/旁观，不承担机制）」时生效：删掉该装饰拍并从角色表移除，
+    输出两人手（家长 × 单孩）。承担机制的第三个角色不动。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    if str(contract.get("story_type") or "").strip().upper() != "N":
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return contract, []
+    parent_asks = any(
+        isinstance(row, dict)
+        and str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        and _N_MECHANISM_ASK_RE.search(str(row.get("intent") or row.get("beat") or ""))
+        for row in chain
+    )
+    if not parent_asks:
+        return contract, []
+    kids: dict[str, int] = {}
+    for row in chain:
+        if not isinstance(row, dict):
+            continue
+        speaker = str(row.get("speaker") or "").strip()
+        if speaker in _PARENT_SPEAKER_SET or not speaker:
+            continue
+        kids[speaker] = kids.get(speaker, 0) + 1
+    if len(kids) < 2:
+        return contract, []
+    decor = [name for name, count in kids.items() if count <= 1]
+    if not decor:
+        return contract, []
+    keep = [
+        row
+        for row in chain
+        if not (
+            isinstance(row, dict)
+            and str(row.get("speaker") or "").strip() in decor
+        )
+    ]
+    if len(keep) < max(BEAT_CHAIN_MIN, 4):
+        return contract, []
+    out = dict(contract)
+    normalized: list[Any] = []
+    for idx, row in enumerate(keep, 1):
+        item = dict(row)
+        if "beat" in item:
+            item["beat"] = idx
+        normalized.append(item)
+    out["beat_chain"] = normalized
+    chars = [
+        str(c).strip()
+        for c in (contract.get("characters") or [])
+        if str(c).strip() and str(c).strip() not in decor
+    ]
+    if chars:
+        out["characters"] = chars
+    notes = [f"N家长追问方: 移除装饰旁观角色:{'、'.join(decor)}"]
+    return out, notes
+
+
+def trim_n_decorative_kid_seed(
+    seed: list[Any] | None,
+    *,
+    contract: dict[str, Any] | None = None,
+) -> tuple[list[Any], list[str]]:
+    """N + 家长当追问方：删掉 seed 里纯装饰的旁观手足行。
+
+    契约已由 ``normalize_n_two_hander_contract`` 收敛成两人手；H3b 若仍按
+    「单孩源拆双孩」写出旁观行，这里再删一次，保证扩写看不到第三个提问者。
+    只删「另一位孩子只剩 ≤1 行」的装饰行，承担机制的行不动。
+    """
+    rows = [r for r in (seed or []) if isinstance(r, dict)]
+    if not rows:
+        return list(seed or []), []
+    sc = contract if isinstance(contract, dict) else {}
+    if str(sc.get("story_type") or "").strip().upper() != "N":
+        return list(seed or []), []
+    parent_asks = any(
+        isinstance(row, dict)
+        and str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        and _N_MECHANISM_ASK_RE.search(str(row.get("intent") or row.get("beat") or ""))
+        for row in (sc.get("beat_chain") or [])
+    )
+    if not parent_asks:
+        return list(seed or []), []
+    parents = {
+        str(r.get("speaker") or "").strip()
+        for r in rows
+        if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+    }
+    if len(parents) != 1:
+        return list(seed or []), []
+    counts: dict[str, int] = {}
+    for r in rows:
+        sp = str(r.get("speaker") or "").strip()
+        if sp and sp not in _PARENT_SPEAKER_SET:
+            counts[sp] = counts.get(sp, 0) + 1
+    if len(counts) < 2:
+        return list(seed or []), []
+    decor = {name for name, n in counts.items() if n <= 1}
+    if not decor or len(set(counts) - decor) != 1:
+        return list(seed or []), []
+    out = [
+        r
+        for r in (seed or [])
+        if not (
+            isinstance(r, dict)
+            and str(r.get("speaker") or "").strip() in decor
+        )
+    ]
+    return out, [f"N两人手: 删除装饰旁观 seed:{'、'.join(sorted(decor))}"]
 
 
 def normalize_retrospective_topic_contract(
@@ -1220,7 +1475,11 @@ _NARRATION_LINE_RE = re.compile(
     r"气全消了|"
     r"撞见(?:她|他)|"
     # 姿态分镜词（宜改口语「一起走/一起吃」，勿当 line 开头旁白）
-    r"勾肩搭背|肩并肩|手挽手|挽着手臂"
+    r"勾肩搭背|肩并肩|手挽手|挽着手臂|"
+    # 叙述式起句：角色不可能自述「（突然）蹦出/冒出个 X」，只能当场说出内容
+    r"(?:突然)?(?:蹦出|冒出)(?:了)?(?:个|一句|一串|一个)[^。！？]{0,12}|"
+    # 身体动作叙述混入对白（与「叹气/愣住」同族，须改成当场反应）
+    r"(?:^|[，,])(?:我)?(?:深?吸了?一?口气)[^。！？]{0,12}"
 )
 _RE_ACTION_CHUNK = re.compile(
     r"又?补[一二两三四五两1-5]?下|按在地上|"
@@ -1330,6 +1589,29 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
     m_ask = re.search(r"(?:问|开口)[:：]\s*(.+)$", raw)
     if m_ask:
         tail = m_ask.group(1).strip("，。！？ ")
+        if tail and not looks_like_narration_line(tail):
+            if tail[-1] not in "？！。!?":
+                tail = f"{tail}！"
+            return tail
+    # 「（突然）蹦出个 X，内容」：叙述动词剥掉，只留当场说出的内容
+    m_blurt = re.match(
+        r"^(?:突然)?(?:蹦出|冒出)(?:了)?(?:个|一句|一串|一个)"
+        r"[^，,。！？]{0,12}[，,]\s*(.+)$",
+        raw,
+    )
+    if m_blurt:
+        tail = m_blurt.group(1).strip("，。！？ ")
+        if tail and not looks_like_narration_line(tail):
+            if tail[-1] not in "？！。!?":
+                tail = f"{tail}！"
+            return tail
+    # 「我深吸一口气，内容」：剥掉身体动作，只留当场说出的话
+    m_breath = re.match(
+        r"^(?:我)?(?:深?吸了?一?口气)[，,]\s*(.+)$",
+        raw,
+    )
+    if m_breath:
+        tail = m_breath.group(1).strip("，。！？ ")
         if tail and not looks_like_narration_line(tail):
             if tail[-1] not in "？！。!?":
                 tail = f"{tail}！"
@@ -1744,6 +2026,84 @@ def align_seed_two_kids_vs_parent(
         },
     )
     return out, [f"seed补同侧第二孩:{other}@{insert_at + 1}"]
+
+
+_N_SEED_ASK_INTENT = re.compile(
+    r"追问|质问|设问|发问|问：|问什么|为什么|为啥|凭什么|怎么(?:会|想|知道)"
+)
+_N_SEED_ANSWER_INTENT = re.compile(
+    r"回答|作答|解释|自洽|离谱|反驳|嘴硬|讲圆|理由|原因|补一句"
+)
+# 只旁观的孩子若在 seed 里承担这些意图，就会被扩写写成追问方
+_N_SEED_VIEWER_QUESTION = re.compile(
+    r"追问|质问|设问|发问|问：|问什么|为什么|为啥|凭什么|"
+    r"怎么(?:会|想|知道|回事)|是不是|要不要|能不能|"
+    r"哪(?:儿|里|来|个|些)?|谁(?:教|说|给|让)|什么(?:意思|名字|东西)"
+)
+
+
+def realign_seed_viewer_questions_to_asker(
+    seed: list[Any] | None,
+    *,
+    contract: dict[str, Any] | None = None,
+) -> tuple[list[Any], list[str]]:
+    """N：追问拍只归立规方，旁观孩子不得在骨架里代问。
+
+    契约里设问/追问的说话人唯一时，把**旁观孩子**（既非追问方也非回答方）
+    的追问类 seed 改派给追问方。旁观者只保留旁观反应（笑/看热闹/接一句
+    无关的）；否则扩写会把立规方挤成「立规 + 总结」两端，N 的
+    「立规方被整句整懵」机制随之失效（#87 实测）。
+
+    只改 speaker，不改 intent、不新增剧情；非 N 或追问方不唯一时原样返回。
+    """
+    rows = [r for r in (seed or []) if isinstance(r, dict)]
+    if not rows:
+        return list(seed or []), []
+    sc = contract if isinstance(contract, dict) else {}
+    if str(sc.get("story_type") or "").strip().upper() != "N":
+        return list(seed or []), []
+    chain = sc.get("beat_chain") or []
+    askers: set[str] = set()
+    answerers: set[str] = set()
+    for item in chain:
+        if not isinstance(item, dict):
+            continue
+        speaker = str(item.get("speaker") or "").strip()
+        if not speaker:
+            continue
+        intent = str(item.get("intent") or "")
+        if _N_SEED_ASK_INTENT.search(intent):
+            askers.add(speaker)
+        if _N_SEED_ANSWER_INTENT.search(intent):
+            answerers.add(speaker)
+    if len(askers) != 1:
+        return list(seed or []), []
+    asker = next(iter(askers))
+    if asker in answerers:
+        return list(seed or []), []
+    viewers = {
+        str(row.get("speaker") or "").strip()
+        for row in rows
+    } - askers - answerers
+    viewers = {v for v in viewers if v}
+    if not viewers:
+        return list(seed or []), []
+    out: list[Any] = []
+    notes: list[str] = []
+    for index, row in enumerate(seed or []):
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        speaker = str(row.get("speaker") or "").strip()
+        intent = str(row.get("intent") or "")
+        if speaker in viewers and _N_SEED_VIEWER_QUESTION.search(intent):
+            new_row = dict(row)
+            new_row["speaker"] = asker
+            out.append(new_row)
+            notes.append(f"seed旁观追问改派:{speaker}→{asker}@{index + 1}")
+            continue
+        out.append(row)
+    return out, notes
 
 
 def parent_identity_claim_target(text: str) -> str | None:

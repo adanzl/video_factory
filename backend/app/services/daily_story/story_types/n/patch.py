@@ -110,7 +110,11 @@ def patch_n_ensure_solemn_reason(story: dict) -> list[str]:
 
 
 def patch_n_promote_existing_reaction_to_stun(story: dict) -> list[str]:
-    """荒诞自洽后已有对方反应但缺愣住槽时，只显式化反应，不新增剧情。"""
+    """荒诞自洽后已有对方反应但缺愣住槽时，只显式化反应，不新增剧情。
+
+    优先挑**开场设问方**（N 的立规方）的反应：N 的破功主体是发问那一方，
+    把愣住槽标到旁观者身上会把破功换人（#87 实测）。
+    """
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return []
@@ -118,6 +122,14 @@ def patch_n_promote_existing_reaction_to_stun(story: dict) -> list[str]:
     if RE_STUN_CLOSE.search(body):
         return []
 
+    opening_speaker = next(
+        (
+            str(item.get("speaker") or "").strip()
+            for item in dialogue
+            if isinstance(item, dict) and str(item.get("line") or "").strip()
+        ),
+        "",
+    )
     reason_idxs = [
         i
         for i, item in enumerate(dialogue)
@@ -130,6 +142,7 @@ def patch_n_promote_existing_reaction_to_stun(story: dict) -> list[str]:
         reason_item = dialogue[reason_idx]
         reason_speaker = str(reason_item.get("speaker") or "").strip()
         candidates: list[tuple[int, str]] = []
+        asker_candidates: list[tuple[int, str]] = []
         for idx in range(reason_idx + 1, min(len(dialogue), reason_idx + 5)):
             item = dialogue[idx]
             if not isinstance(item, dict):
@@ -148,8 +161,11 @@ def patch_n_promote_existing_reaction_to_stun(story: dict) -> list[str]:
                 promoted = f"行吧，{line}"
             if len(promoted) <= DAILY_STORY_LINE_CHARS_MAX:
                 candidates.append((idx, promoted))
-        if candidates:
-            idx, promoted = candidates[-1]
+                if opening_speaker and speaker == opening_speaker:
+                    asker_candidates.append((idx, promoted))
+        chosen = asker_candidates[-1] if asker_candidates else (candidates[-1] if candidates else None)
+        if chosen is not None:
+            idx, promoted = chosen
             dialogue[idx]["line"] = promoted
             return [f"N自洽后显式化愣住反应第{idx + 1}句"]
     return []

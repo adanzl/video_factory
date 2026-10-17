@@ -858,6 +858,22 @@ def _prepare_chat_for_validate_after_local_length_close(
     dialogue_seed = payload.get("dialogue_seed") or []
     if not isinstance(dialogue_seed, list):
         dialogue_seed = []
+    if str(structure_type or "").strip().upper() == "N":
+        from app.services.gold_story.gold_chat.patch import (
+            apply_n_contract_local_patches,
+        )
+
+        data, n_ask_notes = apply_n_contract_local_patches(
+            data,
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
+            mom_lines_max=mom_lines_max,
+        )
+        if n_ask_notes:
+            logger.info(
+                "gold_chat N contract local patch before validate: %s",
+                "；".join(n_ask_notes),
+            )
     data, _ = _stabilize_local_length_candidate(
         data,
         structure_type=structure_type,

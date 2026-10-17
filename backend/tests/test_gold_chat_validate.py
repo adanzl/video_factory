@@ -1792,6 +1792,194 @@ def test_parent_budget_parity_between_validator_and_trimmer():
     assert dad_after >= 2, "裁句层把爸爸砍到 1 句，与校验层口径不一致"
 
 
+def test_n_viewer_trim_and_ask_patch_restore_contract_roles():
+    """N 本地补丁：旁观手足的代问被删，家长关键追问拍用 seed 补回。"""
+    from app.services.gold_story.gold_chat.patch import (
+        apply_n_ask_beat_local_patch,
+        apply_n_viewer_trim_patch,
+    )
+
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "宣布拿本子记录昭昭每句话，看他会不会骗人"},
+        {"beat": 2, "speaker": "昭昭", "intent": "一本正经报出一串编的名字"},
+        {"beat": 3, "speaker": "昭昭", "intent": "蹦出一个英文词，解释成在街上工作别人给钱"},
+        {"beat": 4, "speaker": "妈妈", "intent": "震惊追问谁教的，皱眉追问这些名字什么意思"},
+        {"beat": 5, "speaker": "昭昭", "intent": "淡定补一句苹果"},
+        {"beat": 6, "speaker": "灿灿", "intent": "在旁边笑得直拍腿"},
+        {"beat": 7, "speaker": "妈妈", "intent": "深吸一口气，决定以后说话先打草稿"},
+    ]
+    story = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "我拿本子记你说的每句话，看你骗不骗人。"},
+            {"speaker": "昭昭", "line": "我要找个好人来，叫小明、小红、小刚呀。"},
+            {"speaker": "灿灿", "line": "小明小红小刚，你从哪捡来的名字呀？"},
+            {"speaker": "昭昭", "line": "就是你在街上工作，别人给你钱吧。"},
+            {"speaker": "灿灿", "line": "我什么时候在街上工作啊？"},
+            {"speaker": "昭昭", "line": "苹果呢。"},
+            {"speaker": "灿灿", "line": "哈哈笑死我了，昭昭你太逗呢！"},
+            {"speaker": "昭昭", "line": "好人排队就能发苹果呢。"},
+            {"speaker": "妈妈", "line": "因为他说得通，所以我才一本正经。"},
+            {"speaker": "妈妈", "line": "我以后说话得先打草稿，不然接不住他。"},
+        ],
+    }
+    seed = [
+        {"speaker": "妈妈", "intent": "我拿本子记你说的每句话，看你骗不骗人"},
+        {"speaker": "昭昭", "intent": "我要找个好人来，叫小明、小红、小刚"},
+        {"speaker": "昭昭", "intent": "就是你在街上工作，别人给你钱"},
+        {"speaker": "妈妈", "intent": "谁教你的？这些名字什么意思"},
+        {"speaker": "昭昭", "intent": "苹果"},
+        {"speaker": "灿灿", "intent": "哈哈笑死我了"},
+        {"speaker": "妈妈", "intent": "我以后说话得先打草稿"},
+    ]
+
+    trimmed, viewer_changed = apply_n_viewer_trim_patch(story, beat_chain=chain)
+    assert viewer_changed
+    leftover = [
+        i for i, r in enumerate(trimmed["dialogue"]) if r["speaker"] == "灿灿"
+    ]
+    assert len(leftover) <= 2, "旁观手足 line 须收到 2 句内"
+    assert not any(
+        "？" in trimmed["dialogue"][i]["line"] or "?" in trimmed["dialogue"][i]["line"]
+        for i in leftover
+    ), "旁观手足不得代问关键追问"
+
+    patched, ask_changed = apply_n_ask_beat_local_patch(
+        trimmed, beat_chain=chain, dialogue_seed=seed, mom_lines_max=3
+    )
+    assert ask_changed
+    mom_lines = [r["line"] for r in patched["dialogue"] if r["speaker"] == "妈妈"]
+    assert len(mom_lines) <= 3, "家长句数不得超契约"
+    assert any("谁教" in line for line in mom_lines), "关键追问拍须由家长落地"
+    assert not any("因为他说得通" in line for line in mom_lines), (
+        "填充用的废话家长句应被替换掉"
+    )
+
+
+def test_n_mechanism_token_slot_literal_fidelity():
+    """N：契约声明的怪词没被说出口 → 报机制词槽；本地补丁把它缀回孩子台词。"""
+    from app.services.gold_story.gold_chat.patch import (
+        apply_n_token_slot_local_patch,
+    )
+    from app.services.gold_story.gold_chat.validate import (
+        collect_align_issues,
+        split_align_issues,
+    )
+
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：宣布记下每句话"},
+        {"beat": 2, "speaker": "昭昭", "intent": "说出自造怪词「banana」，解释成在街上工作别人给钱"},
+        {"beat": 3, "speaker": "妈妈", "intent": "震惊追问谁教的，那词什么意思"},
+    ]
+    dialogue = [
+        {"speaker": "妈妈", "line": "我拿本子记你说的每句话，看你骗不骗人。"},
+        {"speaker": "昭昭", "line": "就是你在街上工作，别人给你钱吧。"},
+        {"speaker": "妈妈", "line": "谁教你的？那词什么意思？"},
+    ]
+    story = {"story_type": "N", "dialogue": dialogue, "gold_beat_chain": chain}
+    issues = collect_align_issues(
+        story, structure_type="N", mechanism="M6", beat_chain=chain
+    )
+    blocking, _warn = split_align_issues(issues)
+    assert "保真-N机制词槽" in {i["kind"] for i in blocking}, blocking
+
+    patched, changed = apply_n_token_slot_local_patch(story, beat_chain=chain)
+    assert changed
+    assert any("banana" in r["line"] for r in patched["dialogue"])
+    fixed = {"story_type": "N", "dialogue": patched["dialogue"], "gold_beat_chain": chain}
+    blocking2, _warn2 = split_align_issues(
+        collect_align_issues(fixed, structure_type="N", mechanism="M6", beat_chain=chain)
+    )
+    assert "保真-N机制词槽" not in {i["kind"] for i in blocking2}, blocking2
+
+    # 契约没声明字面词（只写「蹦出一个英文词」）→ 不猜、不报
+    vague = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：宣布记下每句话"},
+        {"beat": 2, "speaker": "昭昭", "intent": "蹦出一个英文词，解释成在街上工作别人给钱"},
+        {"beat": 3, "speaker": "妈妈", "intent": "追问那词什么意思"},
+    ]
+    story2 = {"story_type": "N", "dialogue": dialogue, "gold_beat_chain": vague}
+    blocking3, _warn3 = split_align_issues(
+        collect_align_issues(story2, structure_type="N", mechanism="M6", beat_chain=vague)
+    )
+    assert "保真-N机制词槽" not in {i["kind"] for i in blocking3}
+
+
+def test_parent_preachy_gate_allows_origin_question():
+    """家长追问出处（谁教你的）不是说教；「教」只在说教用法下才算违规。"""
+    from app.services.gold_story.gold_chat.validate import validate_chat_hard
+    from app.services.gold_story.scene import parent_line_looks_preachy
+
+    assert not parent_line_looks_preachy("谁教你的？本子差点扔了，为啥这么编？")
+    assert not parent_line_looks_preachy("跟谁学的呀？")
+    assert parent_line_looks_preachy("我来教你写作业。")
+    assert parent_line_looks_preachy("你应该早点睡。")
+
+    story = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "我拿本子记你说的每句话，看你骗不骗人。"},
+            {"speaker": "昭昭", "line": "我要找个好人来，他叫阿布嘟嘟。"},
+            {"speaker": "昭昭", "line": "banana，就是街上工作别人给钱吧。"},
+            {"speaker": "妈妈", "line": "谁教你的？本子差点扔了，为啥这么编？"},
+            {"speaker": "昭昭", "line": "苹果呢，反正就是这样呀。"},
+            {"speaker": "妈妈", "line": "行吧，以后说话得先打草稿，不然接不住。"},
+        ],
+    }
+    errors = validate_chat_hard(story, mom_lines_max=3)
+    assert not [e for e in errors if "像说教" in e], errors
+
+
+def test_n_viewer_trim_drops_out_of_cast_kid():
+    """两人手契约里没有的孩子被模型写回时整段删除。"""
+    from app.services.gold_story.gold_chat.patch import apply_n_viewer_trim_patch
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
+
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：记录每句话"},
+        {"beat": 2, "speaker": "昭昭", "intent": "报出一串名字"},
+        {"beat": 3, "speaker": "妈妈", "intent": "追问谁教的"},
+        {"beat": 4, "speaker": "昭昭", "intent": "淡定补一句苹果"},
+        {"beat": 5, "speaker": "妈妈", "intent": "决定以后先打草稿"},
+    ]
+    dialogue = [
+        {"speaker": "妈妈", "line": "我拿本子记你说的每句话。"},
+        {"speaker": "昭昭", "line": "我要找个好人来，他叫阿布嘟嘟。"},
+        {"speaker": "灿灿", "line": "哈哈，昭昭你这也太能编了。"},
+        {"speaker": "昭昭", "line": "还有小美、大壮、铁蛋，都是好人。"},
+        {"speaker": "灿灿", "line": "你从哪听来的呀？"},
+        {"speaker": "昭昭", "line": "banana，就是街上工作别人给钱吧。"},
+        {"speaker": "灿灿", "line": "本子都写不下啦，哈哈。"},
+        {"speaker": "昭昭", "line": "好人来了就给banana，苹果也算。"},
+        {"speaker": "昭昭", "line": "他堵车了，因为铁蛋说先吃苹果。"},
+        {"speaker": "昭昭", "line": "那苹果呢，为啥还没拿来呢？"},
+        {"speaker": "妈妈", "line": "谁教你的？本子差点扔了。"},
+        {"speaker": "昭昭", "line": "反正就是这样呀，我没编。"},
+        {"speaker": "昭昭", "line": "明天他还带香蕉来呢。"},
+        {"speaker": "妈妈", "line": "行吧，以后说话得先打草稿。"},
+    ]
+    story = {"story_type": "N", "dialogue": dialogue}
+    out, changed = apply_n_viewer_trim_patch(story, beat_chain=chain)
+    assert changed
+    assert len(out["dialogue"]) >= CHAT_LINE_COUNT_MIN
+    leftover = [r for r in out["dialogue"] if r["speaker"] == "灿灿"]
+    assert len(leftover) <= 2, "契约外孩子最多留 1–2 句反应"
+    assert not [r for r in leftover if "？" in r["line"] or "?" in r["line"]], (
+        "契约外孩子不得代问"
+    )
+
+    # 句数够时整段删除（不占机制位）
+    long_dialogue = dialogue + [
+        {"speaker": "昭昭", "line": "好人就是排队领苹果的人呀。"},
+        {"speaker": "妈妈", "line": "那苹果是谁给你的？"},
+    ]
+    out2, changed2 = apply_n_viewer_trim_patch(
+        {"story_type": "N", "dialogue": long_dialogue}, beat_chain=chain
+    )
+    assert changed2
+    assert not [r for r in out2["dialogue"] if r["speaker"] == "灿灿"]
+
+
 def test_parent_budget_zero_still_blocks_parent_lines():
     """反例：契约要求家长预算为 0 时，家长说话仍须被拦（别把兜底放宽成不设限）。"""
     from app.services.gold_story.gold_chat.validate import validate_chat_hard
@@ -1853,3 +2041,98 @@ def test_length_card_blocks_excess_empty_replies():
     story = {"story_type": "K", "dialogue": dialogue}
     errors = validate_chat_hard(story, mom_lines_max=0)
     assert [e for e in errors if "空应答占行须≤3句，当前4（第" in e], errors
+def test_n_parent_ask_beat_must_land_on_parent():
+    """N：契约里家长的追问拍（追问出处）未由家长落地 → 结构性问题打回重掷。"""
+    from app.services.gold_story.gold_chat.validate import (
+        collect_align_issues,
+        split_align_issues,
+    )
+
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规：记下昭昭每句话"},
+        {"beat": 2, "speaker": "昭昭", "intent": "一本正经胡言乱语，冒出一串名字"},
+        {"beat": 3, "speaker": "妈妈", "intent": "追问意思：那是什么"},
+        {"beat": 4, "speaker": "昭昭", "intent": "解释：在街上工作别人给钱"},
+        {"beat": 5, "speaker": "妈妈", "intent": "震惊追问谁教的"},
+        {"beat": 6, "speaker": "灿灿", "intent": "在旁边笑得直拍腿"},
+    ]
+    with_ask = [
+        {"speaker": "妈妈", "line": "从今天起你说的每句话我都记下来，看你骗不骗人。"},
+        {"speaker": "昭昭", "line": "我要找个好人来，叫张三李四王五。"},
+        {"speaker": "妈妈", "line": "你再说一遍，那个词是什么意思？"},
+        {"speaker": "昭昭", "line": "就是你在街上工作，别人给你钱。"},
+        {"speaker": "妈妈", "line": "这些词谁教你的？你老实说。"},
+        {"speaker": "灿灿", "line": "哈哈哈，我眼泪都笑出来了。"},
+    ]
+    story = {"story_type": "N", "dialogue": with_ask, "gold_beat_chain": chain}
+    issues = collect_align_issues(
+        story,
+        structure_type="N",
+        mechanism="M6",
+        beat_chain=chain,
+    )
+    blocking, _warn = split_align_issues(issues)
+    assert not [
+        i for i in blocking if i["kind"] == "保真-N家长追问拍"
+    ], "家长真问过就不该报追问拍缺失"
+
+    # 把关问拍换成旁观孩子说 → 追问拍转手
+    hijacked = [
+        {"speaker": "妈妈", "line": "从今天起你说的每句话我都记下来，看你骗不骗人。"},
+        {"speaker": "昭昭", "line": "我要找个好人来，叫张三李四王五。"},
+        {"speaker": "灿灿", "line": "那个词是什么意思呀？你倒是说清楚。"},
+        {"speaker": "昭昭", "line": "就是你在街上工作，别人给你钱。"},
+        {"speaker": "灿灿", "line": "这些词谁教你的？"},
+        {"speaker": "昭昭", "line": "没人教，我自己想的。"},
+    ]
+    story2 = {"story_type": "N", "dialogue": hijacked, "gold_beat_chain": chain}
+    issues2 = collect_align_issues(
+        story2,
+        structure_type="N",
+        mechanism="M6",
+        beat_chain=chain,
+    )
+    blocking2, _warn2 = split_align_issues(issues2)
+    kinds2 = {i["kind"] for i in blocking2}
+    assert "保真-N家长追问拍" in kinds2, f"追问转手未被拦: {kinds2}"
+    # 结构性 → 走打回扩写，而不是留在精修打补丁
+    from app.services.gold_story.gold_chat.validate import should_reexpand
+
+    assert should_reexpand(blocking2)
+
+
+def test_n_closing_stun_must_be_spoken_by_asker():
+    """N：收束的愣住拍须由追问方（立规方）说；旁观孩子说则报归属问题。"""
+    from app.services.gold_story.gold_chat.validate import (
+        collect_align_issues,
+        split_align_issues,
+    )
+
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "设问考验：爸爸掉河里先吃啥"},
+        {"beat": 2, "speaker": "昭昭", "intent": "离谱秒答：吃血"},
+        {"beat": 3, "speaker": "妈妈", "intent": "追问为什么"},
+        {"beat": 4, "speaker": "昭昭", "intent": "一本正经解释自洽"},
+        {"beat": 5, "speaker": "妈妈", "intent": "愣住接不住"},
+    ]
+    viewer_close = [
+        {"speaker": "妈妈", "line": "爸爸掉河里了，你先吃西瓜还是先吃葡萄？"},
+        {"speaker": "昭昭", "line": "吃血呀。"},
+        {"speaker": "妈妈", "line": "为什么吃血？"},
+        {"speaker": "昭昭", "line": "因为血是红的，跟西瓜葡萄差不多嘛。"},
+        {"speaker": "灿灿", "line": "行吧，我竟接不上话。"},
+    ]
+    story = {"story_type": "N", "dialogue": viewer_close, "gold_beat_chain": chain}
+    issues = collect_align_issues(
+        story, structure_type="N", mechanism="M6", beat_chain=chain
+    )
+    blocking, _warn = split_align_issues(issues)
+    assert "保真-N收束归属" in {i["kind"] for i in blocking}, blocking
+
+    asker_close = [*viewer_close[:-1], {"speaker": "妈妈", "line": "行吧，我接不上话了。"}]
+    story2 = {"story_type": "N", "dialogue": asker_close, "gold_beat_chain": chain}
+    issues2 = collect_align_issues(
+        story2, structure_type="N", mechanism="M6", beat_chain=chain
+    )
+    blocking2, _warn2 = split_align_issues(issues2)
+    assert "保真-N收束归属" not in {i["kind"] for i in blocking2}, blocking2

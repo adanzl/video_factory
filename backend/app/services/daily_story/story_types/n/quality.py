@@ -8,8 +8,8 @@ from app.services.daily_story.story_types.n.validate import (
     RE_A_BACKFIRE,
     RE_CHALLENGE,
     RE_SOLEMN_REASON,
-    RE_STUN_CLOSE,
     RE_WHY,
+    stun_close_hit,
 )
 from app.services.daily_story.story_types.quality import (
     SHARED_PUNCH_SOFT,
@@ -23,24 +23,20 @@ def score_punchline(
     prev2: str,
     last: str,
 ) -> tuple[int, list[str]]:
-    del speakers
+    del speakers, prev2, last
     n = len(lines)
     if n < 4:
         return 0, []
 
     body = "".join(lines)
     tail6 = "".join(lines[-6:])
-    tail4 = "".join(lines[-4:])
-    close_blob = prev2 + last
     if RE_A_BACKFIRE.search(tail6):
         return 0, ["N收束含A式反噬标记"]
 
     has_q = bool(RE_CHALLENGE.search(body) and RE_WHY.search(body))
     has_reason = bool(RE_SOLEMN_REASON.search(body))
     # 愣住须落在收束窗（末四拍或末三句），勿把中段「接不住」当收束达标
-    has_stun_close = bool(
-        RE_STUN_CLOSE.search(close_blob) or RE_STUN_CLOSE.search(tail4)
-    )
+    has_stun_close = stun_close_hit(lines)
     if not (has_reason and (has_q or has_stun_close)):
         return 0, []
 

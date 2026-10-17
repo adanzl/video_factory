@@ -18,6 +18,8 @@ from app.services.gold_story.scene import (
     normalize_dialogue_setting_for_contract,
     normalize_fact_attributions,
     normalize_k_parent_intervention_budget,
+    normalize_n_two_hander_contract,
+    normalize_parent_beat_ownership,
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
     normalize_scene_dialogue_beats,
@@ -27,6 +29,7 @@ from app.services.gold_story.scene import (
     seed_from_beat_chain,
     sanitize_dialogue_meta_label_suffix,
     is_terminal_no_reply_intent,
+    trim_n_decorative_kid_seed,
     trim_terminal_no_reply_rows,
     validate_scene,
 )
@@ -1004,6 +1007,187 @@ def test_seed_gets_second_kid_on_same_side_for_parent_caught():
         characters=["灿灿"],
     )
     assert len(no_parent) == 2
+
+
+def test_n_seed_viewer_questions_realign_to_asker():
+    """N：追问拍只归立规方，旁观孩子的追问 seed 改派；非 N / 追问方不唯一不动。"""
+    from app.services.gold_story.scene import realign_seed_viewer_questions_to_asker
+
+    seed = [
+        {"speaker": "妈妈", "intent": "立规：记下昭昭每句话"},
+        {"speaker": "妈妈", "intent": "先考你，今天有没有骗过人"},
+        {"speaker": "昭昭", "intent": "我要找个好人来，叫张三李四王五"},
+        {"speaker": "昭昭", "intent": "他们都在街上工作，别人给钱"},
+        {"speaker": "灿灿", "intent": "这些名字哪来的"},
+        {"speaker": "灿灿", "intent": "笑得直拍腿"},
+    ]
+    contract = {
+        "story_type": "N",
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规：记录昭昭每句话"},
+            {"beat": 2, "speaker": "昭昭", "intent": "一本正经胡言乱语"},
+            {"beat": 3, "speaker": "妈妈", "intent": "追问这些名字哪来的"},
+            {"beat": 4, "speaker": "昭昭", "intent": "解释：在街上工作别人给钱"},
+            {"beat": 5, "speaker": "灿灿", "intent": "在旁边笑得直拍腿"},
+        ],
+    }
+    out, notes = realign_seed_viewer_questions_to_asker(seed, contract=contract)
+    moved = [r for r in out if r["intent"] == "这些名字哪来的"]
+    assert moved and moved[0]["speaker"] == "妈妈", "旁观孩子的追问须改派给立规方"
+    assert len(out) == len(seed), "只改 speaker，不增删行"
+    assert any("灿灿" in note for note in notes)
+    laugh = [r for r in out if r["intent"] == "笑得直拍腿"]
+    assert laugh and laugh[0]["speaker"] == "灿灿", "旁观反应保留在旁观者身上"
+
+    # 非 N 不动
+    other = realign_seed_viewer_questions_to_asker(
+        seed, contract={**contract, "story_type": "C"}
+    )
+    assert other[1] == []
+    assert [(r["speaker"], r["intent"]) for r in other[0]] == [
+        (r["speaker"], r["intent"]) for r in seed
+    ]
+
+    # 追问方不唯一时不猜
+    ambiguous = realign_seed_viewer_questions_to_asker(
+        seed,
+        contract={
+            "story_type": "N",
+            "beat_chain": [
+                {"beat": 1, "speaker": "妈妈", "intent": "追问为什么"},
+                {"beat": 2, "speaker": "灿灿", "intent": "追问凭什么"},
+                {"beat": 3, "speaker": "昭昭", "intent": "解释因为所以"},
+            ],
+        },
+    )
+    assert ambiguous[1] == []
+
+
+def test_narration_catches_self_reported_blurt():
+    """叙述式起句（角色自述「突然蹦出个 X」）须判旁白，并只留可说内容。"""
+    from app.services.gold_story.scene import (
+        looks_like_narration_line,
+        rewrite_narration_to_speech,
+    )
+
+    raw = "突然蹦出个英文词，叫 banana，就是苹果吧。"
+    assert looks_like_narration_line(raw)
+    spoken = rewrite_narration_to_speech(raw, speaker="昭昭")
+    assert not looks_like_narration_line(spoken)
+    assert "蹦出" not in spoken, "叙述动词须剥掉"
+    assert "banana" in spoken, "怪词是笑点本体，须保留"
+    assert not looks_like_narration_line("你别冒出这种话！")
+
+
+def test_parent_beat_ownership_strips_and_merges():
+    """拍位所有权：孩子拍里的家长动作剥离并归并到最近家长拍；超额追问合并。"""
+    contract = {
+        "story_type": "N",
+        "mom_lines_max": 3,
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规：记下昭昭每句话"},
+            {"beat": 2, "speaker": "昭昭", "intent": "胡说一串名字"},
+            {"beat": 3, "speaker": "昭昭", "intent": "蹦出英文词，妈妈追问意思，他给出荒诞解释"},
+            {"beat": 4, "speaker": "妈妈", "intent": "震惊追问谁教的"},
+            {"beat": 5, "speaker": "妈妈", "intent": "深吸一口气，决定以后说话先打草稿"},
+        ],
+    }
+    out, notes = normalize_parent_beat_ownership(contract)
+    assert any("剥离越权家长动作" in n for n in notes)
+    child_beat = [r for r in out["beat_chain"] if r["beat"] == 3][0]
+    assert "妈妈追问" not in child_beat["intent"], "孩子拍不得留家长动作"
+    parent_beat = [r for r in out["beat_chain"] if r["beat"] == 4][0]
+    assert "追问意思" in parent_beat["intent"], "剥离出的家长动作须归并到最近家长拍"
+    assert [r["beat"] for r in out["beat_chain"]] == [1, 2, 3, 4, 5], "拍号须重排连续"
+
+    # 家长拍数（4）超 mom_lines_max（3）→ 合并追问拍，不外派给孩子
+    over = {
+        "story_type": "N",
+        "mom_lines_max": 3,
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规：记下昭昭每句话"},
+            {"beat": 2, "speaker": "昭昭", "intent": "胡说一串名字"},
+            {"beat": 3, "speaker": "妈妈", "intent": "追问意思：那是什么词"},
+            {"beat": 4, "speaker": "妈妈", "intent": "追问谁教的"},
+            {"beat": 5, "speaker": "昭昭", "intent": "淡定补一句苹果"},
+            {"beat": 6, "speaker": "妈妈", "intent": "吸口气决定以后说话先打草稿"},
+        ],
+    }
+    merged, merged_notes = normalize_parent_beat_ownership(over)
+    assert any("合并家长追问拍" in n for n in merged_notes)
+    mom_beats = [
+        r for r in merged["beat_chain"] if r["speaker"] == "妈妈"
+    ]
+    assert len(mom_beats) == 3, "家长拍数须收到 mom_lines_max 以内"
+    ask = [r for r in mom_beats if "追问" in r["intent"]][0]
+    assert "谁教" in ask["intent"] and "什么词" in ask["intent"], "追问须合并同拍"
+    assert all(r["speaker"] != "灿灿" for r in merged["beat_chain"]), "不得外派给孩子"
+
+
+def test_n_two_hander_contract_drops_decorative_viewer():
+    """N + 家长当追问方：单孩源不拆双孩，装饰性旁观角色退出契约。"""
+    contract = {
+        "story_type": "N",
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "mom_lines_max": 3,
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "宣布拿本子记录昭昭每句话"},
+            {"beat": 2, "speaker": "昭昭", "intent": "一本正经报出一串编的名字"},
+            {"beat": 3, "speaker": "昭昭", "intent": "蹦出一个英文词，解释成在街上工作别人给钱"},
+            {"beat": 4, "speaker": "妈妈", "intent": "震惊追问谁教的"},
+            {"beat": 5, "speaker": "昭昭", "intent": "淡定补一句苹果"},
+            {"beat": 6, "speaker": "灿灿", "intent": "在旁边笑得直拍腿"},
+            {"beat": 7, "speaker": "妈妈", "intent": "深吸一口气，决定以后说话先打草稿"},
+        ],
+    }
+    out, notes = normalize_n_two_hander_contract(contract)
+    assert notes and "灿灿" in notes[0]
+    assert out["characters"] == ["妈妈", "昭昭"]
+    assert {r["speaker"] for r in out["beat_chain"]} == {"妈妈", "昭昭"}
+    assert [r["beat"] for r in out["beat_chain"]] == [1, 2, 3, 4, 5, 6]
+
+    # 孩子当追问方（非家长追问）→ 不动
+    child_ask = {
+        **contract,
+        "beat_chain": [
+            {"beat": 1, "speaker": "灿灿", "intent": "设问：爸爸掉河里先吃啥"},
+            {"beat": 2, "speaker": "昭昭", "intent": "离谱秒答"},
+            {"beat": 3, "speaker": "灿灿", "intent": "追问为什么"},
+            {"beat": 4, "speaker": "昭昭", "intent": "荒诞自洽"},
+            {"beat": 5, "speaker": "妈妈", "intent": "旁观感叹"},
+        ],
+    }
+    same, no_notes = normalize_n_two_hander_contract(child_ask)
+    assert not no_notes
+    assert same["characters"] == ["妈妈", "昭昭", "灿灿"]
+
+    # 非 N 不动
+    other, _ = normalize_n_two_hander_contract({**contract, "story_type": "C"})
+    assert other["characters"] == ["妈妈", "昭昭", "灿灿"]
+
+
+def test_n_decorative_kid_seed_trimmed_for_parent_asker():
+    """N + 家长追问方：seed 里仅 1 行的旁观手足被删，机制方保留。"""
+    seed = [
+        {"speaker": "妈妈", "intent": "我拿本子记你说的每句话"},
+        {"speaker": "昭昭", "intent": "我要找个好人来"},
+        {"speaker": "昭昭", "intent": "就是你在街上工作，别人给你钱"},
+        {"speaker": "妈妈", "intent": "谁教你的"},
+        {"speaker": "灿灿", "intent": "哈哈笑死我了"},
+        {"speaker": "妈妈", "intent": "我以后说话得先打草稿"},
+    ]
+    contract = {
+        "story_type": "N",
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规"},
+            {"beat": 2, "speaker": "昭昭", "intent": "胡说"},
+            {"beat": 3, "speaker": "妈妈", "intent": "追问谁教的"},
+        ],
+    }
+    out, notes = trim_n_decorative_kid_seed(seed, contract=contract)
+    assert notes and "灿灿" in notes[0]
+    assert all(r["speaker"] != "灿灿" for r in out)
+    assert len(out) == len(seed) - 1
 
 
 def test_e_mid_pairs_support_single_kid_plus_parent():

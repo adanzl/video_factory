@@ -613,8 +613,10 @@ def test_n_post_align_221_stabilizer_uses_contract_context():
     # 补位落在妈妈追问和昭昭已有回答之后，不能切断 beat2→beat3 的开口因果。
     assert closed["dialogue"][2]["speaker"] == "妈妈"
     assert closed["dialogue"][3]["speaker"] == "昭昭"
-    assert closed["dialogue"][4]["speaker"] == "灿灿"
+    # 契约把追问拍交给妈妈：补位的问句必须由妈妈问，旁观手足不得代问
+    assert closed["dialogue"][4]["speaker"] == "妈妈"
     assert "照这个道理认真想" in closed["dialogue"][4]["line"]
+    assert closed["dialogue"][5]["speaker"] == "昭昭"
 
 
 def test_n_natural_mid_pairs_skips_when_parent_qa_in_closing_tail():

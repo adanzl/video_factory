@@ -226,6 +226,22 @@ def _stabilize_refine_candidate(
     )
     if opening_patched:
         logger.info("gold_chat refine local opening causality patch")
+    if str(structure_type or "").strip().upper() == "N":
+        from app.services.gold_story.gold_chat.patch import (
+            apply_n_contract_local_patches,
+        )
+
+        data, n_ask_notes = apply_n_contract_local_patches(
+            data,
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
+            mom_lines_max=mom_lines_max,
+        )
+        if n_ask_notes:
+            logger.info(
+                "gold_chat refine local N contract patch: %s",
+                "；".join(n_ask_notes),
+            )
     data = _stabilize_n_contract_candidate(
         data,
         structure_type=structure_type,

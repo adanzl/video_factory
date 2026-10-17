@@ -102,3 +102,57 @@ def test_n_mid_stun_then_soft_tail_still_penalizes_limp_close():
     reasons = quality.get("reasons") or []
     assert any("无破功软收" in str(r) for r in reasons)
     assert not any("类型收束软尾（已达标）" in str(r) for r in reasons)
+
+
+def test_n_stun_close_only_counts_closing_window():
+    """收束判据唯一：中段追问里的语气词不算愣住，末四句才算。"""
+    from app.services.daily_story.story_types.n.validate import stun_close_hit
+
+    mid_only = [
+        "行吧，那苹果呢？",
+        "他们都在街上工作，别人给钱。",
+        "行，以后我说话得先打草稿。",
+    ]
+    assert not stun_close_hit(mid_only), "中段/疑问句里的「行吧」不算收束"
+
+    closing = [
+        "他们收钱是因为要买苹果吃。",
+        "突然蹦出个英文词，叫 banana。",
+        "行吧，你俩这接龙我接不住。",
+    ]
+    assert stun_close_hit(closing)
+
+
+def test_n_cross_check_quality_and_humor_agree_on_stun():
+    """同一稿结构维与好笑维的愣住判词不得一有一无（#87 判词矛盾回归）。"""
+    from app.services.daily_story.story_types.n.humor import (
+        collect_n_humor_issues,
+        score_funniness_tail,
+    )
+    from app.services.daily_story.story_types.n.quality import score_punchline
+
+    lines = [
+        "从今天起你说的每句话我都记下来，看你骗不骗人。",
+        "没有，我要找个好人来，叫张三李四王五吧。",
+        "完了完了，那赵六钱七孙八呢？",
+        "他们都在街上工作，别人给钱就帮忙干活呢。",
+        "行，那谁给钱呀？你倒是说清楚啊。",
+        "他们收钱是因为要买苹果吃，很正经的呀。",
+        "行吧，那苹果呢？你拿出来看看呀。",
+        "突然蹦出个英文词，叫 banana，就是苹果吧。",
+        "你再说一遍，banana 是什么？为什么叫这个？",
+        "没人教，我自己想的，苹果就是 banana呢。",
+        "你还真是照这个道理认真想的？",
+        "当然，我刚才就是这么认真回答的。",
+        "哈哈哈昭昭你太厉害了，我眼泪都笑出来了。",
+        "行，以后我说话得先打草稿。",
+    ]
+    _bonus, punch_details = score_punchline(lines, ["妈妈"] * len(lines), "", lines[-1])
+    _pts, humor_pros = score_funniness_tail(lines)
+    issues = collect_n_humor_issues(lines)
+
+    assert "愣住收束" not in punch_details
+    assert "缺愣住落点" in punch_details
+    assert "愣住收束" not in humor_pros, "好笑维不得再把中段「行吧」当收束"
+    assert "N缺愣住收束" in issues
+    assert not any("愣住" in x and "缺" not in x for x in humor_pros)
