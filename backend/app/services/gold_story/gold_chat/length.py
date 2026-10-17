@@ -386,6 +386,9 @@ _K_GOLD_CHAT_PAD_TAILS = ("啊", "吧", "呀")
 
 
 _C_SAFE_PAD_TAILS = ("啊", "吧")  # 单语气词；禁叠成了呢了呀
+# N：两人手只有 1 个孩子可垫，字数易近失；只补不改语义的短尾/称呼
+_N_SAFE_NATURAL_EXPAND: tuple[str, ...] = ("，真的", "，你信不信", "，就这样")
+_N_PARENT_SAFE_TAILS: tuple[str, ...] = ("，你说呢", "，真的")
 # 禁「现在/立刻/马上/快点」——near-miss 多轮会叠成句尾垃圾
 _C_SAFE_PAD_PHRASES = (
     "真的",
@@ -1117,6 +1120,51 @@ def _pad_gold_chat_line(
 ) -> tuple[str, int]:
     """near-miss 本地垫字：类型专用规则优先；普通类型只补单粒子。"""
     st = str(story_type or "").strip().upper()
+    if st == "N" and speaker:
+        # N 两人手：孩子句补中性短尾，家长句补称呼（只加词不加句、不改语义）
+        from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
+
+        s = str(line or "").strip()
+        if need <= 0 or not s:
+            return s, 0
+        room = max(0, DAILY_STORY_LINE_CHARS_MAX - len(s))
+        if room <= 0:
+            return s, 0
+        core_head = s.rstrip("！。？…!")
+        has_particle = bool(re.search(r"[呢嘛呀啊吧了]$", core_head))
+        if has_particle:
+            return _pad_gold_chat_single_particle(s, need, used=used)
+        if speaker in {"妈妈", "爸爸"}:
+            # 家长句只补不点名、不改语义的短尾（点名容易点错孩子，不用称呼）
+            for tail in _N_PARENT_SAFE_TAILS:
+                bare = tail.lstrip("，,")
+                if used is not None and bare in used:
+                    continue
+                if bare in s:
+                    continue
+                if len(tail) > need or len(tail) > room:
+                    continue
+                core = s.rstrip("！。？…!")
+                mark = s[len(core) :]
+                if used is not None:
+                    used.add(bare)
+                return f"{core}{tail}{mark}", len(tail)
+            return _pad_gold_chat_single_particle(s, need, used=used)
+        if not any(b in s for b in _N_SAFE_NATURAL_EXPAND):
+            for tail in _N_SAFE_NATURAL_EXPAND:
+                bare = tail.lstrip("，,")
+                if used is not None and bare in used:
+                    continue
+                if bare in s:
+                    continue
+                if len(tail) > need or len(tail) > room:
+                    continue
+                core = s.rstrip("！。？…!")
+                mark = s[len(core) :]
+                if used is not None:
+                    used.add(bare)
+                return f"{core}{tail}{mark}", len(tail)
+        return _pad_gold_chat_single_particle(s, need, used=used)
     if st == "C":
         s = str(line or "").strip()
         if need <= 0:
