@@ -1408,110 +1408,64 @@ def _expand_seed_for_line_floor(
     if not extras:
         return out
 
-    # 补位**分散到每个孩子拍之后**（每拍落地两句：说一句 + 补一个细节），
-    # 不再集中堆在结尾。堆在结尾等于让孩子突然连说四句新话，语义必然接不上；
-    # 分散后每条都紧跟上一条，是同一拍的继续，天然咬合。
+    # ── 补位规则（唯一一套，不再叠加重叠守卫）────────────────────────────
+    # 只做一件事：在**每句孩子台词之后**补一句自我表态，把该拍扩成两句。
+    # 允许的位置必须同时满足：
+    #   1) 该句是孩子说的，且不是怪词/解释/补词这类机制关键行；
+    #   2) 该句不在怪词行之前（先说怪词再表态，否则答非所问）；
+    #   3) 该句在收束行之前（收束之后不再接话）；
+    #   4) 该句后面还没补过（每句最多扩成两句）。
+    # 不满足就跳过，补不满就交给提示词——绝不为了凑数把补位塞到错位置。
+    token_at = next(
+        (
+            k
+            for k, r in enumerate(out)
+            if isinstance(r, dict) and _N_CHAIN_KEY_LINE_RE.search(str(r.get("intent") or ""))
+        ),
+        -1,
+    )
+    close_at = next(
+        (
+            k
+            for k, r in enumerate(out)
+            if isinstance(r, dict)
+            and str(r.get("speaker") or "").strip() in {"妈妈", "爸爸"}
+            and re.search(
+                r"收束|认栽|服了|打草稿|决定以后|接不住",
+                str(r.get("intent") or ""),
+            )
+        ),
+        len(out),
+    )
     ei = 0
-    guard = 0
-    while n < line_target and guard < 20:
-        guard += 1
-        anchored = False
-        # 优先插在**家长拍之后**（孩子接话，不打断孩子的机制链）；
-        # 其次才是非关键孩子拍之后。逆序遍历保证补位落在拍序原位附近。
-        order = [
-            i for i in range(len(out) - 1, 1, -1)
-            if isinstance(out[i], dict)
-            and str(out[i].get("speaker") or "").strip()
-            in {"妈妈", "爸爸"}
-        ] + [
-            i for i in range(len(out) - 1, 1, -1)
-            if isinstance(out[i], dict)
-            and str(out[i].get("speaker") or "").strip() == main_kid
-        ]
-        for idx in order:
-            row = out[idx]
-            if not isinstance(row, dict):
-                continue
-            host_sp = str(row.get("speaker") or "").strip()
-            if host_sp not in {main_kid, "妈妈", "爸爸"}:
-                continue
-            # 家长追问拍之后紧跟的通常是孩子的回答，属 Q-A 配对，不插话
-            if host_sp in {"妈妈", "爸爸"} and re.search(
-                r"追问|问|什么意思|谁教|哪来|怎么", str(row.get("intent") or "")
-            ):
-                continue
-            # 补位行自身也是孩子说的，不能再当成孩子拍继续往后插
-            if str(row.get("_n_pad") or ""):
-                continue
-            # 机制链关键行（说怪词 / 解释怪词 / 补无关词）必须紧邻，
-            # 中间插话会把「怪词→解释」拆开，成稿随即被判缺前提/接不上
-            row_intent = str(row.get("intent") or "")
-            if _N_CHAIN_KEY_LINE_RE.search(row_intent):
-                continue
-            if idx + 1 < len(out):
-                nxt = out[idx + 1]
-                if isinstance(nxt, dict) and _N_CHAIN_KEY_LINE_RE.search(
-                    str(nxt.get("intent") or "")
-                ):
-                    continue
-            # 补位不得插在「怪词出现之前」：孩子还没说出怪词就自我表态，
-            # 会变成答非所问/因果断裂（#87 实测）。只在怪词出现之后补。
-            token_at = -1
-            for k2, row2 in enumerate(out):
-                if isinstance(row2, dict) and _N_CHAIN_KEY_LINE_RE.search(
-                    str(row2.get("intent") or "")
-                ):
-                    token_at = k2
-                    break
-            if token_at >= 0 and idx < token_at:
-                continue
-            # 补位不得落在收束之后：家长已经认栽收场，孩子再说新话会变成
-            # 「答非所问/硬套话头」（#87 实测：收束后孩子还在追问打草稿）。
-            close_at = -1
-            for k2, row2 in enumerate(out):
-                if not isinstance(row2, dict):
-                    continue
-                host = str(row2.get("speaker") or "").strip()
-                if host in {"妈妈", "爸爸"} and re.search(
-                    r"收束|认栽|服了|打草稿|决定以后|接不住",
-                    str(row2.get("intent") or ""),
-                ):
-                    close_at = k2
-                    break
-            if close_at >= 0 and idx >= close_at:
-                continue
-            # 该拍后面最多再跟两条补位（说一句 + 补两个不同维度的细节）
-            pad_after = 0
-            for k in range(idx + 1, len(out)):
-                row_k = out[k]
-                if isinstance(row_k, dict) and str(row_k.get("_n_pad") or ""):
-                    pad_after += 1
-                else:
-                    break
-            if pad_after >= 2:
-                continue
-            # 收束拍（最后一个家长拍）之前不再塞
-            if ei >= len(extras):
-                # 补位要点用完就停：重复塞同一条会直接造成换词重复
-                break
-            extra = dict(extras[ei])
-            ei += 1
-            extra["_n_pad"] = "1"
-            out.insert(idx + 1, extra)
-            n += 1
-            anchored = True
-            break
-        if not anchored:
-            break
-    # 兜底：孩子拍都扩过一遍还不够，用家长额度（有余额时）补追问
-    while n < line_target and parent_room > 0 and main_parent:
-        out.insert(max(2, len(out) - 2), {
-            "speaker": main_parent,
-            "intent": "追问一个具体细节，逼他把话说清",
-            "_n_pad": "1",
-        })
-        parent_room -= 1
+    insert_at = 1
+    while n < line_target and ei < len(extras) and insert_at < len(out):
+        idx = insert_at
+        row = out[idx]
+        ok = (
+            isinstance(row, dict)
+            and str(row.get("speaker") or "").strip() == main_kid
+            and not _N_CHAIN_KEY_LINE_RE.search(str(row.get("intent") or ""))
+            and (token_at < 0 or idx > token_at)
+            and idx < close_at
+            and not str(row.get("_n_pad") or "")
+            and not (
+                idx + 1 < len(out)
+                and isinstance(out[idx + 1], dict)
+                and str(out[idx + 1].get("_n_pad") or "")
+            )
+        )
+        if not ok:
+            insert_at += 1
+            continue
+        extra = dict(extras[ei])
+        ei += 1
+        extra["_n_pad"] = "1"
+        out.insert(idx + 1, extra)
         n += 1
+        # 插完跳过刚插入的补位行，避免在同一处继续堆
+        insert_at = idx + 2
+
     # 清理内部标记，不污染提示词
     for row in out:
         if isinstance(row, dict):
