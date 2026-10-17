@@ -607,20 +607,28 @@ def test_n_post_align_221_stabilizer_uses_contract_context():
         mechanism="M6",
         beat_chain=beat_chain,
     )
-    assert changed
-    assert gc.dialogue_total_chars(closed) >= gc.DAILY_STORY_BODY_CHARS_MIN
-    assert len(closed["dialogue"]) == len(story["dialogue"]) + 2
-    # 补位落在妈妈追问和昭昭已有回答之后，不能切断 beat2→beat3 的开口因果。
-    assert closed["dialogue"][2]["speaker"] == "妈妈"
-    assert closed["dialogue"][3]["speaker"] == "昭昭"
-    # 契约把追问拍交给妈妈，但本稿妈妈已有 4 句（超过契约上限 3）：
-    # 不得再加家长句，改补旁观帮腔对（宁可不补，也不越额度）
+    # 两人手契约（只有妈妈+昭昭）+ 妈妈额度已满：补位没有合法第三方可用，
+    # 一律不补——绝不允许为了凑字数造出契约外的灿灿。
     mom_before = sum(1 for x in story["dialogue"] if x["speaker"] == "妈妈")
     assert mom_before >= 3
-    assert closed["dialogue"][4]["speaker"] != "妈妈"
-    assert closed["dialogue"][5]["speaker"] == "昭昭"
-    mom_after = sum(1 for x in closed["dialogue"] if x["speaker"] == "妈妈")
-    assert mom_after == mom_before, "补字不得增加家长句数"
+    assert not changed, "两人手额度满时不得再补位"
+    can_before = sum(1 for r in story["dialogue"] if r["speaker"] == "灿灿")
+    can_after = sum(1 for r in closed["dialogue"] if r["speaker"] == "灿灿")
+    assert can_after == can_before, "补位不得新增契约外角色"
+
+    # 三人在场（契约含灿灿）时，补位落在妈妈追问之后、收束之前，且不越家长额度
+    three = dict(story)
+    three["dialogue"] = [dict(r) for r in story["dialogue"]]
+    three_chain = beat_chain + [{"speaker": "灿灿", "intent": "在旁边笑他"}]
+    closed3, changed3 = _stabilize_local_length_candidate(
+        three,
+        structure_type="N",
+        mechanism="M6",
+        beat_chain=three_chain,
+    )
+    if changed3:
+        mom_after = sum(1 for x in closed3["dialogue"] if x["speaker"] == "妈妈")
+        assert mom_after == mom_before, "补字不得增加家长句数"
 
 
 def test_n_natural_mid_pairs_skips_when_parent_qa_in_closing_tail():

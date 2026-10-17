@@ -389,6 +389,10 @@ _C_SAFE_PAD_TAILS = ("啊", "吧")  # 单语气词；禁叠成了呢了呀
 # N：两人手只有 1 个孩子可垫，字数易近失；只补不改语义的短尾/称呼
 _N_SAFE_NATURAL_EXPAND: tuple[str, ...] = ("，真的", "，你信不信", "，就这样")
 _N_PARENT_SAFE_TAILS: tuple[str, ...] = ("，你说呢", "，真的")
+# N 收束句特征：决定垫字/补位一律不能越过它（越过就会把收束挤出末段窗口）
+_N_CLOSE_LINE_RE = re.compile(
+    r"行吧|服了|说不出|接不住|算了|那……|打草稿|以后说话"
+)
 # 禁「现在/立刻/马上/快点」——near-miss 多轮会叠成句尾垃圾
 _C_SAFE_PAD_PHRASES = (
     "真的",
@@ -1023,7 +1027,25 @@ def _n_natural_mid_pairs(
                     return (), None
                 reason_idx = bumped
 
-    listener = "灿灿" if reasoner == "昭昭" else "昭昭"
+    # 补位只能用契约里真有拍的角色：这里从 beat_chain 取本场合法 speaker。
+    # 先前写死「另一位手足」会把契约外的孩子放进对白（#87：契约只有妈妈+昭昭，
+    # 补位却塞进灿灿的两句），随后被角色表闸门拦死，等于自己制造违规。
+    cast = {
+        str(raw.get("speaker") or "").strip()
+        for raw in (beat_chain or [])
+        if isinstance(raw, dict) and str(raw.get("speaker") or "").strip()
+    }
+    other_kids = sorted(
+        name
+        for name in cast
+        if name in {"昭昭", "灿灿"} and name != reasoner
+    )
+    if cast:
+        # 契约已知：只能用契约里真有拍的手足；两人手时为空（不补第三方）
+        listener = other_kids[0] if other_kids else ""
+    else:
+        # 契约未知（部分本地收口路径不带 beat_chain）：沿用旧行为
+        listener = "灿灿" if reasoner == "昭昭" else "昭昭"
     # 契约把追问拍交给家长时，补位问句必须由该家长说：旁观手足代问会把
     # 立规方挤成「立规 + 收束」两端，N 的破功主体换人（#87 实测）。
     contract_asker = ""
@@ -1037,6 +1059,14 @@ def _n_natural_mid_pairs(
         ):
             contract_asker = speaker
             break
+    # 补位一律不得越过收束句：收束之后再插句会让「愣住/接不住」离开末段窗口，
+    # 类型契约随即判收束不合格（#87 实测：补位落在妈妈收束句之后）。
+    close_idx = len(dialogue) - 1
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        if _N_CLOSE_LINE_RE.search(str(item.get("line") or "")):
+            close_idx = i
     asker = contract_asker or listener
     if contract_asker:
         # 家长额度：未知时按契约上限 3 保守估计，避免把家长句补到超额度
@@ -1049,12 +1079,18 @@ def _n_natural_mid_pairs(
             and str(item.get("line") or "").strip()
         )
         if used + 1 > cap:
-            # 额度已满：改补旁观帮腔对，也不要把追问挤给旁观手足
+            # 额度已满：有旁观手足才补帮腔对；两人手没有第三方就干脆不补，
+            # 让句内扩写去补字数（绝不允许凭空造一个契约外角色）
+            if not listener:
+                return (), None
             echo_pairs = tuple(
                 ((reasoner, spoken), (listener, echo))
                 for spoken, echo in _N_VIEWER_ECHO_TEMPLATES
             )
-            return echo_pairs, max(2, len(dialogue) - 2)
+            insert_at = close_idx - 1
+            return (echo_pairs, insert_at) if insert_at >= 2 else ((), None)
+    if not asker:
+        return (), None
     pairs = tuple(
         ((asker, ask), (reasoner, answer))
         for ask, answer in _N_NATURAL_MID_TEMPLATES
@@ -1075,6 +1111,10 @@ def _n_natural_mid_pairs(
         if str(item.get("line") or "").strip() not in known_lines:
             break
         insert_at += 1
+    # 补位必须落在收束句之前，且给收束句留出位置
+    insert_at = min(insert_at, close_idx - 1)
+    if insert_at < 2:
+        return (), None
     return pairs, insert_at
 
 

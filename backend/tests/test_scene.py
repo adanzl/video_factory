@@ -19,6 +19,7 @@ from app.services.gold_story.scene import (
     normalize_fact_attributions,
     normalize_cast_to_beats,
     normalize_k_parent_intervention_budget,
+    normalize_n_formula_slots,
     normalize_n_two_hander_contract,
     normalize_parent_beat_ownership,
     normalize_retrospective_topic_contract,
@@ -1239,6 +1240,48 @@ def test_cast_normalized_to_beats_drops_ghost_character():
     # 缺角色表 / 缺 beat 时不动
     assert normalize_cast_to_beats({"beat_chain": []})[1] == []
     assert normalize_cast_to_beats({"characters": ["妈妈"]})[1] == []
+
+
+def test_n_formula_slots_added_when_contract_missing_them():
+    """N 公式槽自洽：契约缺「讲圆」与「愣住收束」时补槽位标注，不新造事实。"""
+    contract = {
+        "story_type": "N",
+        "characters": ["妈妈", "昭昭"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规：记录每句话"},
+            {"beat": 2, "speaker": "昭昭", "intent": "报出一串编的名字"},
+            {"beat": 3, "speaker": "昭昭", "intent": "解释成在街上工作别人给钱"},
+            {"beat": 4, "speaker": "妈妈", "intent": "追问谁教的"},
+            {"beat": 5, "speaker": "昭昭", "intent": "淡定补一句苹果"},
+            {"beat": 6, "speaker": "妈妈", "intent": "决定以后说话先打草稿"},
+        ],
+    }
+    out, notes = normalize_n_formula_slots(contract)
+    assert "补N自洽槽标注" in notes
+    assert "补N愣住收束槽" in notes
+    intent3 = next(r["intent"] for r in out["beat_chain"] if r["beat"] == 3)
+    assert "因为" in intent3 or "讲圆" in intent3
+    intent_last = out["beat_chain"][-1]["intent"]
+    assert "服了" in intent_last or "接不住" in intent_last
+    # 原有事实保留
+    assert "街上工作" in intent3
+    assert "打草稿" in intent_last
+
+    # 已自带这两个槽 → 不动
+    full = {
+        "story_type": "N",
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规"},
+            {"beat": 2, "speaker": "昭昭", "intent": "一本正经讲圆（因为所以）"},
+            {"beat": 3, "speaker": "妈妈", "intent": "最后服了，接不住"},
+        ],
+    }
+    same, no_notes = normalize_n_formula_slots(full)
+    assert not no_notes
+
+    # 非 N 不动
+    other, _ = normalize_n_formula_slots({**contract, "story_type": "C"})
+    assert other["beat_chain"] == contract["beat_chain"]
 
 
 def test_needs_second_kid_false_for_parent_asked_n():

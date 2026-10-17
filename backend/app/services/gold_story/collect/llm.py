@@ -31,6 +31,7 @@ from app.services.gold_story.scene import (
     normalize_k_parent_intervention_budget,
     needs_second_kid,
     normalize_cast_to_beats,
+    normalize_n_formula_slots,
     normalize_n_two_hander_contract,
     normalize_parent_beat_ownership,
     normalize_retrospective_topic_contract,
@@ -889,6 +890,11 @@ def build_scene_contract(
         data, _cast_notes = normalize_cast_to_beats(data)
         if _cast_notes:
             logger.info("H3a cast normalize=%s", _cast_notes[:4])
+        # N 公式槽：契约须写明「一本正经自洽」与「愣住/接不住收束」，
+        # 否则按契约写的稿必然被类型闸门判不合格（#87 实测）
+        data, _formula_notes = normalize_n_formula_slots(data)
+        if _formula_notes:
+            logger.info("H3a N formula slots=%s", _formula_notes[:4])
         data, _dialogue_notes = normalize_scene_dialogue_beats(data)
         data, _turns_notes = normalize_beat_min_turns(data)
         if _turns_notes:

@@ -373,6 +373,77 @@ def needs_second_kid(contract: dict[str, Any] | None) -> bool:
     return True
 
 
+_N_CAUSAL_INTENT_RE = re.compile(r"因为|所以|就这么|这样就能|就能|理由|讲圆|自洽")
+_N_STUN_INTENT_RE = re.compile(r"愣|服了|接不住|说不出|算了|放弃|噎")
+_N_CHILD_REASON_INTENT_RE = re.compile(r"解释|回答|作答|讲圆|自洽|理由|原因")
+
+
+def normalize_n_formula_slots(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """N 公式槽自洽：契约必须写明「一本正经自洽」与「愣住/接不住收束」两槽。
+
+    N 的机检按公式判（正文须有因为/所以那类自洽、收束须落愣住/接不住），
+    但 H3a 常只写「解释成…」「决定以后先打草稿」——契约没这两个槽，
+    照契约写的稿必然被判不合格（#87 实测：20 次缺自洽、17 次缺收束）。
+
+    这里只给契约**补公式槽位标注**，不新造剧情事实：
+    - 孩子已有解释/回答拍却缺因果连词 → 在该拍 intent 前标「讲圆」并点明用因为/所以；
+    - 末拍家长收束缺愣住/接不住 → 在 intent 末尾补「最后只能服了/接不住」。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    if str(contract.get("story_type") or "").strip().upper() != "N":
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    if not rows:
+        return contract, []
+    notes: list[str] = []
+    changed = False
+
+    has_causal = any(
+        _N_CAUSAL_INTENT_RE.search(str(r.get("intent") or r.get("beat") or ""))
+        for r in rows
+    )
+    if not has_causal:
+        target = next(
+            (
+                r
+                for r in rows
+                if str(r.get("speaker") or "").strip() not in _PARENT_SPEAKER_SET
+                and _N_CHILD_REASON_INTENT_RE.search(
+                    str(r.get("intent") or r.get("beat") or "")
+                )
+            ),
+            None,
+        )
+        if target is not None:
+            intent = str(target.get("intent") or target.get("beat") or "").strip()
+            target["intent"] = f"一本正经讲圆（用因为/所以）：{intent}"[:160]
+            notes.append("补N自洽槽标注")
+            changed = True
+
+    parent_rows = [
+        r for r in rows if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+    ]
+    if parent_rows:
+        closing = parent_rows[-1]
+        c_intent = str(closing.get("intent") or closing.get("beat") or "").strip()
+        if not _N_STUN_INTENT_RE.search(c_intent):
+            closing["intent"] = f"{c_intent}，最后只能服了/接不住"[:160]
+            notes.append("补N愣住收束槽")
+            changed = True
+
+    if not changed:
+        return contract, []
+    out = dict(contract)
+    out["beat_chain"] = rows
+    return out, notes
+
+
 def normalize_n_two_hander_contract(
     contract: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
