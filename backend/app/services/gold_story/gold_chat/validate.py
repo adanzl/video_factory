@@ -1493,6 +1493,10 @@ def _n_ask_beat_landed(
             return True
         if "generic" in funcs:
             return True
+        # 归属对、措辞不同（契约写「追问谁教的」，正文问「这什么意思」）：认落地。
+        # 旁观者代问由「旁观占场」判据单独拦，不靠功能词比对。
+        if {"origin", "meaning"} & funcs:
+            return True
     return any(_line_fulfills_beat(speaker, line, entry) for line in lines)
 
 

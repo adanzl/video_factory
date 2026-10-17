@@ -3077,6 +3077,14 @@ def apply_n_contract_local_patches(
     )
     if token_repatched:
         notes.append("N机制词槽再次补回")
+    # 去重/去连说之后家长句数可能又变了：最后再收一次额度
+    data, budget_trimmed2 = _trim_n_parent_overflow(
+        data,
+        beat_chain=beat_chain,
+        mom_lines_max=mom_lines_max,
+    )
+    if budget_trimmed2:
+        notes.append("N家长句数二次收束")
     if not notes:
         return story, []
     return data, notes
