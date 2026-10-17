@@ -1644,10 +1644,13 @@ def _append_n_contract_role_issues(
     )
 
 
+# 只认真正的谓语/词形滥用：
+#   「会waka / 去waka / 要waka / 叫waka」——把词当动作或名字
+#   「waka了 / waka着 / waka过」——加时态
+# 不含「是waka」「就是waka」这类**合法解释**（那正是机制要求的用法）。
 _RE_N_TOKEN_AS_PREDICATE = re.compile(
-    r"(?:会|要|去|在|是|叫|有|做|干|弄|搞)\s*[A-Za-z]{2,15}"
-    r"|[A-Za-z]{2,15}[了着过地得]"
-    r"|[A-Za-z]{2,15}(?:呀|呢|吧|啊)"
+    r"(?:会|要|去|能够|叫)\s*[A-Za-z]{2,15}"
+    r"|[A-Za-z]{2,15}(?:了|着|过)"
 )
 
 

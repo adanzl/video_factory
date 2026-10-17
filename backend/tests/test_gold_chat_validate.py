@@ -2170,3 +2170,39 @@ def test_n_closing_stun_must_be_spoken_by_asker():
     )
     blocking2, _warn2 = split_align_issues(issues2)
     assert "保真-N收束归属" not in {i["kind"] for i in blocking2}, blocking2
+
+
+def test_n_token_must_not_be_used_as_predicate():
+    """怪词只能独立出现；当谓语/加时态要拦，「就是waka」这类解释要放行。"""
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "立规"},
+        {"beat": 2, "speaker": "昭昭", "intent": "蹦出一个词「waka」"},
+        {"beat": 3, "speaker": "昭昭", "intent": "解释这个词是什么意思"},
+        {"beat": 4, "speaker": "妈妈", "intent": "追问什么意思谁教的"},
+        {"beat": 5, "speaker": "妈妈", "intent": "服了收束"},
+    ]
+
+    def _kinds(line: str) -> set[str]:
+        dlg = [
+            ("妈妈", "我拿本子记你说的每句话。"),
+            ("昭昭", "waka。"),
+            ("昭昭", line),
+            ("妈妈", "什么意思，谁教你的？"),
+            ("昭昭", "没人教，我自己想的。"),
+            ("妈妈", "行吧，我服了。"),
+        ]
+        story = {
+            "story_type": "N",
+            "punchline_explain": "N类",
+            "dialogue": [{"speaker": s, "line": x} for s, x in dlg],
+        }
+        issues = collect_align_issues(
+            story, structure_type="N", mechanism="M6", beat_chain=chain,
+        )
+        return {str(i.get("kind")) for i in issues}
+
+    assert "保真-N词槽语法" in _kinds("waka了呀，就是在街上工作。")
+    assert "保真-N词槽语法" in _kinds("因为好人会waka，所以喜欢他。")
+    # 合法解释用法不得误伤
+    assert "保真-N词槽语法" not in _kinds("waka就是在街上工作，别人给你钱。")
+    assert "保真-N词槽语法" not in _kinds("就是waka，我确定。")
