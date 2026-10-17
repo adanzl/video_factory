@@ -1232,6 +1232,14 @@ def _snippet_for_contract(
     return resolve_gold_chat_snippet(source_id)
 
 
+# 正文 240 字的两个杠杆：句数与每句长度。儿童口语的自然长度是 15–17 字，
+# 12 句就必须每句均 20 字——口语化与字数下限互相打架，本地补字上限只有
+# 几十字，缺口稍大就必然补不满（#87 实测：12 句稿反复停在 200–230 字）。
+# 句数上限是 24，句数是零成本的杠杆，故 N 类按「儿童自然句长」反推目标句数。
+_N_NATURAL_LINE_CHARS = 15
+_N_TARGET_LINE_COUNT = 16
+
+
 # 补位 intent 里出现这些形态，等于要求模型凭空造一个新实体（人/地点/道具/
 # 时间），而终检对此的判词是「缺前提 / 引用无据」。补位只允许对已出口的
 # 内容做深化（坚持/反问/复述/推进一格），不允许新开事实。
@@ -1300,10 +1308,12 @@ def _expand_seed_for_line_floor(
         for x in out
         if isinstance(x, dict) and str(x.get("intent") or x.get("line") or "").strip()
     )
-    if n >= CHAT_LINE_COUNT_MIN:
+    st = str(structure_type or "").strip().upper()
+    # N 按儿童自然句长反推目标句数；其余类型仍用通用下限
+    line_target = _N_TARGET_LINE_COUNT if st == "N" else CHAT_LINE_COUNT_MIN
+    if n >= line_target:
         return out
 
-    st = str(structure_type or "").strip().upper()
 
     # ── 可用说话人：只认契约角色；契约缺失时退回 seed 已有说话人 ──
     cast = [
@@ -1369,6 +1379,10 @@ def _expand_seed_for_line_floor(
             {"speaker": main_kid, "intent": "反问对方：你自己不信就算了"},
             {"speaker": main_kid, "intent": "指出对方刚才还在记，现在又不信，这不讲道理"},
             {"speaker": main_kid, "intent": "说这话没说完，让对方等他讲完再问"},
+            {"speaker": main_kid, "intent": "强调这话当着本子说的，写下来也还是这样"},
+            {"speaker": main_kid, "intent": "表示自己从来不乱说，这回格外认真"},
+            {"speaker": main_kid, "intent": "让对方先别急着下结论，等他说到底"},
+            {"speaker": main_kid, "intent": "反问对方小时候是不是也这样，别只说他"},
         ]
     else:
         extras = [
@@ -1390,7 +1404,7 @@ def _expand_seed_for_line_floor(
     # 分散后每条都紧跟上一条，是同一拍的继续，天然咬合。
     ei = 0
     guard = 0
-    while n < CHAT_LINE_COUNT_MIN and guard < 20:
+    while n < line_target and guard < 20:
         guard += 1
         anchored = False
         for idx in range(len(out) - 1, 1, -1):
@@ -1413,7 +1427,10 @@ def _expand_seed_for_line_floor(
             if pad_after >= 2:
                 continue
             # 收束拍（最后一个家长拍）之前不再塞
-            extra = dict(extras[ei % len(extras)])
+            if ei >= len(extras):
+                # 补位要点用完就停：重复塞同一条会直接造成换词重复
+                break
+            extra = dict(extras[ei])
             ei += 1
             extra["_n_pad"] = "1"
             out.insert(idx + 1, extra)
@@ -1423,7 +1440,7 @@ def _expand_seed_for_line_floor(
         if not anchored:
             break
     # 兜底：孩子拍都扩过一遍还不够，用家长额度（有余额时）补追问
-    while n < CHAT_LINE_COUNT_MIN and parent_room > 0 and main_parent:
+    while n < line_target and parent_room > 0 and main_parent:
         out.insert(max(2, len(out) - 2), {
             "speaker": main_parent,
             "intent": "追问一个具体细节，逼他把话说清",

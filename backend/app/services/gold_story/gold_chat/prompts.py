@@ -141,7 +141,8 @@ _SYSTEM = (
     "只输出一个合法 JSON 对象：无解释、无注释、无 markdown 代码围栏。\n"
     "输出 JSON 须与站内 daily_story 字段一致。\n"
     "**输出预算**：先保证正文 ≥240 字（目标 280–340），"
-    "dialogue 约 12–16 条后闭合；禁止复读/草稿并列/循环加戏。"
+    "dialogue 约 16–18 条后闭合（句数是凑字数的主力，儿童口语 15–20 字/句）；"
+    "禁止复读/草稿并列/循环加戏。"
 )
 
 _USER = """金故事标题：{title}
@@ -707,12 +708,14 @@ def format_cast_block(contract: dict[str, Any] | None) -> str:
             "**禁止**用新角色注水"
         )
         n_beats = len(sc.get("beat_chain") or []) or 6
-        need_lines = max(12, n_beats * 2)
+        # 正文 240 字靠句数凑，不靠把句子拉长：儿童口语自然 15–17 字，
+        # 12 句就得均 20 字，与「口语化」直接冲突（#87 实测反复卡字）。
+        need_lines = max(16, n_beats * 2)
         lines.append(
-            f"- **句数预算（硬）**：两人手没有第三方分担，{n_beats} 个拍要"
-            f"**每拍落地 2 句**，合计至少 {need_lines} 句；"
-            f"少于 {need_lines} 句直接判不合格（不许靠加长单句凑字数，"
-            f"单句仍须 ≤{CHAT_MAX_LINE_CHARS} 字）"
+            f"- **句数预算（硬）**：两人手没有第三方分担，总共写 **{need_lines} 句左右**"
+            f"（{n_beats} 个拍，每拍 2–3 句）；每句 15–20 字即可，"
+            f"**靠句数凑到 240 字，不要靠把单句拉长**"
+            f"（单句仍须 ≤{CHAT_MAX_LINE_CHARS} 字，全篇均句 ≤22 字）"
         )
         lines.append(
             "- **禁换词重复（硬）**：同一个意思全场只说一次。要凑够句数必须引入"

@@ -521,6 +521,7 @@ def normalize_n_two_hander_contract(
 
 
 _N_TOKEN_ONLY_SPLIT_RE = re.compile(r"[A-Za-z][A-Za-z0-9'\-_]{1,15}")
+_N_TOKEN_SPLIT_PREFIXES = ("只说出这个词（不解释）：", "解释这个词是什么意思：")
 
 
 # 契约里的「出处问」：立规方问这句话是从哪来的
@@ -624,12 +625,26 @@ def split_n_token_from_explanation(
         return rows, []
     out: list[Any] = []
     notes: list[str] = []
+    emitted_tokens: set[str] = set()
     for item in rows:
         if not isinstance(item, dict):
             out.append(item)
             continue
         intent = str(item.get("intent") or item.get("line") or "").strip()
         speaker = str(item.get("speaker") or "").strip()
+        # 幂等：本函数产出的意图会被写回 seed，重跑时必须原样放行，
+        # 否则模板文本会被再次当作「前缀」处理，越跑越脏（#87 实测）。
+        if intent.startswith(_N_TOKEN_SPLIT_PREFIXES):
+            tokens_seen = _N_TOKEN_ONLY_SPLIT_RE.findall(intent)
+            if tokens_seen:
+                key = tokens_seen[0].lower()
+                if key in emitted_tokens:
+                    # 同一怪词的重复出词行：丢弃（保留解释行）
+                    notes.append(f"丢弃重复出词行:{key}")
+                    continue
+                emitted_tokens.add(key)
+            out.append(item)
+            continue
         # 只拆孩子的「说词 + 解释」；家长的追问句照原样留着
         if speaker in {"妈妈", "爸爸"}:
             out.append(item)
@@ -648,6 +663,15 @@ def split_n_token_from_explanation(
         tail = intent[idx + len(token):].lstrip("！!，,。：: 　")
         # 怪词出现在句中被当前缀/谓语/名字用（「因为好人叫banana」「好人会banana」）
         # 时，前缀本身就是病句，一律丢掉：只留「说出这个词」这一句。
+        if token.lower() in emitted_tokens:
+            # 同一怪词只保留一次「独立出词」（另一处已拆出），重复会让
+            # seed 出现同义重复行，模型照抄即触发换词重复
+            if len(tail) >= 4:
+                only = dict(item)
+                only["intent"] = f"解释这个词是什么意思：{tail}"
+                out.append(only)
+            continue
+        emitted_tokens.add(token.lower())
         first = dict(item)
         first["intent"] = f"只说出这个词（不解释）：{token}"
         if len(tail) >= 4:
