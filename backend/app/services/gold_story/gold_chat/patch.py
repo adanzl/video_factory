@@ -2806,6 +2806,20 @@ def apply_n_token_slot_local_patch(
             -1,
         )
         if target < 0:
+            # 落不到该拍时，优先挑「像在讲圆/解释」的那一句（含因为/所以/就是/
+            # 就是给钱一类），别把怪词缀到无关的报名字句上——那会让成稿读起来
+            # 像突然插话（#87 实测 job 被缀到「我要找个好人来」前面）。
+            reason_re = re.compile(r"因为|所以|就是|意思是|这样就能|才算")
+            target = next(
+                (
+                    i
+                    for i, row in enumerate(dlg)
+                    if str(row.get("speaker") or "").strip() == speaker
+                    and reason_re.search(str(row.get("line") or ""))
+                ),
+                -1,
+            )
+        if target < 0:
             target = next(
                 (
                     i
