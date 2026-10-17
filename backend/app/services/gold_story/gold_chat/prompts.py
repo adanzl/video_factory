@@ -754,6 +754,34 @@ def format_cast_block(contract: dict[str, Any] | None) -> str:
                 f"- 家长台词合计 ≤ {int(mom_max)} 句（句数上限，不是字数上限）："
                 "额度紧就合并措辞，**禁止**把家长的追问/责备整体挪给孩子"
             )
+            # 额度必须优先保证「追问」还在：立规与收束很容易把额度吃光，
+            # 追问一消失，N 的机制就塌成孩子独白（#87 实测多次「无人问」）。
+            ask_beats = [
+                r
+                for r in (sc.get("beat_chain") or [])
+                if isinstance(r, dict)
+                and str(r.get("speaker") or "").strip() in parents
+                and re.search(
+                    r"追问|问|什么意思|谁教|哪来|怎么",
+                    str(r.get("intent") or r.get("beat") or ""),
+                )
+            ]
+            if ask_beats and int(mom_max) >= 1:
+                n_ask = int(mom_max)
+                need_open = 1  # 立规/触发
+                need_close = 1  # 收束/破功
+                # 额度够 → 追问可以占多句；不够 → 追问必须合并成一句，
+                # 但**保底一句**，因为追问一缺席 N 的机制就塌了。
+                ask_budget = max(1, n_ask - need_open - need_close)
+                ask_budget = min(ask_budget, len(ask_beats), n_ask)
+                lines.append(
+                    f"- **家长额度分配（硬）**：{n_ask} 句 = 立规 {need_open} 句"
+                    f" + 追问 {ask_budget} 句 + 收束 {need_close} 句"
+                    f"（共 {need_open + ask_budget + need_close} 句；"
+                    f"若超出 {n_ask}，追问合并成一句问全——意思是/谁教的/在哪儿，"
+                    "但**不许取消追问**）；"
+                    "**禁止**让家长的追问缺席、也禁止把追问改由孩子自问自答"
+                )
     return "\n".join(lines)
 
 
