@@ -1316,7 +1316,10 @@ def _expand_seed_for_line_floor(
     # 会在「出词→解释」「追问→回答」这些必须紧邻的行对之间插话，反而打断
     # 机制链（#87 实测：补到 16 条时成稿句序与契约错位）。
     # 对白句数交给提示词（明确要求 16–18 句、每句 15–20 字）。
-    line_target = CHAT_LINE_COUNT_MIN
+    # 目标：把 seed 补到 16 条（= 契约 6 拍 × 每拍 2–3 句），这样扩写有足够
+    # 句数落点，正文字数才凑得满 240。关键行对（出词/解释、追问/回答）由下方
+    # 的跳过规则保护，不会被插话打断。
+    line_target = _N_TARGET_LINE_COUNT if st == "N" else CHAT_LINE_COUNT_MIN
     if n >= line_target:
         return out
 
