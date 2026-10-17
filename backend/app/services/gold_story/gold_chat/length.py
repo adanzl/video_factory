@@ -1035,9 +1035,9 @@ def _n_natural_mid_pairs(
             contract_asker = speaker
             break
     asker = contract_asker or listener
-    if contract_asker and parent_lines_max is not None:
-        # 家长额度已满时不得再用「家长追问拍」补字：改补旁观帮腔对，
-        # 也不要把追问挤给旁观手足（那正是要拦的转手）。
+    if contract_asker:
+        # 家长额度：未知时按契约上限 3 保守估计，避免把家长句补到超额度
+        cap = 3 if parent_lines_max is None else max(0, int(parent_lines_max))
         used = sum(
             1
             for item in dialogue
@@ -1045,7 +1045,8 @@ def _n_natural_mid_pairs(
             and str(item.get("speaker") or "").strip() == contract_asker
             and str(item.get("line") or "").strip()
         )
-        if used + 1 > max(0, int(parent_lines_max)):
+        if used + 1 > cap:
+            # 额度已满：改补旁观帮腔对，也不要把追问挤给旁观手足
             echo_pairs = tuple(
                 ((reasoner, spoken), (listener, echo))
                 for spoken, echo in _N_VIEWER_ECHO_TEMPLATES

@@ -3085,6 +3085,12 @@ def apply_n_contract_local_patches(
     )
     if budget_trimmed2:
         notes.append("N家长句数二次收束")
+    # 补句/改写可能带进旁白腔：最后统一过一遍旁白→口语（既有的转换器）
+    from app.services.gold_story.scene import patch_dialogue_narration_to_speech
+
+    narration_notes = patch_dialogue_narration_to_speech(data)
+    if narration_notes:
+        notes.append(f"N旁白句转口语{len(narration_notes)}句")
     if not notes:
         return story, []
     return data, notes
