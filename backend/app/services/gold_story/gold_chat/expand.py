@@ -2213,6 +2213,24 @@ def gold_story_to_gold_chat(
             # 留在当前候选上修复；预算耗尽才退出，不丢稿重抽。
             repair_error = ""
             while True:
+                # 评分前先过一遍 N 契约补丁：同人连说/换词重复/句数额度都会被
+                # 结构分直接扣分，补丁是确定性的，先清再评分（幂等）。
+                if str(structure_type or "").strip().upper() == "N":
+                    from app.services.gold_story.gold_chat.patch import (
+                        apply_n_contract_local_patches,
+                    )
+
+                    chat, n_pre_notes = apply_n_contract_local_patches(
+                        chat,
+                        beat_chain=beat_chain,
+                        dialogue_seed=seed if isinstance(seed, list) else None,
+                        mom_lines_max=mom_int,
+                    )
+                    if n_pre_notes:
+                        logger.info(
+                            "gold_chat pre-score N contract patch: %s",
+                            "；".join(n_pre_notes),
+                        )
                 chat, candidate_errors = prepare_candidate_for_acceptance(
                     chat, mom_lines_max=mom_int, banned_literals=banned_list,
                 )
