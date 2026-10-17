@@ -705,6 +705,14 @@ def format_cast_block(contract: dict[str, Any] | None) -> str:
             f"- 字数靠 {kids[0]} 的荒诞解释与 {parents[0]} 的追问推进，"
             "**禁止**用新角色注水"
         )
+        n_beats = len(sc.get("beat_chain") or []) or 6
+        need_lines = max(12, n_beats * 2)
+        lines.append(
+            f"- **句数预算（硬）**：两人手没有第三方分担，{n_beats} 个拍要"
+            f"**每拍落地 2 句**，合计至少 {need_lines} 句；"
+            f"少于 {need_lines} 句直接判不合格（不许靠加长单句凑字数，"
+            f"单句仍须 ≤{CHAT_MAX_LINE_CHARS} 字）"
+        )
     elif len(kids) >= 2:
         lines.append("- 本次是**双孩同侧**：两个孩子同侧齐上，家长为配角；禁止把孩子写成对立")
     if parents:
