@@ -2786,10 +2786,40 @@ def apply_n_token_slot_local_patch(
     if not entries or not dlg:
         return story, False
     body_lower = "\n".join(str(row.get("line") or "") for row in dlg).lower()
+    changed_shape = False
     for _beat_no, entry in entries:
         intent = str(entry.get("intent") or entry.get("beat") or "")
         token = _n_declared_word_token(intent)
-        if not token or token.lower() in body_lower:
+        if not token:
+            continue
+        if token.lower() in body_lower:
+            # 词已出现，但可能带着病态形态（「waka了」「会waka」「waka吧」）。
+            # 那种形态机检会判「词槽语法」，所以这里要做**就地修形**：
+            # 把带病的形态还原成「原形 + 逗号」，让词保持独立出现。
+            fixed_any = False
+            for i, row in enumerate(dlg):
+                line_i = str(row.get("line") or "")
+                if token.lower() not in line_i.lower():
+                    continue
+                repaired = re.sub(
+                    re.escape(token) + r"(?:了|着|过|呀|吧|呢|啊)",
+                    f"{token}，",
+                    line_i,
+                )
+                repaired = re.sub(
+                    r"(?:会|要|去|叫)\s*" + re.escape(token),
+                    token,
+                    repaired,
+                )
+                repaired = re.sub(r"([，,])\s*([，,])", r"\1", repaired)
+                if repaired != line_i:
+                    dlg[i] = dict(row)
+                    dlg[i]["line"] = repaired
+                    fixed_any = True
+            if fixed_any:
+                out = dict(story)
+                out["dialogue"] = dlg
+                changed_shape = True
             continue
         speaker = str(entry.get("speaker") or "").strip()
         if not speaker:
@@ -2835,6 +2865,10 @@ def apply_n_token_slot_local_patch(
         if len(merged) > CHAT_MAX_LINE_CHARS:
             continue
         dlg[target] = {"speaker": speaker, "line": merged}
+        out = copy.deepcopy(story)
+        out["dialogue"] = dlg
+        return out, True
+    if changed_shape:
         out = copy.deepcopy(story)
         out["dialogue"] = dlg
         return out, True
