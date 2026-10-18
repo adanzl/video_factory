@@ -3407,6 +3407,86 @@ def apply_n_explain_dedup_patch(
     return out, [f"N解释句去重:{changed}句"]
 
 
+def apply_n_partner_line_pin_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """把第二个孩子的台词**钉成契约里写的具体台词**。
+
+    她的拍在契约里已经是写好的具体句子（自足、不依赖上文、不含怪词）。
+    但模型会自由改写，改出来的句子反复被判「接不上/答非所问/换词重复」
+    （#87 实测 30+ 轮，每换一种意图描述就换一种错法）。
+
+    既然契约里的句子本身就是可用的成品台词，这里直接照用：按她的拍序
+    依次替换她的台词。只替换「她的说话人」，其余不动。
+    """
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    entries = [e for _n, e in _beat_chain_entries(chain)]
+    if not entries:
+        return story, []
+    # 旁观主角 = 出现过的、不是机制词槽持有者的那个孩子
+    from app.services.gold_story.gold_chat.validate import _n_declared_word_token
+
+    slot_owner = ""
+    for e in entries:
+        if _n_declared_word_token(str(e.get("intent") or "")):
+            slot_owner = str(e.get("speaker") or "").strip()
+            break
+    kids = {
+        str(e.get("speaker") or "").strip()
+        for e in entries
+        if str(e.get("speaker") or "").strip() in {"昭昭", "灿灿"}
+    }
+    partner = next((k for k in sorted(kids) if k != slot_owner), "") if slot_owner else ""
+    if not partner:
+        return story, []
+    partner_lines = [
+        str(e.get("intent") or "").strip()
+        for e in entries
+        if str(e.get("speaker") or "").strip() == partner
+    ]
+    # 只钉「像成品台词」的拍（含句末标点或长度足够），避免把意图当台词写进去
+    partner_lines = [
+        ln
+        for ln in partner_lines
+        if ln and (ln.endswith(("。", "！", "？", "…")) or len(ln) >= 8)
+        and not re.search(r"^\s*[^：:]{0,12}[：:]", ln)
+    ]
+    if not partner_lines:
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    changed = 0
+    idx = 0
+    for row in dlg:
+        if str(row.get("speaker") or "").strip() != partner:
+            continue
+        if idx >= len(partner_lines):
+            break
+        target = partner_lines[idx]
+        idx += 1
+        if str(row.get("line") or "").strip() == target:
+            continue
+        row["line"] = target
+        changed += 1
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, [f"第二孩台词钉成契约台词:{changed}句"]
+
+
 def apply_n_partner_ask_to_pile_on_patch(
     story: dict[str, Any],
     *,
@@ -3641,6 +3721,14 @@ def apply_n_contract_local_patches(
     if _action_notes:
         notes.extend(_action_notes)
     # 孩子连说先拆开（插反应句，不删句）
+    # 旁观主角的台词**直接换成契约里的具体台词**（确定性兜底）。
+    # 模型自由发挥的句子反复被判「接不上/答非所问/换词重复」，
+    # 而契约里给她写的是自足的具体台词，照用即可（#87 实测 30+ 轮）。
+    data, _pin_notes = apply_n_partner_line_pin_patch(
+        data, beat_chain=beat_chain
+    )
+    if _pin_notes:
+        notes.extend(_pin_notes)
     # 旁观主角代问关键追问 → 改成同伙加码（她可以抢编，但不能替妈妈发问）
     data, _pile_notes = apply_n_partner_ask_to_pile_on_patch(
         data, beat_chain=beat_chain
