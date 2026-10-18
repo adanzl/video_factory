@@ -1515,7 +1515,9 @@ def build_n_two_kid_dialogue(
                 return line
         return ""
 
-    names_line = _reuse(lambda x: ("叫" in x or "名字" in x), min_len=20)
+    # 报名字这句**不复用**旧稿：旧稿里常是「我也会编名字」这类残留，
+    # 复用后前后主语会打架（#87 实测：第2句暗示别人先报了名字，
+    # 第3句又说「你说的这几个名字」，谁先报说不清）。
     addon_line = _reuse(
         lambda x: 0 < len(re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", x)) <= 4
     )
@@ -1526,9 +1528,7 @@ def build_n_two_kid_dialogue(
     out: list[dict[str, Any]] = []
     for role, tag, template in _N_TWO_KID_PLAN:
         line = template.replace("{token}", token)
-        if role == "mech" and tag == "报名字" and names_line:
-            line = names_line
-        elif role == "mech" and tag == "补词" and addon_line:
+        if role == "mech" and tag == "补词" and addon_line:
             line = addon_line
         elif role == "mom" and tag == "立规" and mom_opening:
             line = mom_opening
