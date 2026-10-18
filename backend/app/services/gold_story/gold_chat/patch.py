@@ -3867,6 +3867,12 @@ def apply_opening_causality_local_patch(
                 spoken += "。"
             if len(spoken) > CHAT_MAX_LINE_CHARS:
                 continue
+            # 我们要的是**对话稿**：seed 里的叙述句（「蛋挞烤鸭上桌，绕口令抢吃」
+            # 「磕巴念绕口令，口误笑场」）不是能说出口的台词，不能插进对白。
+            from app.services.gold_story.scene import looks_like_narration_line
+
+            if looks_like_narration_line(spoken):
+                continue
             if _line_fulfills_beat(expected, spoken, entry):
                 return {"speaker": expected, "line": spoken}
 

@@ -2424,6 +2424,91 @@ def _intent_anchor_tokens(intent: str) -> list[str]:
     return [p for p in parts if p not in _OPENING_INTENT_STOP][:6]
 
 
+# 列举型 intent：抽象描述「说出一串/几个/一堆 名字/词」，字面 anchor 与
+# 真实对白毫无交集（intent 是叙述，对白是人名罗列）。这类拍按**列举形态**认：
+# 对白里有 ≥2 个并列项即算落地。不绑剧情词，只看结构。
+_RE_LIST_INTENT = re.compile(
+    r"(?:一串|几个|一堆|一连串|好些个|若干个)\s*(?:编的)?"
+    r"(?:名字|名称|人名|词|词语|称呼)"
+)
+_RE_LIST_ITEM = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]{2,8}")
+
+
+def _line_looks_like_listing(line: str) -> bool:
+    """对白是否在**罗列一串同类事物**（人名/词串）。
+
+    只认两种强形态，避免把普通口语的逗号当列举：
+    1) 顿号分隔 ≥2 项（「小明、小红、小刚」）——顿号本身就是并列标记；
+    2) 「叫/有/是」+ A、B（逗号分隔 ≥2 项且都很短，像名字）。
+    """
+    text = str(line or "")
+    if "、" in text:
+        parts = [
+            p.strip("。！？，、… 　")
+            for p in re.split(r"[、]", text)
+            if p.strip("。！？，、… 　")
+        ]
+        if len([p for p in parts if _RE_LIST_ITEM.fullmatch(p)]) >= 2:
+            return True
+    # 「叫A，B」「有A，B，C」：引导词后接 ≥2 个**很短**的项（2–4 字，像名字/词）
+    m = re.search(r"(?:叫|有)([^。！？]{4,60})", text)
+    if m:
+        tail = m.group(1)
+        parts = [
+            p.strip("。！？，、… 　")
+            for p in re.split(r"[，,、]", tail)
+            if p.strip("。！？，、… 　")
+        ]
+        short = [p for p in parts if 2 <= len(p) <= 4]
+        if len(short) >= 2:
+            return True
+    return False
+
+
+_RE_HAN_RUN = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _looks_like_dialogue_line(line: str) -> bool:
+    """这句话是否像「对在场某人说的话」。
+
+    只有像对白的句子才允许走宽松的语义兜底；叙述句没有对话对象，
+    即便语义命中某拍也不能算台词落地。
+    """
+    text = str(line or "").strip()
+    if not text:
+        return False
+    if _looks_like_pure_action(text):
+        return False
+    return bool(_DIALOGUE_MARKER_RE.search(text))
+
+
+def _bigrams(text: str) -> set[str]:
+    """中文双字词集合（滑窗）。用于跨改写的语义近邻判定。"""
+    out: set[str] = set()
+    for run in _RE_HAN_RUN.findall(str(text or "")):
+        for i in range(len(run) - 1):
+            out.add(run[i : i + 2])
+    return out
+
+
+def _intent_line_overlap(intent: str, line: str, *, need: int = 3) -> bool:
+    """intent 与 line 的双字词交集是否够多（容忍口语改写）。
+
+    机检的 anchor 是**叙述性整句**（「宣布要记录昭昭说的每一句话」），
+    真实对白是口语改写（「我拿本子记下你说的每句话」），字面包含判定
+    必然失效——这不是模型没写，是判词认不出（#87 实测：18 次误报缺拍）。
+
+    这里改用双字词交集：intent 与 line 共享 ≥``need`` 个不同的双字词即算
+    落地。阈值取 3 是实测出来的：取 2 时「你说的这些名字都是谁」会误命中
+    「我拿本子记下你说的每句话」（只共享「你说/说的」），取 3 才分得开。
+    """
+    a = _bigrams(intent)
+    if len(a) < 4:
+        return False
+    b = _bigrams(line)
+    return len(a & b) >= need
+
+
 def _anchor_matches_line(anchor: str, line: str) -> bool:
     """锚词是否落地到对白；容忍口语对压缩 intent 的改写。
 
@@ -2564,6 +2649,11 @@ def _line_fulfills_beat(
     line = str(line or "").strip()
     if not line:
         return False
+    # 纯动作句不算落地：对话稿里动作不是台词，它不可能「说出」任何一拍。
+    # （例如 seed 里的叙述句「磕巴念绕口令，口误笑场」被原样抄进对白时，
+    # 既不是有效台词，也不能拿它去满足 beat。）
+    if _looks_like_pure_action(line):
+        return False
     acts = _intent_speech_acts(intent)
     if (
         "trigger" in acts
@@ -2584,8 +2674,17 @@ def _line_fulfills_beat(
             # 必须只认家长可说出口的指令，不能因整句复读 intent 同时命中
             # "收玩具/踢积木" 等 anchor，就把剧情描述判成对白。
             return _opening_directive_matches(intent, line)
+    if _RE_LIST_INTENT.search(intent) and _line_looks_like_listing(line):
+        # 列举型拍：intent 是叙述（「报出一串编的名字」），对白是人名罗列，
+        # 字面 anchor 必然对不上，按列举形态认落地。
+        return True
     anchors = _intent_anchor_tokens(intent)
     if anchors and any(_anchor_matches_line(token, line) for token in anchors):
+        return True
+    # 口语改写兜底：叙述性 intent 与对白字面必然不同，用双字词交集认落地。
+    # 只对**像对白的句子**启用——叙述句（「蛋挞烤鸭上桌，绕口令抢吃」）
+    # 即使语义命中，也不是台词，不能拿它满足拍（我们要的是对话稿）。
+    if _looks_like_dialogue_line(line) and _intent_line_overlap(intent, line):
         return True
     if "rebuttal" in acts and _opening_rebuttal_matches(intent, line):
         return True
