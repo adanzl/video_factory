@@ -45,6 +45,12 @@ _RE_SOLEMN_NONSENSE = re.compile(
     r"(?:意外|巧合|运气|事故).{0,24}(?:说成|当成|解释成|变成).{0,20}(?:主动|技能|本事)|"
     r"(?:主动|技能|本事).{0,20}(?:解释|说成).{0,20}(?:意外|巧合|运气|事故)"
 )
+# 改判后旧稿 mapping_note 里常留「符合M11+I」这类**旧类型断言**。
+# 这段文字会原样进 H3a prompt（convert.py 用它取 structure_mapping_note），
+# LLM 看到旧断言又会把契约判回旧类型，改判等于白做（#135 实测：
+# 列已改成 N/M6，跑稿却仍按 I 类四条硬卡判，因 prompt 里写着「符合M11+I」）。
+_RE_STALE_TYPE_CLAIM = re.compile(r"[，,；;、]?\s*符合\s*M\d+\s*\+\s*[A-Z](?:\s*\+\s*[A-Z])?")
+
 _RE_NO_BOOMERANG_NOTE = re.compile(r"未形成回旋镖|没有回旋镖|非回旋镖|无回旋镖")
 # I 类的「拷问」要有**原因**，不能只凭「语塞」这个结果：
 #   原因词：灵魂拷问 / 一招制敌 / 价值高地 / 双标质问……
@@ -869,6 +875,21 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     mechanism = str(out.get("mechanism") or "").strip().upper()
     current = str(out.get("structure_type") or "").strip().upper()
 
+    # 类型没变，但 note 里留着**别的**类型断言（改判只改了列、忘了改 note，
+    # 或人工改过列）：note 会进 H3a prompt，留着就会把稿件拉回旧类型。
+    # 只清「符合Mxx+X」这种正向断言；「非 C 双规则」这类对比说明不动。
+    _note_now = str(payload.get("structure_mapping_note") or "")
+    if _RE_STALE_TYPE_CLAIM.search(_note_now):
+        _claims = _RE_STALE_TYPE_CLAIM.findall(_note_now)
+        _want = f"符合{mechanism}+{current}"
+        _wrong = [c for c in _claims if c.strip("；;，,、 ").replace(" ", "") != _want.replace(" ", "")]
+        if _wrong:
+            _cleaned = _RE_STALE_TYPE_CLAIM.sub("", _note_now).strip("；;，,、 ")
+            payload["structure_mapping_note"] = (
+                f"{_cleaned}；{_want}" if _cleaned else _want
+            )
+            notes.append(f"mapping_note 清掉旧类型断言:{len(_wrong)}处")
+
     target_mech = ""
     target_st = ""
     extra = ""
@@ -965,10 +986,13 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     out["structure_type"] = target_st
     notes.append(f"mechanism:{mechanism}→{target_mech}+structure:{current}→{target_st}")
 
-    note = str(payload.get("structure_mapping_note") or "").strip()
+    note = _RE_STALE_TYPE_CLAIM.sub("", str(payload.get("structure_mapping_note") or ""))
+    note = note.strip("；;，,、 ")
     if extra not in note:
         payload["structure_mapping_note"] = (
-            f"{note}；{extra}".strip("；") if note else extra
+            f"{note}；符合{target_mech}+{target_st}；{extra}".strip("；")
+            if note
+            else f"符合{target_mech}+{target_st}；{extra}"
         )
 
     _sync_scene_contract_story_type(payload, target_st, notes)
