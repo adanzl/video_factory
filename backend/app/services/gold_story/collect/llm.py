@@ -555,6 +555,7 @@ story_raw（背景，勿照抄）：
 - setting 须含地点；当前场景确有实体冲突物时再写谁持有。若 object 是回忆/旧事/过去经历，
   只写“在该地点聊起旧事”，禁止凭空端出历史物件或替代道具
 - 严格按 beat_chain 顺序展开；每拍 1–3 条 seed
+- **素材充分性（硬）**：seed 是下游对白的唯一素材来源，总字数须 ≥ `beat_chain 拍数 × 22`（不足会让成稿凑不够 240 字，只能靠编造补白，随即被判「缺前提」）。因此每拍尽量给满 2–3 条，且每条 intent 写足 **18–22 字**、含具体可念的内容；不得只写「表示不信」「催他继续」这类空壳意图，也不得把同一条重复拆成两条。
 - **事实角色绑定（硬）**：与 `facts` 相关的每条 seed 必须带 `fact_ref`/`speech_act`/`claim_role`：
   承认、自曝、否认、辩解句（admit/confess/deny）的 speaker 必须等于该 fact 的
   `secret_holder`；指认、揭发句（accuse/expose）的 speaker 必须等于

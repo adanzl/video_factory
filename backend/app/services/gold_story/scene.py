@@ -548,13 +548,14 @@ def normalize_n_formula_slots(
 # 分层设计，相邻几拍不会撞车：
 #   报名 → 穿戴 → 场面 → 加码 → 情形 → 入伙
 _N_SECOND_KID_LINES: tuple[str, ...] = (
-    "这话我可有点不信，你别蒙我。",
-    "行，那我就等着看你怎么办。",
-    "你可真敢说，我可不敢接。",
-    "越说越像真有这么回事了。",
-    "那我倒要看看你怎么收场。",
-    "你这话我可记住了，别反悔。",
+    "这话我可有点不信，你可得说清楚才行。",
+    "我怎么听着这么玄乎，越琢磨越觉得悬。",
+    "越说越像真有这么回事，我都快当真了。",
+    "行，那我就在旁边看着你把这事说圆。",
+    "这么说我可学不会，还是你自个儿来吧。",
+    "我听着都替你捏把汗，你可别把话说漏。",
 )
+
 
 
 # 说明：这些台词**只表达态度，不含任何剧情内容**（没有人名、怪词、道具），
@@ -1538,7 +1539,7 @@ def build_n_two_kid_dialogue(
         line = str(row["line"])
         if len(line) >= 20 and ("，" in line):
             head, _, tail = line.rstrip("。！？…").rpartition("，")
-            if len(head) >= 8 and len(tail) >= 5:
+            if len(head) >= 10 and len(tail) >= 9:
                 split_rows.append({"speaker": row["speaker"], "line": head + "。"})
                 split_rows.append({"speaker": row["speaker"], "line": tail + "。"})
                 continue
@@ -1666,6 +1667,92 @@ def build_n_two_kid_dialogue(
     notes = [f"按seed重排双孩对白:{len(out)}句"]
     return out, notes
 
+
+
+_RE_RAW_QUOTE = re.compile(r"[“「『\"]([^”」』\"]{6,60})[”」』\"]")
+
+
+def enrich_seed_from_story_raw(
+    seed: list[Any],
+    *,
+    story_raw: str = "",
+    contract: dict[str, Any] | None = None,
+    min_chars: int = 240,
+) -> tuple[list[Any], list[str]]:
+    """seed 素材不足时，从 story_raw 的**引语**补行。
+
+    seed 是下游对白的唯一素材来源。素材不足时成稿凑不到 240 字，
+    只能靠编造补白，而编出来的东西立即被判「缺前提」（#87 实测）。
+    story_raw 里本来就有该故事的真实对白，只是没被抽成 seed。
+
+    只取**引号内的直接引语**（那是原文对白，不是叙述），
+    按上下文判断说话人；判断不出就跳过，绝不猜。
+    """
+    if not isinstance(contract, dict):
+        return seed or [], []
+    raw = str(story_raw or "").strip()
+    if not raw:
+        return seed or [], []
+    cur_chars = sum(len(str(r.get("intent") or r.get("line") or "")) for r in seed or [] if isinstance(r, dict))
+    if cur_chars >= min_chars:
+        return seed or [], []
+
+    chain = [r for r in (contract.get("beat_chain") or []) if isinstance(r, dict)]
+    kids = kid_speakers_of(
+        [
+            *(str(r.get("speaker") or "") for r in chain),
+            *(contract.get("characters") or []),
+        ]
+    )
+    if len(kids) < 2:
+        return seed or [], []
+    # 机制孩子 = 词槽持有者，其余孩子是搭档
+    mech_kid = ""
+    for row in chain:
+        if _n_token_of_intent(str(row.get("intent") or "")):
+            mech_kid = str(row.get("speaker") or "").strip()
+            break
+    if mech_kid not in kids:
+        mech_kid = sorted(kids)[0]
+
+    existing = {
+        str(r.get("intent") or r.get("line") or "").strip()
+        for r in seed or []
+        if isinstance(r, dict)
+    }
+    rows = [dict(r) for r in seed or [] if isinstance(r, dict)]
+    added = 0
+    for m in _RE_RAW_QUOTE.finditer(raw):
+        quote = m.group(1).strip().strip("，。 ")
+        if len(quote) < 6 or quote in existing:
+            continue
+        # 说话人：引语前 12 字内出现「昭昭/灿灿/妈妈」就归他；
+        # 否则引语里出现「妈妈」指的是妈妈 → 归机制孩子（孩子在说妈妈的事）
+        before = raw[max(0, m.start() - 12) : m.start()]
+        speaker = ""
+        for name in sorted(kids):
+            if name in before:
+                speaker = name
+                break
+        if not speaker:
+            if "妈妈" in before:
+                continue
+            speaker = mech_kid
+        # 插到「同说话人上一条之后」，没有就放收束前
+        at = len(rows) - 1
+        for i in range(len(rows) - 1, -1, -1):
+            if str(rows[i].get("speaker") or "").strip() == speaker:
+                at = i + 1
+                break
+        rows.insert(at, {"speaker": speaker, "intent": quote})
+        existing.add(quote)
+        added += 1
+        cur_chars += len(quote)
+        if cur_chars >= min_chars:
+            break
+    if not added:
+        return seed or [], []
+    return rows, [f"从story_raw补seed引语:{added}条"]
 
 
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
