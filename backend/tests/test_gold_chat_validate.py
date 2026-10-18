@@ -2206,3 +2206,48 @@ def test_n_token_must_not_be_used_as_predicate():
     # 合法解释用法不得误伤
     assert "保真-N词槽语法" not in _kinds("waka就是在街上工作，别人给你钱。")
     assert "保真-N词槽语法" not in _kinds("就是waka，我确定。")
+
+
+def test_pure_action_lines_are_rejected():
+    """对话稿里纯动作句必须被拒（用户口径：我们要的是对话稿）。"""
+    from app.services.gold_story.gold_chat.validate import _looks_like_pure_action
+
+    # 只有动作/神态 → 拒
+    for line in ("笑了一声", "拍腿笑死我了", "笑得我直拍腿", "点了点头", "愣住", "皱眉"):
+        assert _looks_like_pure_action(line), line
+
+    # 真的在说话 → 放行
+    for line in (
+        "哎哟，这我可学不来",
+        "你还真敢说",
+        "行吧，你接着讲",
+        "别笑了",
+        "没人教，我自己想的",
+        "因为好人多，所以找得着",
+        "那后来呢，你接着说",
+        "你可真敢说，我服了",
+    ):
+        assert not _looks_like_pure_action(line), line
+
+
+def test_pure_action_patch_rewrites_to_speech():
+    """纯动作句要被就地改成能说出口的话，句数与 speaker 不变。"""
+    from app.services.gold_story.gold_chat.patch import (
+        apply_pure_action_to_speech_patch,
+    )
+
+    dlg = [
+        {"speaker": "妈妈", "line": "我拿本子记你说的每句话。"},
+        {"speaker": "灿灿", "line": "笑了一声"},
+        {"speaker": "昭昭", "line": "哇卡。"},
+        {"speaker": "妈妈", "line": "什么意思？"},
+    ]
+    out, notes = apply_pure_action_to_speech_patch({"story_type": "N", "dialogue": dlg})
+    assert notes
+    assert len(out["dialogue"]) == len(dlg)
+    assert [r["speaker"] for r in out["dialogue"]] == [r["speaker"] for r in dlg]
+    rewritten = out["dialogue"][1]["line"]
+    assert rewritten != "笑了一声"
+    from app.services.gold_story.gold_chat.validate import _looks_like_pure_action
+
+    assert not _looks_like_pure_action(rewritten)

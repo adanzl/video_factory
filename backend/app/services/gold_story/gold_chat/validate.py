@@ -94,6 +94,7 @@ STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
         "保真-角色表外台词",
         "保真-孩子连说",
         "保真-N词槽语法",
+        "保真-纯动作台词",
     }
 )
 
@@ -1754,6 +1755,62 @@ def _append_n_token_grammar_issues(
         )
 
 
+# ── 纯动作句门限 ────────────────────────────────────────────────────────
+# 我们要的是**对话稿**。一句台词必须是角色对现场另一个人说的话；
+# 「笑一声」「拍腿笑死我了」这类只是动作/神态描述，是舞台说明不是对白。
+# 这类句子没有对话对象、不能配音演出来（观众听到的是演员在念动作），
+# 所以在机检里直接拒绝，不指望 LLM 语义审读偶尔抓到。
+_ACTION_VERB_RE = re.compile(
+    r"笑|点头|摇头|皱眉|叹气|拍腿|拍手|鼓掌|转身|发愣|愣住|瞪|撇嘴|"
+    r"耸肩|搓手|跺脚|低头|抬头|伸手|摆手|眨眼|抿嘴|咬牙|挠头|捂脸|"
+    r"咳嗽|倒吸|深吸|皱眉|挑眉|翻白眼"
+)
+# 出现这些标记说明这句话确实在对人说（有人称/疑问/引述/祈使）
+_DIALOGUE_MARKER_RE = re.compile(
+    r"你|您|问|吗|呢|谁|哪|什么|凭|怎么|"
+    r"别|不要|说|讲|喊|叫|"
+    r"[？?]|「|」|\""
+)
+
+
+def _looks_like_pure_action(line: str) -> bool:
+    """这句话是不是「只有动作、没有对话」的舞台说明。"""
+    text = str(line or "").strip()
+    if not text:
+        return False
+    if not _ACTION_VERB_RE.search(text):
+        return False
+    return not _DIALOGUE_MARKER_RE.search(text)
+
+
+def _append_pure_action_issues(
+    rows: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+) -> None:
+    """纯动作台词一律拒绝：对话稿里每句都得是人能说出口的话。"""
+    offenders = [
+        i
+        for i, row in enumerate(rows, 1)
+        if _looks_like_pure_action(str(row.get("line") or ""))
+    ]
+    if not offenders:
+        return
+    issues.append(
+        _issue(
+            lines=offenders,
+            kind="保真-纯动作台词",
+            desc=(
+                f"第{offenders}句只有动作/神态，没有对话内容"
+                "（观众听到的会是演员在念动作说明）"
+            ),
+            fix=(
+                "改成角色对现场人**说出口的话**（比如把「笑了一声」改成"
+                "「你可真敢说」）；动作不能当台词，也不要写「（笑）」「（愣住）」"
+            ),
+        ),
+    )
+
+
 def _append_consecutive_sibling_issues(
     rows: list[dict[str, Any]],
     issues: list[dict[str, Any]],
@@ -2107,6 +2164,9 @@ def collect_align_issues(
 
     # 只对 N 硬拦孩子连说：N 是「两人手 + 家长额度封顶」结构，连说是设计缺陷。
     # 其它类型（M8 互打/A 类破功等）本就需要同一孩子连说，不能一刀切。
+    # 纯动作台词：全类型一律拒绝（对话稿不允许舞台说明当台词）
+    _append_pure_action_issues(rows, issues)
+
     if st == "N":
         _append_consecutive_sibling_issues(rows, issues)
 

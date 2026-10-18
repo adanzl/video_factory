@@ -3145,6 +3145,62 @@ _N_REACT_LINES: tuple[str, ...] = (
 )
 
 
+# 纯动作句的改写词库：把「笑了一声」这类舞台说明换成**真的说出口的话**。
+# 按动作语义分档，避免把「笑」一律改成同一句。
+_ACTION_TO_SPEECH: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (re.compile(r"笑|噗|拍腿"), ("你可真敢说。", "这也太好笑了吧。")),
+    (re.compile(r"点头|点头|嗯"), ("行，我信你。", "那就这么定了。")),
+    (re.compile(r"摇头|撇嘴|翻白眼"), ("我可不信。", "你这话太离谱了。")),
+    (re.compile(r"愣|发愣|无语|僵"), ("你再说一遍？", "我没听明白。")),
+    (re.compile(r"皱眉|瞪|挑眉"), ("你说的这是什么意思？", "你认真的吗？")),
+    (re.compile(r"叹|深吸|倒吸"), ("唉，随你吧。", "我真拿你没办法。")),
+)
+
+
+def apply_pure_action_to_speech_patch(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """把只有动作/神态的台词改成真的说出口的话。
+
+    对话稿里动作不能当台词（观众听到的是演员在念动作说明）。机检会直接
+    拒绝这类句子，但拒绝之后还得有人改——这里按动作语义给一句自然对白，
+    句数与 speaker 不变，只换措辞。
+    """
+    if not isinstance(story, dict):
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if not dlg:
+        return story, []
+    from app.services.gold_story.gold_chat.validate import _looks_like_pure_action
+
+    existing = [str(r.get("line") or "").strip() for r in dlg]
+    changed = 0
+    for row in dlg:
+        line = str(row.get("line") or "").strip()
+        if not _looks_like_pure_action(line):
+            continue
+        replacement = ""
+        for pat, cands in _ACTION_TO_SPEECH:
+            if not pat.search(line):
+                continue
+            for cand in cands:
+                if cand not in existing:
+                    replacement = cand
+                    break
+            if replacement:
+                break
+        if not replacement:
+            continue
+        row["line"] = replacement
+        existing.append(replacement)
+        changed += 1
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, [f"纯动作句改台词:{changed}"]
+
+
 def apply_n_alternation_lines_patch(
     story: dict[str, Any],
     *,
@@ -3233,6 +3289,10 @@ def apply_n_contract_local_patches(
     )
     if _cast_notes:
         notes.extend(_cast_notes)
+    # 纯动作台词先改成真话（对话稿不允许舞台说明当台词）
+    data, _action_notes = apply_pure_action_to_speech_patch(data)
+    if _action_notes:
+        notes.extend(_action_notes)
     # 孩子连说先拆开（插反应句，不删句）
     data, _alt_notes = apply_n_alternation_lines_patch(data, beat_chain=beat_chain)
     if _alt_notes:
