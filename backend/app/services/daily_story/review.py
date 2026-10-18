@@ -1081,7 +1081,10 @@ def _n_type_token_premise_exempt(
         return False
     # 描述里若点的是「人/物/旧事」而不是「这个词」，不算怪词豁免
     desc = str(issue.get("desc") or "")
-    if any(k in desc for k in ("人物", "道具", "旧事", "身份", "关系")):
+    # 只排除「凭空多出人物/道具/旧事/身份」这类真缺前提。
+    # 不能用「关系」二字做排除——审读会把机制本身的因果关系写成
+    # 「缺失关系：缺 X → Y」，一撞就整条豁免失效（#87 实测）。
+    if any(k in desc for k in ("人物", "道具", "旧事", "身份", "身份关系")):
         return False
     if kind == "语病":
         # 语病类必须是在说「这个词没有含义/关联不上」，不是别的语法问题
