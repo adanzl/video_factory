@@ -528,11 +528,17 @@ def normalize_n_formula_slots(
 # 同侧第二个孩子的反应拍（抽象，不承担机制、不代问关键追问）。
 # 用户/专家口径：孩子不能连说 5 句；戏份交给第二个孩子交替，而不是把
 # 第二个孩子删掉（删了她就只剩两人手，孩子必然连说 3+ 句）。
-_N_SECOND_KID_REACTIONS: tuple[str, ...] = (
-    "在旁边笑一声，跟着起哄",
-    "跟着点一下头，说自己信了",
-    "帮腔一句，说听着还真有点道理",
-    "在旁边插一句，说自己也想去",
+# 第二个孩子的实质台词（用户授权：允许她有实质性台词）。
+# 她的功能定位：同侧、不抢机制、不代问关键追问，但要**推进话头**——
+# 可以追问细节、替观众说出疑惑、加码追问、替机制孩子铺垫、拆台。
+# 全是「推动对话往前走」的动作，不是单纯笑/点头。
+_N_SECOND_KID_LINES: tuple[str, ...] = (
+    "追问细节：那后来呢，你接着说",
+    "替观众说出疑惑：我怎么越听越糊涂",
+    "拆台一句：你这话编得也太顺了",
+    "加码追一句：那你让自己也去试试",
+    "替对方整理：所以你的意思是，站着就有钱拿？",
+    "表达不信：我不信，除非你当场再说一遍",
 )
 
 
@@ -571,8 +577,8 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
             out_rows.append(
                 {
                     "speaker": partner,
-                    "intent": _N_SECOND_KID_REACTIONS[
-                        react_i % len(_N_SECOND_KID_REACTIONS)
+                    "intent": _N_SECOND_KID_LINES[
+                        react_i % len(_N_SECOND_KID_LINES)
                     ],
                 }
             )
@@ -596,7 +602,7 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
             return contract, []
         out_rows.insert(
             target + 1,
-            {"speaker": partner, "intent": _N_SECOND_KID_REACTIONS[0]},
+            {"speaker": partner, "intent": _N_SECOND_KID_LINES[0]},
         )
         inserted = 1
     for idx, row in enumerate(out_rows, 1):
@@ -669,8 +675,8 @@ def ensure_n_two_kid_alternation(
                 rows_with_partner.append(
                     {
                         "speaker": partner,
-                        "intent": _N_SECOND_KID_REACTIONS[
-                            react_i % len(_N_SECOND_KID_REACTIONS)
+                        "intent": _N_SECOND_KID_LINES[
+                            react_i % len(_N_SECOND_KID_LINES)
                         ],
                     }
                 )
@@ -716,8 +722,8 @@ def ensure_n_two_kid_alternation(
             out_rows.append(
                 {
                     "speaker": other_kid,
-                    "intent": _N_SECOND_KID_REACTIONS[
-                        react_i % len(_N_SECOND_KID_REACTIONS)
+                    "intent": _N_SECOND_KID_LINES[
+                        react_i % len(_N_SECOND_KID_LINES)
                     ],
                 }
             )
