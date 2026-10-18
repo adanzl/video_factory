@@ -3304,6 +3304,62 @@ _PARTNER_FALLBACK = "我也知道这事，比他说的还离谱。"
 _TOKEN_DEF_RE = re.compile(r"就是|意思是|指的|算是")
 
 
+_N_DISMISSIVE_RE = re.compile(
+    r"反正我就这么说|你信不信都行|你自己想吧|我说完了|信不信随你|"
+    r"爱信不信|随你怎么想"
+)
+
+
+def apply_n_dismissive_prune_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """清掉「敷衍收摊」类句子，最多保留一句。
+
+    「反正我就这么说」+「我说完了，你自己想吧」+「你信不信都行」是同一个
+    态度换词说多遍，判换词重复；而且这类句子**不含任何信息**，既不推进
+    也不能被接住，紧跟在任何一句后面都是「接不上」（#87 实测反复）。
+
+    保留最后一句（它离收束最近，起「嘴硬到底」作用），其余删掉。
+    """
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if len(dlg) < 4:
+        return story, []
+    hits = [
+        i
+        for i, row in enumerate(dlg)
+        if _N_DISMISSIVE_RE.search(str(row.get("line") or ""))
+    ]
+    if len(hits) <= 1:
+        return story, []
+    keep = hits[-1]
+    drop = {i for i in hits if i != keep}
+    out_dlg = [row for i, row in enumerate(dlg) if i not in drop]
+    # 删句会造成新的同人相邻：这里就地拆开（把重复那条挪到后面）
+    kids = {"昭昭", "灿灿"}
+    for k in range(len(out_dlg) - 1):
+        a = str(out_dlg[k].get("speaker") or "").strip()
+        b = str(out_dlg[k + 1].get("speaker") or "").strip()
+        if a in kids and a == b:
+            row = out_dlg.pop(k + 1)
+            close_now = max(
+                (
+                    z
+                    for z, rr in enumerate(out_dlg)
+                    if str(rr.get("speaker") or "").strip() in {"妈妈", "爸爸"}
+                ),
+                default=len(out_dlg) - 1,
+            )
+            out_dlg.insert(max(1, min(close_now, len(out_dlg) - 1)), row)
+            break
+    out = dict(story)
+    out["dialogue"] = out_dlg
+    return out, [f"N敷衍句去重:{len(drop)}句"]
+
+
 def apply_n_explain_dedup_patch(
     story: dict[str, Any],
     *,
@@ -3591,6 +3647,9 @@ def apply_n_contract_local_patches(
     )
     if _pile_notes:
         notes.extend(_pile_notes)
+    data, _dis_notes = apply_n_dismissive_prune_patch(data, beat_chain=beat_chain)
+    if _dis_notes:
+        notes.extend(_dis_notes)
     data, _dedup_notes = apply_n_explain_dedup_patch(data, beat_chain=beat_chain)
     if _dedup_notes:
         notes.extend(_dedup_notes)
