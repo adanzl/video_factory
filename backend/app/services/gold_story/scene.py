@@ -564,6 +564,15 @@ _N_SECOND_KID_LINES: tuple[str, ...] = (
 
 
 
+# 只有这种「空壳追问」才是搭档拍里可以安全刷新的：
+# 「追问时间/地点」这类旧写法会让机检判关键追问归属错，但它不含剧情内容。
+# 反例（必须保留）：立规加码、反驳、语塞/愣住收束——那些是剧情与机制骨架。
+_N_STALE_PARTNER_BEAT = re.compile(
+    r"追问|质问|反问|打听|^问[：:]|"
+    r"问.{0,6}(?:时间|地点|在哪|几点|什么时候|谁教|哪来|哪儿来)"
+)
+
+
 def refresh_second_kid_intents(
     contract: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
@@ -605,9 +614,20 @@ def refresh_second_kid_intents(
     if not partner_rows:
         return contract, []
     changed = 0
-    for idx, row in enumerate(partner_rows):
-        new_intent = _N_SECOND_KID_LINES[idx % len(_N_SECOND_KID_LINES)]
-        if str(row.get("intent") or "") != new_intent:
+    pool_i = 0
+    for row in partner_rows:
+        cur = str(row.get("intent") or "")
+        # 只刷新「过期追问/打听」这类我方补的空壳拍。
+        # 原实现无条件用 _N_SECOND_KID_LINES 覆盖**所有**搭档拍，会把真实剧情
+        # 内容一起抹掉——包括 N 收束必需的「语塞/愣住」拍、立规反驳拍。
+        # #135 实测：灿灿「一时语塞，答不上来」被换成「这话我可有点不信」，
+        # 于是 N 类「收束须愣住」每轮必挂；昭昭的「加码立规」也被换掉，
+        # 连带 seed 被写成模板句并落库，素材直接损坏。
+        if not _N_STALE_PARTNER_BEAT.search(cur):
+            continue
+        new_intent = _N_SECOND_KID_LINES[pool_i % len(_N_SECOND_KID_LINES)]
+        pool_i += 1
+        if cur != new_intent:
             row["intent"] = new_intent
             changed += 1
     if not changed:
@@ -1895,6 +1915,11 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
                     continue
                 if _pi >= len(_partner_beats):
                     break
+                # 同上：只刷过期追问型 seed 行。真实素材（立规/抢答/语塞）
+                # 一律保留，否则 seed 会被写成契约叙述句甚至模板句并落库。
+                if not _N_STALE_PARTNER_BEAT.search(str(_r.get("intent") or "")):
+                    _pi += 1
+                    continue
                 if str(_r.get("intent") or "") != _partner_beats[_pi]:
                     _r["intent"] = _partner_beats[_pi]
                     _changed_seed += 1
