@@ -712,6 +712,45 @@ def merge_seed_consecutive_kid_rows(
 _RE_ASK_INTENT = re.compile(r"追问|质问|反问|设问|问：|什么意思|谁教|哪来|怎么|谁")
 
 
+_RE_SEED_TOKEN_OUT = re.compile(r"只说出这个词|说出这个词|蹦出")
+_RE_SEED_TOKEN_EXPLAIN = re.compile(r"解释这个词")
+
+
+def keep_seed_token_pair_adjacent(seed: list[Any]) -> tuple[list[Any], list[str]]:
+    """seed 里「说出词」和「解释这个词」必须相邻。
+
+    中间被旁观的拍隔开时，模型会写成两段互不相连的因果
+    （「因为街上有人工作」…「所以别人给你钱」），终检判因果断裂
+    （#87 实测）。这两句本来就是一口气说完的。
+    """
+    rows = [dict(r) if isinstance(r, dict) else r for r in (seed or [])]
+    out_i = next(
+        (i for i, r in enumerate(rows) if isinstance(r, dict)
+         and _RE_SEED_TOKEN_OUT.search(str(r.get("intent") or ""))),
+        -1,
+    )
+    exp_i = next(
+        (i for i, r in enumerate(rows) if isinstance(r, dict)
+         and _RE_SEED_TOKEN_EXPLAIN.search(str(r.get("intent") or ""))),
+        -1,
+    )
+    if out_i < 0 or exp_i < 0:
+        return seed or [], []
+    # 正确顺序：出词 → （家长问）→ 解释。
+    # 若二者之间夹的是**家长的追问**，保持不动（问答相邻才是对的）；
+    # 只有夹着旁观的拍时才需要把它们并到一起。
+    between = [
+        r for r in rows[out_i + 1 : exp_i]
+        if isinstance(r, dict)
+        and str(r.get("speaker") or "").strip() not in _PARENT_SPEAKER_SET
+    ]
+    if not between:
+        return seed or [], []
+    row = rows.pop(exp_i)
+    rows.insert(out_i + 1, row)
+    return rows, ["seed词与解释之间清掉旁观拍"]
+
+
 def align_seed_to_contract_beats(
     seed: list[Any],
     *,
@@ -1067,6 +1106,63 @@ def collapse_extra_parent_asks(contract: dict[str, Any]) -> tuple[dict[str, Any]
     return out, [f"家长追问合并:{len(drop)}拍→共{parent_n}拍"]
 
 
+_RE_MECHANISM_EXPLAIN = re.compile(r"讲圆|解释|自洽|因为|所以")
+
+
+def keep_mechanism_chain_adjacent(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """机制孩子的「说出词 → 解释」两拍必须紧邻，中间不许插旁观的拍。
+
+    「因为街上有人工作呀」+「所以别人给你钱」被灿灿一句隔开，就成了
+    两段互不相连的因果（终检判「中间缺了定义句」）。语序上这两句本来就
+    该一口气说完。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or len(chain) < 4:
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    mech: dict[str, int] = {}
+    for r in rows:
+        sp = str(r.get("speaker") or "").strip()
+        if sp and sp not in _PARENT_SPEAKER_SET and _N_MECHANISM_CHILD_RE.search(
+            str(r.get("intent") or r.get("beat") or "")
+        ):
+            mech[sp] = mech.get(sp, 0) + 1
+    mech_kid = max(mech, key=lambda k: mech[k]) if mech else ""
+    if not mech_kid:
+        return contract, []
+    moved = 0
+    for _ in range(4):
+        acted = False
+        for i in range(len(rows) - 2):
+            if str(rows[i].get("speaker") or "").strip() != mech_kid:
+                continue
+            if not _RE_MECHANISM_EXPLAIN.search(str(rows[i].get("intent") or "")):
+                continue
+            mid_sp = str(rows[i + 1].get("speaker") or "").strip()
+            nxt_sp = str(rows[i + 2].get("speaker") or "").strip()
+            if mid_sp in _PARENT_SPEAKER_SET or mid_sp == mech_kid:
+                continue
+            if nxt_sp != mech_kid:
+                continue
+            # 把中间那条旁观拍挪到机制孩子第二句之后
+            intruder = rows.pop(i + 1)
+            rows.insert(i + 2, intruder)
+            moved += 1
+            acted = True
+            break
+        if not acted:
+            break
+    if not moved:
+        return contract, []
+    for idx, row in enumerate(rows, 1):
+        row["beat"] = idx
+    out = dict(contract)
+    out["beat_chain"] = rows
+    return out, [f"机制链相邻修复:{moved}处"]
+
+
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把**契约与 seed 一起**做词槽归一化（唯一入口）。
 
@@ -1117,6 +1213,12 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         )
         if c_notes:
             notes.extend(c_notes)
+        # 机制链（说词→解释）必须紧邻
+        out["scene_contract"], mc_notes = keep_mechanism_chain_adjacent(
+            out.get("scene_contract") or {}
+        )
+        if mc_notes:
+            notes.extend(mc_notes)
         # 契约层收敛：孩子相邻与问答相邻互相影响，交替跑到不动为止
         for _ in range(3):
             out["scene_contract"], sp_notes = spread_kid_beats(
@@ -1146,6 +1248,13 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
     if _align_notes:
         out["dialogue_seed"] = _seed_final
         notes.extend(_align_notes)
+    # 词与解释必须相邻（中间被隔开会写成互不相连的两段因果）
+    _seed_pair, _p2 = keep_seed_token_pair_adjacent(
+        out.get("dialogue_seed") or []
+    )
+    if _p2:
+        out["dialogue_seed"] = _seed_pair
+        notes.extend(_p2)
     # 合并可能因对齐重新出现的相邻同行
     _seed_merged, _m2 = merge_seed_consecutive_kid_rows(
         out.get("dialogue_seed") or []
