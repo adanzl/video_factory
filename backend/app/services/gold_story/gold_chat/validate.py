@@ -1825,12 +1825,15 @@ def _append_cast_membership_issues(
         # 契约拍不足以判定人物真相时不拦（避免空契约把整篇误杀）
         return
     parent_speakers = {"妈妈", "爸爸"}
+    # 产品规则：昭昭/灿灿两个孩子都必须能出场。契约拍若漏写某一方，
+    # 不能把他当「闯入者」拦掉——那会与「插反应句拆连说」互相抵消。
+    canonical_kids = {"昭昭", "灿灿"}
     intruders: dict[str, list[int]] = {}
     for i, row in enumerate(rows, 1):
         speaker = str(row.get("speaker") or "").strip()
         if not speaker or not str(row.get("line") or "").strip():
             continue
-        if speaker in cast or speaker in parent_speakers:
+        if speaker in cast or speaker in parent_speakers or speaker in canonical_kids:
             continue
         intruders.setdefault(speaker, []).append(i)
     for speaker, line_nos in intruders.items():

@@ -1739,16 +1739,23 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             # 复用前也要过「双孩交替」：库里旧契约可能是「只有一个孩子」的
             # 两人手形态，直接复用就会让孩子连说（用户明令禁止）。
             # 这里补齐第二个孩子的反应拍，再写回 payload。
-            from app.services.gold_story.scene import ensure_n_two_kid_alternation
+            from app.services.gold_story.scene import (
+                enforce_two_kid_cast,
+                ensure_n_two_kid_alternation,
+            )
 
+            # 复用路径同样要过「两孩出场」（出厂设定），否则库里旧契约只有
+            # 一个孩子，下游 cast 补丁会把补进来的孩子当「契约外」删掉，
+            # 与「插反应句拆连说」形成删-插死循环（#87 实测）。
+            existing_contract, _kid_notes = enforce_two_kid_cast(existing_contract)
             existing_contract, _alt_notes = ensure_n_two_kid_alternation(
                 existing_contract
             )
-            if _alt_notes:
+            if _kid_notes or _alt_notes:
                 logger.info(
-                    "[GOLD_CHAT] reuse+alternation id=%s: %s",
+                    "[GOLD_CHAT] reuse cast normalize id=%s: %s",
                     row.get("id"),
-                    _alt_notes[:2],
+                    (_kid_notes + _alt_notes)[:3],
                 )
             logger.info(
                 "[GOLD_CHAT] reuse existing scene_contract id=%s beats=%s mom_max=%s",

@@ -3108,11 +3108,21 @@ def apply_cast_membership_patch(
     if not dlg:
         return story, []
     parents = {"妈妈", "爸爸"}
+    # 产品规则「必须有两个孩子出场」优先于「契约拍里有没有他」。
+    # 昭昭/灿灿都是合法在场人：即便契约漏写了某一方的拍，也不能删他的台词，
+    # 否则会与「插反应句拆孩子连说」形成删-插死循环（#87 实测 150 次）。
+    # 只删两个既定孩子之外的、契约未登记的闯入者。
+    known_kids = {"昭昭", "灿灿"}
     kept: list[dict[str, Any]] = []
     dropped: list[str] = []
     for row in dlg:
         speaker = str(row.get("speaker") or "").strip()
-        if speaker and speaker not in cast and speaker not in parents:
+        if (
+            speaker
+            and speaker not in cast
+            and speaker not in parents
+            and speaker not in known_kids
+        ):
             dropped.append(speaker)
             continue
         kept.append(row)
