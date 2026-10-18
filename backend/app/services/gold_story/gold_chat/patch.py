@@ -3501,6 +3501,22 @@ def apply_n_contract_local_patches(
     )
     if budget_trimmed2:
         notes.append("N家长句数二次收束")
+    # ── 终极收敛：孩子连说是硬规则，必须放在**所有**插入/删除之后 ──
+    # 前面任何一步（补拍、补词槽、额度裁剪）都可能重新造出连说，
+    # 所以这里再拆一次，直到没有连说为止。
+    for _ in range(3):
+        data, _final_alt = apply_n_alternation_lines_patch(
+            data, beat_chain=beat_chain
+        )
+        if not _final_alt:
+            break
+        notes.extend(_final_alt)
+    # 收束句必须压在最末（上面的插入可能又把它挤到中间）
+    data, _final_close = apply_n_move_close_to_tail_patch(
+        data, beat_chain=beat_chain
+    )
+    if _final_close:
+        notes.extend(_final_close)
     # 补句/改写可能带进旁白腔：最后统一过一遍旁白→口语（既有的转换器）
     from app.services.gold_story.scene import patch_dialogue_narration_to_speech
 
