@@ -3135,12 +3135,13 @@ def apply_cast_membership_patch(
     return out, [f"删除契约外说话人:{'、'.join(dict.fromkeys(dropped))}"]
 
 
+# 桥接句同样不能引用「刚才/前面」这类上下文（位置不定，会破坏开场因果）
 _N_BRIDGE_LINES: tuple[str, ...] = (
-    "等等，你刚才说啥？",
     "我怎么越听越糊涂了。",
-    "你先等等，我还没听懂。",
     "这话我可不敢信。",
     "你确定？我可记着呢。",
+    "行，那我听着。",
+    "你这话编得挺顺啊。",
 )
 
 _N_REACT_LINES: tuple[str, ...] = (
