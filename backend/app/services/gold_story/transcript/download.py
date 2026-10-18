@@ -36,6 +36,10 @@ class DownloadResult:
     metadata: dict[str, Any]
 
 
+class VideoTooLongError(ValueError):
+    """站外视频超出时长上限（GOLD_STORY_MAX_DURATION_SEC）。"""
+
+
 def normalize_bv(source: str) -> str:
     return parse_media_ref(source, platform="bili").source_id
 
@@ -70,15 +74,26 @@ def parse_media_ref(raw: str, *, platform: str = "bili") -> MediaRef:
 
 
 def download_media(ref: MediaRef, config: Config) -> DownloadResult:
+    max_duration_sec = int(getattr(config, "gold_story_max_duration_sec", 0) or 0)
     if ref.source == "bili":
-        return _download_with_ytdlp(ref, config, cookie_path=config.bili_cookie_path)
+        return _download_with_ytdlp(
+            ref,
+            config,
+            cookie_path=config.bili_cookie_path,
+            max_duration_sec=max_duration_sec,
+        )
     if ref.source == "douyin":
         cookie_path = config.douyin_cookie_path
         if cookie_path is None or not cookie_path.exists():
             raise RuntimeError(
                 "douyin download requires DOUYIN_COOKIE_PATH; not configured yet"
             )
-        return _download_with_ytdlp(ref, config, cookie_path=cookie_path)
+        return _download_with_ytdlp(
+            ref,
+            config,
+            cookie_path=cookie_path,
+            max_duration_sec=max_duration_sec,
+        )
     raise ValueError(f"unsupported source: {ref.source}")
 
 
@@ -169,6 +184,7 @@ def _download_with_ytdlp(
     config: Config,
     *,
     cookie_path: Path | None,
+    max_duration_sec: int = 0,
 ) -> DownloadResult:
     """用 yt-dlp CLI 下载；避免 Python API 在 gevent 下 spawn ffmpeg 变僵尸。"""
     workspace = config.gold_story_media_workspace
@@ -191,6 +207,9 @@ def _download_with_ytdlp(
         "-o",
         outtmpl,
     ]
+    if max_duration_sec > 0:
+        # yt-dlp 在下载前按元数据比对，7 小时合集不会再拉几个 G 下来
+        cmd.extend(["--match-filter", f"duration <= {max_duration_sec}"])
     if cookie_path and cookie_path.exists():
         resolved = _ytdlp_cookie_path(cookie_path, workspace)
         if resolved:
@@ -206,13 +225,40 @@ def _download_with_ytdlp(
         except OSError:
             pass
 
-    run_subprocess_cmd(cmd, timeout=900.0, check=True)
+    code, stdout, stderr = run_subprocess_cmd(cmd, timeout=900.0, check=False)
+    output = f"{stdout}\n{stderr}"
+    filter_note = f" (yt-dlp: {output.strip()[:200]})" if output.strip() else ""
 
     video_path = _resolve_downloaded_video(downloads_dir, ref.source_id)
+    if code != 0:
+        if max_duration_sec > 0 and "does not pass filter" in output:
+            raise VideoTooLongError(
+                f"{ref.source_id} skipped by yt-dlp: duration > {max_duration_sec}s"
+            )
+        detail = output.strip() or f"exit {code}"
+        raise RuntimeError(f"command failed: {detail}")
     if not video_path.exists():
+        # 带时长过滤时，yt-dlp 命中过滤是「正常退出 + 不产出文件」；
+        # 这是长合集最常见的落点，直接判 too_long 而不是笼统的下载失败
+        if max_duration_sec > 0:
+            raise VideoTooLongError(
+                f"{ref.source_id} not downloaded: duration > {max_duration_sec}s"
+                f"{filter_note}"
+            )
         raise RuntimeError(f"download finished but file missing: {video_path}")
 
     info = _read_info_json(downloads_dir, ref.source_id)
+    duration_sec = info.get("duration")
+    if (
+        max_duration_sec > 0
+        and isinstance(duration_sec, (int, float))
+        and duration_sec > max_duration_sec
+    ):
+        _cleanup_downloads(downloads_dir, ref.source_id)
+        raise VideoTooLongError(
+            f"{ref.source_id} duration {float(duration_sec):.0f}s > {max_duration_sec}s"
+        )
+
     metadata = {
         "source": ref.source,
         "source_id": ref.source_id,
@@ -224,6 +270,14 @@ def _download_with_ytdlp(
         "downloaded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     return DownloadResult(ref=ref, video_path=video_path, metadata=metadata)
+
+
+def _cleanup_downloads(downloads_dir: Path, source_id: str) -> None:
+    for old in downloads_dir.glob(f"{source_id}.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
 
 
 def _resolve_downloaded_video(downloads_dir: Path, source_id: str) -> Path:

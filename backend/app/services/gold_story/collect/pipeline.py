@@ -32,7 +32,7 @@ from app.services.gold_story.transcript import (
     save_repaired_transcript,
     transcribe_bilibili,
 )
-from app.services.gold_story.transcript.download import normalize_bv
+from app.services.gold_story.transcript.download import VideoTooLongError, normalize_bv
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,26 @@ def process_candidate(
     if existing_row and not overwrite_existing:
         return {**base, "action": "skip", "reason": "already_in_db"}
 
+    # H1 时长门控：合集/直播回放（如 7 小时)转写要几小时，且抽不出单条故事。
+    # 放在 H0b 之前，避免白下载、白抽帧、白跑 ASR。
+    max_duration = int(getattr(cfg, "gold_story_max_duration_sec", 0) or 0)
+    duration_sec = int(candidate.duration_sec or 0)
+    if max_duration > 0 and duration_sec > max_duration:
+        logger.info(
+            "gold_story h1 skip bvid=%s reason=too_long duration=%ss max=%ss title=%r",
+            candidate.source_id,
+            duration_sec,
+            max_duration,
+            candidate.title[:40],
+        )
+        return {
+            **base,
+            "action": "reject",
+            "stage": "H1",
+            "reason": "too_long",
+            "duration_sec": duration_sec,
+        }
+
     transcript_path = cfg.gold_story_transcript_dir / f"{candidate.source_id}.txt"
     transcript_text = _read_transcript(transcript_path)
     tx: dict[str, Any] | None = None
@@ -95,6 +115,19 @@ def process_candidate(
                 return {**base, "action": "error", "stage": "H0b", "error": tx}
             else:
                 return {**base, "action": "error", "stage": "H0b", "error": tx}
+        except VideoTooLongError as exc:
+            logger.info(
+                "gold_story h0b skip bvid=%s reason=too_long: %s",
+                candidate.source_id,
+                exc,
+            )
+            return {
+                **base,
+                "action": "reject",
+                "stage": "H0b",
+                "reason": "too_long",
+                "error": str(exc),
+            }
         except Exception as exc:
             logger.warning(
                 "gold_story H0b failed bvid=%s: %s",
@@ -367,6 +400,7 @@ def _build_candidate_from_bvid(
             "reply_count": 0,
             "url": str(existing_row.get("url") or ""),
             "cid": 0,
+            "duration": int((existing_row.get("payload") or {}).get("duration_sec") or 0),
         }
         replies = []
 
@@ -394,6 +428,7 @@ def _build_candidate_from_bvid(
         top_replies=tuple(replies),
         cid=int(meta.get("cid") or 0),
         funny_metrics=metrics_to_payload(funny),
+        duration_sec=int(meta.get("duration") or 0),
     )
 
 
@@ -677,6 +712,7 @@ def enqueue_collect_candidates(
             "bili_title": row.title,
             "search_keyword": row.keyword,
             "pipeline_stage": "queued",
+            "duration_sec": int(row.duration_sec or 0),
             **(row.funny_metrics or {}),
         }
         try:

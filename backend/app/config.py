@@ -456,6 +456,11 @@ class Config:
         self.gold_story_cron_max: int = int(os.getenv("GOLD_STORY_CRON_MAX", "10"))
         self.gold_story_min_view: int = int(os.getenv("GOLD_STORY_MIN_VIEW", "100000"))
         self.gold_story_min_reply: int = int(os.getenv("GOLD_STORY_MIN_REPLY", "50"))
+        # 单条站外视频最长时长（秒）：超时长的合集/直播回放直接丢，
+        # 转写一条 7 小时视频要跑几小时且抽不出单条故事；<=0 关闭该门控
+        self.gold_story_max_duration_sec: int = int(
+            os.getenv("GOLD_STORY_MAX_DURATION_SEC", "1200")
+        )
         self.gold_story_candidates_file: Path = _path(
             "GOLD_STORY_CANDIDATES_FILE",
             ROOT_DIR / "data/gold_story/_candidates_bv.txt",

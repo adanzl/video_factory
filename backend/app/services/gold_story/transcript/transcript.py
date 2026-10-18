@@ -15,6 +15,7 @@ from . import ocr as gs_subtitle_ocr
 from . import whisper as gs_whisper
 from .download import (
     MediaRef,
+    VideoTooLongError,
     download_media,
     extract_audio_wav,
     normalize_bv,
@@ -224,6 +225,12 @@ def transcribe_media(
 
     downloaded = download_media(ref, cfg)
     duration_sec = float(downloaded.metadata.get("duration") or 0.0)
+    max_duration_sec = int(getattr(cfg, "gold_story_max_duration_sec", 0) or 0)
+    if max_duration_sec > 0 and duration_sec > max_duration_sec:
+        # 兜底：download 侧已按元数据拦截，这里再挡一次，绝不把长合集丢进 ASR
+        raise VideoTooLongError(
+            f"{ref.source_id} duration {duration_sec:.0f}s > {max_duration_sec}s"
+        )
     audio_path = extract_audio_wav(
         downloaded.video_path,
         audio_dir=audio_dir,

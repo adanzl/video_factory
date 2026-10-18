@@ -58,6 +58,7 @@ class VideoCandidate:
     top_replies: tuple[str, ...] = ()
     cid: int = 0
     funny_metrics: dict[str, Any] | None = None
+    duration_sec: int = 0
 
 
 def search_keywords(config: Config | None = None) -> list[str]:
@@ -83,6 +84,7 @@ def passes_h1_filter(
     title: str,
     view_count: int,
     reply_count: int,
+    duration_sec: int | None = None,
     config: Config | None = None,
 ) -> tuple[bool, str]:
     cfg = config or Config()
@@ -91,6 +93,14 @@ def passes_h1_filter(
         return False, "empty_title"
     if _EXCLUDE_TITLE.search(title_text):
         return False, "exclude_title"
+    max_duration = int(getattr(cfg, "gold_story_max_duration_sec", 0) or 0)
+    if (
+        duration_sec is not None
+        and max_duration > 0
+        and int(duration_sec) > max_duration
+    ):
+        # 合集/直播回放：转写要几小时，且往往抽不出单条微型故事
+        return False, "too_long"
     view_ok = int(view_count) >= cfg.gold_story_min_view
     reply_ok = int(reply_count) >= cfg.gold_story_min_reply
     if not view_ok and not reply_ok:
@@ -141,6 +151,8 @@ def fetch_video_meta(
         "view_count": int(stat.get("view") or 0),
         "reply_count": int(stat.get("reply") or 0),
         "cid": int(data.get("cid") or 0),
+        # 合集/多 P 视频这里给的是总时长，正好用于「太长不要」门控
+        "duration": int(data.get("duration") or 0),
     }
 
 
@@ -259,17 +271,20 @@ def collect_candidates(
             except Exception as exc:
                 logger.warning("gold_story view failed bvid=%s: %s", bvid, exc)
                 continue
+            duration_sec = int(meta.get("duration") or 0)
             ok, reason = passes_h1_filter(
                 title=meta["title"],
                 view_count=meta["view_count"],
                 reply_count=meta["reply_count"],
+                duration_sec=duration_sec,
                 config=cfg,
             )
             if not ok:
                 logger.info(
-                    "gold_story h1 skip bvid=%s reason=%s title=%r",
+                    "gold_story h1 skip bvid=%s reason=%s duration=%ss title=%r",
                     bvid,
                     reason,
+                    duration_sec,
                     meta["title"][:40],
                 )
                 continue
@@ -309,6 +324,7 @@ def collect_candidates(
                     top_replies=tuple(replies),
                     cid=int(meta.get("cid") or 0),
                     funny_metrics=metrics_to_payload(funny),
+                    duration_sec=duration_sec,
                 )
             )
     return results
