@@ -1779,6 +1779,20 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             out = dict(row)
             out["payload"] = dict(payload)
             out["payload"]["scene_contract"] = existing_contract
+            # 归一化结果要**落库**：否则下一次复用又读到旧的英文词槽/单孩契约，
+            # 永远修不好（#87 实测：waka 一直留在库里）。
+            gid = int(row.get("id") or 0)
+            if gid > 0 and existing_contract is not payload.get("scene_contract"):
+                try:
+                    repo_gold_story.patch_story_payload(
+                        gid, {"scene_contract": existing_contract}
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[GOLD_CHAT] persist normalized contract failed id=%s: %s",
+                        gid,
+                        exc,
+                    )
             if not isinstance(existing_seed, list) or not existing_seed:
                 from app.services.gold_story.scene import seed_from_beat_chain
 
