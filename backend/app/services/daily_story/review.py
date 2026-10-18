@@ -1025,8 +1025,12 @@ def _n_type_token_premise_exempt(
     只豁免这一种：kind=缺前提/引用无据，且被点名的句子正是**契约声明的
     词槽句**（含怪词）。其它缺前提（凭空冒出人物/道具/旧事）照旧硬拦。
     """
+    # 也覆盖「语病」类里针对怪词本身的判定：
+    # 「怪词和这个意思之间没有关联」「不知道这词到底指什么」——这类判词的
+    # 前提是「词应当有公认含义」，而 N 的机制就是**自造词 + 荒诞解释**，
+    # 按常识判必然判死（#87 实测）。只在描述确实指向怪词时豁免。
     kind = str(issue.get("kind") or "")
-    if kind not in {"缺前提", "引用无据"}:
+    if kind not in {"缺前提", "引用无据", "语病"}:
         return False
     if str(story.get("story_type") or "").strip().upper() != "N":
         return False
@@ -1071,6 +1075,15 @@ def _n_type_token_premise_exempt(
     desc = str(issue.get("desc") or "")
     if any(k in desc for k in ("人物", "道具", "旧事", "身份", "关系")):
         return False
+    if kind == "语病":
+        # 语病类必须是在说「这个词没有含义/关联不上」，不是别的语法问题
+        token_focus = any(
+            k in desc
+            for k in ("这个词", "这词", "怪词", "自造", "没有任何可理解的关联",
+                      "到底指什么", "不知道这词")
+        )
+        if not token_focus:
+            return False
     return True
 
 
