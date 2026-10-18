@@ -3163,8 +3163,11 @@ def apply_n_alternation_lines_patch(
         if isinstance(r, dict)
         and str(r.get("speaker") or "").strip() in {"昭昭", "灿灿"}
     }
+    if len(kids) == 1:
+        # 只有一个孩子：按用户裁决补一个同侧搭档来承担交替位
+        # （不豁免连说、也不删句）。
+        kids.add("灿灿" if "昭昭" in kids else "昭昭")
     if len(kids) < 2:
-        # 只有一个孩子可说话：交替无从谈起（契约应已保证两孩在场）
         return story, []
     existing = [
         str(r.get("line") or "").strip() for r in dlg if str(r.get("line") or "").strip()

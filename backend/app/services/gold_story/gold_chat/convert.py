@@ -1736,6 +1736,20 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         from app.services.gold_story.scene import validate_scene
 
         if not validate_scene(existing_contract):
+            # 复用前也要过「双孩交替」：库里旧契约可能是「只有一个孩子」的
+            # 两人手形态，直接复用就会让孩子连说（用户明令禁止）。
+            # 这里补齐第二个孩子的反应拍，再写回 payload。
+            from app.services.gold_story.scene import ensure_n_two_kid_alternation
+
+            existing_contract, _alt_notes = ensure_n_two_kid_alternation(
+                existing_contract
+            )
+            if _alt_notes:
+                logger.info(
+                    "[GOLD_CHAT] reuse+alternation id=%s: %s",
+                    row.get("id"),
+                    _alt_notes[:2],
+                )
             logger.info(
                 "[GOLD_CHAT] reuse existing scene_contract id=%s beats=%s mom_max=%s",
                 row.get("id"),

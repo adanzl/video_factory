@@ -531,8 +531,49 @@ def ensure_n_two_kid_alternation(
         )
     )
     if len(kids) < 2:
-        # 只有一个孩子：这是两人手契约，交替无从谈起（上层会补第二孩）
-        return contract, []
+        # 只有一个孩子：禁止连说就无从满足（家长额度封顶后剩下的句子只能
+        # 由他连说）。按用户裁决，这里主动**补一个同侧孩子**，用他承担
+        # 交替位的反应拍——不是删孩子、也不是豁免连说。
+        solo = kids[0] if kids else ""
+        partner = "灿灿" if solo == "昭昭" else "昭昭"
+        if not solo:
+            return contract, []
+        rows_with_partner: list[Any] = []
+        prev_kid = ""
+        react_i = 0
+        inserted = 0
+        for row in rows:
+            sp = str(row.get("speaker") or "").strip()
+            if sp == solo and sp == prev_kid:
+                rows_with_partner.append(
+                    {
+                        "speaker": partner,
+                        "intent": _N_SECOND_KID_REACTIONS[
+                            react_i % len(_N_SECOND_KID_REACTIONS)
+                        ],
+                    }
+                )
+                react_i += 1
+                inserted += 1
+                prev_kid = partner
+            rows_with_partner.append(row)
+            prev_kid = sp if sp not in _PARENT_SPEAKER_SET else ""
+        if not inserted:
+            return contract, []
+        for idx, row in enumerate(rows_with_partner, 1):
+            if isinstance(row, dict):
+                row["beat"] = idx
+        out_solo = dict(contract)
+        out_solo["beat_chain"] = rows_with_partner
+        chars_solo = [
+            str(c).strip()
+            for c in (contract.get("characters") or [])
+            if str(c).strip()
+        ]
+        if partner not in chars_solo:
+            chars_solo.append(partner)
+        out_solo["characters"] = chars_solo
+        return out_solo, [f"N单孩补第二个孩子:{partner}(插{inserted}拍反应)"]
     # 机制主体 = 承担机制推进拍的孩子
     mech: dict[str, int] = {}
     for r in rows:
