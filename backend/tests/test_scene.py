@@ -1791,3 +1791,88 @@ def test_pad_intent_must_not_require_new_entity():
         [{"speaker": "昭昭", "intent": i} for i in bad + good]
     )
     assert len(kept) == len(good) and len(dropped) == len(bad)
+
+
+def _n_contract(token: str = "咕噜") -> dict:
+    return {
+        "story_type": "N",
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "立规：问西瓜怎么长这么大"},
+            {"beat": 2, "speaker": "昭昭", "intent": "一本正经说爷爷有秘方"},
+            {"beat": 3, "speaker": "昭昭", "intent": f"突然蹦出一个自造怪词「{token}」"},
+            {"beat": 4, "speaker": "妈妈", "intent": "追问这词什么意思"},
+            {"beat": 5, "speaker": "妈妈", "intent": "收束：认栽"},
+        ],
+    }
+
+
+def _n_seed(token: str = "咕噜", names: str = "小豆、小苗、小禾") -> list[dict]:
+    return [
+        {"speaker": "妈妈", "intent": "我要记下你说的每句话，看你骗不骗人"},
+        {"speaker": "昭昭", "intent": f"爷爷种西瓜有个办法，叫{names}"},
+        {"speaker": "灿灿", "intent": "这话我可有点不信，你别蒙我"},
+        {"speaker": "昭昭", "intent": f"只说出这个词（不解释）：{token}"},
+        {"speaker": "妈妈", "intent": f"{token}是什么意思，谁教你的"},
+        {
+            "speaker": "昭昭",
+            "intent": "解释这个词是什么意思：没人教，就是浇完水要念三遍",
+        },
+        {"speaker": "灿灿", "intent": "越说越像真有这么回事"},
+        {"speaker": "昭昭", "intent": "黄瓜"},
+        {"speaker": "妈妈", "intent": "我认栽，以后说话得先打草稿"},
+    ]
+
+
+def test_n_two_kid_dialogue_is_seed_driven_not_hardcoded():
+    """换一个故事，内容必须跟着 seed 变——绝不能串写成别篇的台词。
+
+    这条测试守的是「不许过拟合」：早前 build_n_two_kid_dialogue 里
+    写死过某篇的「小明小红小刚 / 哇卡 / 苹果」，结果任何 N 故事都会被
+    改写成那篇的内容。
+    """
+    from app.services.gold_story.scene import build_n_two_kid_dialogue
+
+    rows, _notes = build_n_two_kid_dialogue(
+        _n_contract("咕噜"), existing=[], dialogue_seed=_n_seed("咕噜")
+    )
+    joined = "".join(str(r["line"]) for r in rows)
+    # 本故事的实体必须在
+    assert "咕噜" in joined
+    assert "西瓜" in joined or "黄瓜" in joined
+    # 别篇的实体一律不许出现
+    for leaked in ("小明", "小红", "小刚", "哇卡", "苹果", "好人"):
+        assert leaked not in joined, f"串写了别篇内容: {leaked}"
+
+
+def test_n_two_kid_dialogue_keeps_alternation_and_mom_budget():
+    """重排后必须：孩子严格交替、家长不超过 3 句、末句是家长收束。"""
+    from app.services.gold_story.scene import build_n_two_kid_dialogue
+
+    rows, _notes = build_n_two_kid_dialogue(
+        _n_contract("咕噜"), existing=[], dialogue_seed=_n_seed("咕噜")
+    )
+    speakers = [str(r["speaker"]) for r in rows]
+    kids = [s for s in speakers if s in {"昭昭", "灿灿"}]
+    assert all(a != b for a, b in zip(speakers, speakers[1:]) if a in {"昭昭", "灿灿"})
+    assert speakers.count("妈妈") <= 3
+    assert speakers[-1] == "妈妈"
+    assert len(kids) >= 4
+
+
+def test_n_two_kid_dialogue_skips_when_already_good():
+    """已有合格对白时不再重建（否则每次 refine 都会覆盖扩写成果）。"""
+    from app.services.gold_story.scene import build_n_two_kid_dialogue
+
+    good, _ = build_n_two_kid_dialogue(
+        _n_contract("咕噜"), existing=[], dialogue_seed=_n_seed("咕噜")
+    )
+    # 补到 12 句以上（模拟扩写后的成稿），再次调用应跳过
+    padded = [dict(r) for r in good]
+    while len(padded) < 12:
+        padded.insert(1, {"speaker": "妈妈", "line": "我记下了。"})
+    again, notes = build_n_two_kid_dialogue(
+        _n_contract("咕噜"), existing=padded, dialogue_seed=_n_seed("咕噜")
+    )
+    assert again == []
+    assert notes == []

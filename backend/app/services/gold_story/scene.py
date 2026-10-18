@@ -184,7 +184,6 @@ _PARENT_SPEAKER_SET = frozenset({"妈妈", "爸爸"})
 # 需要的句数、又不出现同人连说。所有「补角色 / 查人数 / 单孩兜底」都必须
 # 走下面这两个函数，禁止在各处再写 `if len(kids) == 1` 的临时分支
 # （此前这种分支散在 16 处，逐个补必然漏，且互相冲突）。
-_KID_SPEAKER_SET = frozenset({"昭昭", "灿灿"})
 _DEFAULT_KID_ORDER: tuple[str, str] = ("昭昭", "灿灿")
 
 
@@ -549,13 +548,18 @@ def normalize_n_formula_slots(
 # 分层设计，相邻几拍不会撞车：
 #   报名 → 穿戴 → 场面 → 加码 → 情形 → 入伙
 _N_SECOND_KID_LINES: tuple[str, ...] = (
-    "我也认识几个好人，叫小美、小强、小丽。",
-    "他上回还说要带一帮人来呢。",
-    "这事儿有意思，我得盯着看。",
-    "那我以后也这么说话成不成？",
-    "你这么讲，我听着都替他害臊。",
-    "他那人就这样，越说越来劲。",
+    "这话我可有点不信，你别蒙我。",
+    "我怎么听着这么玄乎呢。",
+    "越说越像真有这么回事了。",
+    "行，那我就在旁边看着你编。",
+    "这么说我可学不会，你自个儿来吧。",
+    "我听着都替你捏把汗呢。",
 )
+
+# 说明：这些台词**只表达态度，不含任何剧情内容**（没有人名、怪词、道具），
+# 所以对任何 N 故事都成立。剧情内容一律来自 dialogue_seed 与契约，
+# 绝不在这里写死具体故事（否则换一个故事就会被串写成 #87 的内容）。
+
 
 
 def refresh_second_kid_intents(
@@ -1390,155 +1394,237 @@ def pin_mechanism_kid_lines(contract: dict[str, Any]) -> tuple[dict[str, Any], l
 #   - 每句按 18–22 字写足，13 句即可过 240 字。
 # 机制内容（怪词、名字）仍来自 H3b seed，不写死剧情。
 # role: mom=家长 mech=机制孩子 side=搭档孩子
-# 每一拍都**承接上一拍**，并且**带来新信息**（这是同时满足
-# 「不各说各的」「不换词重复」的唯一排法）。
-# 相邻两拍的关系：认下→反驳→追问→回答→加码→顶回去……
-# 每一拍都**承接上一拍**，并且**带来新信息**（这是同时满足
-# 「不各说各的」「不换词重复」的唯一排法）。
-# 相邻两拍的关系：认下→驳回→追问→回答→加码→顶回去……
-# 三处专治过实测硬伤：
-#   ① 第4拍必须回应第3拍的「好记」（否则判没接住话头）；
-#   ② 第6拍只**命名**不定义，第8拍才**定义**（否则判同一定义说两遍）；
-#   ③ 「苹果」由第10拍首次引入，第11拍不得说「又」（否则判缺前提）。
-# 每一拍都**承接上一拍**，并且**带来新信息**（这是同时满足
-# 「不各说各的」「不换词重复」的唯一排法）。
-# 关键结构约束（都是实测踩出来的）：
-#   ① 第4拍必须咬住第3拍的原话重点（不能自说自话）；
-#   ② 怪词先**命名**、妈妈追问、再**定义**，不能同一定义说两遍；
-#   ③ 「苹果」必须**有人问、它来答**：第9拍先问「你要我做什么」，
-#      第10拍才淡定回「苹果。」——这样既是荒诞秒答，又接住话头；
-#      后续两拍再围绕它抬杠。
-# 每一拍都**承接上一拍**，并且**带来新信息**。
-#
-# 专家复核 (2026-10) 的关键意见：灿灿不能把昭昭的**对话对象**拉走。
-# 机制主线是「孩子对妈妈一本正经胡说 → 妈妈破功」；一旦昭昭转去跟灿灿
-# 争辩，妈妈就被边缘化、破功感消失。所以：
-#   ① 灿灿只做「凑热闹/帮腔/被带偏」这类同伴式反应，不向昭昭提问、
-#      不要求昭昭解释机制（她一问，昭昭就去答她了）；
-#   ② 怪词必须由昭昭**主动**蹦出，不是被灿灿反问引出来的；
-#   ③ 昭昭的关键解释一律面向妈妈（回答妈妈第7拍那个追问）。
-# 另按专家意见去掉成人腔：「有个专门的叫法」「我说了算」「我认栽」。
-# 每一拍都**承接上一拍**，并且**带来新信息**；孩子严格交替。
-#
-# 专家复核 (2026-10) 的关键意见：灿灿不能把昭昭的**对话对象**拉走。
-# 机制主线是「孩子对妈妈一本正经胡说 → 妈妈破功」；一旦昭昭转去跟灿灿
-# 争辩，妈妈就被边缘化、破功感消失。所以：
-#   ① 灿灿只做「凑热闹/帮腔/被带偏」这类同伴式反应，**不向昭昭提问**、
-#      不要求昭昭解释机制（她一问，昭昭就去答她了）；
-#   ② 怪词必须由昭昭**主动**蹦出，不是被灿灿反问引出来的；
-#   ③ 昭昭的关键解释一律面向妈妈（回答妈妈的关键追问那一拍）。
-# 另按专家意见去掉成人腔：「有个专门的叫法」「我说了算」「我认栽」。
-# 每一拍都**承接上一拍**，并且**带来新信息**；孩子严格交替。
-#
-# 专家复核 (2026-10) 的关键意见：灿灿不能把昭昭的**对话对象**拉走。
-# 机制主线是「孩子对妈妈一本正经胡说 → 妈妈破功」；一旦昭昭转去跟灿灿
-# 争辩，妈妈就被边缘化、破功感消失。所以：
-#   ① 灿灿只做「凑热闹/帮腔/被带偏」这类同伴式反应，**不向昭昭提问**；
-#   ② 怪词必须由昭昭主动蹦出，不是被灿灿反问引出来的；
-#   ③ 昭昭的关键解释一律面向妈妈。
-#
-# 因果链必须自下而上建立，不能凭空出现设定（终检反复判「缺前提」）：
-#   妈妈立规 → 昭昭报名 → 妈妈问「好人」是谁 → 昭昭给定义（给钱）
-#   → 妈妈追问词 → 昭昭解释 → 补词 → 妈妈收束
-# 每一拍都**承接上一拍**，并且**带来新信息**；孩子严格交替。
-#
-# 专家两轮复核的一致意见（2026-10），这是本计划的硬约束：
-#   ① 灿灿只能做**反应式接话**——质疑、复述、笑、补刀。她可以实质推进
-#      观感，但**不许入伙、分钱、代办**：那会让她变成共谋，抢走
-#      「孩子对妈妈一本正经胡说 → 妈妈破功」的机制推进；
-#   ② 灿灿**不向昭昭提问**，不让昭昭转去对她解释机制（对话对象必须是妈妈）；
-#   ③ 怪词由昭昭**主动**命名，且命名句要有明确指代（不能「这事」悬空）；
-#   ④ 「哇卡」的定义只在第8拍给出**词的来历**，不重复第4拍「好人=给钱」的定义；
-#   ⑤ 「苹果」独立成句抛出（N 的「淡定补一句」），由灿灿下一拍点出突兀感。
-# 另去掉成人腔：「办这件事」「我说了算」「我认栽」。
-_N_TWO_KID_PLAN: tuple[tuple[str, str, str], ...] = (
-    ("mom", "立规", "我记下你的话，看你会不会骗人，找好人跟钱有关吗？"),
-    ("mech", "报名字", "我要找个好人来，叫小明、小红、小刚。"),
-    ("side", "凑热闹", "你说的这几个名字我都会写，我写给你看。"),
-    ("mech", "定义好人", "好人就是会给我钱的那种，别人都不算数。"),
-    ("side", "拆台", "名字我倒都写下来了，可人一个也没见过。"),
-    ("mech", "命名", "这事的名字我改过，现在就叫哇卡。"),
-    ("mom", "关键追问", "这词是什么意思，我怎么从没听过，是谁教你的？"),
-    ("mech", "解释词义", "没人教我，因为哇卡就是给钱，所以我才这么叫。"),
-    ("side", "反应", "自己起的词，我可学不会，你留着用吧。"),
-    ("mech", "补词", "苹果。"),
-    ("side", "点出突兀", "怎么又冒出苹果来了，我都没跟上。"),
-    ("mech", "补规则", "苹果还得挑红的，红的才甜，这也是规矩。"),
-    ("side", "补刀", "还挑上红的了，越说越像真有这么回事。"),
-    ("mom", "收束", "行吧，我说不过你，以后问你话得先打个草稿。"),
+
+
+
+_RE_SEED_PREFIX = re.compile(
+    r"^(?:"
+    r"只说出这个词[（(]不解释[)）]?[：:]|只说出这个词[：:]|"
+    r"解释这个词是什么意思[：:]|解释这个词[：:]|"
+    r"否认有人教[：:]|"
+    r"插一句自己的看法[：:]|表示不信[：:]|拆台一句[：:]|"
+    r"要求对方讲清楚[：:]|说自己没听懂[：:]|表个态[：:]|"
+    r"追问一句[：:]|说出自己的猜测[：:]|表示要记下来[：:]|"
+    r"催对方继续[：:]|表达惊讶[：:]|摆出怀疑[：:]|"
+    r"先直接回答上一句问的问题[^，,]*[，,]|"
+    r"一本正经讲圆[（(][^)）]*[)）][：:]?|"
+    r"淡定补一句|"
+    r"愣住追问[：:]|皱眉追问[：:]|追问[：:]|收束[：:]|立规[：:]"
+    r")"
 )
+
+
+def _seed_intent_to_line(intent: str) -> str:
+    """把 seed 的 intent 文本转成可直接念的台词。
+
+    seed 里的行常带模板前缀（「只说出这个词（不解释）：哇卡」），
+    照原样写进正文就不是人话了。这里剥掉已知前缀、补句末标点，
+    让素材本身成为台词——**内容不增不减**，因此不会串写别的故事。
+    """
+    text = str(intent or "").strip()
+    if not text:
+        return ""
+    text = _RE_SEED_PREFIX.sub("", text).strip()
+    # 去掉残留的「｜台词：xxx」这类附注，取后面的正文
+    if "｜台词：" in text:
+        text = text.split("｜台词：", 1)[1].strip()
+    text = text.strip("：:，,、 ")
+    if not text:
+        return ""
+    if not text.endswith(("。", "！", "？", "…")):
+        text = text + ("？" if re.search(r"吗|呢|什么|谁|怎么|为什么|哪|几|多少", text) else "。")
+    return text
 
 
 def build_n_two_kid_dialogue(
     contract: dict[str, Any],
     *,
     existing: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """按回合计划生成 N 类双孩对白；已有的好句子优先复用。
+    """把 seed 重排成「双孩严格交替」的可播对白。
 
-    复用规则：报名字、补词、家长三句若库里已有合格文本就沿用（保住素材
-    真实感），其余回合用计划台词。怪词从契约取，保证与词槽一致。
+    **完全由 seed 驱动**：人名、怪词、补词、家长的话都取自 seed 与契约，
+    这里不写死任何具体剧情（早前写死过 #87 的台词，结果换个故事就被
+    串写成「小明小红小刚」「哇卡」「苹果」）。
+
+    只做三件通用的事：
+      ① 把 seed 的 intent 转成可念的台词（剥模板前缀、补标点）；
+      ② 孩子相邻时插一条**只表达态度**的搭档反应（池里没有剧情内容）；
+      ③ 不足字数时继续插同一类反应句，仍不得越过收束。
     """
     if not isinstance(contract, dict):
         return [], []
     chain = [r for r in (contract.get("beat_chain") or []) if isinstance(r, dict)]
     kids = kid_speakers_of(
-        [*(str(r.get("speaker") or "") for r in chain),
-         *(contract.get("characters") or [])]
+        [
+            *(str(r.get("speaker") or "") for r in chain),
+            *(contract.get("characters") or []),
+        ]
     )
     if len(kids) < 2:
         return [], []
-    token = ""
-    for row in chain:
-        tok = _n_token_of_intent(str(row.get("intent") or ""))
-        if tok:
-            token = tok
-            break
-    if not token:
+    seed_rows = [r for r in (dialogue_seed or []) if isinstance(r, dict)]
+    if not seed_rows:
         return [], []
-    # 机制孩子 = 词槽持有者
+    # ── 结构守门：现有对白已经合格就不再重建 ─────────────────────────
+    # 重建只在「结构不合格」时兜底。否则每一轮 refine 都会把扩写成果
+    # 覆盖回 seed 的短句（字数也随之掉回 150 上下）。
+    cur = [r for r in (existing or []) if isinstance(r, dict)]
+    cur_lines = [str(r.get("line") or "").strip() for r in cur]
+    cur_lines = [ln for ln in cur_lines if ln]
+    if len(cur_lines) >= 12:
+        cur_spk = [str(r.get("speaker") or "").strip() for r in cur if str(r.get("line") or "").strip()]
+        siblings_adjacent = any(
+            a == b and a in {"昭昭", "灿灿"} for a, b in zip(cur_spk, cur_spk[1:])
+        )
+        joined = "".join(cur_lines)
+        tokens_all = [
+            _n_token_of_intent(str(r.get("intent") or "")) for r in chain
+        ]
+        tokens_all = [t for t in tokens_all if t]
+        has_token = all(t in joined for t in tokens_all) if tokens_all else False
+        if not siblings_adjacent and has_token:
+            return [], []
+    parents = {"妈妈", "爸爸"}
+    # 只保留有台词的 seed 行，并转成可念的句子
+    rows: list[dict[str, Any]] = []
+    for item in seed_rows:
+        sp = str(item.get("speaker") or "").strip()
+        line = _seed_intent_to_line(
+            str(item.get("intent") or item.get("line") or "")
+        )
+        if not sp or not line:
+            continue
+        rows.append({"speaker": sp, "line": line})
+    if len(rows) < 4:
+        return [], []
+
+    # 家长句数上限：留立规、追问、收束三类；多余的家长句按顺序砍掉末尾
+    out: list[dict[str, Any]] = []
+
+    def _is_parent(row: dict[str, Any]) -> bool:
+        return str(row.get("speaker") or "").strip() in parents
+
+    # 机制孩子 = 词槽持有者；另一个孩子才是「搭档」
     mech_kid = ""
     for row in chain:
         if _n_token_of_intent(str(row.get("intent") or "")):
             mech_kid = str(row.get("speaker") or "").strip()
             break
     if mech_kid not in kids:
-        return [], []
-    side_kid = next(k for k in kids if k != mech_kid)
+        mech_kid = sorted(kids)[0]
+    side_kid = next((k for k in sorted(kids) if k != mech_kid), "")
 
-    old = [r for r in (existing or []) if isinstance(r, dict)]
-    old_lines = [str(r.get("line") or "").strip() for r in old]
+    used: set[str] = {str(r["line"]) for r in rows}
+    pool_i = 0
 
-    def _reuse(predicate, *, min_len: int = 18) -> str:
-        for line in old_lines:
-            if line and len(line) >= min_len and predicate(line):
-                return line
+    def _next_reaction() -> str:
+        """取一条还没用过的搭档反应（只表达态度，不含剧情）。"""
+        nonlocal pool_i
+        while pool_i < len(_N_SECOND_KID_LINES):
+            cand = _N_SECOND_KID_LINES[pool_i]
+            pool_i += 1
+            if cand not in used:
+                return cand
         return ""
 
-    # 报名字这句**不复用**旧稿：旧稿里常是「我也会编名字」这类残留，
-    # 复用后前后主语会打架（#87 实测：第2句暗示别人先报了名字，
-    # 第3句又说「你说的这几个名字」，谁先报说不清）。
-    addon_line = _reuse(
-        lambda x: 0 < len(re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", x)) <= 4
-    )
-    mom_opening = _reuse(lambda x: "记" in x)
-    mom_ask = _reuse(lambda x: re.search(r"什么意思|谁教|什么词", x) is not None)
-    mom_close = _reuse(lambda x: re.search(r"认栽|服了|打草稿|草稿", x) is not None)
-
+    # ① 孩子相邻拆开：只在两个孩子之间插「搭档」的反应，
+    #    绝不把搭档的台词塞给机制孩子（否则机制孩子会说「我可学不会」）。
     out: list[dict[str, Any]] = []
-    for role, tag, template in _N_TWO_KID_PLAN:
-        line = template.replace("{token}", token)
-        if role == "mech" and tag == "补词" and addon_line:
-            line = addon_line
-        elif role == "mom" and tag == "立规" and mom_opening:
-            line = mom_opening
-        elif role == "mom" and tag == "追问" and mom_ask:
-            line = mom_ask
-        elif role == "mom" and tag == "收束" and mom_close:
-            line = mom_close
-        speaker = "妈妈" if role == "mom" else (mech_kid if role == "mech" else side_kid)
-        out.append({"speaker": speaker, "line": line})
-    return out, ["按回合计划重建双孩对白:13回合"]
+
+    def _is_parent(row: dict[str, Any]) -> bool:
+        return str(row.get("speaker") or "").strip() in parents
+
+    for row in rows:
+        if (
+            out
+            and not _is_parent(row)
+            and not _is_parent(out[-1])
+            and str(row["speaker"]) == str(out[-1]["speaker"])
+            and side_kid
+            and str(row["speaker"]) == mech_kid
+        ):
+            cand = _next_reaction()
+            if cand:
+                out.append({"speaker": side_kid, "line": cand})
+                used.add(cand)
+        out.append(row)
+
+    # ② 顺序：家长立规在最前、收束在最后
+    if not _is_parent(out[0]):
+        first_mom = next((i for i, r in enumerate(out) if _is_parent(r)), -1)
+        if first_mom > 0:
+            out.insert(0, out.pop(first_mom))
+    last_parent = max((i for i, r in enumerate(out) if _is_parent(r)), default=-1)
+    if last_parent >= 0 and last_parent != len(out) - 1:
+        out.append(out.pop(last_parent))
+    # 收束后再插句会把「愣住」挤出末段窗口，插入点一律在末句之前
+    close_idx = len(out) - 1
+
+    # ③ 字数不足：先试**逐句加长**（只加不改变语义的收尾词），
+    #    加长用尽了再插搭档反应。绝不为了凑字数而编新剧情。
+    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+    from app.services.gold_story.gold_chat.length import _pad_gold_chat_line
+
+    def _total() -> int:
+        return sum(len(str(r["line"])) for r in out)
+
+    pad_used: set[str] = set()
+    for _round in range(3):
+        if _total() >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        for row in out:
+            if _total() >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            line = str(row["line"])
+            if len(line) >= 22 or len(line.rstrip("。！？…")) <= 4:
+                continue
+            need = min(
+                DAILY_STORY_BODY_CHARS_MIN - _total(),
+                22 - len(line),
+            )
+            if need <= 0:
+                continue
+            padded, added = _pad_gold_chat_line(
+                line,
+                need,
+                used=pad_used,
+                story_type="N",
+                speaker=str(row["speaker"]),
+            )
+            if added:
+                row["line"] = padded
+
+    # ④ 句数不足时补搭档反应。
+    #    **只补到句数够**，不按字数硬凑：字数交给扩写阶段把每句写到
+    #    18–22 字（13 句 × 19 字 ≈ 247 字，正好过线）。若在这里按字数
+    #    凑满，搭档会被塞进 6–7 句，反而把机制主线稀释掉。
+    target_lines = CHAT_LINE_COUNT_MIN
+    guard = 0
+    while len(out) < target_lines and guard < 8:
+        guard += 1
+        cand = _next_reaction()
+        if not cand or not side_kid:
+            break
+        placed = False
+        # **只能插在机制孩子说完之后**：搭档的台词是「对前面那句的反应」，
+        # 放在开场之前会变成无话头可接（读者看到「我替你捏把汗」会莫名其妙）。
+        for at in range(close_idx, 0, -1):
+            prev_sp = str(out[at - 1]["speaker"]) if at - 1 < len(out) else ""
+            next_sp = str(out[at]["speaker"]) if at < len(out) else ""
+            if prev_sp != mech_kid or side_kid in (prev_sp, next_sp):
+                continue
+            out.insert(at, {"speaker": side_kid, "line": cand})
+            used.add(cand)
+            placed = True
+            break
+        if not placed:
+            break
+
+    notes = [f"按seed重排双孩对白:{len(out)}句"]
+    return out, notes
+
 
 
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:

@@ -4032,6 +4032,20 @@ def apply_n_contract_local_patches(
 ) -> tuple[dict[str, Any], list[str]]:
     """N 类确定性契约补丁：收旁观占场 → 补机制词槽 → 补家长关键追问拍。"""
     notes: list[str] = []
+    # ── 结构底座：先用 seed 排出一版「严格交替」的可播对白 ──────────────
+    # 放在最前，后续扩写/润色都在它之上加工；已经合格则跳过（幂等）。
+    # 内容全部来自 seed 与契约，这里不写死任何剧情。
+    from app.services.gold_story.scene import build_n_two_kid_dialogue
+
+    _base, _base_notes = build_n_two_kid_dialogue(
+        {"story_type": "N", "beat_chain": list(beat_chain or [])},
+        existing=list(story.get("dialogue") or []),
+        dialogue_seed=list(dialogue_seed or []),
+    )
+    if _base:
+        story = dict(story)
+        story["dialogue"] = _base
+        notes.extend(_base_notes)
     # 先做全局收口：契约外说话人一律删除（收束句之后也不例外）
     data, _cast_notes = apply_cast_membership_patch(
         story,
@@ -4158,22 +4172,6 @@ def apply_n_contract_local_patches(
     )
     if _final_close:
         notes.extend(_final_close)
-    # ── 最终收敛：N 双孩按回合计划重建 ────────────────────────────────
-    # 前面所有补丁都是「局部修」，但内容重复/字数不足/各说各的这三件事
-    # 必须整体排布才能同时满足。这里按回合计划收敛一次：13 个互不重复的
-    # 回合，每个搭档回合都紧跟它能咬住的机制回合，每句按 18–22 字写足。
-    # 报名字/补词/家长三句仍优先沿用稿子里的原句，保住素材真实感。
-    from app.services.gold_story.scene import build_n_two_kid_dialogue
-    from app.services.gold_story.gold_chat.validate import resolve_story_beat_chain
-
-    _contract: dict[str, Any] = {"story_type": "N", "beat_chain": list(beat_chain or [])}
-    _planned, _plan_notes = build_n_two_kid_dialogue(
-        _contract, existing=list(data.get("dialogue") or [])
-    )
-    if _planned:
-        data = dict(data)
-        data["dialogue"] = _planned
-        notes.extend(_plan_notes)
     # 补句/改写可能带进旁白腔：最后统一过一遍旁白→口语（既有的转换器）
     from app.services.gold_story.scene import patch_dialogue_narration_to_speech
 
