@@ -3288,6 +3288,104 @@ _N_CLOSE_LINE_YANK_RE = re.compile(
 )
 
 
+# 同伙加码的兜底台词：自足、不依赖上下文、不问任何信息。
+# 用在「模型把她的拍写成了关键追问」时替换——她可以抢着编，但不能替妈妈发问。
+_PARTNER_PILE_ON_BY_INTENT: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"报出一串|也报|名字"), "我也报几个，比他那些还多。"),
+    (re.compile(r"更离谱|细节|编得更圆"), "他还说下回要带一帮人一起来。"),
+    (re.compile(r"也见过|作证"), "我也见过，就在楼下那条街上。"),
+    (re.compile(r"往下推|煞有介事"), "这算什么，往后还有更热闹的。"),
+    (re.compile(r"更厉害|抢着"), "我那边还有更厉害的说法呢。"),
+    (re.compile(r"纠正|改成自己"), "不对不对，他那版说错了一个地方。"),
+)
+_PARTNER_FALLBACK = "我也知道这事，比他说的还离谱。"
+
+
+def apply_n_partner_ask_to_pile_on_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """旁观主角不得代问机制关键追问：改写成「同伙加码」。
+
+    她是主角之一，可以抢着编、帮着作证、把谎编得更圆——这些都自足，
+    接在哪一拍都成立。但「这词什么意思／谁教你的」必须由立规方问，
+    她一问就把妈妈的追问拆断（#87 实测：同一追问被两人各问一半）。
+
+    所以这里把她写出来的关键追问，改成该拍 intent 对应的加码台词。
+    """
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    entries = [e for _n, e in _beat_chain_entries(chain)]
+    if not entries:
+        return story, []
+    # 机制主体 = 词槽持有者；另一个孩子就是旁观主角
+    slot_owner = ""
+    for e in entries:
+        from app.services.gold_story.gold_chat.validate import _n_declared_word_token
+
+        if _n_declared_word_token(str(e.get("intent") or "")):
+            slot_owner = str(e.get("speaker") or "").strip()
+            break
+    kids = {
+        str(e.get("speaker") or "").strip()
+        for e in entries
+        if str(e.get("speaker") or "").strip() in {"昭昭", "灿灿"}
+    }
+    partner = next((k for k in sorted(kids) if k != slot_owner), "") if slot_owner else ""
+    if not partner:
+        return story, []
+    partner_intents = [
+        str(e.get("intent") or "")
+        for e in entries
+        if str(e.get("speaker") or "").strip() == partner
+    ]
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    existing = [str(r.get("line") or "").strip() for r in dlg]
+    changed = 0
+    pidx = 0
+    for row in dlg:
+        if str(row.get("speaker") or "").strip() != partner:
+            continue
+        line = str(row.get("line") or "")
+        intent = partner_intents[pidx % len(partner_intents)] if partner_intents else ""
+        pidx += 1
+        is_key_ask = bool(re.search(r"[？?]", line)) and bool(
+            re.search(
+                r"什么意思|啥意思|是什么|是啥|什么词|这词|那词|谁教|"
+                r"哪来|哪儿来|什么时候|几点|哪天|在哪儿|什么地方|哪里|几个|多少",
+                line,
+            )
+        )
+        if not is_key_ask:
+            continue
+        replacement = ""
+        for pat, cand in _PARTNER_PILE_ON_BY_INTENT:
+            if pat.search(intent) and cand not in existing:
+                replacement = cand
+                break
+        if not replacement:
+            replacement = _PARTNER_FALLBACK
+        row["line"] = replacement
+        existing.append(replacement)
+        changed += 1
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, [f"旁观主角代问改加码:{changed}句"]
+
+
 def apply_n_move_close_to_tail_patch(
     story: dict[str, Any],
     *,
@@ -3437,6 +3535,12 @@ def apply_n_contract_local_patches(
     if _action_notes:
         notes.extend(_action_notes)
     # 孩子连说先拆开（插反应句，不删句）
+    # 旁观主角代问关键追问 → 改成同伙加码（她可以抢编，但不能替妈妈发问）
+    data, _pile_notes = apply_n_partner_ask_to_pile_on_patch(
+        data, beat_chain=beat_chain
+    )
+    if _pile_notes:
+        notes.extend(_pile_notes)
     data, _tokrep_notes = apply_n_token_repeat_patch(data, beat_chain=beat_chain)
     if _tokrep_notes:
         notes.extend(_tokrep_notes)
