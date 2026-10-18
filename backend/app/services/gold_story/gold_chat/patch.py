@@ -3478,6 +3478,18 @@ def apply_n_partner_line_pin_patch(
         idx += 1
         if str(row.get("line") or "").strip() == target:
             continue
+        # 她的台词若引用了**还没发生过的事**（如「对，苹果」而对方还没说苹果），
+        # 钉住就会造成「先有回应后有事件」。这种情况换成不引用具体名词的说法。
+        prev_lines = "".join(
+            str(r.get("line") or "") for r in dlg[: dlg.index(row)]
+        )
+        nouns = [
+            w
+            for w in re.findall(r"[\u4e00-\u9fff]{2,4}", target)
+            if w in target and w not in prev_lines
+        ]
+        if nouns and re.search(r"^对|^是|^没错", target):
+            target = "我也听人这么说过，听着还挺像真的。"
         row["line"] = target
         changed += 1
     if not changed:
