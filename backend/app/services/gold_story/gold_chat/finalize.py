@@ -1001,11 +1001,21 @@ def run_gold_chat_final_acceptance(
     # 终检前最后一道确定性契约补丁（幂等）：重掷/LLM 修稿可能把旁观角色、
     # 词槽或追问归属写回去，终检只审补丁后的文本（专家口径：自动管线补丁，
     # 不是手改导出稿）。
-    if str(chat.get("story_type") or "").strip().upper() == "N":
+    # story_type 可能只存在于 row（chat 里没有这个字段），
+    # 直接用 chat.get 会让这段前置补丁**永远不执行**（#87 实测：
+    # 日志里 pre-final N contract patch 一次都没出现，旧对白原样进终检）。
+    _st_for_patch = (
+        str(chat.get("story_type") or row.get("story_type") or "")
+        .strip()
+        .upper()
+    )
+    if _st_for_patch == "N":
         from app.services.gold_story.gold_chat.patch import (
             apply_n_contract_local_patches,
         )
 
+        if not chat.get("story_type"):
+            chat["story_type"] = "N"
         chat, pre_final_notes = apply_n_contract_local_patches(
             chat,
             beat_chain=beat_chain,
