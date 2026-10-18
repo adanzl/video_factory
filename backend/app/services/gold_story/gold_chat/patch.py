@@ -2744,9 +2744,10 @@ def apply_n_viewer_trim_patch(
             continue
         if "generic" in funcs or re.search(r"什么|啥|怎么|谁|哪", line):
             remove.add(i)
+    # 双孩交替：她要承担交替位置的接话，不能再压到 2 句；
+    # 只删「代问关键追问」的问句（那会让立规方被架空）。
     kept_viewer = [i for i in viewer_idx if i not in remove]
-    for i in reversed(kept_viewer[2:]):
-        remove.add(i)
+    del kept_viewer
     if not remove:
         return story, False
     out = copy.deepcopy(story)
@@ -3124,6 +3125,85 @@ def apply_cast_membership_patch(
     return out, [f"删除契约外说话人:{'、'.join(dict.fromkeys(dropped))}"]
 
 
+_N_REACT_LINES: tuple[str, ...] = (
+    "哎哟，这我可学不来。",
+    "你还真敢说。",
+    "行行，你接着讲。",
+    "我听着都替你害臊。",
+    "这理由编得挺顺啊。",
+    "我可记着呢，别赖。",
+)
+
+
+def apply_n_alternation_lines_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """N：同一个孩子连说时，插入另一个孩子的短反应，让两人交替。
+
+    用户裁决：孩子禁止连说，戏份靠两个孩子交替解决——**不靠删句**。
+    这里只做一件事：每段连说里，除第一句外每句前面插一句另一个孩子的
+    短反应，把连说拆开。反应句短、无新事实、去重，不占家长额度。
+    """
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    # 可交替的孩子 = 对白里已出现 ∪ 契约 beat 里登记的
+    # （契约里有灿灿、成稿只写了昭昭时，正是要靠她来拆连说）
+    kids = {
+        str(r.get("speaker") or "").strip()
+        for r in dlg
+        if str(r.get("speaker") or "").strip() in {"昭昭", "灿灿"}
+    } | {
+        str(r.get("speaker") or "").strip()
+        for r in (beat_chain or [])
+        if isinstance(r, dict)
+        and str(r.get("speaker") or "").strip() in {"昭昭", "灿灿"}
+    }
+    if len(kids) < 2:
+        # 只有一个孩子可说话：交替无从谈起（契约应已保证两孩在场）
+        return story, []
+    existing = [
+        str(r.get("line") or "").strip() for r in dlg if str(r.get("line") or "").strip()
+    ]
+    out_rows: list[dict[str, Any]] = []
+    prev_sp = ""
+    react_i = 0
+    inserted = 0
+    for row in dlg:
+        sp = str(row.get("speaker") or "").strip()
+        is_kid = sp in kids
+        if is_kid and sp == prev_sp and len(out_rows) < CHAT_LINE_COUNT_MAX:
+            other = next(k for k in sorted(kids) if k != sp)
+            # 挑一条不与现有句重复的反应
+            line = ""
+            for k in range(len(_N_REACT_LINES)):
+                cand = _N_REACT_LINES[(react_i + k) % len(_N_REACT_LINES)]
+                from app.services.gold_story.gold_chat.length import (
+                    _pad_line_is_duplicate,
+                )
+
+                if not _pad_line_is_duplicate(cand, existing):
+                    line = cand
+                    react_i += 1
+                    break
+            if line:
+                out_rows.append({"speaker": other, "line": line})
+                existing.append(line)
+                inserted += 1
+                prev_sp = other
+        out_rows.append(row)
+        prev_sp = sp if is_kid else ""
+    if not inserted:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = out_rows
+    return out, [f"N孩子交替补反应句:{inserted}"]
+
+
 def apply_n_contract_local_patches(
     story: dict[str, Any],
     *,
@@ -3140,6 +3220,10 @@ def apply_n_contract_local_patches(
     )
     if _cast_notes:
         notes.extend(_cast_notes)
+    # 孩子连说先拆开（插反应句，不删句）
+    data, _alt_notes = apply_n_alternation_lines_patch(data, beat_chain=beat_chain)
+    if _alt_notes:
+        notes.extend(_alt_notes)
     data, viewer_trimmed = apply_n_viewer_trim_patch(data, beat_chain=beat_chain)
     if viewer_trimmed:
         notes.append("N旁观手足占场已收束")
