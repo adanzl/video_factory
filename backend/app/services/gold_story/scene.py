@@ -536,22 +536,26 @@ def normalize_n_formula_slots(
 #
 # 正确做法：契约只声明「她这一拍要干什么」，台词交给模型结合上下文写。
 # 三条约束保持：不引用上下文、不提那个机制词、不承担机制。
-# 意图的设计原则（三条，全部踩过坑）：
-#   ① **不指定追问维度**（时间/地点/人数）——机制孩子答不上来只能硬凑；
-#   ② **不写「问」的形状**——关键追问归立规方，旁观孩子一问就抢主线；
-#   ③ **相邻两条必须是不同类型的动作**——如果都是「不信/听不明白」这类
-#      表态，写三句就必然同义重复（终检直接判「同一态度连说三遍」）。
-# 所以下面按类型交错排列：质疑 → 帮腔 → 补刀 → 看热闹 → 复述 → 加码……
-# 相邻两条类型不同，任意连续几拍都不会撞车。
+# 第二孩的拍：**只写「她做什么」，不写任何信息型追问**。
+#
+# 四条铁律，每一条都是实测踩出来的：
+#   ① 不指定追问维度（时间/地点/人数）→ 机制孩子答不上来只能硬凑；
+#   ② 不提「什么意思/谁教」→ 那是立规方的关键追问，谁抢谁破坏功主体；
+#   ③ 不重复同一态度（不信/听不懂/犯嘀咕）→ 三句就同义重复被判原地打转；
+#   ④ 不描述外形/细节 → 模型会写成旁白。
+#
+# 正解：她的拍是**挑衅式陈述句**。陈述句不索取信息，机制孩子随便否认、
+# 反驳、纠正都能接上，天然不会答非所问；同时每条挑衅的动作类型不同，
+# 连续几拍也不会撞车。
 _N_SECOND_KID_LINES: tuple[str, ...] = (
-    "质疑：表示不信这套说法，说出自己的判断",
-    "帮腔：顺着机制孩子的话往下接，说自己信了",
-    "补刀：把机制孩子的话往更离谱的方向推一句",
-    "看热闹：表示自己要看着这事怎么收场",
-    "复述：用自己的话把刚才听到的意思讲一遍",
-    "加码：说自己也要照着这么做试试",
-    "转述：提起别人的说法来对照眼下这件事",
-    "下结论：直接断言这事站不住脚",
+    "断言这套说法是编的，语气很不屑（对方会否认或辩解）",
+    "断言这事根本不可能，摆出自己的理由（对方会反驳）",
+    "当场加码，要对方立刻再说一遍证明（对方会嘴硬或照做）",
+    "拿自己作对比，说自己绝不会这么干（对方会反过来将他一军）",
+    "替对方把话总结成一个更离谱的版本（对方会纠正或认下）",
+    "放话要看对方怎么收场，语气像看戏（对方会硬撑到底）",
+    "宣布自己也要照着试一次，故意气对方（对方会拦他）",
+    "下判断说这套道理讲不通，直接给结论（对方会再补一套说辞）",
 )
 
 
@@ -649,6 +653,62 @@ def clean_seed_fragments(seed: list[Any]) -> tuple[list[Any], list[str]]:
     return rows, [f"修正seed因果残句:{fixed}条"]
 
 
+_RE_DENY_TAUGHT = re.compile(r"^(?:否认有人教|否认教)[：:]\s*")
+_RE_EXPLAIN = re.compile(r"^解释这个词是什么意思[：:]\s*")
+
+
+def merge_seed_consecutive_kid_rows(
+    seed: list[Any],
+) -> tuple[list[Any], list[str]]:
+    """把同一个孩子相邻的两条 seed 并成一行。
+
+    连说在 N 里是硬禁止，而 seed 把「否认有人教」和「解释词义」拆成两行时，
+    模型只能让同一个孩子连说两句，再叠上「苹果」就是三连（#87 实测：
+    孩子连说 20–50 次，多数来自这里）。这两件事本来就该一口气说完，
+    合成一行既自然、又少一次连说风险。
+    """
+    rows = [dict(r) if isinstance(r, dict) else r for r in (seed or [])]
+    out: list[Any] = []
+    merged = 0
+    for item in rows:
+        if not isinstance(item, dict) or not out:
+            out.append(item)
+            continue
+        prev = out[-1]
+        if not isinstance(prev, dict):
+            out.append(item)
+            continue
+        same_speaker = (
+            str(prev.get("speaker") or "").strip()
+            and str(prev.get("speaker") or "").strip()
+            == str(item.get("speaker") or "").strip()
+        )
+        if not same_speaker:
+            out.append(item)
+            continue
+        prev_intent = str(prev.get("intent") or "")
+        cur_intent = str(item.get("intent") or "")
+        # 「否认有人教」后面紧跟同一孩子说的话 → 并成一行。
+        # 不必要求下一行长得像「解释…」：清理残句后它就是普通句子，
+        # 只按「同人说 + 前一句是否认」判断即可。
+        if not _RE_DENY_TAUGHT.match(prev_intent):
+            out.append(item)
+            continue
+        tail = _RE_EXPLAIN.sub("", cur_intent).strip()
+        if not tail:
+            out.append(item)
+            continue
+        merged_row = dict(item)
+        merged_row["intent"] = (
+            "解释这个词是什么意思：没人教，自己想的，" + tail
+        )
+        out[-1] = merged_row
+        merged += 1
+    if not merged:
+        return seed or [], []
+    return out, [f"合并孩子相邻seed:{merged}处"]
+
+
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把**契约与 seed 一起**做词槽归一化（唯一入口）。
 
@@ -681,6 +741,12 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         if f_notes:
             out["dialogue_seed"] = new_seed
             notes.extend(f_notes)
+        new_seed, m_notes = merge_seed_consecutive_kid_rows(
+            out.get("dialogue_seed") or []
+        )
+        if m_notes:
+            out["dialogue_seed"] = new_seed
+            notes.extend(m_notes)
     return out, notes
 
 
