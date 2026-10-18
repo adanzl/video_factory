@@ -1070,12 +1070,24 @@ def _n_type_token_premise_exempt(
         if any(tok in line_lower for tok in tokens):
             hit_tokens = True
             break
-        # 「补词句」：机制孩子在被追问后顺手抛出的独立短词（如「苹果」）。
-        # N 的机制就是「答完再补一个更离谱的」，它本来就没有前因；
-        # 语义审读按常识要求「可追踪的转场」，必然判缺前提（#87 实测）。
+        # 「补词」及其**后续两拍**：机制孩子随手抛出的荒诞词（如「苹果」），
+        # 以及对方紧接着围绕它的顶撞。N 的机制就是「答完再补一个更离谱的」，
+        # 这部分天生没有前因；语义审读按常识要求「可追踪的转场」，必然判
+        # 缺前提（#87 实测：这条反复卡住收尾）。
         bare = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", lines[idx])
         if 0 < len(bare) <= 4 and lines[idx].strip().endswith(("。", "！", "…")):
             hit_addon = True
+            break
+        # 被点名的句子本身较短的「延续拍」，且前面 1–2 句里出现过极短补词
+        for back in (1, 2):
+            j = idx - back
+            if not (0 <= j < len(lines)):
+                continue
+            prev_bare = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", lines[j])
+            if 0 < len(prev_bare) <= 4:
+                hit_addon = True
+                break
+        if hit_addon:
             break
     if not hit_tokens and not hit_addon:
         return False
