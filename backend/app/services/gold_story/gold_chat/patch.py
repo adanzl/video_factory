@@ -3407,6 +3407,67 @@ def apply_n_explain_dedup_patch(
     return out, [f"N解释句去重:{changed}句"]
 
 
+_RE_PINNED_LINE = re.compile(r"｜台词：\s*(.+)$")
+
+
+def apply_n_beat_line_pin_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """把契约里**已经写好的台词**（intent 里 `｜台词：…`）落到正文。
+
+    这是最直接的收敛手段：既然契约里那句话已经是成品（自足、含怪词、
+    与相邻拍呼应），就不该再让模型改写。改写只会引入接不上/重复。
+    按拍序与正文顺序对齐，逐个说话人依次替换。
+    """
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    entries = [e for _n, e in _beat_chain_entries(chain)]
+    if not entries:
+        return story, []
+    pinned: dict[str, list[str]] = {}
+    for e in entries:
+        sp = str(e.get("speaker") or "").strip()
+        m = _RE_PINNED_LINE.search(str(e.get("intent") or ""))
+        if sp and m:
+            pinned.setdefault(sp, []).append(m.group(1).strip())
+    if not pinned:
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    seen: dict[str, int] = {}
+    changed = 0
+    for row in dlg:
+        sp = str(row.get("speaker") or "").strip()
+        lines = pinned.get(sp)
+        if not lines:
+            continue
+        k = seen.get(sp, 0)
+        if k >= len(lines):
+            continue
+        seen[sp] = k + 1
+        target = lines[k]
+        if str(row.get("line") or "").strip() == target:
+            continue
+        row["line"] = target
+        changed += 1
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, [f"契约台词落到正文:{changed}句"]
+
+
 def apply_n_partner_line_pin_patch(
     story: dict[str, Any],
     *,
@@ -3736,6 +3797,11 @@ def apply_n_contract_local_patches(
     # 旁观主角的台词**直接换成契约里的具体台词**（确定性兜底）。
     # 模型自由发挥的句子反复被判「接不上/答非所问/换词重复」，
     # 而契约里给她写的是自足的具体台词，照用即可（#87 实测 30+ 轮）。
+    data, _beatpin_notes = apply_n_beat_line_pin_patch(
+        data, beat_chain=beat_chain
+    )
+    if _beatpin_notes:
+        notes.extend(_beatpin_notes)
     data, _pin_notes = apply_n_partner_line_pin_patch(
         data, beat_chain=beat_chain
     )

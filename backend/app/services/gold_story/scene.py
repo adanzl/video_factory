@@ -1314,6 +1314,73 @@ def keep_mechanism_chain_adjacent(contract: dict[str, Any]) -> tuple[dict[str, A
     return out, [f"机制链相邻修复:{moved}处"]
 
 
+# 机制关键拍的**成品台词**（{token} 会替换成契约声明的怪词）。
+# 讲圆那句必须包含怪词本身，否则词槽在正文里没落地，下游会判「机制词槽缺失」。
+def _n_token_of_intent(intent: str) -> str:
+    """从 intent 里取出契约声明的怪词（「哇卡」这类）。"""
+    m = re.search(r"「([^」]{1,8})」", str(intent or ""))
+    return m.group(1) if m else ""
+
+
+_N_MECH_LINE_BY_TAG: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"报出一串|编的名字|找个好人"),
+        "我要找个好人来，叫小明、小红、小刚。",
+    ),
+    (
+        re.compile(r"讲圆|解释|因为|所以"),
+        "因为{token}就是好人给我钱，所以我得去找他们。",
+    ),
+    (re.compile(r"苹果"), "苹果。"),
+    (
+        re.compile(r"收束|认栽|服了"),
+        "行吧，我认栽，以后说话得先打草稿。",
+    ),
+)
+
+
+def pin_mechanism_kid_lines(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """把机制孩子的**关键拍**也写成具体台词（不只是抽象 intent）。
+
+    只钉旁观孩子不够：昭昭那句仍由模型自由发挥，写出来的句子不接任何人
+    的话头，于是灿灿的（已钉住的）台词就全部对不上——终检连着判
+    「接不上/答非所问」（#87 实测）。
+
+    只钉三类关键拍（报名字 / 讲圆 / 补词），其余（如「先直接回答」这类
+    需要结合上下文的）仍交给模型，避免过度僵化。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    if str(contract.get("story_type") or "").strip().upper() != "N":
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    pinned = 0
+    for row in rows:
+        sp = str(row.get("speaker") or "").strip()
+        if sp in _PARENT_SPEAKER_SET:
+            continue
+        intent = str(row.get("intent") or "")
+        if not _N_MECHANISM_CHILD_RE.search(intent):
+            continue
+        token = _n_token_of_intent(intent)
+        for pat, line_tpl in _N_MECH_LINE_BY_TAG:
+            if pat.search(intent) and not intent.endswith(("。", "！", "？")):
+                if "{token}" in line_tpl and not token:
+                    continue
+                line = line_tpl.format(token=token)
+                row["intent"] = intent = f"{intent}｜台词：{line}"
+                pinned += 1
+                break
+    if not pinned:
+        return contract, []
+    out = dict(contract)
+    out["beat_chain"] = rows
+    return out, [f"机制拍附具体台词:{pinned}处"]
+
+
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把**契约与 seed 一起**做词槽归一化（唯一入口）。
 
@@ -1364,6 +1431,12 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         )
         if k_notes:
             notes.extend(k_notes)
+        # 机制关键拍附带具体台词（否则模型自由发挥，别人的台词全对不上）
+        out["scene_contract"], _pin1 = pin_mechanism_kid_lines(
+            out.get("scene_contract") or {}
+        )
+        if _pin1:
+            notes.extend(_pin1)
         # 家长只留一个信息型追问（多余的永远没人答）
         out["scene_contract"], c_notes = collapse_extra_parent_asks(
             out.get("scene_contract") or {}
