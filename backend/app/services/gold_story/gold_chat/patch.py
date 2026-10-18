@@ -4032,20 +4032,6 @@ def apply_n_contract_local_patches(
 ) -> tuple[dict[str, Any], list[str]]:
     """N 类确定性契约补丁：收旁观占场 → 补机制词槽 → 补家长关键追问拍。"""
     notes: list[str] = []
-    # ── 结构底座：先用 seed 排出一版「严格交替」的可播对白 ──────────────
-    # 放在最前，后续扩写/润色都在它之上加工；已经合格则跳过（幂等）。
-    # 内容全部来自 seed 与契约，这里不写死任何剧情。
-    from app.services.gold_story.scene import build_n_two_kid_dialogue
-
-    _base, _base_notes = build_n_two_kid_dialogue(
-        {"story_type": "N", "beat_chain": list(beat_chain or [])},
-        existing=list(story.get("dialogue") or []),
-        dialogue_seed=list(dialogue_seed or []),
-    )
-    if _base:
-        story = dict(story)
-        story["dialogue"] = _base
-        notes.extend(_base_notes)
     # 先做全局收口：契约外说话人一律删除（收束句之后也不例外）
     data, _cast_notes = apply_cast_membership_patch(
         story,
@@ -4172,6 +4158,21 @@ def apply_n_contract_local_patches(
     )
     if _final_close:
         notes.extend(_final_close)
+    # ── 最终成稿：按 seed 重排（内容来自 seed/契约，不写死剧情）──────────
+    # 必须放在**所有**润色之后：LLM 扩写/修稿会自己发明情节
+    # （实测过「上回在菜市场，好人塞给我五块钱」这类凭空事件），
+    # 而 seed 是真实素材，照着它排出来的对白不会凭空多出东西。
+    from app.services.gold_story.scene import build_n_two_kid_dialogue
+
+    _final_rows, _final_notes = build_n_two_kid_dialogue(
+        {"story_type": "N", "beat_chain": list(beat_chain or [])},
+        existing=list(data.get("dialogue") or []),
+        dialogue_seed=list(dialogue_seed or []),
+    )
+    if _final_rows:
+        data = dict(data)
+        data["dialogue"] = _final_rows
+        notes.extend(_final_notes)
     # 补句/改写可能带进旁白腔：最后统一过一遍旁白→口语（既有的转换器）
     from app.services.gold_story.scene import patch_dialogue_narration_to_speech
 

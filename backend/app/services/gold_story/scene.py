@@ -549,12 +549,13 @@ def normalize_n_formula_slots(
 #   报名 → 穿戴 → 场面 → 加码 → 情形 → 入伙
 _N_SECOND_KID_LINES: tuple[str, ...] = (
     "这话我可有点不信，你别蒙我。",
-    "我怎么听着这么玄乎呢。",
+    "行，那我就等着看你怎么办。",
+    "你可真敢说，我可不敢接。",
     "越说越像真有这么回事了。",
-    "行，那我就在旁边看着你编。",
-    "这么说我可学不会，你自个儿来吧。",
-    "我听着都替你捏把汗呢。",
+    "那我倒要看看你怎么收场。",
+    "你这话我可记住了，别反悔。",
 )
+
 
 # 说明：这些台词**只表达态度，不含任何剧情内容**（没有人名、怪词、道具），
 # 所以对任何 N 故事都成立。剧情内容一律来自 dialogue_seed 与契约，
@@ -1529,6 +1530,21 @@ def build_n_two_kid_dialogue(
                 return cand
         return ""
 
+    # ⓿ 长句分句：一句话超过 20 字时，在最后一个逗号处拆成两句。
+    #    这是**合法**的加长手段——内容不增不减，只是让同一个孩子把话说成
+    #    两次，中间正好可以放搭档的反应，从而在不编新剧情的前提下凑出回合。
+    split_rows: list[dict[str, Any]] = []
+    for row in rows:
+        line = str(row["line"])
+        if len(line) >= 20 and ("，" in line):
+            head, _, tail = line.rstrip("。！？…").rpartition("，")
+            if len(head) >= 8 and len(tail) >= 5:
+                split_rows.append({"speaker": row["speaker"], "line": head + "。"})
+                split_rows.append({"speaker": row["speaker"], "line": tail + "。"})
+                continue
+        split_rows.append(row)
+    rows = split_rows
+
     # ① 孩子相邻拆开：只在两个孩子之间插「搭档」的反应，
     #    绝不把搭档的台词塞给机制孩子（否则机制孩子会说「我可学不会」）。
     out: list[dict[str, Any]] = []
@@ -1596,24 +1612,49 @@ def build_n_two_kid_dialogue(
             if added:
                 row["line"] = padded
 
-    # ④ 句数不足时补搭档反应。
-    #    **只补到句数够**，不按字数硬凑：字数交给扩写阶段把每句写到
-    #    18–22 字（13 句 × 19 字 ≈ 247 字，正好过线）。若在这里按字数
-    #    凑满，搭档会被塞进 6–7 句，反而把机制主线稀释掉。
-    target_lines = CHAT_LINE_COUNT_MIN
+    # ④ 补足篇幅：**只用两种手段，绝不编新剧情**——
+    #    ① 把偏短的句子补到 18–22 字（只加「真的/就这样」这类收尾强调）；
+    #    ② 仍未达标时插搭档反应（只表达态度，不含剧情）。
+    #    #87 实测：seed 只有 10 行/151 字，靠这两步可以到 240+ 且不引入新情节。
+    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+
+    def _total() -> int:
+        return sum(len(str(r["line"])) for r in out)
+
+    pad_used: set[str] = set()
+    for _round in range(4):
+        if _total() >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        for row in out:
+            if _total() >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            line = str(row["line"])
+            if len(line) >= 22 or len(line.rstrip("。！？…")) <= 4:
+                continue
+            need = min(DAILY_STORY_BODY_CHARS_MIN - _total(), 22 - len(line))
+            if need <= 0:
+                continue
+            padded, added = _pad_gold_chat_line(
+                line,
+                need,
+                used=pad_used,
+                story_type="N",
+                speaker=str(row["speaker"]),
+            )
+            if added:
+                row["line"] = padded
+
     guard = 0
-    while len(out) < target_lines and guard < 8:
+    while _total() < DAILY_STORY_BODY_CHARS_MIN and guard < 10:
         guard += 1
         cand = _next_reaction()
         if not cand or not side_kid:
             break
         placed = False
-        # **只能插在机制孩子说完之后**：搭档的台词是「对前面那句的反应」，
-        # 放在开场之前会变成无话头可接（读者看到「我替你捏把汗」会莫名其妙）。
         for at in range(close_idx, 0, -1):
             prev_sp = str(out[at - 1]["speaker"]) if at - 1 < len(out) else ""
             next_sp = str(out[at]["speaker"]) if at < len(out) else ""
-            if prev_sp != mech_kid or side_kid in (prev_sp, next_sp):
+            if side_kid in (prev_sp, next_sp):
                 continue
             out.insert(at, {"speaker": side_kid, "line": cand})
             used.add(cand)
