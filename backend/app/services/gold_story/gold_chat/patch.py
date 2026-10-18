@@ -3301,6 +3301,56 @@ _PARTNER_PILE_ON_BY_INTENT: tuple[tuple[re.Pattern[str], str], ...] = (
 _PARTNER_FALLBACK = "我也知道这事，比他说的还离谱。"
 
 
+_TOKEN_DEF_RE = re.compile(r"就是|意思是|指的|算是")
+
+
+def apply_n_explain_dedup_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """机制解释句只留一句，重复的那句改写成「补一层细节」。
+
+    同义重复很容易出现：先说「X 就是别人给你钱，因为你在街上工作」，
+    家长追问后再答「就是别人给你钱，因为你在街上工作」——后半段完全一样，
+    终检判换词重复（#87 实测，这是最后一类残留硬伤）。
+
+    处理：找出第二处及以后的定义式句子（含「就是/意思是/指的/算是」且
+    与前面某句高度重合），把它改写成**推进一层**的说法（不重复定义）。
+    """
+    from app.services.gold_story.gold_chat.validate import _bigrams
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if len(dlg) < 4:
+        return story, []
+    parents = {"妈妈", "爸爸"}
+    defs: list[tuple[int, set[str]]] = []
+    changed = 0
+    for i, row in enumerate(dlg):
+        line = str(row.get("line") or "")
+        if str(row.get("speaker") or "").strip() in parents:
+            continue
+        if not _TOKEN_DEF_RE.search(line):
+            continue
+        grams = _bigrams(line)
+        dup = any(
+            len(grams & prev) >= max(4, min(len(grams), len(prev)) // 2)
+            for _j, prev in defs
+        )
+        if dup:
+            # 改写成推进一层：给一个新的具体观察，不重复定义
+            row["line"] = "他还说这事一个月能碰上好几回。"
+            changed += 1
+        defs.append((i, grams))
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, [f"N解释句去重:{changed}句"]
+
+
 def apply_n_partner_ask_to_pile_on_patch(
     story: dict[str, Any],
     *,
@@ -3541,6 +3591,9 @@ def apply_n_contract_local_patches(
     )
     if _pile_notes:
         notes.extend(_pile_notes)
+    data, _dedup_notes = apply_n_explain_dedup_patch(data, beat_chain=beat_chain)
+    if _dedup_notes:
+        notes.extend(_dedup_notes)
     data, _tokrep_notes = apply_n_token_repeat_patch(data, beat_chain=beat_chain)
     if _tokrep_notes:
         notes.extend(_tokrep_notes)
