@@ -608,6 +608,37 @@ def refresh_second_kid_intents(
     return out, [f"刷新第二孩意图:{changed}拍"]
 
 
+_RE_SEED_EXPLAIN_PREFIX = re.compile(r"^解释这个词是什么意思[：:]\s*")
+_RE_SEED_HALF_CAUSAL = re.compile(r"^(?:所以|因此|于是|才能|才)")
+
+
+def clean_seed_fragments(seed: list[Any]) -> tuple[list[Any], list[str]]:
+    """清掉 seed 里的**因果残句**。
+
+    拆「怪词 + 解释」时会产生这种碎片：「解释这个词是什么意思：所以才能来」
+    ——只有「所以」没有「因为」。模型照着写，成稿必然是因果断裂、
+    答非所问（#87 实测多轮都栽在这句上）。
+
+    只做保守处理：删掉以「所以/因此/才」开头的解释残句（信息量为零），
+    完整解释由其它 seed 行提供。
+    """
+    rows: list[Any] = []
+    dropped = 0
+    for item in seed or []:
+        if not isinstance(item, dict):
+            rows.append(item)
+            continue
+        intent = str(item.get("intent") or "")
+        m = _RE_SEED_EXPLAIN_PREFIX.match(intent)
+        if m and _RE_SEED_HALF_CAUSAL.match(intent[m.end():].strip()):
+            dropped += 1
+            continue
+        rows.append(item)
+    if not dropped:
+        return seed or [], []
+    return rows, [f"清除seed因果残句:{dropped}条"]
+
+
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把**契约与 seed 一起**做词槽归一化（唯一入口）。
 
@@ -636,6 +667,10 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         if s_notes:
             out["dialogue_seed"] = new_seed
             notes.extend(s_notes)
+        new_seed, f_notes = clean_seed_fragments(out.get("dialogue_seed") or [])
+        if f_notes:
+            out["dialogue_seed"] = new_seed
+            notes.extend(f_notes)
     return out, notes
 
 
