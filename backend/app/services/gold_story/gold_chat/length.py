@@ -387,8 +387,14 @@ _K_GOLD_CHAT_PAD_TAILS = ("啊", "吧", "呀")
 
 _C_SAFE_PAD_TAILS = ("啊", "吧")  # 单语气词；禁叠成了呢了呀
 # N：两人手只有 1 个孩子可垫，字数易近失；只补不改语义的短尾/称呼
-_N_SAFE_NATURAL_EXPAND: tuple[str, ...] = ("，真的", "，你信不信", "，就这样")
-_N_PARENT_SAFE_TAILS: tuple[str, ...] = ("，你说呢", "，真的")
+# 孩子垫字尾巴：只允许「强调自己所言为真」的收尾，不加新信息、不加问句。
+_N_SAFE_NATURAL_EXPAND: tuple[str, ...] = ("，真的", "，就这样")
+
+# 家长垫字尾巴：只允许**不改变语义、不追加问句**的收尾强调。
+# 踩过的坑：「，你说呢」把陈述句变成反问，产出的
+# 「我要记下你说的每句话，你说呢。」根本说不通（#87 实测）。
+_N_PARENT_SAFE_TAILS: tuple[str, ...] = ("，真的",)
+
 # N 收束句特征：决定垫字/补位一律不能越过它（越过就会把收束挤出末段窗口）
 _N_CLOSE_LINE_RE = re.compile(
     r"行吧|服了|说不出|接不住|算了|那……|打草稿|以后说话"
@@ -1137,6 +1143,11 @@ def _pad_gold_chat_single_particle(
     # 「了/着/过」也是句末助词：再补「呢」会造出「懂了呢」这类不通的叠尾
     if not core or core[-1] in "啦嘛呀啊呢吧哦喔咯呗了着过":
         return text, 0
+    # 极短句（如机制怪词独立成句「哇卡」）绝不能加语气词：
+    # 会造出「哇卡，呢。」这种碎片，读一遍完全不懂（#87 实测）。
+    # 短句的时长缺口交给其它句子补，短句本身必须保持干净。
+    if len(core) <= 4:
+        return text, 0
     room = max(0, CHAT_MAX_LINE_CHARS - len(text))
     if room <= 0:
         return text, 0
@@ -1170,6 +1181,11 @@ def _pad_gold_chat_line(
             return s, 0
         room = max(0, DAILY_STORY_LINE_CHARS_MAX - len(s))
         if room <= 0:
+            return s, 0
+        # 极短句一律不垫：机制怪词句/补词句本来就只有两三个字，
+        # 任何垫字都会把它变成「哇卡，呢。」这类碎片（#87 实测）。
+        # 字数缺口由别的句子承担。
+        if len(s.rstrip("！。？…!")) <= 4:
             return s, 0
         core_head = s.rstrip("！。？…!")
         has_particle = bool(re.search(r"[呢嘛呀啊吧了]$", core_head))
