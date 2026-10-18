@@ -558,6 +558,59 @@ _N_SECOND_KID_LINES: tuple[str, ...] = (
 )
 
 
+def refresh_second_kid_intents(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """把旁观孩子（非机制方）的拍意图刷新成最新意图池。
+
+    契约复用会保留库里的旧意图，于是「追问时间/地点」这类旧写法一直活着，
+    而机检又拦关键追问 → 每轮都判归属错。搭档的拍本来就是我方补的，
+    每次刷新安全且幂等。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    if str(contract.get("story_type") or "").strip().upper() != "N":
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    kids = kid_speakers_of(
+        [*(r.get("speaker") or "" for r in rows), *(contract.get("characters") or [])]
+    )
+    if len(kids) < 2:
+        return contract, []
+    mech: dict[str, int] = {}
+    for r in rows:
+        sp = str(r.get("speaker") or "").strip()
+        if sp in kids and _N_MECHANISM_CHILD_RE.search(
+            str(r.get("intent") or r.get("beat") or "")
+        ):
+            mech[sp] = mech.get(sp, 0) + 1
+    if not mech:
+        return contract, []
+    main_kid = max(mech, key=lambda k: mech[k])
+    partner = next((k for k in kids if k != main_kid), "")
+    if not partner:
+        return contract, []
+    partner_rows = [
+        r for r in rows if str(r.get("speaker") or "").strip() == partner
+    ]
+    if not partner_rows:
+        return contract, []
+    changed = 0
+    for idx, row in enumerate(partner_rows):
+        new_intent = _N_SECOND_KID_LINES[idx % len(_N_SECOND_KID_LINES)]
+        if str(row.get("intent") or "") != new_intent:
+            row["intent"] = new_intent
+            changed += 1
+    if not changed:
+        return contract, []
+    out = dict(contract)
+    out["beat_chain"] = rows
+    return out, [f"刷新第二孩意图:{changed}拍"]
+
+
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把**契约与 seed 一起**做词槽归一化（唯一入口）。
 
@@ -575,6 +628,11 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         if c_notes:
             out["scene_contract"] = new_contract
             notes.extend(c_notes)
+        out["scene_contract"], r_notes = refresh_second_kid_intents(
+            out["scene_contract"]
+        )
+        if r_notes:
+            notes.extend(r_notes)
     seed = out.get("dialogue_seed")
     if isinstance(seed, list) and seed:
         new_seed, s_notes = neutralize_seed_tokens(seed)
@@ -767,6 +825,17 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
     for idx, row in enumerate(out_rows, 1):
         if isinstance(row, dict):
             row["beat"] = idx
+    # ── 把搭档的拍统一刷新成本池的最新意图 ──────────────────────────────
+    # 契约复用会保留库里旧意图，于是「追问时间/地点」这类旧写法一直活着，
+    # 机检又拦它 → 每轮都判关键追问归属（#87 实测）。
+    # 搭档的拍本来就是我方补的，每次刷新是安全的，且保证幂等。
+    partner_rows = [
+        r for r in out_rows
+        if isinstance(r, dict) and str(r.get("speaker") or "").strip() == partner
+    ]
+    for idx, row in enumerate(partner_rows):
+        row["intent"] = _N_SECOND_KID_LINES[idx % len(_N_SECOND_KID_LINES)]
+
     sc["beat_chain"] = out_rows
     sc["characters"] = ensure_two_kid_cast(
         [*(sc.get("characters") or []), solo, partner]
