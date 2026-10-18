@@ -26,7 +26,10 @@ _RE_C_DUAL_FAIR = re.compile(
     re.DOTALL,
 )
 _RE_DOMINATION = re.compile(
-    r"打|巴掌|扇|拳|肘击|踢|按倒|锁住|扭打|ko|压制|镇住|一锤|最强形态|"
+    # 「打」单字误伤严重：打圆场/打招呼/打算/打赌/打趣/打点/打包 都不是武力压制。
+    # 负向断言只排除这些日常词，其余「打」（打人/打起来/打了他）仍按武力算。
+    r"打(?!个?圆场|个?招呼|个?照面|算|赌|趣|点|包|滚|扫|扮|听|开|住|通|动|量|仗|喷嚏|哈欠|击掌)|"
+    r"巴掌|扇|拳|肘击|踢|按倒|锁住|扭打|ko|压制|镇住|一锤|最强形态|"
     r"草莓熊|互毁|互打",
     re.IGNORECASE,
 )
@@ -43,6 +46,21 @@ _RE_SOLEMN_NONSENSE = re.compile(
     r"(?:主动|技能|本事).{0,20}(?:解释|说成).{0,20}(?:意外|巧合|运气|事故)"
 )
 _RE_NO_BOOMERANG_NOTE = re.compile(r"未形成回旋镖|没有回旋镖|非回旋镖|无回旋镖")
+# I 类的「拷问」要有**原因**，不能只凭「语塞」这个结果：
+#   原因词：灵魂拷问 / 一招制敌 / 价值高地 / 双标质问……
+#   结果词：语塞 / 无言以对 / 哑口无言（单独出现不足以判 I）
+_RE_I_SOUL_CAUSE = re.compile(
+    r"灵魂拷问|一招制敌|价值高地|质问.{0,6}双标|双标.{0,6}质问|"
+    r"为你好.{0,10}不让我|不让我.{0,10}为你好"
+)
+# 结果词 + 语塞者：I 类的拷问者必须是孩子、被问倒的是别人。
+# 「家长问 → 孩子语塞」是 N（家长设问把对方整懵），不是 I（#135 实测：
+# 妈妈问「那哥哥的妈是谁」→ 哥哥语塞，标注器见「语塞」就判 I，方向反了）。
+_RE_SPEECHLESS = re.compile(r"语塞|无言以对|哑口无言")
+_RE_PARENT_SPEECHLESS = re.compile(
+    r"(?:妈妈|爸爸|母亲|父亲)[^。！？\n]{0,8}(?:语塞|无言以对|哑口无言)|"
+    r"(?:语塞|无言以对|哑口无言)[^。！？\n]{0,6}(?:的是)?(?:妈妈|爸爸)"
+)
 _RE_I_SOUL_QUESTION = re.compile(
     r"灵魂拷问|一招制敌|价值高地|质问.*双标|双标.*质问|"
     r"为你好.*不让我|不让我.*为你好|语塞|无言以对|哑口无言"
@@ -170,7 +188,16 @@ def suggests_c_fairness_boomerang(blob: str) -> bool:
     if _RE_C_DUAL_FAIR.search(text):
         return True
     fair_hits = len(re.findall(r"公平|凭什么|归谁|你先|我先|应该给我", text))
-    return fair_hits >= 3 and not _RE_DOMINATION.search(text)
+    # 「不算公平争夺」的两个反向证据：
+    #   ① 有武力压制（那是 J）；
+    #   ② 有明确的拷问特征（那是 I）。缺了 ②，纯靠「凭什么/归谁」次数
+    #      会把「孩子拷问家长」误判成公平争夺（#21/#98/#129 实测：
+    #      DOMINATION 修掉「打圆场」假阳性后，这几篇的 fair_hits 反而越线）。
+    if _RE_DOMINATION.search(text):
+        return False
+    if _RE_I_SOUL_CAUSE.search(text):
+        return False
+    return fair_hits >= 3
 
 
 def suggests_m11_i_soul_question(blob: str) -> bool:
@@ -179,6 +206,12 @@ def suggests_m11_i_soul_question(blob: str) -> bool:
     if suggests_c_fairness_boomerang(text):
         return False
     if _RE_DOMINATION.search(text):
+        return False
+    # 拷问的**原因**：有明确的拷问特征词，或语塞的是家长（孩子把家长问倒）
+    has_cause = bool(_RE_I_SOUL_CAUSE.search(text))
+    parent_stumped = bool(_RE_PARENT_SPEECHLESS.search(text))
+    if not has_cause and not parent_stumped:
+        # 只有「孩子语塞」这一结果词 → 拷问者多半是家长，属 N 不属 I
         return False
     has_soul = bool(_RE_I_SOUL_QUESTION.search(text))
     question_hits = len(_RE_I_QUESTION_CHAIN.findall(text))
@@ -540,6 +573,14 @@ def should_reclassify_to_m6_n(
     if mech == "M8" and st == "J" and not suggests_m8_j_domination(blob):
         return True
     if st == "C" and _RE_NO_BOOMERANG_NOTE.search(blob):
+        return True
+    # 已标 I 但 I 的自身判据**不成立**（没有质问链/拷问者没赢）而正经胡说成立
+    # → 实际是「荒诞自洽把对方整懵」，归 N。
+    # 这类误标很常见：源片是家长设问、孩子荒诞抢答、第三方（另一个孩子）
+    # 被问倒，标注器看到「语塞」就判 I，可拷问者是家长、赢家也是家长，
+    # I 的「孩子拷问+孩子赢」根本不成立（#135 实测）。
+    # 只在 I 判据自证失败时改判，真 I 稿（拷问链+语塞）不会被误改。
+    if st == "I" and not suggests_m11_i_soul_question(blob):
         return True
     return False
 

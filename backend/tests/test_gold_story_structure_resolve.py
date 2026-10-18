@@ -772,3 +772,92 @@ def test_authority_cognition_keeps_a_when_child_quotes_prior_line():
     assert fixed["structure_type"] == "A"
     assert not any("authority-cognition-caught" in n for n in notes)
 
+
+
+# ── I 类：「语塞」是结果不是原因；拷问方向必须成立 ────────────────────────
+
+_STORY_135_RAW = (
+    "妹妹指着妈妈买的玩具，冲哥哥喊：「这是妈妈买的！」哥哥不服气：「是我妈妈买的。」"
+    "妹妹立刻加码：「你才喊了两年做妈，我喊了十五年妈妈！」妈妈被逗笑，故意问："
+    "「妈妈是谁的妈妈？」妹妹抢答：「我的妈妈。」妈妈转头问哥哥：「那哥哥的妈是谁？」"
+    "哥哥一时语塞，妹妹得意地晃脑袋。妈妈见状打圆场：「你们不能这样弄哥哥，跟他玩吧。」"
+)
+
+
+def _blob_with_funny(story_raw: str, funny_why: str, beat: list[str]) -> str:
+    from app.services.gold_story.structure_resolve import classification_blob
+
+    base = classification_blob(story_raw=story_raw, beat=beat)
+    return f"{base}\n{funny_why}"
+
+
+def test_mother_asks_child_stumped_is_not_i():
+    """家长设问把孩子问倒 → 不是 I（I 是孩子拷问别人，方向不能反）。
+
+    #135 实测：标注器看到「哥哥语塞」就判 M11+I，可拷问者是妈妈、
+    被问倒的是孩子，I 的「孩子拷问+孩子赢」不成立。
+    """
+    from app.services.gold_story.structure_resolve import (
+        suggests_m11_i_soul_question,
+    )
+
+    blob = _blob_with_funny(
+        _STORY_135_RAW,
+        "妹妹用年限逻辑荒诞自洽，哥哥被问住，妈妈打圆场后两人又闹作一团",
+        ["妹妹加码：你才喊两年妈，我喊了十五年", "哥哥语塞，妹妹得意晃脑"],
+    )
+    assert not suggests_m11_i_soul_question(blob)
+
+
+def test_story_135_row_reclassifies_i_to_m6_n():
+    """#135：标 I 但拷问方向反了、且有荒诞自洽 → 应改判 M6+N。"""
+    from app.services.gold_story.structure_resolve import (
+        should_reclassify_to_m6_n,
+    )
+
+    blob = _blob_with_funny(
+        _STORY_135_RAW,
+        "妹妹用年限逻辑荒诞自洽，哥哥被问住，妈妈打圆场后两人又闹作一团",
+        ["妹妹加码：你才喊两年妈，我喊了十五年", "哥哥语塞，妹妹得意晃脑"],
+    )
+    assert should_reclassify_to_m6_n(
+        mechanism="M11", structure_type="I", blob=blob
+    )
+
+
+def test_parent_stumped_keeps_i():
+    """孩子把家长问到哑口无言 → 仍是 I（拷问方向正确）。"""
+    from app.services.gold_story.structure_resolve import (
+        suggests_m11_i_soul_question,
+    )
+
+    blob = (
+        "孩子一本正经反问：你自己做到过吗，凭什么要求我。"
+        "妈妈被怼得哑口无言，只好叹气。"
+    )
+    assert suggests_m11_i_soul_question(blob)
+
+
+def test_real_i_not_reclassified_by_new_branch():
+    """拷问方向正确的真 I 稿不能被新分支改判成 N。"""
+    from app.services.gold_story.structure_resolve import (
+        should_reclassify_to_m6_n,
+    )
+
+    blob = (
+        "孩子用不可答的反问拷问妈妈：你爱学习吗，那你怎么不学。"
+        "妈妈语塞无言以对，说不过孩子。"
+    )
+    assert not should_reclassify_to_m6_n(
+        mechanism="M11", structure_type="I", blob=blob
+    )
+
+
+def test_domination_ignores_daily_da_phrases():
+    """「打圆场/打招呼/打算」不是武力压制；真武力仍要识别。"""
+    from app.services.gold_story.structure_resolve import _RE_DOMINATION
+
+    for text in ("妈妈打圆场", "打个招呼就走", "我打算明天去", "打喷嚏"):
+        assert not _RE_DOMINATION.search(text), text
+    for text in ("他打了我", "两个人打起来了", "一巴掌", "压制住他"):
+        assert _RE_DOMINATION.search(text), text
