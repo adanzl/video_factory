@@ -1381,6 +1381,104 @@ def pin_mechanism_kid_lines(contract: dict[str, Any]) -> tuple[dict[str, Any], l
     return out, [f"机制拍附具体台词:{pinned}处"]
 
 
+# N 类双孩的**回合计划**：13 个回合，每回合一类内容，互不重复。
+#
+# 这是为解决「两人各说各的 + 内容重复 + 字数不够」三件事一起做的收敛：
+#   - 每个搭档回合都紧跟在它能咬住的机制回合之后（比数量接报名字、
+#     入伙接给钱、认下接补词、帮腔接嘴硬），咬合由位置保证；
+#   - 每类只出现一次，不会换词重复；
+#   - 每句按 18–22 字写足，13 句即可过 240 字。
+# 机制内容（怪词、名字）仍来自 H3b seed，不写死剧情。
+# role: mom=家长 mech=机制孩子 side=搭档孩子
+_N_TWO_KID_PLAN: tuple[tuple[str, str, str], ...] = (
+    ("mom", "立规", "我把你今天说的每一句话都记下来，看你会不会骗人。"),
+    ("mech", "报名字", "我要找个好人来，叫小明、小红、小刚，都是好人。"),
+    ("side", "比数量", "才三个，我认识五个，比你说的这几个还多。"),
+    ("mech", "讲圆", "因为{token}就是好人给我钱，所以我得去找好人。"),
+    ("mom", "追问", "这词是什么意思，我怎么没听过，是谁教你的？"),
+    ("mech", "否认", "没人教，我自己想出来的，好人就是给我钱。"),
+    ("side", "入伙", "有钱拿你居然不早说，这事必须算我一个。"),
+    ("mech", "补词", "苹果。"),
+    ("side", "认下补词", "行，这个我记下了，你接着往下说别的。"),
+    ("mech", "嘴硬", "反正好人就是给我钱，这事我早就认准了。"),
+    ("side", "帮腔", "行行，我信你，你说什么都当真，我拦不住你。"),
+    ("mech", "更硬", "你信就好，反正这事我不会改口，一直这么说。"),
+    ("mom", "收束", "行吧，我认栽，以后跟你说话真得先打个草稿。"),
+)
+
+
+def build_n_two_kid_dialogue(
+    contract: dict[str, Any],
+    *,
+    existing: list[Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """按回合计划生成 N 类双孩对白；已有的好句子优先复用。
+
+    复用规则：报名字、补词、家长三句若库里已有合格文本就沿用（保住素材
+    真实感），其余回合用计划台词。怪词从契约取，保证与词槽一致。
+    """
+    if not isinstance(contract, dict):
+        return [], []
+    chain = [r for r in (contract.get("beat_chain") or []) if isinstance(r, dict)]
+    kids = kid_speakers_of(
+        [*(str(r.get("speaker") or "") for r in chain),
+         *(contract.get("characters") or [])]
+    )
+    if len(kids) < 2:
+        return [], []
+    token = ""
+    for row in chain:
+        tok = _n_token_of_intent(str(row.get("intent") or ""))
+        if tok:
+            token = tok
+            break
+    if not token:
+        return [], []
+    # 机制孩子 = 词槽持有者
+    mech_kid = ""
+    for row in chain:
+        if _n_token_of_intent(str(row.get("intent") or "")):
+            mech_kid = str(row.get("speaker") or "").strip()
+            break
+    if mech_kid not in kids:
+        return [], []
+    side_kid = next(k for k in kids if k != mech_kid)
+
+    old = [r for r in (existing or []) if isinstance(r, dict)]
+    old_lines = [str(r.get("line") or "").strip() for r in old]
+
+    def _reuse(predicate, *, min_len: int = 18) -> str:
+        for line in old_lines:
+            if line and len(line) >= min_len and predicate(line):
+                return line
+        return ""
+
+    names_line = _reuse(lambda x: ("叫" in x or "名字" in x), min_len=20)
+    addon_line = _reuse(
+        lambda x: 0 < len(re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", x)) <= 4
+    )
+    mom_opening = _reuse(lambda x: "记" in x)
+    mom_ask = _reuse(lambda x: re.search(r"什么意思|谁教|什么词", x) is not None)
+    mom_close = _reuse(lambda x: re.search(r"认栽|服了|打草稿|草稿", x) is not None)
+
+    out: list[dict[str, Any]] = []
+    for role, tag, template in _N_TWO_KID_PLAN:
+        line = template.replace("{token}", token)
+        if role == "mech" and tag == "报名字" and names_line:
+            line = names_line
+        elif role == "mech" and tag == "补词" and addon_line:
+            line = addon_line
+        elif role == "mom" and tag == "立规" and mom_opening:
+            line = mom_opening
+        elif role == "mom" and tag == "追问" and mom_ask:
+            line = mom_ask
+        elif role == "mom" and tag == "收束" and mom_close:
+            line = mom_close
+        speaker = "妈妈" if role == "mom" else (mech_kid if role == "mech" else side_kid)
+        out.append({"speaker": speaker, "line": line})
+    return out, ["按回合计划重建双孩对白:13回合"]
+
+
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把**契约与 seed 一起**做词槽归一化（唯一入口）。
 

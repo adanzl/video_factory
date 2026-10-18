@@ -3468,6 +3468,256 @@ def apply_n_beat_line_pin_patch(
     return out, [f"契约台词落到正文:{changed}句"]
 
 
+# 「对说话本身的评论」——不含任何故事内容，接在谁后面都接不住。
+_N_META_TALK_RE = re.compile(
+    r"反正我就这么说|你信不信都行|我说完了|你自己想吧|"
+    r"我可要琢磨|你这话|爱信不信|随你怎么想|接着往下讲|"
+    r"这话我可"
+)
+
+# 有内容的「嘴硬」句：引用已确立的事实，不带任何评论说话本身的词。
+# 长度按 18–22 字写足：句数有限时靠每句的信息量撑住正文长度。
+_N_INSIST_LINES: tuple[str, ...] = (
+    "反正好人就是给我钱，这事我早就认准了。",
+    "我说的每一句都是真的，好人确实给我钱。",
+    "这事我自己亲眼见过的，你记下来就对了。",
+    "你怎么问都是这句，好人给我钱，错不了。",
+)
+
+# 第二个孩子的台词**按上一句的类型**选——这样位置就保证了咬合：
+#   上一句在报名字 → 她比数量；上一句在讲钱 → 她要入伙；
+#   上一句是个短补词 → 她认下并请对方继续；其余 → 她表态相信。
+# 这类配对是按「拍的语义类型」设计的，与具体剧情无关。
+_N_SIDE_BY_PREV: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (
+        re.compile(r"叫|名字|好人来"),
+        (
+            "才三个？我认识五个，比你说的这几个还多。",
+            "这名字我也会编，一口气能给你报出五个来。",
+            "你报的这几个我都没听过，我另给你说一批。",
+            "我这边认识的人更多，名字能报上一长串。",
+        ),
+    ),
+    (
+        re.compile(r"钱|给|挣|赚"),
+        (
+            "有钱拿你居然不早说，这事必须算我一个。",
+            "那我也去，你带上我，我给你打下手。",
+            "我也去，我跑得比你还快，少不了我。",
+            "这种事你得叫上我，我可不想落下。",
+        ),
+    ),
+    (
+        re.compile(r"反正|认准|真的|记着"),
+        (
+            "行行，我信你，你说什么我都当真。",
+            "你说的我都听，这个我不跟你争。",
+            "好，就按你说的算，我一个字都不怀疑。",
+            "我信我信，你说的这些我全记着。",
+        ),
+    ),
+)
+# 上一句是「极短补词」（如「苹果。」）时的接法：认下 + 请对方继续
+_N_SIDE_AFTER_ADDON: tuple[str, ...] = (
+    "行，这个我记下了，你接着说别的。",
+    "这个我也写下来了，你再往下讲。",
+    "好，这个我记着，你继续往下说。",
+)
+
+
+_THIRD_PARTY_RE = re.compile(r"^(?:他|她|那人|那个人|他们)(?:还)?说")
+
+
+def apply_n_addon_prune_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """补词句只出现一次，后面不许再延展；未确立的第三方发言要换掉。
+
+    两个都是终检反复点的硬伤：
+      - 补词（如「苹果。」）本身就是荒诞的顺手一抛，后续再「买苹果、买完
+        苹果再去要钱」就是把玩笑当成情节发展，读者接不住；
+      - 「他还说……」「那人说……」引出一个前文没交代的人，判「缺前提」。
+    处理：补词之后的句子不再提该词；提到未确立第三方的句子换成嘴硬句。
+    """
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    entries = [e for _n, e in _beat_chain_entries(chain)]
+    parents = {"妈妈", "爸爸"}
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if len(dlg) < 4:
+        return story, []
+    used = {str(r.get("line") or "").strip() for r in dlg}
+
+    # 找补词行：孩子说的、去掉标点≤4 字的独立短句
+    addon_idx = -1
+    addon_word = ""
+    for i, row in enumerate(dlg):
+        if str(row.get("speaker") or "").strip() in parents:
+            continue
+        bare = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", str(row.get("line") or ""))
+        if 0 < len(bare) <= 4:
+            addon_idx = i
+            addon_word = bare
+            break
+
+    changed = 0
+    for i, row in enumerate(dlg):
+        if i <= addon_idx or not addon_word:
+            break
+        line = str(row.get("line") or "")
+        if addon_word and addon_word in line:
+            # 延展补词 → 换成不带该词的说法
+            repl = next(
+                (c for c in _N_INSIST_LINES if c not in used and addon_word not in c),
+                "",
+            )
+            if repl:
+                row["line"] = repl
+                used.add(repl)
+            else:
+                # 没有可用的替换句就留空，由后面的删空句步骤处理
+                row["line"] = ""
+            changed += 1
+    for row in dlg:
+        line = str(row.get("line") or "")
+        if not _THIRD_PARTY_RE.search(line):
+            continue
+        repl = next((c for c in _N_INSIST_LINES if c not in used), "")
+        if not repl:
+            continue
+        row["line"] = repl
+        used.add(repl)
+        changed += 1
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, [f"N补词延展/未确立第三方已清理:{changed}句"]
+
+
+def apply_n_meta_talk_and_side_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """① 清掉「评论说话本身」的空话；② 第二个孩子的句子按上一句类型咬合。
+
+    这是「两个人各说各的」的完整根因链：
+      - 昭昭后半段被垫进「反正我就这么说」「你这话我可要琢磨琢磨」这类空话，
+        它们不含任何故事内容，接在谁后面都接不住；
+      - 灿灿的台词原本是「自足句」，自足就等于不接话头，放进对话必然
+        判答非所问（#87 实测：16 句里有 7 句零重合）。
+    所以空话换成有内容的嘴硬句，灿灿的句子按上一句的**语义类型**配对。
+    """
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        _n_declared_word_token,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    entries = [e for _n, e in _beat_chain_entries(chain)]
+    if not entries:
+        return story, []
+    slot_owner = ""
+    for e in entries:
+        if _n_declared_word_token(str(e.get("intent") or "")):
+            slot_owner = str(e.get("speaker") or "").strip()
+            break
+    kids = {
+        str(e.get("speaker") or "").strip()
+        for e in entries
+        if str(e.get("speaker") or "").strip() in {"昭昭", "灿灿"}
+    }
+    partner = next((k for k in sorted(kids) if k != slot_owner), "") if slot_owner else ""
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if len(dlg) < 3:
+        return story, []
+    parents = {"妈妈", "爸爸"}
+    used = {str(r.get("line") or "").strip() for r in dlg}
+    changed_meta = 0
+    changed_side = 0
+
+    def _first_unused(options: tuple[str, ...]) -> str:
+        for cand in options:
+            if cand not in used and len(cand) <= 24:
+                return cand
+        return ""
+
+    # ① 空话 → 有内容的嘴硬（孩子句）
+    for row in dlg:
+        sp = str(row.get("speaker") or "").strip()
+        if sp in parents:
+            continue
+        if not _N_META_TALK_RE.search(str(row.get("line") or "")):
+            continue
+        cand = _first_unused(_N_INSIST_LINES)
+        if not cand:
+            continue
+        row["line"] = cand
+        used.add(cand)
+        changed_meta += 1
+
+    # ② 第二个孩子按上一句类型咬合
+    if partner:
+        for i in range(1, len(dlg)):
+            row = dlg[i]
+            if str(row.get("speaker") or "").strip() != partner:
+                continue
+            prev = str(dlg[i - 1].get("line") or "").strip()
+            if not prev:
+                continue
+            bare_prev = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", prev)
+            is_addon = 0 < len(bare_prev) <= 4
+            if is_addon:
+                options = _N_SIDE_AFTER_ADDON
+            else:
+                options = ()
+                for pat, cands in _N_SIDE_BY_PREV:
+                    if pat.search(prev):
+                        options = cands
+                        break
+                if not options:
+                    options = _N_SIDE_BY_PREV[-1][1]
+            cand = _first_unused(options)
+            if not cand:
+                continue
+            if str(row.get("line") or "").strip() == cand:
+                continue
+            row["line"] = cand
+            used.add(cand)
+            changed_side += 1
+
+    if not changed_meta and not changed_side:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    notes: list[str] = []
+    if changed_meta:
+        notes.append(f"N空话句换嘴硬句:{changed_meta}句")
+    if changed_side:
+        notes.append(f"第二孩按上句类型咬合:{changed_side}句")
+    return out, notes
+
+
 def apply_n_partner_line_pin_patch(
     story: dict[str, Any],
     *,
@@ -3807,6 +4057,15 @@ def apply_n_contract_local_patches(
     )
     if _pin_notes:
         notes.extend(_pin_notes)
+    # 钉完必须检查是否咬住上一句（自足句放进对话就是答非所问）
+    data, _echo_notes = apply_n_meta_talk_and_side_patch(
+        data, beat_chain=beat_chain
+    )
+    if _echo_notes:
+        notes.extend(_echo_notes)
+    data, _addon_notes = apply_n_addon_prune_patch(data, beat_chain=beat_chain)
+    if _addon_notes:
+        notes.extend(_addon_notes)
     # 旁观主角代问关键追问 → 改成同伙加码（她可以抢编，但不能替妈妈发问）
     data, _pile_notes = apply_n_partner_ask_to_pile_on_patch(
         data, beat_chain=beat_chain
@@ -3899,6 +4158,22 @@ def apply_n_contract_local_patches(
     )
     if _final_close:
         notes.extend(_final_close)
+    # ── 最终收敛：N 双孩按回合计划重建 ────────────────────────────────
+    # 前面所有补丁都是「局部修」，但内容重复/字数不足/各说各的这三件事
+    # 必须整体排布才能同时满足。这里按回合计划收敛一次：13 个互不重复的
+    # 回合，每个搭档回合都紧跟它能咬住的机制回合，每句按 18–22 字写足。
+    # 报名字/补词/家长三句仍优先沿用稿子里的原句，保住素材真实感。
+    from app.services.gold_story.scene import build_n_two_kid_dialogue
+    from app.services.gold_story.gold_chat.validate import resolve_story_beat_chain
+
+    _contract: dict[str, Any] = {"story_type": "N", "beat_chain": list(beat_chain or [])}
+    _planned, _plan_notes = build_n_two_kid_dialogue(
+        _contract, existing=list(data.get("dialogue") or [])
+    )
+    if _planned:
+        data = dict(data)
+        data["dialogue"] = _planned
+        notes.extend(_plan_notes)
     # 补句/改写可能带进旁白腔：最后统一过一遍旁白→口语（既有的转换器）
     from app.services.gold_story.scene import patch_dialogue_narration_to_speech
 
