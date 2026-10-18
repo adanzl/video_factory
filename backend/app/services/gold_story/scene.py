@@ -536,26 +536,25 @@ def normalize_n_formula_slots(
 #
 # 正确做法：契约只声明「她这一拍要干什么」，台词交给模型结合上下文写。
 # 三条约束保持：不引用上下文、不提那个机制词、不承担机制。
-# 第二孩的拍：她是**主角之一**，和机制孩子合伙把谎编圆。
+# 第二孩的拍：**给具体台词，不给抽象意图**。
 #
-# 这是十几轮才想通的关键：我此前把她写成「旁观者」——不信、听不懂、拆台。
-# 但旁观者的台词必须接住别人的话头，而她的位置往往没有话头可接，
-# 于是无论换多少种写法（追问/表态/挑衅/交错）都必然被判「答非所问」。
-# 主角不需要接话头——**她自己就有话要说**。
+# 这是走了十几轮弯路才认的账：抽象意图（「补一个现场细节」「表示自己不信」）
+# 交给模型自由发挥，产出的句子必然和上下文撞车——要么接不上前句、要么和
+# 另一拍同义重复、要么凭空编出前文没有的东西。每换一种意图描述就换一种错法，
+# 永远收敛不了。
 #
-# 两条约束（都实测踩过）：
-#   ① 不碰妈妈的机制关键追问（词义/出处），那是配角家长的破功依据；
-#   ② **两拍的动作类型必须不同**——都是「自己也报一串名字」会撞车，
-#      第二拍原样复述第一拍，判换词重复。
+# 她是主角之一（和机制孩子合伙把谎编圆），所以她的台词**自足**：不依赖
+# 上文、不需要谁回答、也不含那个怪词。这种句子写死在契约里，模型照用即可。
 #
-# 所以按「加码方向」分层：先补人，再补物，再补场面，最后加码程度。
+# 分层设计，相邻几拍不会撞车：
+#   报名 → 穿戴 → 场面 → 加码 → 情形 → 入伙
 _N_SECOND_KID_LINES: tuple[str, ...] = (
-    "也报出几个自己编的名字，要跟对方比一比",
-    "补一个现场细节（手里拿的、身上穿的这类），把谎编得更像",
-    "补上时间地点这类要素，让整件事听起来有鼻子有眼",
-    "声称自己还见过更夸张的情形，往下加码",
-    "替对方补一句更离谱的话，把谎推到不可收拾",
-    "表示自己也想去试试，主动入伙",
+    "我也认识几个好人，叫小美、小强、小丽。",
+    "他那天还穿了件新褂子，可神气了。",
+    "就在街口那儿，站着好几个人呢。",
+    "我还见过更热闹的，比这厉害多了。",
+    "他手里还拿着个本子，跟咱家那本一样。",
+    "那我也去试试，说不定还能挣着钱。",
 )
 
 
@@ -718,11 +717,12 @@ _RE_SEED_TOKEN_EXPLAIN = re.compile(r"解释这个词")
 
 
 def keep_seed_token_pair_adjacent(seed: list[Any]) -> tuple[list[Any], list[str]]:
-    """seed 里「说出词」和「解释这个词」必须相邻。
+    """seed 里「说出词 → 家长追问 → 解释」必须按这个顺序相邻。
 
-    中间被旁观的拍隔开时，模型会写成两段互不相连的因果
-    （「因为街上有人工作」…「所以别人给你钱」），终检判因果断裂
-    （#87 实测）。这两句本来就是一口气说完的。
+    两个坑，都会直接判错：
+      ① 中间夹旁观的拍 → 模型写成两段互不相连的因果
+         （「因为街上有人工作」…「所以别人给你钱」被判因果断裂）；
+      ② 解释排在家长追问**之前** → 提前答了后文的问题（判错位）。
     """
     rows = [dict(r) if isinstance(r, dict) else r for r in (seed or [])]
     out_i = next(
@@ -735,21 +735,89 @@ def keep_seed_token_pair_adjacent(seed: list[Any]) -> tuple[list[Any], list[str]
          and _RE_SEED_TOKEN_EXPLAIN.search(str(r.get("intent") or ""))),
         -1,
     )
-    if out_i < 0 or exp_i < 0:
+    if out_i < 0 or exp_i < 0 or exp_i < out_i:
         return seed or [], []
-    # 正确顺序：出词 → （家长问）→ 解释。
-    # 若二者之间夹的是**家长的追问**，保持不动（问答相邻才是对的）；
-    # 只有夹着旁观的拍时才需要把它们并到一起。
+
+    notes: list[str] = []
+
+    def _is_parent_ask(row: Any) -> bool:
+        if not isinstance(row, dict):
+            return False
+        return (
+            str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+            and bool(
+                _RE_ASK_INTENT.search(
+                    str(row.get("intent") or row.get("line") or "")
+                )
+            )
+        )
+
+    # ① 清掉出词与解释之间的旁观拍
     between = [
-        r for r in rows[out_i + 1 : exp_i]
+        r
+        for r in rows[out_i + 1 : exp_i]
         if isinstance(r, dict)
         and str(r.get("speaker") or "").strip() not in _PARENT_SPEAKER_SET
     ]
-    if not between:
+    if between:
+        row = rows.pop(exp_i)
+        rows.insert(out_i + 1, row)
+        exp_i = out_i + 1
+        notes.append("seed词与解释之间清掉旁观拍")
+
+    # ② 家长追问必须在解释之前
+    has_ask_before = any(_is_parent_ask(r) for r in rows[out_i:exp_i])
+    if not has_ask_before:
+        donor = next(
+            (k for k in range(exp_i + 1, len(rows)) if _is_parent_ask(rows[k])),
+            -1,
+        )
+        if donor >= 0:
+            row_d = rows.pop(donor)
+            rows.insert(exp_i, row_d)
+            notes.append("seed家长追问移到解释前")
+
+    # ③ 同一孩子不得相邻：把重复的那条挪到后面（收束前）去
+    kids = {"昭昭", "灿灿"}
+    parent_last = max(
+        (
+            k
+            for k, r in enumerate(rows)
+            if isinstance(r, dict)
+            and str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        ),
+        default=len(rows) - 1,
+    )
+    for k in range(len(rows) - 1):
+        a = str(rows[k].get("speaker") or "").strip() if isinstance(rows[k], dict) else ""
+        b = (
+            str(rows[k + 1].get("speaker") or "").strip()
+            if isinstance(rows[k + 1], dict)
+            else ""
+        )
+        if a in kids and a == b:
+            row = rows.pop(k + 1)
+            # 插到最后一个家长拍**之前**（收束必须在最后）；
+            # 下标要在 pop 之后重新算，否则会插到末尾去。
+            close_now = max(
+                (
+                    z
+                    for z, rr in enumerate(rows)
+                    if isinstance(rr, dict)
+                    and str(rr.get("speaker") or "").strip()
+                    in _PARENT_SPEAKER_SET
+                ),
+                default=len(rows) - 1,
+            )
+            pos = max(1, min(close_now, len(rows) - 1))
+            rows.insert(pos, row)
+            notes.append("seed同人相邻已拆开")
+            break
+
+    if not notes:
         return seed or [], []
-    row = rows.pop(exp_i)
-    rows.insert(out_i + 1, row)
-    return rows, ["seed词与解释之间清掉旁观拍"]
+    return rows, notes
+
 
 
 def align_seed_to_contract_beats(
