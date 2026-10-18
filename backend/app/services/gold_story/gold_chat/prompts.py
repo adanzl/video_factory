@@ -22,6 +22,14 @@ from app.services.gold_story.gold_chat.validate import (
 )
 
 CHAT_MAX_LINE_CHARS = DAILY_STORY_LINE_CHARS_MAX
+# ── 句长的唯一权威口径 ──────────────────────────────────────────────────
+# 出厂设定：正文 240 字靠「句数 × 句长」凑，句长落在这个区间最容易同时满足
+# 「儿童口语化」和「够字数」。此前这个数在提示词里有三套写法
+# （18–22 / 16–22 / 12–18），模型每轮按哪套写全看运气，字数与句数的账
+# 自然对不上。所有提示词一律引用这两个常量，禁止再写字面区间。
+SAFE_LINE_CHARS_LO = 18
+SAFE_LINE_CHARS_HI = 22
+SAFE_LINE_CHARS_HINT = f"{SAFE_LINE_CHARS_LO}–{SAFE_LINE_CHARS_HI} 字"
 # 提示词软目标：低于硬卡上限，避免顶着 370 写爆
 CHARS_SOFT_LO = DAILY_STORY_BODY_CHARS_MIN + 40  # 280
 CHARS_SOFT_HI = DAILY_STORY_BODY_CHARS_MAX - 30  # 340
@@ -141,7 +149,7 @@ _SYSTEM = (
     "只输出一个合法 JSON 对象：无解释、无注释、无 markdown 代码围栏。\n"
     "输出 JSON 须与站内 daily_story 字段一致。\n"
     "**输出预算**：先保证正文 ≥240 字（目标 280–340），"
-    "dialogue 约 14 条后闭合，每句 18–22 字（靠句长凑 240 字，不靠重复注水）；"
+    "dialogue 约 14 条后闭合，每句 " + SAFE_LINE_CHARS_HINT + "（靠句长凑 240 字，不靠重复注水）；"
     "禁止复读/草稿并列/循环加戏。"
 )
 
@@ -206,7 +214,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
   禁灌尾巴（「你给我听好了/这回算清楚/别再装傻/说了就不改」等）
 - **收束时机**：字数已 ≥{chars_min} 且冲突按 closing 落实后立刻闭合；
   禁止超过 {chars_max}，禁止顶着上限注水
-- **单句** ≤{max_line} 字，**宜 16–22 字**（过短难满 240 总字）；**key** 须 {key_min}–{key_max} 字；
+- **单句** ≤{max_line} 字，**宜 {safe_lo}–{safe_hi} 字**（过短难满 240 总字）；**key** 须 {key_min}–{key_max} 字；
   **punchline_explain 必填**，含「{structure_type}类」前缀，宜短
 - **seed**：通常每条扩 1–2 句；可保留关键词，禁止逐字照抄；
   禁止一条 seed 改写成多版本/草稿并列；
@@ -715,7 +723,7 @@ def format_cast_block(contract: dict[str, Any] | None) -> str:
         need_lines = max(14, n_beats + 2)
         lines.append(
             f"- **句数预算（硬）**：两人手没有第三方分担，总共写 **{need_lines} 句左右**"
-            f"（{n_beats} 个拍）；每句 **18–22 字**（比儿歌长一点、比书面语短一点），"
+            f"（{n_beats} 个拍）；每句 **{SAFE_LINE_CHARS_HINT}**（比儿歌长一点、比书面语短一点），"
             f"单句不得超过 {CHAT_MAX_LINE_CHARS} 字，全篇均句 ≤22 字"
         )
         lines.append(
@@ -773,6 +781,11 @@ def format_cast_block(contract: dict[str, Any] | None) -> str:
         lines.append(
             f"- 本次是**双孩同侧**：{'、'.join(kids)} 同侧齐上，家长为配角；"
             "禁止把孩子写成对立"
+        )
+        lines.append(
+            f"- **每句长度**：{SAFE_LINE_CHARS_HINT}"
+            f"（单句 ≤{CHAT_MAX_LINE_CHARS} 字，全篇均句 ≤22 字）；"
+            "两个孩子交替接话，句数自然够，不要靠拉长单句凑字数"
         )
         lines.append(
             "- **严禁孩子连说（硬）**：任意相邻两句的孩子不能是同一个人——"
@@ -1094,7 +1107,7 @@ def format_expand_regen_feedback(
         elif "正文总字数须≥" in err:
             parts.append(
                 "- M8+J：扭打互顶→立规谁赢谁说了算→应战挑衅→一锤取胜→认输收场；"
-                "每句宜 16–22 字写满 beat，禁止只扩 seed 短句就停"
+                f"每句宜 {SAFE_LINE_CHARS_HINT} 写满 beat，禁止只扩 seed 短句就停"
             )
     if "正文总字数须≤" in err:
         parts.append(
@@ -1126,7 +1139,7 @@ def format_expand_regen_feedback(
         else:
             parts.append(
                 "- A：立规亮权威→孩子追问顶回→权威自己当场违规（一锤）→"
-                "埋可引用原话→末四拍；每句宜 16–22 字写满 beat，"
+                f"埋可引用原话→末四拍；每句宜 {SAFE_LINE_CHARS_HINT} 写满 beat，"
                 "禁止只把 seed 扩成短句就停"
             )
     if "punchline_explain" in err:
@@ -1337,7 +1350,7 @@ def format_seed_span_block(
     parts = [
         f"【篇幅硬卡】dialogue_seed 共 {n} 条；"
         f"正文必须 ≥{CHAT_LINE_COUNT_MIN} 句且 ≥{DAILY_STORY_BODY_CHARS_MIN} 字"
-        f"（目标 280–340）；每句宜 16–22 字，禁灌尾巴凑字。",
+        f"（目标 280–340）；每句宜 {SAFE_LINE_CHARS_HINT}，禁灌尾巴凑字。",
     ]
     if need_lines > 0:
         if m8_j:

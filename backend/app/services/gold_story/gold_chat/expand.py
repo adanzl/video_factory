@@ -77,6 +77,8 @@ from app.services.gold_story.gold_chat.prompts import (
     format_beat_sequence_block,
     format_align_block,
     format_align_issues_block,
+    SAFE_LINE_CHARS_HI,
+    SAFE_LINE_CHARS_LO,
     format_cast_block,
     format_m5_h_expand_beat_block,
     format_authority_punchline_expand_block,
@@ -2120,6 +2122,8 @@ def gold_story_to_gold_chat(
             ),
             align_block=align_block,
             gold_chat_snippet=_snippet_for_contract(scene_contract, str(row.get("source_id") or "")),
+            safe_lo=SAFE_LINE_CHARS_LO,
+            safe_hi=SAFE_LINE_CHARS_HI,
             **_prompt_budget_kwargs(),
         )
         candidates: list[dict[str, Any]] = []

@@ -33,6 +33,7 @@ from app.services.gold_story.scene import (
     normalize_cast_to_beats,
     neutralize_mechanism_token,
     normalize_n_formula_slots,
+    enforce_two_kid_cast,
     ensure_n_two_kid_alternation,
     normalize_parent_beat_ownership,
     normalize_retrospective_topic_contract,
@@ -903,6 +904,11 @@ def build_scene_contract(
         data, _neutral_notes = neutralize_mechanism_token(data)
         if _neutral_notes:
             logger.info("H3a token neutralize=%s", _neutral_notes[:3])
+        # 出厂设定（唯一执行点）：永远不允许只有一个孩子出场。
+        # 放在契约归一化最后一环，下游就再也见不到单孩契约。
+        data, _two_kid_notes = enforce_two_kid_cast(data)
+        if _two_kid_notes:
+            logger.info("H3a two-kid cast=%s", _two_kid_notes[:2])
         data, _dialogue_notes = normalize_scene_dialogue_beats(data)
         data, _turns_notes = normalize_beat_min_turns(data)
         if _turns_notes:

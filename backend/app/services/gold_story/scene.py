@@ -179,6 +179,53 @@ def is_retrospective_topic_object(value: str) -> bool:
 
 
 _PARENT_SPEAKER_SET = frozenset({"妈妈", "爸爸"})
+# ── 出厂设定：本系统永远不允许「只有一个孩子出场」 ────────────────────────
+# 这是产品级约束，不是某一类的临时处理：孩子戏份靠两个孩子交替，才能既有
+# 需要的句数、又不出现同人连说。所有「补角色 / 查人数 / 单孩兜底」都必须
+# 走下面这两个函数，禁止在各处再写 `if len(kids) == 1` 的临时分支
+# （此前这种分支散在 16 处，逐个补必然漏，且互相冲突）。
+_KID_SPEAKER_SET = frozenset({"昭昭", "灿灿"})
+_DEFAULT_KID_ORDER: tuple[str, str] = ("昭昭", "灿灿")
+
+
+def kid_speakers_of(names: Any) -> list[str]:
+    """从任意名单里挑出孩子，并按既定顺序（昭昭 → 灿灿）返回。"""
+    raw = {str(n).strip() for n in (names or []) if str(n).strip()}
+    return [k for k in _DEFAULT_KID_ORDER if k in raw]
+
+
+def ensure_two_kids(names: Any) -> list[str]:
+    """保证至少两个孩子在场（不足则补齐）。
+
+    唯一权威入口：任何要产出/校验对白人物的地方都用它，
+    不要在调用点再判断人数。
+    """
+    kids = kid_speakers_of(names)
+    if not kids:
+        return list(_DEFAULT_KID_ORDER)
+    if len(kids) >= 2:
+        return kids
+    # 只有一个孩子：补另一个同侧孩子（不是删他）
+    for cand in _DEFAULT_KID_ORDER:
+        if cand not in kids:
+            kids.append(cand)
+            break
+    return kids
+
+
+def ensure_two_kid_cast(cast: Any) -> list[str]:
+    """把「家长 + 孩子」名单补成「家长 + 两个孩子」，保持原有顺序风格。"""
+    items = [str(c).strip() for c in (cast or []) if str(c).strip()]
+    parents = [c for c in items if c in _PARENT_SPEAKER_SET]
+    kids = ensure_two_kids(items)
+    # 家长在前、孩子在后（与项目既有约定一致）；没有家长信息时保留默认家长
+    if not parents:
+        parents = ["妈妈"]
+    ordered = list(dict.fromkeys([*parents, *kids]))
+    return ordered
+
+
+
 # 家长拍的对话动词（越权塞进孩子拍时会暴露）
 _PARENT_ASK_CLAUSE_RE = re.compile(
     r"(?:妈妈|爸爸)[^，,。；;]{0,6}?(?:追问|质问|反问|问|震惊追问|插问)"
@@ -487,6 +534,80 @@ _N_SECOND_KID_REACTIONS: tuple[str, ...] = (
     "帮腔一句，说听着还真有点道理",
     "在旁边插一句，说自己也想去",
 )
+
+
+def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """出厂设定落地：契约的角色表与 beat 里必须有两个孩子。
+
+    这是「永远不允许只有一个孩子出场」的**唯一执行点**。放在契约归一化的
+    最后一环，下游（扩写/补丁/机检）就再也不会遇到单孩契约，各处那些
+    `if len(kids) == 1` 的临时分支也随之失去意义。
+
+    做法是「补」不是「删」：若某个孩子完全没有拍，就给他补一条反应拍，
+    让他有真实戏份；同时把他写进 characters。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    sc = dict(contract)
+    chain = sc.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    names = [str(r.get("speaker") or "").strip() for r in rows]
+    names += [str(c).strip() for c in (sc.get("characters") or [])]
+    kids = kid_speakers_of(names)
+    if len(kids) >= 2:
+        return contract, []
+    partner = next(k for k in _DEFAULT_KID_ORDER if k not in kids) if kids else "灿灿"
+    solo = kids[0] if kids else ""
+    notes: list[str] = []
+    react_i = 0
+    inserted = 0
+    out_rows: list[Any] = []
+    prev_kid = ""
+    for row in rows:
+        sp = str(row.get("speaker") or "").strip()
+        if solo and sp == solo and sp == prev_kid:
+            out_rows.append(
+                {
+                    "speaker": partner,
+                    "intent": _N_SECOND_KID_REACTIONS[
+                        react_i % len(_N_SECOND_KID_REACTIONS)
+                    ],
+                }
+            )
+            react_i += 1
+            inserted += 1
+            prev_kid = partner
+        out_rows.append(row)
+        prev_kid = sp if sp not in _PARENT_SPEAKER_SET else ""
+    if not inserted:
+        # 孩子没有连续拍，也要给他一条反应拍（保证他真的出场）
+        target = next(
+            (
+                i
+                for i, r in enumerate(out_rows)
+                if isinstance(r, dict)
+                and str(r.get("speaker") or "").strip() == solo
+            ),
+            -1,
+        )
+        if target < 0:
+            return contract, []
+        out_rows.insert(
+            target + 1,
+            {"speaker": partner, "intent": _N_SECOND_KID_REACTIONS[0]},
+        )
+        inserted = 1
+    for idx, row in enumerate(out_rows, 1):
+        if isinstance(row, dict):
+            row["beat"] = idx
+    sc["beat_chain"] = out_rows
+    sc["characters"] = ensure_two_kid_cast(
+        [*(sc.get("characters") or []), solo, partner]
+    )
+    notes.append(f"保证两孩出场:补{partner}({inserted}拍)")
+    return sc, notes
 
 
 def ensure_n_two_kid_alternation(

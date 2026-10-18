@@ -3571,3 +3571,36 @@ def test_retry_prompt_block_empty_without_feedback() -> None:
     assert format_retry_missing_events_block(
         {"gold_chat_retry_feedback": {"reason": "semantic_review_exhausted"}}
     ) == ""
+
+
+def test_single_authoritative_line_length_hint():
+    """句长标准只能有一个来源：通用提示词里不许再写死字面区间。"""
+    import re
+
+    from app.services.gold_story.gold_chat import prompts as gp
+
+    assert gp.SAFE_LINE_CHARS_LO < gp.SAFE_LINE_CHARS_HI
+    assert gp.SAFE_LINE_CHARS_HI <= gp.CHAT_MAX_LINE_CHARS
+    hint = gp.SAFE_LINE_CHARS_HINT
+    assert str(gp.SAFE_LINE_CHARS_LO) in hint and str(gp.SAFE_LINE_CHARS_HI) in hint
+
+    # 通用系统提示与出场角色块都引用同一口径
+    assert hint in gp._SYSTEM
+    blk = gp.format_cast_block(
+        {
+            "characters": ["妈妈", "昭昭", "灿灿"],
+            "mom_lines_max": 3,
+            "beat_chain": [
+                {"beat": 1, "speaker": "妈妈", "intent": "立规"},
+                {"beat": 2, "speaker": "昭昭", "intent": "说词"},
+                {"beat": 3, "speaker": "灿灿", "intent": "笑一声"},
+            ],
+        }
+    )
+    assert hint in blk
+
+    # 通用段落里不得再出现与权威口径不同的字面区间
+    # （M8/J 的分拍预算另有机制，允许自己的区间）
+    generic = gp._SYSTEM + blk
+    for bad in ("16–22 字", "12–18 字"):
+        assert bad not in generic, f"通用提示词里仍有旧口径: {bad}"
