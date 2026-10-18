@@ -1742,11 +1742,23 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             from app.services.gold_story.scene import (
                 enforce_two_kid_cast,
                 ensure_n_two_kid_alternation,
+                neutralize_mechanism_token,
             )
 
             # 复用路径同样要过「两孩出场」（出厂设定），否则库里旧契约只有
             # 一个孩子，下游 cast 补丁会把补进来的孩子当「契约外」删掉，
             # 与「插反应句拆连说」形成删-插死循环（#87 实测）。
+            # 词槽中性化：库里旧契约可能还带着英文串（waka/banana），
+            # 复用路径不经过 H3a，必须在这里也做一次（否则英文词进成稿）。
+            existing_contract, _neutral_notes = neutralize_mechanism_token(
+                existing_contract
+            )
+            if _neutral_notes:
+                logger.info(
+                    "[GOLD_CHAT] reuse token neutralize id=%s: %s",
+                    row.get("id"),
+                    _neutral_notes[:2],
+                )
             existing_contract, _kid_notes = enforce_two_kid_cast(existing_contract)
             existing_contract, _alt_notes = ensure_n_two_kid_alternation(
                 existing_contract
