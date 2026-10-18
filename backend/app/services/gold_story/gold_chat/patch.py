@@ -3212,6 +3212,77 @@ def apply_pure_action_to_speech_patch(
     return out, [f"纯动作句改台词:{changed}"]
 
 
+def apply_n_token_repeat_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """机制怪词只允许在「蹦出」那一句出现原形，之后一律用「这词」指代。
+
+    绕圈规则是按「同一个词出现在连续 4 句」扣分的，而怪词很容易连着出现
+    （孩子抛词 → 旁观问词 → 孩子解释词 → 家长追问词），四条连在一起就
+    直接扣 10 分、结构分掉到 70（#87 实测）。
+
+    处理方式：
+      - 保留**首次**出现（那正是机制要的「突然蹦出」）；
+      - 后续行若以「词+问号/逗号」开头且本行已有指代 → 直接删掉那个词头；
+      - 其它情况把词换成「这词」，保证句子仍然通顺。
+    """
+    from app.services.gold_story.gold_chat.validate import (
+        _beat_chain_entries,
+        _n_declared_word_token,
+        resolve_story_beat_chain,
+    )
+
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    chain = (
+        beat_chain
+        if isinstance(beat_chain, list) and beat_chain
+        else resolve_story_beat_chain(story)
+    )
+    tokens = {
+        tok
+        for _n, entry in _beat_chain_entries(chain)
+        for tok in [
+            _n_declared_word_token(str(entry.get("intent") or ""))
+        ]
+        if tok
+    }
+    if not tokens:
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if not dlg:
+        return story, []
+    seen_first = False
+    changed = 0
+    for row in dlg:
+        line = str(row.get("line") or "")
+        if not line:
+            continue
+        hit = next((t for t in tokens if t in line), "")
+        if not hit:
+            continue
+        if not seen_first:
+            seen_first = True
+            continue
+        # 词头 + 标点，且本行已有指代 → 删掉词头
+        head_re = re.compile(
+            r"^\s*" + re.escape(hit) + r"\s*[，,？?！!。…]?\s*"
+        )
+        if re.search(r"这词|这个词", line) and head_re.search(line):
+            row["line"] = re.sub(head_re, "", line, count=1)
+            changed += 1
+            continue
+        row["line"] = line.replace(hit, "这词")
+        changed += 1
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, [f"N怪词重复已收敛:{changed}"]
+
+
 def apply_n_alternation_lines_patch(
     story: dict[str, Any],
     *,
@@ -3305,6 +3376,9 @@ def apply_n_contract_local_patches(
     if _action_notes:
         notes.extend(_action_notes)
     # 孩子连说先拆开（插反应句，不删句）
+    data, _tokrep_notes = apply_n_token_repeat_patch(data, beat_chain=beat_chain)
+    if _tokrep_notes:
+        notes.extend(_tokrep_notes)
     data, _alt_notes = apply_n_alternation_lines_patch(data, beat_chain=beat_chain)
     if _alt_notes:
         notes.extend(_alt_notes)
