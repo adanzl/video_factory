@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="mb-4 flex flex-wrap items-center gap-3">
-      <el-button type="primary" size="small" :disabled="loading" @click="fetchItems">
+      <el-button type="primary" size="small" :disabled="loading" @click="fetchItems()">
         <el-icon>
           <Refresh />
         </el-icon>
@@ -244,8 +244,16 @@ function readStoredChoice(key: string, allowed: string[]): string {
   return allowed.includes(raw) ? raw : "";
 }
 
-const page = ref(1);
-const pageSize = ref(parseInt(localStorage.getItem("goldChatPageSize") || "15", 10));
+const PAGE_KEY = "goldChatPage";
+const PAGE_SIZE_KEY = "goldChatPageSize";
+
+function readStoredPositiveInt(key: string, fallback: number): number {
+  const raw = Number.parseInt(localStorage.getItem(key) || "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+
+const page = ref(readStoredPositiveInt(PAGE_KEY, 1));
+const pageSize = ref(readStoredPositiveInt(PAGE_SIZE_KEY, 15));
 const total = ref(0);
 const filterHasStory = ref(readStoredChoice(FILTER_HAS_STORY_KEY, FILTER_HAS_STORY_VALUES));
 const filterExcludeArchived = ref(
@@ -256,6 +264,11 @@ const collectPhase = ref("");
 const collectEnqueued = ref(0);
 const collectProcessed = ref(0);
 const collectCandidates = ref(0);
+
+/** 翻页状态跟着 localStorage 走，刷新页面/轮询自动刷新都不会跳回第一页 */
+function persistPage() {
+  localStorage.setItem(PAGE_KEY, String(page.value));
+}
 
 const collectButtonLabel = computed(() => {
   if (!collecting.value) return "采集（10 条）";
@@ -530,13 +543,23 @@ function resetCollectProgress() {
   collectCandidates.value = 0;
 }
 
-function showCollectListFilters() {
+/** 采集任务启动时回第一页方便看新入队的 pending；轮询期间只回一次，别把用户翻的页顶掉 */
+let collectListResetDone = false;
+
+function showCollectListFilters(force = false) {
+  if (collectListResetDone && !force) return;
+  collectListResetDone = true;
   // 采集后应能看见 pending，避免「有故事/通过」筛掉
   page.value = 1;
+  persistPage();
   if (filterHasStory.value === "yes") {
     filterHasStory.value = "";
     localStorage.setItem(FILTER_HAS_STORY_KEY, "");
   }
+}
+
+function clearCollectListFiltersReset() {
+  collectListResetDone = false;
 }
 
 function formatReimportDone(res: GoldStoryReimportResult): string {
@@ -560,8 +583,9 @@ function startReimportPolling() {
   }, POLL_INTERVAL_MS);
 }
 
-async function fetchItems(opts?: { quiet?: boolean }) {
+async function fetchItems(opts?: { quiet?: boolean; allowPageClamp?: boolean }) {
   const quiet = opts?.quiet === true;
+  const allowPageClamp = opts?.allowPageClamp !== false;
   const savedSelected = quiet ? [...selectedIds.value] : null;
   if (!quiet) loading.value = true;
   try {
@@ -575,6 +599,13 @@ async function fetchItems(opts?: { quiet?: boolean }) {
           ? { has_story: false }
           : {}),
     });
+    // 条数变少（删除/归档/改筛选）时回退到最后一页，避免停在空白页
+    const maxPage = Math.max(1, Math.ceil(res.total / pageSize.value));
+    if (allowPageClamp && page.value > maxPage) {
+      page.value = maxPage;
+      persistPage();
+      return await fetchItems({ quiet, allowPageClamp: false });
+    }
     items.value = res.items;
     total.value = res.total;
     if (savedSelected !== null) {
@@ -608,11 +639,12 @@ async function pollCollectStatus() {
     const wasCollecting = collecting.value;
     collecting.value = false;
     stopCollectPolling();
+    clearCollectListFiltersReset();
     if (!wasCollecting) {
       resetCollectProgress();
       return;
     }
-    showCollectListFilters();
+    // 采集结束只刷新当前页，不把用户翻到的页顶回第一页
     await fetchItems({ quiet: true });
     if (res.status === "error") {
       ElMessage.error(res.error || "采集失败");
@@ -660,19 +692,22 @@ function onFilterChange() {
   localStorage.setItem(FILTER_HAS_STORY_KEY, filterHasStory.value);
   localStorage.setItem(FILTER_EXCLUDE_ARCHIVED_KEY, String(filterExcludeArchived.value));
   page.value = 1;
+  persistPage();
   selectedIds.value = [];
   void fetchItems();
 }
 
 function onPageChange() {
+  persistPage();
   selectedIds.value = [];
   void fetchItems();
 }
 
 function onPageSizeChange() {
   page.value = 1;
+  persistPage();
   selectedIds.value = [];
-  localStorage.setItem("goldChatPageSize", String(pageSize.value));
+  localStorage.setItem(PAGE_SIZE_KEY, String(pageSize.value));
   void fetchItems();
 }
 
@@ -1001,7 +1036,7 @@ async function handleCollect() {
     return;
   }
   collecting.value = true;
-  showCollectListFilters();
+  showCollectListFilters(true);
   try {
     const res = await collectGoldStories({ max: 10 });
     applyCollectProgress(res);
