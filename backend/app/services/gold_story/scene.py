@@ -736,8 +736,46 @@ def align_seed_to_contract_beats(
     beat_speakers = [str(b.get("speaker") or "").strip() for b in beats]
     seed_speakers = {str(r.get("speaker") or "").strip() for r in rows}
     missing = {sp for sp in beat_speakers if sp and sp not in seed_speakers}
-    if not missing:
+    # 家长问句在 seed 里可能多于契约的追问拍（追问被合并后会留下孤儿问句，
+    # 没人回答 → 必判答非所问）。这种情况也要重排，把孤儿问句丢掉。
+    contract_asks = [
+        str(b.get("intent") or "")
+        for b in beats
+        if str(b.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        and _RE_ASK_INTENT.search(str(b.get("intent") or ""))
+    ]
+    seed_asks = [
+        str(r.get("intent") or r.get("line") or "")
+        for r in rows
+        if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        and _RE_ASK_INTENT.search(str(r.get("intent") or r.get("line") or ""))
+    ]
+    orphan_asks = max(0, len(seed_asks) - len(contract_asks))
+    if not missing and not orphan_asks:
         return seed or [], []
+    if orphan_asks:
+        # 逐个比对：seed 的家长问句能在契约追问里找到语义近邻才保留
+        def _bigrams(text: str) -> set[str]:
+            out_b: set[str] = set()
+            for run in re.findall(r"[\u4e00-\u9fff]+", text):
+                for k in range(len(run) - 1):
+                    out_b.add(run[k : k + 2])
+            return out_b
+
+        kept_rows: list[Any] = []
+        contract_grams = [_bigrams(a) for a in contract_asks]
+        for r in rows:
+            is_parent_ask = (
+                str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+                and _RE_ASK_INTENT.search(str(r.get("intent") or r.get("line") or ""))
+            )
+            if not is_parent_ask:
+                kept_rows.append(r)
+                continue
+            grams = _bigrams(str(r.get("intent") or r.get("line") or ""))
+            if any(len(grams & cg) >= 1 for cg in contract_grams):
+                kept_rows.append(r)
+        rows = kept_rows
 
     pool = list(rows)
     out: list[Any] = []
@@ -972,6 +1010,63 @@ def spread_kid_beats(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str
     return out, [f"孩子连说分配:{moved}处"]
 
 
+_RE_KEY_ASK = re.compile(r"这词|什么意思|谁教|哪来|出处")
+
+
+def collapse_extra_parent_asks(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """家长只保留**一个**信息型追问；其余删掉。
+
+    反复出现的硬伤「妈妈问 X，孩子没答 X」根因在契约：家长排了两个追问拍
+    （问名字 + 问词义），但只有后者有对应的回答拍，前者永远没人答，
+    孩子只能跳过去说别的，语义审读必然判答非所问（#87 实测多轮）。
+
+    规则（抽象，不绑剧情）：
+      - 家长的信息型追问拍最多留一个，优先保留含「这词/什么意思/谁教」的
+        机制关键追问；
+      - 被删的追问拍不影响机制链（立规、收束、孩子的拍都不动）。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or len(chain) < 4:
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    ask_idx = [
+        i
+        for i, r in enumerate(rows)
+        if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        and _RE_ASK_INTENT.search(str(r.get("intent") or ""))
+    ]
+    if len(ask_idx) <= 1:
+        return contract, []
+    # 优先保留机制关键追问（含「这词/什么意思/谁教」）
+    key = [
+        i
+        for i in ask_idx
+        if _RE_KEY_ASK.search(str(rows[i].get("intent") or ""))
+    ]
+    keep = key[0] if key else ask_idx[-1]
+    drop = [i for i in ask_idx if i != keep]
+    if not drop:
+        return contract, []
+    for i in sorted(drop, reverse=True):
+        rows.pop(i)
+    for idx, row in enumerate(rows, 1):
+        row["beat"] = idx
+    out = dict(contract)
+    out["beat_chain"] = rows
+    # 额度跟着拍数走（家长拍变少，额度同步收窄，避免虚高额度被拿去加句）
+    parent_n = sum(
+        1
+        for r in rows
+        if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        and str(r.get("intent") or "").strip()
+    )
+    if parent_n:
+        out["mom_lines_max"] = parent_n
+    return out, [f"家长追问合并:{len(drop)}拍→共{parent_n}拍"]
+
+
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把**契约与 seed 一起**做词槽归一化（唯一入口）。
 
@@ -1010,20 +1105,18 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         if m_notes:
             out["dialogue_seed"] = new_seed
             notes.extend(m_notes)
-        # seed 必须覆盖契约每一拍的说话人（否则第二个孩子只能凭空编）
-        new_seed, a_notes = align_seed_to_contract_beats(
-            out.get("dialogue_seed") or [],
-            contract=out.get("scene_contract"),
-        )
-        if a_notes:
-            out["dialogue_seed"] = new_seed
-            notes.extend(a_notes)
         # 问答必须相邻：家长问句后面不许插旁观的拍
         out["scene_contract"], k_notes = keep_qa_adjacent(
             out.get("scene_contract") or {}
         )
         if k_notes:
             notes.extend(k_notes)
+        # 家长只留一个信息型追问（多余的永远没人答）
+        out["scene_contract"], c_notes = collapse_extra_parent_asks(
+            out.get("scene_contract") or {}
+        )
+        if c_notes:
+            notes.extend(c_notes)
         # 契约层收敛：孩子相邻与问答相邻互相影响，交替跑到不动为止
         for _ in range(3):
             out["scene_contract"], sp_notes = spread_kid_beats(
@@ -1044,6 +1137,21 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         )
         if q_notes:
             notes.extend(q_notes)
+    # ── 最终对齐：契约已收敛，seed 必须与之一致 ────────────────────────
+    # 必须放在契约收敛之后，否则孤儿问句/缺说话人按旧契约判定，等于没修。
+    _seed_final, _align_notes = align_seed_to_contract_beats(
+        out.get("dialogue_seed") or [],
+        contract=out.get("scene_contract"),
+    )
+    if _align_notes:
+        out["dialogue_seed"] = _seed_final
+        notes.extend(_align_notes)
+    # 合并可能因对齐重新出现的相邻同行
+    _seed_merged, _m2 = merge_seed_consecutive_kid_rows(
+        out.get("dialogue_seed") or []
+    )
+    if _m2:
+        out["dialogue_seed"] = _seed_merged
     return out, notes
 
 
