@@ -358,18 +358,8 @@ def needs_second_kid(contract: dict[str, Any] | None) -> bool:
     N 类家长当追问方时是两人手（家长 × 单孩），不补第二孩：
     否则 seed 先被补、再被两人手规则删掉，来回震荡（#87 实测）。
     """
-    sc = contract if isinstance(contract, dict) else {}
-    if str(sc.get("story_type") or "").strip().upper() == "N":
-        parent_asks = any(
-            isinstance(row, dict)
-            and str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
-            and _N_MECHANISM_ASK_RE.search(
-                str(row.get("intent") or row.get("beat") or "")
-            )
-            for row in (sc.get("beat_chain") or [])
-        )
-        if parent_asks:
-            return False
+    # 两个孩子是「禁同人连说」的解法：只给一个孩子时，家长额度一旦封顶，
+    # 剩下的句子只能由同一个孩子连说（用户裁决：禁止连说 → 必须补第二孩）。
     return True
 
 
@@ -488,19 +478,28 @@ def normalize_n_formula_slots(
     return out, notes
 
 
-def normalize_n_two_hander_contract(
+# 同侧第二个孩子的反应拍（抽象，不承担机制、不代问关键追问）。
+# 用户/专家口径：孩子不能连说 5 句；戏份交给第二个孩子交替，而不是把
+# 第二个孩子删掉（删了她就只剩两人手，孩子必然连说 3+ 句）。
+_N_SECOND_KID_REACTIONS: tuple[str, ...] = (
+    "在旁边笑一声，跟着起哄",
+    "跟着点一下头，说自己信了",
+    "帮腔一句，说听着还真有点道理",
+    "在旁边插一句，说自己也想去",
+)
+
+
+def ensure_n_two_kid_alternation(
     contract: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
-    """N 类：家长当追问方时，单孩源不拆双孩，第三人只留机制内戏份。
+    """N 类：两个孩子的台词交错，禁止同一个孩子连说。
 
-    N 的机制是「孩子一本正经胡说 → 立规方破功」，是成人与孩子的对手戏；
-    被硬拆进来的第二个孩子不承担机制，实测会反复接管追问、稀释破功
-    （#87：契约只给她 1 拍旁观，扩写却给她 4–7 句且大半是问句）。
-
-    只在「story_type=N + 家长承担追问拍 + 另有一个孩子**完全不承担机制推进拍**
-    （没有回答/解释/自洽/报出类拍，只有笑/看/质疑等装饰拍）」时生效：
-    删掉该孩子的装饰拍并从角色表移除，输出两人手（家长 × 单孩）。
-    承担机制推进的孩子不动。
+    两条硬约束相互作用会逼出连说：
+    「正文 ≥240 字 + 家长额度只有 3 句」→ 剩下 9 句全归孩子；
+    若只有 1 个孩子，必然出现连续 3 句以上。用户裁决：**禁止连说**，
+    孩子戏份靠**两个孩子交替**解决。所以这里不做删除，而是：
+    在机制孩子出现「连续两拍」的位置，插入另一个孩子的一拍反应，
+    把连说拆开。反应拍抽象、不代问关键追问、不抢机制。
     """
     if not isinstance(contract, dict):
         return contract, []
@@ -509,70 +508,120 @@ def normalize_n_two_hander_contract(
     chain = contract.get("beat_chain")
     if not isinstance(chain, list) or not chain:
         return contract, []
-    parent_asks = any(
-        isinstance(row, dict)
-        and str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
-        and _N_MECHANISM_ASK_RE.search(str(row.get("intent") or row.get("beat") or ""))
-        for row in chain
-    )
-    if not parent_asks:
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    if not rows:
         return contract, []
-    kids: dict[str, int] = {}
-    mechanism_kids: set[str] = set()
-    for row in chain:
-        if not isinstance(row, dict):
-            continue
-        speaker = str(row.get("speaker") or "").strip()
-        if speaker in _PARENT_SPEAKER_SET or not speaker:
-            continue
-        kids[speaker] = kids.get(speaker, 0) + 1
-        if _N_MECHANISM_CHILD_RE.search(
-            str(row.get("intent") or row.get("beat") or "")
-        ):
-            mechanism_kids.add(speaker)
-    if len(kids) < 2 or len(mechanism_kids) != 1:
-        return contract, []
-    decor = [name for name in kids if name not in mechanism_kids]
-    if not decor:
-        return contract, []
-    keep = [
-        row
-        for row in chain
-        if not (
-            isinstance(row, dict)
-            and str(row.get("speaker") or "").strip() in decor
+    # 孩子来源有两处：beat_chain 里已说话的，以及 characters 里登记但还没给的拍。
+    # 后者正是「角色表有、beat 没有」的幽灵角色——旧做法是删掉她（于是只剩
+    # 两人手、孩子必然连说），现在改成给她反应拍，用她来拆连说。
+    kids = list(
+        dict.fromkeys(
+            [
+                str(r.get("speaker") or "").strip()
+                for r in rows
+                if str(r.get("speaker") or "").strip()
+                and str(r.get("speaker") or "").strip() not in _PARENT_SPEAKER_SET
+            ]
+            + [
+                str(c).strip()
+                for c in (contract.get("characters") or [])
+                if str(c).strip()
+                and str(c).strip() not in _PARENT_SPEAKER_SET
+            ]
         )
-    ]
-    if len(keep) < max(BEAT_CHAIN_MIN, 4):
+    )
+    if len(kids) < 2:
+        # 只有一个孩子：这是两人手契约，交替无从谈起（上层会补第二孩）
         return contract, []
+    # 机制主体 = 承担机制推进拍的孩子
+    mech: dict[str, int] = {}
+    for r in rows:
+        sp = str(r.get("speaker") or "").strip()
+        if sp in kids and _N_MECHANISM_CHILD_RE.search(
+            str(r.get("intent") or r.get("beat") or "")
+        ):
+            mech[sp] = mech.get(sp, 0) + 1
+    main_kid = max(mech, key=lambda k: mech[k]) if mech else kids[0]
+    other_kid = next((k for k in kids if k != main_kid), "")
+
+    out_rows: list[Any] = []
+    prev_kid = ""
+    react_i = 0
+    inserted = 0
+    for row in rows:
+        sp = str(row.get("speaker") or "").strip()
+        if sp in kids and sp == prev_kid and sp == main_kid and other_kid:
+            out_rows.append(
+                {
+                    "speaker": other_kid,
+                    "intent": _N_SECOND_KID_REACTIONS[
+                        react_i % len(_N_SECOND_KID_REACTIONS)
+                    ],
+                }
+            )
+            react_i += 1
+            inserted += 1
+            prev_kid = other_kid
+        out_rows.append(row)
+        prev_kid = sp if sp in kids else ""
+    if not inserted:
+        return contract, []
+    # 全量重编号：插入的拍没有原 beat 号，必须补上，否则契约拍号断档
+    for idx, row in enumerate(out_rows, 1):
+        if isinstance(row, dict):
+            row["beat"] = idx
     out = dict(contract)
-    normalized: list[Any] = []
-    for idx, row in enumerate(keep, 1):
-        item = dict(row)
-        if "beat" in item:
-            item["beat"] = idx
-        normalized.append(item)
-    out["beat_chain"] = normalized
+    out["beat_chain"] = out_rows
     chars = [
-        str(c).strip()
-        for c in (contract.get("characters") or [])
-        if str(c).strip() and str(c).strip() not in decor
+        str(c).strip() for c in (contract.get("characters") or []) if str(c).strip()
     ]
+    if other_kid and other_kid not in chars:
+        chars.append(other_kid)
     if chars:
         out["characters"] = chars
-    notes = [f"N家长追问方: 移除装饰旁观角色:{'、'.join(decor)}"]
-    return out, notes
+    return out, [f"N孩子交替:插入{inserted}拍{other_kid}反应"]
 
 
-_N_TOKEN_ONLY_SPLIT_RE = re.compile(r"[A-Za-z][A-Za-z0-9'\-_]{1,15}")
+
+_RE_QUOTED_WORD = re.compile(r"[「『“\"]([A-Za-z][A-Za-z0-9'\-_]{1,15}|[\u4e00-\u9fff]{2,4})[」』”\"]")
+_RE_BARE_ASCII_WORD = re.compile(r"[A-Za-z][A-Za-z0-9'\-_]{1,15}")
+
+
+class _TokenFinder:
+    """在 intent 文本里定位「契约声明的字面词」。
+
+    优先「」包裹的词（ASCII 或 2–4 字中文自造词），其次裸 ASCII 词。
+    中文自造词是合规替换后的常规形态——不该往中文童言里塞英文串。
+    """
+
+    @staticmethod
+    def find(text: str) -> str:
+        raw = str(text or "")
+        quoted = _RE_QUOTED_WORD.search(raw)
+        if quoted:
+            return quoted.group(1)
+        # 没加引号时，只认「替换表里的中性词」——中文裸词太多，
+        # 不能随便把叙述里的普通词当词槽。
+        for neutral in set(_GOLD_CHAT_NEUTRAL_TOKEN_MAP.values()):
+            if neutral and neutral in raw:
+                return neutral
+        bare = _RE_BARE_ASCII_WORD.search(raw)
+        return bare.group(0) if bare else ""
+
+    @staticmethod
+    def findall(text: str) -> list[str]:
+        tok = _TokenFinder.find(text)
+        return [tok] if tok else []
+
 # 合规替换：源素材里的成人词必须换成「无本义音节词」。有实物含义的词
 # （水果/动物/品牌）会和剧情里的物件打架——观众一听就出戏，终检也判
 # 「语义混乱」（#87 实测：banana 被解释成「站街上干活」，又与「买苹果」冲突）。
 # 这里给一个**可复用**的替换表：只换词，不动因果链。
 _GOLD_CHAT_NEUTRAL_TOKEN_MAP: dict[str, str] = {
-    "banana": "waka",
-    "job": "waka",
-    "work": "waka",
+    "banana": "哇卡",
+    "job": "哇卡",
+    "work": "哇卡",
+    "waka": "哇卡",
 }
 
 
@@ -714,7 +763,7 @@ def split_n_token_from_explanation(
         # 幂等：本函数产出的意图会被写回 seed，重跑时必须原样放行，
         # 否则模板文本会被再次当作「前缀」处理，越跑越脏（#87 实测）。
         if intent.startswith(_N_TOKEN_SPLIT_PREFIXES):
-            tokens_seen = _N_TOKEN_ONLY_SPLIT_RE.findall(intent)
+            tokens_seen = _TokenFinder.findall(intent)
             if tokens_seen:
                 key = tokens_seen[0].lower()
                 if key in emitted_tokens:
@@ -732,14 +781,14 @@ def split_n_token_from_explanation(
         if re.search(r"什么|啥|谁教|哪来|怎么|问", intent):
             out.append(item)
             continue
-        tokens = _N_TOKEN_ONLY_SPLIT_RE.findall(intent)
+        tokens = _TokenFinder.findall(intent)
         if not tokens:
             out.append(item)
             continue
         token = tokens[0]
         # 怪词后面还有中文解释内容 → 拆
         idx = intent.find(token)
-        tail = intent[idx + len(token):].lstrip("！!，,。：: 　")
+        tail = intent[idx + len(token):].lstrip("」』”\"！!，,。：: 　")
         # 怪词出现在句中被当前缀/谓语/名字用（「因为好人叫banana」「好人会banana」）
         # 时，前缀本身就是病句，一律丢掉：只留「说出这个词」这一句。
         if token.lower() in emitted_tokens:
@@ -767,55 +816,21 @@ def split_n_token_from_explanation(
 
 def trim_n_decorative_kid_seed(
     seed: list[Any] | None,
-    *,
+    *, 
     contract: dict[str, Any] | None = None,
 ) -> tuple[list[Any], list[str]]:
-    """N + 家长当追问方：删掉 seed 里纯装饰的旁观手足行。
+    """保留第二个孩子的 seed 行（现在她是**交替位置**的承担者）。
 
-    契约已由 ``normalize_n_two_hander_contract`` 收敛成两人手；H3b 若仍按
-    「单孩源拆双孩」写出旁观行，这里再删一次，保证扩写看不到第三个提问者。
-    只删「另一位孩子只剩 ≤1 行」的装饰行，承担机制的行不动。
+    旧设计把她当「装饰旁观」删掉，改成两人手；但两人手 + 家长额度封顶
+    必然让孩子连说 3 句以上，而用户裁决是**禁止同人连说**。
+    现在第二个孩子在契约里有真实反应拍，她的 seed 行要留着供扩写落地。
+
+    唯一仍要处理的情形：她只剩一行且**带追问功能**（会抢立规方的关键追问），
+    该行改派给契约追问方由 ``realign_seed_viewer_questions_to_asker`` 负责，
+    这里不再删除。
     """
-    rows = [r for r in (seed or []) if isinstance(r, dict)]
-    if not rows:
-        return list(seed or []), []
-    sc = contract if isinstance(contract, dict) else {}
-    if str(sc.get("story_type") or "").strip().upper() != "N":
-        return list(seed or []), []
-    parent_asks = any(
-        isinstance(row, dict)
-        and str(row.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
-        and _N_MECHANISM_ASK_RE.search(str(row.get("intent") or row.get("beat") or ""))
-        for row in (sc.get("beat_chain") or [])
-    )
-    if not parent_asks:
-        return list(seed or []), []
-    parents = {
-        str(r.get("speaker") or "").strip()
-        for r in rows
-        if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
-    }
-    if len(parents) != 1:
-        return list(seed or []), []
-    counts: dict[str, int] = {}
-    for r in rows:
-        sp = str(r.get("speaker") or "").strip()
-        if sp and sp not in _PARENT_SPEAKER_SET:
-            counts[sp] = counts.get(sp, 0) + 1
-    if len(counts) < 2:
-        return list(seed or []), []
-    decor = {name for name, n in counts.items() if n <= 1}
-    if not decor or len(set(counts) - decor) != 1:
-        return list(seed or []), []
-    out = [
-        r
-        for r in (seed or [])
-        if not (
-            isinstance(r, dict)
-            and str(r.get("speaker") or "").strip() in decor
-        )
-    ]
-    return out, [f"N两人手: 删除装饰旁观 seed:{'、'.join(sorted(decor))}"]
+    return list(seed or []), []
+
 
 
 def normalize_retrospective_topic_contract(

@@ -770,7 +770,17 @@ def format_cast_block(contract: dict[str, Any] | None) -> str:
             "禁止在话头悬着时突然收束"
         )
     elif len(kids) >= 2:
-        lines.append("- 本次是**双孩同侧**：两个孩子同侧齐上，家长为配角；禁止把孩子写成对立")
+        lines.append(
+            f"- 本次是**双孩同侧**：{'、'.join(kids)} 同侧齐上，家长为配角；"
+            "禁止把孩子写成对立"
+        )
+        lines.append(
+            "- **严禁孩子连说（硬）**：任意相邻两句的孩子不能是同一个人——"
+            f"必须是 {'/'.join(kids)} 交替。"
+            "孩子要凑够句数就靠交错接话（笑一声/点头/帮腔/补一句），"
+            "**禁止**让同一个孩子连着说两句以上，"
+            "**也不许**为了不连说把内容删掉"
+        )
     if parents:
         mom_max = sc.get("mom_lines_max")
         if mom_max is not None:

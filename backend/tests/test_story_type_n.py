@@ -1,3 +1,4 @@
+import json
 """N 类正经胡说：校验/观感 smoke（注册映射见 test_gold_story_types）。"""
 
 from app.services.daily_story.quality import (
@@ -158,40 +159,39 @@ def test_n_cross_check_quality_and_humor_agree_on_stun():
     assert not any("愣住" in x and "缺" not in x for x in humor_pros)
 
 
-def test_consecutive_sibling_not_penalized_when_forced_by_parent_budget():
-    """两人手 + 家长额度已满时，同人连说是结构必然，不再扣分。"""
+def test_consecutive_sibling_always_penalized():
+    """孩子连说一律扣分：戏份靠两个孩子交替解决，不做额度豁免。"""
     from app.services.daily_story.quality import score_daily_story
 
-    dialogue = [
-        {"speaker": "妈妈", "line": "我拿本子记下你说的每句话，看你会不会骗人。"},
+    dlg = [
+        {"speaker": "妈妈", "line": "我拿本子记你说的每句话，看你会不会骗人。"},
         {"speaker": "昭昭", "line": "我要找个好人来，他叫张小明。"},
         {"speaker": "昭昭", "line": "还有李小红、王大力、赵小刚。"},
-        {"speaker": "昭昭", "line": "我还知道一个词叫job呀。"},
-        {"speaker": "昭昭", "line": "job就是你在街上工作，别人给你钱。"},
-        {"speaker": "妈妈", "line": "job是什么意思？谁教你的？"},
-        {"speaker": "昭昭", "line": "因为就是站街上，别人走过来就给你钱。"},
-        {"speaker": "昭昭", "line": "不是，我就是按自己的想法认真说的。"},
-        {"speaker": "昭昭", "line": "当然，我刚才就是这么认真回答的。"},
-        {"speaker": "昭昭", "line": "你记吧，站得直一点，人家才给。"},
+        {"speaker": "妈妈", "line": "什么意思？谁教你的？"},
+        {"speaker": "昭昭", "line": "因为好人多，所以得先找。"},
         {"speaker": "昭昭", "line": "不给就换个地方站，总有人给。"},
-        {"speaker": "昭昭", "line": "对呀，苹果就是苹果，红红的那个。"},
-        {"speaker": "妈妈", "line": "行吧，我以后说话得先打草稿。"},
+        {"speaker": "妈妈", "line": "行吧，我服了，以后说话得先打草稿。"},
     ]
     base = {
         "story_type": "N",
         "punchline_explain": "N类正经胡说",
-        "conflict_core": "妈妈拿本子记录昭昭的话",
-        "dialogue": dialogue,
+        "conflict_core": "妈妈记录昭昭的话",
+        "dialogue": dlg,
     }
+    # 即便给出家长额度上下文（旧豁免条件成立），也必须扣分
     capped = dict(base)
     capped["_gold_chat_mom_lines_max"] = 3
-    q_capped = score_daily_story(capped)
-    cons_capped = q_capped.get("structure_cons") or []
-    assert not any("同人连说" in str(c) for c in cons_capped), (
-        "家长额度已满时同人连说属结构必然，不该扣分"
-    )
+    for story in (base, capped):
+        q = score_daily_story(dict(story))
+        assert any(
+            "同人连说" in str(c) for c in q.get("structure_cons") or []
+        ), "孩子连说必须扣分"
 
-    q_plain = score_daily_story(dict(base))
-    cons_plain = q_plain.get("structure_cons") or []
-    assert any("同人连说" in str(c) for c in cons_plain)
-    assert (q_capped.get("structure_score") or 0) > (q_plain.get("structure_score") or 0)
+    # 交替写法不扣这一项
+    alt = json.loads(json.dumps(base))
+    alt["dialogue"][2]["speaker"] = "灿灿"
+    alt["dialogue"][5]["speaker"] = "灿灿"
+    q_alt = score_daily_story(alt)
+    assert not any(
+        "同人连说" in str(c) for c in q_alt.get("structure_cons") or []
+    )

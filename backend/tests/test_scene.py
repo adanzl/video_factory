@@ -22,7 +22,7 @@ from app.services.gold_story.scene import (
     normalize_cast_to_beats,
     normalize_k_parent_intervention_budget,
     normalize_n_formula_slots,
-    normalize_n_two_hander_contract,
+    ensure_n_two_kid_alternation,
     normalize_parent_beat_ownership,
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
@@ -1129,87 +1129,64 @@ def test_parent_beat_ownership_strips_and_merges():
     assert all(r["speaker"] != "灿灿" for r in merged["beat_chain"]), "不得外派给孩子"
 
 
-def test_n_two_hander_contract_drops_decorative_viewer():
-    """N + 家长当追问方：单孩源不拆双孩，装饰性旁观角色退出契约。"""
+def test_n_two_kid_alternation_inserts_reactions():
+    """两个孩子时不删第二孩，而是插反应拍把连说拆开。"""
     contract = {
         "story_type": "N",
         "characters": ["妈妈", "昭昭", "灿灿"],
-        "mom_lines_max": 3,
         "beat_chain": [
-            {"beat": 1, "speaker": "妈妈", "intent": "宣布拿本子记录昭昭每句话"},
-            {"beat": 2, "speaker": "昭昭", "intent": "一本正经报出一串编的名字"},
-            {"beat": 3, "speaker": "昭昭", "intent": "蹦出一个英文词，解释成在街上工作别人给钱"},
-            {"beat": 4, "speaker": "妈妈", "intent": "震惊追问谁教的"},
-            {"beat": 5, "speaker": "昭昭", "intent": "淡定补一句苹果"},
-            {"beat": 6, "speaker": "灿灿", "intent": "在旁边笑得直拍腿"},
-            {"beat": 7, "speaker": "妈妈", "intent": "深吸一口气，决定以后说话先打草稿"},
+            {"beat": 1, "speaker": "妈妈", "intent": "立规记录每句话"},
+            {"beat": 2, "speaker": "昭昭", "intent": "报出一串编的名字"},
+            {"beat": 3, "speaker": "昭昭", "intent": "解释这个词的意思"},
+            {"beat": 4, "speaker": "妈妈", "intent": "追问什么意思、谁教的"},
+            {"beat": 5, "speaker": "妈妈", "intent": "服了收束"},
         ],
     }
-    out, notes = normalize_n_two_hander_contract(contract)
-    assert notes and "灿灿" in notes[0]
-    assert out["characters"] == ["妈妈", "昭昭"]
-    assert {r["speaker"] for r in out["beat_chain"]} == {"妈妈", "昭昭"}
-    assert [r["beat"] for r in out["beat_chain"]] == [1, 2, 3, 4, 5, 6]
-
-    # 孩子当追问方（非家长追问）→ 不动
-    child_ask = {
-        **contract,
-        "beat_chain": [
-            {"beat": 1, "speaker": "灿灿", "intent": "设问：爸爸掉河里先吃啥"},
-            {"beat": 2, "speaker": "昭昭", "intent": "离谱秒答"},
-            {"beat": 3, "speaker": "灿灿", "intent": "追问为什么"},
-            {"beat": 4, "speaker": "昭昭", "intent": "荒诞自洽"},
-            {"beat": 5, "speaker": "妈妈", "intent": "旁观感叹"},
-        ],
-    }
-    same, no_notes = normalize_n_two_hander_contract(child_ask)
-    assert not no_notes
-    assert same["characters"] == ["妈妈", "昭昭", "灿灿"]
-
-    # 承担机制的孩子 + 装饰孩子（笑/质疑多拍）也算装饰 → 一并移除
-    decor_many = {
-        **contract,
-        "beat_chain": [
-            {"beat": 1, "speaker": "妈妈", "intent": "立规：记录每句话"},
-            {"beat": 2, "speaker": "昭昭", "intent": "一本正经报出一串编的名字"},
-            {"beat": 3, "speaker": "灿灿", "intent": "质疑：这名字哪来的"},
-            {"beat": 4, "speaker": "妈妈", "intent": "追问谁教的"},
-            {"beat": 5, "speaker": "昭昭", "intent": "解释：街上工作别人给钱"},
-            {"beat": 6, "speaker": "灿灿", "intent": "在旁边笑得直拍腿"},
-            {"beat": 7, "speaker": "妈妈", "intent": "决定以后先打草稿"},
-        ],
-    }
-    out3, notes3 = normalize_n_two_hander_contract(decor_many)
-    assert notes3 and "灿灿" in notes3[0], "只笑/质疑的多拍装饰角色也须移除"
-    assert {r["speaker"] for r in out3["beat_chain"]} == {"妈妈", "昭昭"}
-
-    # 非 N 不动
-    other, _ = normalize_n_two_hander_contract({**contract, "story_type": "C"})
-    assert other["characters"] == ["妈妈", "昭昭", "灿灿"]
-
-
-def test_n_decorative_kid_seed_trimmed_for_parent_asker():
-    """N + 家长追问方：seed 里仅 1 行的旁观手足被删，机制方保留。"""
-    seed = [
-        {"speaker": "妈妈", "intent": "我拿本子记你说的每句话"},
-        {"speaker": "昭昭", "intent": "我要找个好人来"},
-        {"speaker": "昭昭", "intent": "就是你在街上工作，别人给你钱"},
-        {"speaker": "妈妈", "intent": "谁教你的"},
-        {"speaker": "灿灿", "intent": "哈哈笑死我了"},
-        {"speaker": "妈妈", "intent": "我以后说话得先打草稿"},
+    out, notes = ensure_n_two_kid_alternation(contract)
+    assert notes and "交替" in notes[0]
+    speakers = [r["speaker"] for r in out["beat_chain"]]
+    # 两个孩子不再相邻重复
+    kids = [s for s in speakers if s in ("昭昭", "灿灿")]
+    for a, b in zip(kids, kids[1:]):
+        assert a != b, f"两个孩子仍然连说: {speakers}"
+    # 灿灿在里面，且反应拍不代问关键追问
+    assert "灿灿" in speakers
+    react = [
+        r for r in out["beat_chain"]
+        if r["speaker"] == "灿灿"
     ]
-    contract = {
+    for r in react:
+        assert not any(
+            w in r["intent"] for w in ("什么意思", "谁教的")
+        ), "第二孩不得代问关键追问"
+    # 妈妈拍数不变
+    assert sum(1 for s in speakers if s == "妈妈") == 3
+
+    # 只有一个孩子 → 不做（两人手由上层补第二孩）
+    solo = {
         "story_type": "N",
+        "characters": ["妈妈", "昭昭"],
         "beat_chain": [
             {"beat": 1, "speaker": "妈妈", "intent": "立规"},
             {"beat": 2, "speaker": "昭昭", "intent": "胡说"},
-            {"beat": 3, "speaker": "妈妈", "intent": "追问谁教的"},
         ],
     }
-    out, notes = trim_n_decorative_kid_seed(seed, contract=contract)
-    assert notes and "灿灿" in notes[0]
-    assert all(r["speaker"] != "灿灿" for r in out)
-    assert len(out) == len(seed) - 1
+    assert ensure_n_two_kid_alternation(solo)[1] == []
+
+def test_n_decorative_kid_seed_preserved_for_alternation():
+    """第二孩的 seed 行要保留：她是交替位置的承担者，删了就必然连说。"""
+    seed = [
+        {"speaker": "妈妈", "intent": "立规"},
+        {"speaker": "昭昭", "intent": "我要找好人"},
+        {"speaker": "灿灿", "intent": "跟着起哄说他真会编"},
+        {"speaker": "昭昭", "intent": "苹果"},
+    ]
+    out, notes = trim_n_decorative_kid_seed(seed, contract={"story_type": "N"})
+    assert not notes
+    assert out == seed
+    assert any(r["speaker"] == "灿灿" for r in out)
+    out2, _ = trim_n_decorative_kid_seed(seed, contract={"story_type": "C"})
+    assert out2 == seed
 
 
 def test_cast_normalized_to_beats_drops_ghost_character():
@@ -1286,29 +1263,12 @@ def test_n_formula_slots_added_when_contract_missing_them():
     assert other["beat_chain"] == contract["beat_chain"]
 
 
-def test_needs_second_kid_false_for_parent_asked_n():
-    """N + 家长当追问方是两人手，不再补第二个孩子（否则补了又被删）。"""
-    two_hander = {
-        "story_type": "N",
-        "characters": ["妈妈", "昭昭"],
-        "beat_chain": [
-            {"beat": 1, "speaker": "妈妈", "intent": "立规"},
-            {"beat": 2, "speaker": "昭昭", "intent": "胡说"},
-            {"beat": 3, "speaker": "妈妈", "intent": "追问谁教的"},
-        ],
-    }
-    assert needs_second_kid(two_hander) is False
-
-    child_asked = {
-        "story_type": "N",
-        "beat_chain": [
-            {"beat": 1, "speaker": "灿灿", "intent": "设问：爸爸掉河里先吃啥"},
-            {"beat": 2, "speaker": "昭昭", "intent": "离谱秒答"},
-            {"beat": 3, "speaker": "灿灿", "intent": "追问为什么"},
-        ],
-    }
-    assert needs_second_kid(child_asked) is True
+def test_needs_second_kid_always_true():
+    """补第二孩是「禁同人连说」的前提：任何类型的单孩源都要补。"""
+    assert needs_second_kid({"story_type": "N", "beat_chain": []}) is True
     assert needs_second_kid({"story_type": "C", "beat_chain": []}) is True
+    assert needs_second_kid({}) is True
+    assert needs_second_kid(None) is True
 
 
 def test_e_mid_pairs_support_single_kid_plus_parent():

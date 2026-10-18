@@ -33,7 +33,7 @@ from app.services.gold_story.scene import (
     normalize_cast_to_beats,
     neutralize_mechanism_token,
     normalize_n_formula_slots,
-    normalize_n_two_hander_contract,
+    ensure_n_two_kid_alternation,
     normalize_parent_beat_ownership,
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
@@ -885,9 +885,10 @@ def build_scene_contract(
         if _owner_notes:
             logger.info("H3a beat ownership normalize=%s", _owner_notes[:4])
         # N + 家长当追问方：单孩源不拆双孩，装饰性旁观角色退出角色表
-        data, _n_two_notes = normalize_n_two_hander_contract(data)
+        # 孩子台词必须两孩交替（禁同人连说）：插反应拍而不是删第二孩
+        data, _n_two_notes = ensure_n_two_kid_alternation(data)
         if _n_two_notes:
-            logger.info("H3a N two-hander normalize=%s", _n_two_notes[:4])
+            logger.info("H3a N alternation=%s", _n_two_notes[:4])
         # 角色表对齐 beat：没有拍的角色不许出场（幽灵角色会让扩写照着写、
         # 随后被补丁删掉，字数来回震荡）
         data, _cast_notes = normalize_cast_to_beats(data)

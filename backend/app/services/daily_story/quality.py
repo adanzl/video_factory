@@ -1285,16 +1285,12 @@ def score_daily_story(
                 cons.append(f"{who}裁判式收场（{pat}）")
                 break
 
+    # 孩子连说一律扣分（用户裁决：禁止连说，戏份靠两个孩子交替解决）。
+    # 此前按「两人手额度封顶属数学必然」豁免过，那条豁免与「禁止连说」
+    # 直接冲突，已撤销。
     if _has_consecutive_sibling(dialogue):  # type: ignore[arg-type]
-        forced = _consecutive_sibling_is_forced(
-            dialogue,  # type: ignore[arg-type]
-            mom_lines_max=story.get("_gold_chat_mom_lines_max"),  # type: ignore[union-attr]
-        )
-        # 两人手额度封顶时连说是数学必然（专家裁决）：只在连说句之间真的
-        # 没有新信息（换词重复/同义空转）时才扣分，否则放行。
-        if not forced or _consecutive_run_is_redundant(dialogue):  # type: ignore[arg-type]
-            score -= 15
-            cons.append("存在同人连说")
+        score -= 15
+        cons.append("存在同人连说")
 
     # ── 事故道具凭空（B 类翻车连锁）──
     if profile.code == "B":

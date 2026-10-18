@@ -92,6 +92,7 @@ STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
         "保真-N收束归属",
         "保真-N机制词槽",
         "保真-角色表外台词",
+        "保真-孩子连说",
         "保真-N词槽语法",
     }
 )
@@ -1502,12 +1503,16 @@ _RE_N_TOKEN_BEAT_INTENT = re.compile(
     r"蹦出|冒出|说出|说了个|一个新词|怪词|英文词|外语词|自造词|生造词|单词"
 )
 _RE_ASCII_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9'\-_]{1,15}")
+# 中文自造词：孩子自造的 2–4 字音节组合。合规替换不该往中文童言里塞英文串
+# （「waka了呀」这种读起来就不是中文），所以词槽允许中文自造词。
+# 只认「」包裹的短词，避免把 intent 里的叙述短语当词槽。
+_RE_QUOTED_CN_TOKEN = re.compile(r"[「『“\"]([\u4e00-\u9fff]{2,4})[」』”\"]")
 
 
 def _n_declared_word_token(intent: str) -> str:
     """从「词槽拍」的 intent 里取契约声明的字面词（合规替换后的锚点）。
 
-    只认 ASCII 词（如 banana），避免把 intent 里常见的中文引述短语当成词槽；
+    优先「」包裹的 ASCII 词，其次「」包裹的 2–4 字中文自造词；
     intent 未声明字面词时返回空串，调用方即跳过该不变量（不猜、不补词）。
     """
     text = str(intent or "")
@@ -1516,6 +1521,9 @@ def _n_declared_word_token(intent: str) -> str:
     quoted = re.search(r"[「『“\"]([A-Za-z][A-Za-z0-9'\-_]{1,15})[」』”\"]", text)
     if quoted:
         return quoted.group(1)
+    cn = _RE_QUOTED_CN_TOKEN.search(text)
+    if cn:
+        return cn.group(1)
     plain = _RE_ASCII_TOKEN.search(text)
     return plain.group(0) if plain else ""
 
@@ -1644,14 +1652,19 @@ def _append_n_contract_role_issues(
     )
 
 
-# 只认真正的谓语/词形滥用：
-#   「会waka / 去waka / 要waka / 叫waka」——把词当动作或名字
-#   「waka了 / waka着 / waka过」——加时态
-# 不含「是waka」「就是waka」这类**合法解释**（那正是机制要求的用法）。
-_RE_N_TOKEN_AS_PREDICATE = re.compile(
-    r"(?:会|要|去|能够|叫)\s*[A-Za-z]{2,15}"
-    r"|[A-Za-z]{2,15}(?:了|着|过)"
-)
+def _token_predicate_re(token: str) -> re.Pattern[str]:
+    """按**声明词本身**构造「被当谓语/加时态」的检测正则。
+
+    只认真正的词形滥用：
+      「会X / 要X / 去X / 叫X」——把词当动作或名字；
+      「X了 / X着 / X过」——给它加时态。
+    不含「是X」「就是X」这类**合法解释**（那正是机制要求的用法）。
+    不假设词的语种：中文自造词与外语词同样适用。
+    """
+    esc = re.escape(token)
+    return re.compile(
+        rf"(?:会|要|去|能够|叫)\s*{esc}|{esc}(?:了|着|过)"
+    )
 
 
 def _append_n_token_grammar_issues(
@@ -1688,9 +1701,10 @@ def _append_n_token_grammar_issues(
         line = str(row.get("line") or "")
         if not line:
             continue
-        for m in _RE_N_TOKEN_AS_PREDICATE.finditer(line):
-            chunk = m.group(0)
-            if any(tok in chunk.lower() for tok in tokens):
+        for tok in tokens:
+            if not re.search(re.escape(tok), line, re.I):
+                continue
+            if _token_predicate_re(tok).search(line):
                 offenders.append(i)
                 break
     # 同一怪词被反复重新定义：一次追问只要一次解释，重复定义会让观众听不懂
@@ -1735,6 +1749,51 @@ def _append_n_token_grammar_issues(
                 fix=(
                     "怪词只能原样独立出现一次，之后用「这个词」或「它」指代；"
                     "禁止给它加「了/着/过」或放在「会/要/是/叫」后面"
+                ),
+            ),
+        )
+
+
+def _append_consecutive_sibling_issues(
+    rows: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+) -> None:
+    """两个孩子之间禁止同人连说。
+
+    用户裁决：孩子台词靠**两个孩子交替**解决，不许让一个孩子连说。
+    连说 5 句的观感是「孩子在自言自语」，N 的机制也随之塌成独白。
+    只判孩子（家长额度另有硬卡），只判相邻两句。
+    """
+    kids = {"昭昭", "灿灿"}
+    runs: list[list[int]] = []
+    current: list[int] = []
+    prev = ""
+    for i, row in enumerate(rows, 1):
+        speaker = str(row.get("speaker") or "").strip()
+        if speaker not in kids or not str(row.get("line") or "").strip():
+            if len(current) > 1:
+                runs.append(current)
+            current = []
+            prev = speaker
+            continue
+        if speaker == prev:
+            current.append(i)
+        else:
+            if len(current) > 1:
+                runs.append(current)
+            current = [i]
+        prev = speaker
+    if len(current) > 1:
+        runs.append(current)
+    for run in runs:
+        issues.append(
+            _issue(
+                lines=run,
+                kind="保真-孩子连说",
+                desc=f"第{run}句是同一个孩子连说，观众听感像自言自语",
+                fix=(
+                    "两句之间换另一个孩子接话（笑一声/点头/帮腔/补一句），"
+                    "**禁止**同一孩子连着说；不要靠删句解决，要交替"
                 ),
             ),
         )
@@ -2042,6 +2101,11 @@ def collect_align_issues(
 
     if st == "N":
         _append_n_token_grammar_issues(rows, issues, beat_chain=beat_chain)
+
+    # 只对 N 硬拦孩子连说：N 是「两人手 + 家长额度封顶」结构，连说是设计缺陷。
+    # 其它类型（M8 互打/A 类破功等）本就需要同一孩子连说，不能一刀切。
+    if st == "N":
+        _append_consecutive_sibling_issues(rows, issues)
 
     _append_cast_membership_issues(rows, issues, beat_chain=beat_chain)
 
