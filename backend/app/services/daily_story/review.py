@@ -1061,6 +1061,7 @@ def _n_type_token_premise_exempt(
     if not tokens:
         return False
     hit_tokens = False
+    hit_addon = False
     for n in nos:
         idx = n - 1
         if not (0 <= idx < len(lines)):
@@ -1069,7 +1070,14 @@ def _n_type_token_premise_exempt(
         if any(tok in line_lower for tok in tokens):
             hit_tokens = True
             break
-    if not hit_tokens:
+        # 「补词句」：机制孩子在被追问后顺手抛出的独立短词（如「苹果」）。
+        # N 的机制就是「答完再补一个更离谱的」，它本来就没有前因；
+        # 语义审读按常识要求「可追踪的转场」，必然判缺前提（#87 实测）。
+        bare = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", lines[idx])
+        if 0 < len(bare) <= 4 and lines[idx].strip().endswith(("。", "！", "…")):
+            hit_addon = True
+            break
+    if not hit_tokens and not hit_addon:
         return False
     # 描述里若点的是「人/物/旧事」而不是「这个词」，不算怪词豁免
     desc = str(issue.get("desc") or "")
