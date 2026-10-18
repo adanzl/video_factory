@@ -1011,6 +1011,69 @@ def _validate_export_review_evidence_shape(
     return None
 
 
+def _n_type_token_premise_exempt(
+    issue: dict[str, Any],
+    story: dict,
+) -> bool:
+    """N 类「怪词突现」不算缺前提（机制本身要求突然出现）。
+
+    N 类的机制是：孩子**突然**蹦出一个自造词 → 家长愣住追问 → 孩子再解释。
+    「先抛怪词、后补解释」正是机制，不是缺陷。而语义审读按常识判
+    「第4句突然蹦出某个词、前文没有交代」，会稳定否掉合格稿
+    （#87 实测：这一条反复出现在终检第一名）。
+
+    只豁免这一种：kind=缺前提/引用无据，且被点名的句子正是**契约声明的
+    词槽句**（含怪词）。其它缺前提（凭空冒出人物/道具/旧事）照旧硬拦。
+    """
+    kind = str(issue.get("kind") or "")
+    if kind not in {"缺前提", "引用无据"}:
+        return False
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return False
+    rows = _dialogue(story)
+    lines = [
+        str(r.get("line") or "")
+        for r in rows
+        if isinstance(r, dict) and str(r.get("line") or "").strip()
+    ]
+    if not lines:
+        return False
+    nos = _normalize_issue_line_numbers(issue.get("lines"))
+    if not nos:
+        return False
+    # 怪词集合来自契约词槽（与机检同源）
+    from app.services.gold_story.gold_chat.validate import _n_declared_word_token
+
+    chain = story.get("gold_beat_chain")
+    if not isinstance(chain, list):
+        chain = []
+    tokens: set[str] = set()
+    for entry in chain:
+        if not isinstance(entry, dict):
+            continue
+        tok = _n_declared_word_token(str(entry.get("intent") or ""))
+        if tok:
+            tokens.add(tok.lower())
+    if not tokens:
+        return False
+    hit_tokens = False
+    for n in nos:
+        idx = n - 1
+        if not (0 <= idx < len(lines)):
+            continue
+        line_lower = lines[idx].lower()
+        if any(tok in line_lower for tok in tokens):
+            hit_tokens = True
+            break
+    if not hit_tokens:
+        return False
+    # 描述里若点的是「人/物/旧事」而不是「这个词」，不算怪词豁免
+    desc = str(issue.get("desc") or "")
+    if any(k in desc for k in ("人物", "道具", "旧事", "身份", "关系")):
+        return False
+    return True
+
+
 def partition_llm_export_blocking_issues(
     issues: list[dict[str, Any]],
     story: dict,
@@ -1024,6 +1087,9 @@ def partition_llm_export_blocking_issues(
     for it in issues:
         kind = str(it.get("kind") or "")
         if kind not in _LLM_EXPORT_BLOCKING_KINDS:
+            continue
+        # N 类怪词突现属于机制，不算缺前提（只在词槽句上豁免）
+        if _n_type_token_premise_exempt(it, story):
             continue
         if _issue_has_blocking_evidence(it, rows, beat_chain=beat_chain):
             valid.append(it)
