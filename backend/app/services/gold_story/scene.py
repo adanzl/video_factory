@@ -528,21 +528,24 @@ def normalize_n_formula_slots(
 # 同侧第二个孩子的反应拍（抽象，不承担机制、不代问关键追问）。
 # 用户/专家口径：孩子不能连说 5 句；戏份交给第二个孩子交替，而不是把
 # 第二个孩子删掉（删了她就只剩两人手，孩子必然连说 3+ 句）。
-# 第二个孩子的实质台词（用户授权：允许她有实质性台词）。
-# 她的功能定位：同侧、不抢机制、不代问关键追问，但要**推进话头**——
-# 可以追问细节、替观众说出疑惑、加码追问、替机制孩子铺垫、拆台。
-# 全是「推动对话往前走」的动作，不是单纯笑/点头。
-# 第二个孩子的实质台词。注意：这些 intent 会被放到**任意位置**，
-# 所以不能引用「后来/刚才/前面」这类依赖上下文的内容——放在机制句之前时，
-# 会立刻被判「开场因果缺拍」（#87 实测 18 次）。
-# 只用自洽、不依赖前文的说话动作。
+# 第二个孩子的实质台词库（她可以有自己的实质台词，只是不承担机制）。
+# 三条铁律，都是踩过的坑：
+#   1) 不引用上下文（「后来/刚才/前面」）——插入位置不定，会判开场因果缺拍；
+#   2) 不提那个怪的机制词——她会把词引到自己的口里，导致同一个词三种含义；
+#   3) 每条信息不同——空话/重复会被判「原地打转」。
 _N_SECOND_KID_LINES: tuple[str, ...] = (
-    "插一句自己的看法：我觉得这事挺好笑",
-    "表示不信：你这话我可不怎么信",
-    "拆台一句：你这话编得也太顺了",
-    "要求对方再说一遍：你把它讲清楚点",
-    "替观众说出疑惑：我越听越糊涂",
+    "插一句自己的看法：我觉得这事挺好玩",
+    "表示不信：这话我可不怎么信",
+    "拆台一句：你编得也太顺了",
+    "要求对方讲清楚：你说明白点",
+    "说自己没听懂：我越听越糊涂",
     "表个态：行，那我就听着",
+    "追问一句：那你打算怎么办",
+    "说出自己的猜测：我猜你是在瞎扯",
+    "表示要记下来：这条我可记住了",
+    "催对方继续：你倒是往下说",
+    "表达惊讶：这也行啊",
+    "摆出怀疑：你还是没说服我",
 )
 
 
@@ -614,6 +617,81 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
             {"speaker": partner, "intent": _N_SECOND_KID_LINES[0]},
         )
         inserted = 1
+    # ── 按句数反推她需要几拍 ────────────────────────────────────────────
+    # 正文 ≥240 字、妈妈额度封顶后，剩下 9–11 句全归孩子；两孩严格交替时
+    # 每个孩子要承担约 5 句。若契约只给她 1 拍，扩写只能靠编空话凑，
+    # 结果就是「你接着说」反复出现、被判原地打转（#87 实测）。
+    # 所以这里把她缺的拍补够：目标 = 与她需承担的句数相当。
+    try:
+        mom_cap = max(0, int(sc.get("mom_lines_max") or 0))
+    except (TypeError, ValueError):
+        mom_cap = 0
+    kid_lines_needed = max(0, CHAT_LINE_COUNT_MIN - mom_cap)
+    per_kid_lines = -(-kid_lines_needed // 2)
+    # 每拍可以扩成 2 句，所以「拍数」≈ 句数的一半。契约拍数是骨架，
+    # 不是最终句数——按句数直接给拍会让她的拍塞不进交替位置。
+    per_kid = -(-per_kid_lines // 2)
+    # 交替位置最多等于另一个孩子的拍数（一拍对一拍）
+    solo_beats = sum(
+        1
+        for r in out_rows
+        if isinstance(r, dict) and str(r.get("speaker") or "").strip() == solo
+    )
+    per_kid = max(1, min(per_kid, solo_beats))
+    partner_beats = sum(
+        1
+        for r in out_rows
+        if isinstance(r, dict) and str(r.get("speaker") or "").strip() == partner
+    )
+    pool_i = partner_beats
+    # 交错分布：每次插在**下一个该孩子拍之后**，避免她的拍全堆在末尾
+    # （堆在末尾会让她自己连说，等于把连说问题换个孩子重演）。
+    while partner_beats < per_kid and pool_i < len(_N_SECOND_KID_LINES):
+        if len(out_rows) >= CHAT_LINE_COUNT_MAX:
+            break
+        # 找到「上一个孩子拍」的位置，插在它前面（即紧邻前一个孩子拍之前）
+        kid_positions = [
+            i
+            for i, r in enumerate(out_rows)
+            if isinstance(r, dict)
+            and str(r.get("speaker") or "").strip() in {solo, partner}
+        ]
+        if not kid_positions:
+            break
+        # 从后往前挑一个后面还没插过搭档的位置
+        inserted_here = False
+        for pos in reversed(kid_positions[:-1] if len(kid_positions) > 1 else kid_positions):
+            nxt = out_rows[pos + 1] if pos + 1 < len(out_rows) else None
+            if (
+                isinstance(nxt, dict)
+                and str(nxt.get("speaker") or "").strip() == partner
+            ):
+                continue
+            out_rows.insert(
+                pos + 1,
+                {"speaker": partner, "intent": _N_SECOND_KID_LINES[pool_i]},
+            )
+            partner_beats += 1
+            pool_i += 1
+            inserted += 1
+            inserted_here = True
+            break
+        if not inserted_here:
+            # 所有孩子拍后面都有她的拍了：插在最后一个孩子拍之前
+            last_kid = kid_positions[-1]
+            if (
+                last_kid > 0
+                and str(out_rows[last_kid - 1].get("speaker") or "").strip()
+                == partner
+            ):
+                break
+            out_rows.insert(
+                last_kid,
+                {"speaker": partner, "intent": _N_SECOND_KID_LINES[pool_i]},
+            )
+            partner_beats += 1
+            pool_i += 1
+            inserted += 1
     for idx, row in enumerate(out_rows, 1):
         if isinstance(row, dict):
             row["beat"] = idx
