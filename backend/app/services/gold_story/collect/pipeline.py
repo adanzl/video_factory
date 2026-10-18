@@ -22,6 +22,7 @@ from app.services.gold_story.collect.search import (
     engagement_norm,
     fetch_top_replies,
     fetch_video_meta,
+    title_reject_reason,
     write_candidate_list,
 )
 from app.services.gold_story.export_story import export_story_files
@@ -75,6 +76,23 @@ def process_candidate(
         )
     if existing_row and not overwrite_existing:
         return {**base, "action": "skip", "reason": "already_in_db"}
+
+    # H1 标题门控：孕产/分娩、育儿课、游戏 IP 这类题材，标题就能判死。
+    # 队列里早已入队（或手工重导）的 BV 也走这里，避免继续白下载+转写。
+    title_reason = title_reject_reason(candidate.title)
+    if title_reason and title_reason != "empty_title":
+        logger.info(
+            "gold_story h1 skip bvid=%s reason=%s title=%r",
+            candidate.source_id,
+            title_reason,
+            candidate.title[:40],
+        )
+        return {
+            **base,
+            "action": "reject",
+            "stage": "H1",
+            "reason": title_reason,
+        }
 
     # H1 时长门控：合集/直播回放（如 7 小时)转写要几小时，且抽不出单条故事。
     # 放在 H0b 之前，避免白下载、白抽帧、白跑 ASR。

@@ -43,6 +43,16 @@ _EXCLUDE_TITLE = re.compile(
     r"星穹|崩坏|铁道|助眠|催眠|游戏实况|角色PV|恐怖地图",
     re.I,
 )
+# 孕产/分娩题材：站外是「产房实录」「待产包」「坐月子」这类成人纪实，
+# 站内要的是 7–10 岁孩子日常对手戏，没有可拍的双孩冲突。
+# 靠「二胎」进 _INCLUDE_TITLE 是漏点（#152「可妈二胎产房实录」就是这样进来的）。
+# LLM 审核最终也会判「成人生产纪实」并驳回（#86），但那时已白下载+转写整条视频。
+_EXCLUDE_BIRTH_TITLE = re.compile(
+    r"产房|待产|破水|坐月子|月子中心|月嫂|分娩|剖腹产|顺产|催产|产科|接生|"
+    r"新生儿|怀孕|孕期|孕晚期|孕妇|备孕|生孩子|生娃|生完|生产实录|生产日记|"
+    r"产妇|陪产",
+    re.I,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +89,23 @@ def engagement_norm(view_count: int, reply_count: int) -> float:
     return round(0.6 * v + 0.4 * r, 4)
 
 
+def title_reject_reason(title: str) -> str | None:
+    """只看标题就能判死的题材，返回 reject reason；不拦则 None。
+
+    抽取成公共函数，H1 初筛与单条 pipeline 共用：
+    已入队/手工重导的 BV 也要挡，避免旧队列里的孕产片继续下载转写。
+    """
+    text = str(title or "").strip()
+    if not text:
+        return "empty_title"
+    if _EXCLUDE_TITLE.search(text):
+        return "exclude_title"
+    if _EXCLUDE_BIRTH_TITLE.search(text):
+        # 孕产/分娩纪实：标题就能判死，别浪费一次下载 + 转写
+        return "exclude_birth"
+    return None
+
+
 def passes_h1_filter(
     *,
     title: str,
@@ -89,10 +116,9 @@ def passes_h1_filter(
 ) -> tuple[bool, str]:
     cfg = config or Config()
     title_text = str(title or "").strip()
-    if not title_text:
-        return False, "empty_title"
-    if _EXCLUDE_TITLE.search(title_text):
-        return False, "exclude_title"
+    title_reason = title_reject_reason(title_text)
+    if title_reason:
+        return False, title_reason
     max_duration = int(getattr(cfg, "gold_story_max_duration_sec", 0) or 0)
     if (
         duration_sec is not None
