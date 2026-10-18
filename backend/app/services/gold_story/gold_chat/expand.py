@@ -1810,6 +1810,14 @@ def _apply_gold_chat_local_hard_repairs(
         parent_lines_max=parent_lines_max,
         dad_lines_max=dad_lines_max,
     )
+    # 站外称谓（哥哥/弟弟）改站内名：硬卡 collect_voice_errors 见到即拦，
+    # 而改写是无损的（只换称谓词），必须在**校验前**做，否则每轮都白拦
+    # （#135 实测：refine 循环里 5 处命中反复驳回，到 finalize 才修已来不及）。
+    from app.services.gold_story.gold_chat.patch import (
+        apply_kinship_label_patch,
+    )
+
+    data, _kin_notes = apply_kinship_label_patch(data)
     return data
 
 def _short_content_reject_message(detail: str, *, regen_count: int = 0) -> str:

@@ -4596,6 +4596,50 @@ def apply_n_ask_beat_local_patch(
     return out, True
 
 
+_OUT_OF_PRODUCT_KINSHIP = (
+    (re.compile(r"哥哥"), "灿灿"),
+    (re.compile(r"弟弟"), "昭昭"),
+)
+
+
+def apply_kinship_label_patch(story: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """把正文里的站外称谓（哥哥/弟弟）换成站内名。
+
+    站内固定是灿灿（10岁姐姐）/ 昭昭（7岁弟弟），源稿常写「哥哥/弟弟」。
+    硬卡 `collect_voice_errors` 见到这两个词直接拦，但原先**没有对应的修**，
+    于是任何含「哥哥的妈」这类台词的稿子都只能反复重掷到预算耗尽
+    （#135 实测：5 处命中，每轮都拦）。
+
+    只换称谓词，不动句子其余部分；「姐姐」站内允许，不在替换范围内。
+    """
+    if not isinstance(story, dict):
+        return story, []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, []
+    rows: list[dict[str, Any]] = []
+    changed = 0
+    for item in dialogue:
+        if not isinstance(item, dict):
+            rows.append(item)  # type: ignore[arg-type]
+            continue
+        row = dict(item)
+        line = str(row.get("line") or "")
+        new_line = line
+        for pat, name in _OUT_OF_PRODUCT_KINSHIP:
+            if pat.search(new_line):
+                new_line = pat.sub(name, new_line)
+        if new_line != line:
+            row["line"] = new_line
+            changed += 1
+        rows.append(row)
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = rows
+    return out, [f"站外称谓改站内名:{changed}句"]
+
+
 def apply_opening_causality_local_patch(
     story: dict[str, Any],
     *,

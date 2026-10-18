@@ -924,6 +924,7 @@ def apply_final_acceptance_local_patches(
 ) -> dict[str, Any]:
     """终检语义审核前本地 patch，与审核行号对齐的稿件基线。"""
     from app.services.gold_story.gold_chat.patch import (
+        apply_kinship_label_patch,
         apply_opening_causality_local_patch,
     )
     from app.services.gold_story.gold_chat.validate import (
@@ -941,6 +942,13 @@ def apply_final_acceptance_local_patches(
     )
     if n_role_patched:
         logger.info("[GOLD_CHAT] final acceptance N beat role speaker align")
+
+    patched, kin_patched = apply_kinship_label_patch(patched)
+    if kin_patched:
+        logger.info(
+            "[GOLD_CHAT] final acceptance kinship patch: %s",
+            "；".join(kin_patched),
+        )
 
     patched, opening_patched = apply_opening_causality_local_patch(
         patched,
