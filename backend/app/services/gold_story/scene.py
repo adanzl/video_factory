@@ -615,6 +615,52 @@ _RE_SEED_EXPLAIN_PREFIX = re.compile(r"^解释这个词是什么意思[：:]\s*"
 _RE_SEED_HALF_CAUSAL = re.compile(r"^(?:所以|因此|于是|才能|才)")
 
 
+_RE_SECOND_PERSON_DRIFT = re.compile(
+    r"就是你在|就你在|你在街上|你自己在|你们在|你那"
+)
+
+
+def fix_second_person_drift(seed: list[Any]) -> tuple[list[Any], list[str]]:
+    """把 seed 里「你在……工作」这类**主语漂移**改成第一人称。
+
+    机制孩子解释自己的事，说成「你在街上工作，别人给你钱」时，
+    「你」就指向了家长——家长并没有上街工作，句子主谓错位，
+    终检判「读一遍不知道在说什么」（#87 实测反复出现）。
+
+    只改主语，不动其余内容；改成「我在街上工作」后语义自洽。
+    """
+    rows: list[Any] = []
+    fixed = 0
+    for item in seed or []:
+        if not isinstance(item, dict):
+            rows.append(item)
+            continue
+        row = dict(item)
+        for key in ("intent", "line"):
+            text = row.get(key)
+            if not isinstance(text, str) or not text:
+                continue
+            if not _RE_SECOND_PERSON_DRIFT.search(text):
+                continue
+            new_text = text
+            for old_pat, repl in (
+                ("就是你在", "就是我在"),
+                ("就你在", "就我在"),
+                ("你在街上", "我在街上"),
+                ("你自己在", "我自己在"),
+                ("你们在", "我们在"),
+                ("你那", "我那"),
+            ):
+                new_text = new_text.replace(old_pat, repl)
+            if new_text != text:
+                row[key] = new_text
+                fixed += 1
+        rows.append(row)
+    if not fixed:
+        return seed or [], []
+    return rows, [f"seed主语漂移修正:{fixed}处"]
+
+
 def clean_seed_fragments(seed: list[Any]) -> tuple[list[Any], list[str]]:
     """清掉 seed 里的**因果残句**。
 
@@ -642,6 +688,7 @@ def clean_seed_fragments(seed: list[Any]) -> tuple[list[Any], list[str]]:
                 row = dict(item)
                 row["intent"] = (
                     "解释这个词是什么意思：一本正经给个荒诞但自洽的说法"
+                    "（用第一人称说自己的事，不要把对方扯进去）"
                 )
                 rows.append(row)
                 fixed += 1
@@ -1295,6 +1342,12 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         if s_notes:
             out["dialogue_seed"] = new_seed
             notes.extend(s_notes)
+        _seed_p, p_notes = fix_second_person_drift(
+            out.get("dialogue_seed") or []
+        )
+        if p_notes:
+            out["dialogue_seed"] = _seed_p
+            notes.extend(p_notes)
         new_seed, f_notes = clean_seed_fragments(out.get("dialogue_seed") or [])
         if f_notes:
             out["dialogue_seed"] = new_seed
