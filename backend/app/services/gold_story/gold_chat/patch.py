@@ -3283,6 +3283,67 @@ def apply_n_token_repeat_patch(
     return out, [f"N怪词重复已收敛:{changed}"]
 
 
+_N_CLOSE_LINE_YANK_RE = re.compile(
+    r"我认栽|我服了|行吧|服了|接不住|说不出|放弃|算了|打草稿"
+)
+
+
+def apply_n_move_close_to_tail_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """把家长的破功收束句挪到**最后一句**。
+
+    收束是 N 的机制终点：家长被整懵后收场，之后不该再有人说话。
+    但补拍/插反应句很容易把句子塞到它后面，于是「收束在中间、后面继续
+    演」——这既不合机制，也让愣住收束离开末段窗口（只能靠旁人一句
+    「妈妈接不住了」蒙混过闸，#87 实测）。
+
+    做法：找出最后一句家长破功句，若它后面还有句子，就把后面那些
+    **孩子之间**的对话整体前移（保持相对顺序），让收束落到末尾。
+    """
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if len(dlg) < 4:
+        return story, []
+    parents = {"妈妈", "爸爸"}
+    close_idx = -1
+    for i, row in enumerate(dlg):
+        sp = str(row.get("speaker") or "").strip()
+        if sp not in parents:
+            continue
+        if _N_CLOSE_LINE_YANK_RE.search(str(row.get("line") or "")):
+            close_idx = i
+    if close_idx < 0 or close_idx == len(dlg) - 1:
+        return story, []
+    after = dlg[close_idx + 1:]
+    # 收束后面若还有家长句，说明不止一个收束，交给别的规则；这里只处理孩子句
+    if any(str(r.get("speaker") or "").strip() in parents for r in after):
+        return story, []
+    # 收束前不得提前「剧透」家长破功（旁人说「妈妈接不住了」这类），
+    # 那会让真正的收束失去力度，也属于替家长收场（归属错位）。
+    _pre_empt = re.compile(r"妈妈.{0,4}(接不住|服了|认栽|说不出)")
+    cleaned: list[dict[str, Any]] = []
+    for row in dlg[:close_idx]:
+        if str(row.get("speaker") or "").strip() in {"昭昭", "灿灿"} and _pre_empt.search(
+            str(row.get("line") or "")
+        ):
+            continue
+        cleaned.append(row)
+    if len(cleaned) != close_idx:
+        # 有句子被删：句数可能不足，交回上游补位（不要在这里硬凑）
+        dlg = cleaned + dlg[close_idx:]
+        close_idx = len(cleaned)
+    close_row = dlg[close_idx]
+    head = dlg[:close_idx]
+    out_dlg = [*head, *after, close_row]
+    out = dict(story)
+    out["dialogue"] = out_dlg
+    return out, [f"N收束句移至末尾:后移{len(after)}句"]
+
+
 def apply_n_alternation_lines_patch(
     story: dict[str, Any],
     *,
@@ -3379,6 +3440,11 @@ def apply_n_contract_local_patches(
     data, _tokrep_notes = apply_n_token_repeat_patch(data, beat_chain=beat_chain)
     if _tokrep_notes:
         notes.extend(_tokrep_notes)
+    data, _close_notes = apply_n_move_close_to_tail_patch(
+        data, beat_chain=beat_chain
+    )
+    if _close_notes:
+        notes.extend(_close_notes)
     data, _alt_notes = apply_n_alternation_lines_patch(data, beat_chain=beat_chain)
     if _alt_notes:
         notes.extend(_alt_notes)
