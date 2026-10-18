@@ -3539,7 +3539,7 @@ def apply_n_alternation_local_patch(
     for i, row in enumerate(dlg):
         if i in drop:
             continue
-        if i in bridge:
+        if i in bridge and i >= 2:
             other = bridge[i]
             line_pick = ""
             for cand in _N_BRIDGE_LINES:
@@ -3551,6 +3551,8 @@ def apply_n_alternation_local_patch(
             if line_pick:
                 rebuilt.append({"speaker": other, "line": line_pick})
         rebuilt.append(row)
+    # 桥接句不得落在第 1 句之后立刻插入：那会把开场拍（如「报名字」）
+    # 挤到后面，开场因果随即判缺拍。前两句属于开场，不动。
     out["dialogue"] = rebuilt
     # 桥接后可能仍有残留连说（插入位置使相邻关系变化）：再收敛一轮，
     # 直到没有孩子连说或用尽轮次。收敛不动就交给上层重掷，绝不返回带连说的稿。

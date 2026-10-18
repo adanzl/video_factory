@@ -573,7 +573,12 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
     prev_kid = ""
     for row in rows:
         sp = str(row.get("speaker") or "").strip()
-        if solo and sp == solo and sp == prev_kid:
+        # 只能在**第一个孩子拍之后**插入搭档拍：插在开场之前会把
+        # 「报名字」这类前置拍推到后面，开场因果立刻判缺拍（#87 实测）。
+        seen_kid = any(
+            str(r.get("speaker") or "").strip() == solo for r in out_rows
+        )
+        if solo and seen_kid and sp == solo and sp == prev_kid:
             out_rows.append(
                 {
                     "speaker": partner,
@@ -718,7 +723,10 @@ def ensure_n_two_kid_alternation(
     inserted = 0
     for row in rows:
         sp = str(row.get("speaker") or "").strip()
-        if sp in kids and sp == prev_kid and sp == main_kid and other_kid:
+        seen_main = any(
+            str(r.get("speaker") or "").strip() == main_kid for r in out_rows
+        )
+        if seen_main and sp in kids and sp == prev_kid and sp == main_kid and other_kid:
             out_rows.append(
                 {
                     "speaker": other_kid,
