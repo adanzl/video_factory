@@ -709,6 +709,269 @@ def merge_seed_consecutive_kid_rows(
     return out, [f"合并孩子相邻seed:{merged}处"]
 
 
+_RE_ASK_INTENT = re.compile(r"追问|质问|反问|设问|问：|什么意思|谁教|哪来|怎么|谁")
+
+
+def align_seed_to_contract_beats(
+    seed: list[Any],
+    *,
+    contract: dict[str, Any] | None = None,
+) -> tuple[list[Any], list[str]]:
+    """让 seed **覆盖契约每一拍的说话人**。
+
+    这是踩了十几轮才看清的架构缺口：契约给第二个孩子排了 3 拍，
+    而 seed 里她**一条行都没有**（源素材只有单孩）。模型拿到的契约说
+    「第 3 拍灿灿说话」，seed 却没有她的素材 → 只能凭空编，编出来的
+    必然被判「接不上/缺前提/引用无据」。
+
+    只有在「契约某说话人在 seed 里完全缺席」时才做重排（避免干扰正常稿）：
+    按契约拍序逐拍取用 seed 里同说话人的下一行；缺席者用该拍 intent 合成。
+    这样 seed 与契约的说话人序列一致，模型不用再编。
+    """
+    sc = contract if isinstance(contract, dict) else {}
+    rows = [dict(r) for r in (seed or []) if isinstance(r, dict)]
+    beats = [r for r in (sc.get("beat_chain") or []) if isinstance(r, dict)]
+    if not rows or len(beats) < 2:
+        return seed or [], []
+    beat_speakers = [str(b.get("speaker") or "").strip() for b in beats]
+    seed_speakers = {str(r.get("speaker") or "").strip() for r in rows}
+    missing = {sp for sp in beat_speakers if sp and sp not in seed_speakers}
+    if not missing:
+        return seed or [], []
+
+    pool = list(rows)
+    out: list[Any] = []
+    synthesized = 0
+    for beat in beats:
+        sp = str(beat.get("speaker") or "").strip()
+        if not sp:
+            continue
+        idx = next(
+            (
+                i
+                for i, r in enumerate(pool)
+                if str(r.get("speaker") or "").strip() == sp
+            ),
+            -1,
+        )
+        if idx >= 0:
+            out.append(pool.pop(idx))
+            continue
+        intent = str(beat.get("intent") or beat.get("beat") or "").strip()
+        out.append(
+            {
+                "speaker": sp,
+                "intent": intent or "顺着上一句接一句，说出自己的看法",
+            }
+        )
+        synthesized += 1
+    # 契约没覆盖到的 seed 行放回**收束前**，保证收束仍在末尾
+    if pool:
+        out = out[:-1] + pool + out[-1:]
+    notes = [f"seed按契约补齐说话人:{'、'.join(sorted(missing))}(合成{synthesized}条)"]
+    return out, notes
+
+
+def prefix_answer_after_parent_ask(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """家长问句后面的那一拍，孩子必须**先直接回答**，再往下讲。
+
+    反复出现的语义硬伤「妈妈问 X，孩子答 Y」（答非所问）根因在契约层：
+    契约把「妈妈追问」和「孩子讲圆」排成相邻两拍，却没告诉模型这两拍是
+    问答关系。模型就各写各的，终检必然判接不上。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or len(chain) < 2:
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    # 机制主体 = 说怪词/解释/自洽的那个孩子：家长问的、要他答的就是他。
+    # 旁观孩子的拍是挑衅/帮腔，不承担「回答家长」的义务（加了反而错位）。
+    mech: dict[str, int] = {}
+    for r in rows:
+        sp = str(r.get("speaker") or "").strip()
+        if sp and sp not in _PARENT_SPEAKER_SET and _N_MECHANISM_CHILD_RE.search(
+            str(r.get("intent") or r.get("beat") or "")
+        ):
+            mech[sp] = mech.get(sp, 0) + 1
+    mech_kid = max(mech, key=lambda k: mech[k]) if mech else ""
+    changed = 0
+    for i in range(len(rows) - 1):
+        cur = rows[i]
+        nxt = rows[i + 1]
+        cur_sp = str(cur.get("speaker") or "").strip()
+        nxt_sp = str(nxt.get("speaker") or "").strip()
+        if cur_sp not in _PARENT_SPEAKER_SET or nxt_sp in _PARENT_SPEAKER_SET:
+            continue
+        if mech_kid and nxt_sp != mech_kid:
+            continue
+        if not _RE_ASK_INTENT.search(str(cur.get("intent") or "")):
+            continue
+        intent = str(nxt.get("intent") or "")
+        if intent.startswith("先直接回答"):
+            continue
+        nxt["intent"] = (
+            "先直接回答上一句问的问题（点出具体答案，别绕开），" + intent
+        )[:160]
+        changed += 1
+    if not changed:
+        return contract, []
+    out = dict(contract)
+    out["beat_chain"] = rows
+    return out, [f"问答配对标注:{changed}处"]
+
+
+def keep_qa_adjacent(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """家长问句后面必须紧跟机制孩子的回答，中间不许插旁观的拍。
+
+    反复出现的「妈妈问 X，孩子答 Y／没人答」根因在此：交替规则会把同伴的
+    挑衅拍插到「家长追问」和「机制孩子回答」中间，问答就被打断了。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or len(chain) < 3:
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    mech: dict[str, int] = {}
+    for r in rows:
+        sp = str(r.get("speaker") or "").strip()
+        if sp and sp not in _PARENT_SPEAKER_SET and _N_MECHANISM_CHILD_RE.search(
+            str(r.get("intent") or r.get("beat") or "")
+        ):
+            mech[sp] = mech.get(sp, 0) + 1
+    mech_kid = max(mech, key=lambda k: mech[k]) if mech else ""
+    if not mech_kid:
+        return contract, []
+    moved = 0
+    for _ in range(4):
+        acted = False
+        for i in range(len(rows) - 1):
+            cur_sp = str(rows[i].get("speaker") or "").strip()
+            nxt_sp = str(rows[i + 1].get("speaker") or "").strip()
+            if cur_sp not in _PARENT_SPEAKER_SET:
+                continue
+            if not _RE_ASK_INTENT.search(str(rows[i].get("intent") or "")):
+                continue
+            if nxt_sp in _PARENT_SPEAKER_SET or nxt_sp == mech_kid:
+                continue
+            # 把这条旁观的拍移到「下一个机制孩子拍」之后
+            intruder = rows.pop(i + 1)
+            target = next(
+                (
+                    j
+                    for j in range(i + 1, len(rows))
+                    if str(rows[j].get("speaker") or "").strip() == mech_kid
+                ),
+                -1,
+            )
+            if target < 0:
+                rows.insert(i + 1, intruder)
+                continue
+            rows.insert(target + 1, intruder)
+            moved += 1
+            acted = True
+            break
+        if not acted:
+            break
+    if not moved:
+        return contract, []
+    for idx, row in enumerate(rows, 1):
+        row["beat"] = idx
+    out = dict(contract)
+    out["beat_chain"] = rows
+    return out, [f"问答相邻修复:{moved}处"]
+
+
+def spread_kid_beats(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """契约里两个孩子不得相邻连说（N 类硬规则）。
+
+    任何一次「插入/搬移」都可能让两个孩子的拍挨在一起，扩写就会照着连说。
+    这里做最后一次分配：把重复的那一拍挪到最近的安全空位
+    （不在家长问句之后、不在收束之后）。
+    """
+    if not isinstance(contract, dict):
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or len(chain) < 4:
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    kids = {"昭昭", "灿灿"}
+    close_idx = max(
+        (
+            i
+            for i, r in enumerate(rows)
+            if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+        ),
+        default=len(rows) - 1,
+    )
+
+    # 旁观孩子的拍必须排在机制孩子**说过话之后**：
+    # 他还没开口，她无从「加码/拆台/断言编的」（#87 实测被排到第2拍）。
+    first_kid_idx = next(
+        (
+            i
+            for i, r in enumerate(rows)
+            if str(r.get("speaker") or "").strip() in kids
+        ),
+        -1,
+    )
+
+    def _safe_positions() -> list[int]:
+        positions: list[int] = []
+        for i in range(1, len(rows)):
+            if first_kid_idx >= 0 and i <= first_kid_idx:
+                continue
+            prev_sp = str(rows[i - 1].get("speaker") or "").strip()
+            # 不在家长问句之后（问答必须相邻）
+            if prev_sp in _PARENT_SPEAKER_SET and _RE_ASK_INTENT.search(
+                str(rows[i - 1].get("intent") or "")
+            ):
+                continue
+            if i >= close_idx:
+                continue
+            positions.append(i)
+        return positions
+
+    moved = 0
+    for _ in range(6):
+        acted = False
+        for i in range(len(rows) - 1):
+            a = str(rows[i].get("speaker") or "").strip()
+            b = str(rows[i + 1].get("speaker") or "").strip()
+            if a not in kids or b not in kids or a != b:
+                continue
+            for pos in _safe_positions():
+                if pos in (i, i + 1):
+                    continue
+                prev_sp = str(rows[pos - 1].get("speaker") or "").strip()
+                next_sp = (
+                    str(rows[pos].get("speaker") or "").strip()
+                    if pos < len(rows)
+                    else ""
+                )
+                if prev_sp == b or next_sp == b:
+                    continue
+                row = rows.pop(i + 1)
+                rows.insert(pos, row)
+                moved += 1
+                acted = True
+                break
+            if acted:
+                break
+        if not acted:
+            break
+    if not moved:
+        return contract, []
+    for idx, row in enumerate(rows, 1):
+        row["beat"] = idx
+    out = dict(contract)
+    out["beat_chain"] = rows
+    return out, [f"孩子连说分配:{moved}处"]
+
+
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把**契约与 seed 一起**做词槽归一化（唯一入口）。
 
@@ -747,6 +1010,40 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         if m_notes:
             out["dialogue_seed"] = new_seed
             notes.extend(m_notes)
+        # seed 必须覆盖契约每一拍的说话人（否则第二个孩子只能凭空编）
+        new_seed, a_notes = align_seed_to_contract_beats(
+            out.get("dialogue_seed") or [],
+            contract=out.get("scene_contract"),
+        )
+        if a_notes:
+            out["dialogue_seed"] = new_seed
+            notes.extend(a_notes)
+        # 问答必须相邻：家长问句后面不许插旁观的拍
+        out["scene_contract"], k_notes = keep_qa_adjacent(
+            out.get("scene_contract") or {}
+        )
+        if k_notes:
+            notes.extend(k_notes)
+        # 契约层收敛：孩子相邻与问答相邻互相影响，交替跑到不动为止
+        for _ in range(3):
+            out["scene_contract"], sp_notes = spread_kid_beats(
+                out.get("scene_contract") or {}
+            )
+            out["scene_contract"], k2_notes = keep_qa_adjacent(
+                out.get("scene_contract") or {}
+            )
+            if sp_notes:
+                notes.extend(sp_notes)
+            if k2_notes:
+                notes.extend(k2_notes)
+            if not sp_notes and not k2_notes:
+                break
+        # 家长问句之后的拍：机制孩子必须先直接回答
+        out["scene_contract"], q_notes = prefix_answer_after_parent_ask(
+            out.get("scene_contract") or {}
+        )
+        if q_notes:
+            notes.extend(q_notes)
     return out, notes
 
 
