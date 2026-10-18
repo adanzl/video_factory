@@ -536,26 +536,24 @@ def normalize_n_formula_slots(
 #
 # 正确做法：契约只声明「她这一拍要干什么」，台词交给模型结合上下文写。
 # 三条约束保持：不引用上下文、不提那个机制词、不承担机制。
-# 第二孩的拍：**只写「她做什么」，不写任何信息型追问**。
+# 第二孩的拍：她是**主角之一**，不是旁观反应者。
 #
-# 四条铁律，每一条都是实测踩出来的：
-#   ① 不指定追问维度（时间/地点/人数）→ 机制孩子答不上来只能硬凑；
-#   ② 不提「什么意思/谁教」→ 那是立规方的关键追问，谁抢谁破坏功主体；
-#   ③ 不重复同一态度（不信/听不懂/犯嘀咕）→ 三句就同义重复被判原地打转；
-#   ④ 不描述外形/细节 → 模型会写成旁白。
+# 这是十几轮才想通的关键：我此前把她写成「旁观者」——不信、听不懂、拆台。
+# 但旁观者的台词必须接住别人的话头，而她的位置往往没有话头可接，
+# 于是无论换多少种写法（追问/表态/挑衅/交错）都必然被判「答非所问」。
 #
-# 正解：她的拍是**挑衅式陈述句**。陈述句不索取信息，机制孩子随便否认、
-# 反驳、纠正都能接上，天然不会答非所问；同时每条挑衅的动作类型不同，
-# 连续几拍也不会撞车。
+# 主角不需要接话头——**她自己就有话要说**。所以她的拍改成「同伙加码」：
+# 跟着编、替对方补、自己也报一个、把谎编得更圆。这类动作永远是自足的，
+# 接在哪一拍都成立，而且天然是 N 类「两个孩子合伙一本正经胡说」的喜剧。
+#
+# 依然遵守：不碰妈妈的机制关键追问（词义/出处）、不承担破功收束。
 _N_SECOND_KID_LINES: tuple[str, ...] = (
-    "断言这套说法是编的，语气很不屑（对方会否认或辩解）",
-    "断言这事根本不可能，摆出自己的理由（对方会反驳）",
-    "当场加码，要对方立刻再说一遍证明（对方会嘴硬或照做）",
-    "拿自己作对比，说自己绝不会这么干（对方会反过来将他一军）",
-    "替对方把话总结成一个更离谱的版本（对方会纠正或认下）",
-    "放话要看对方怎么收场，语气像看戏（对方会硬撑到底）",
-    "宣布自己也要照着试一次，故意气对方（对方会拦他）",
-    "下判断说这套道理讲不通，直接给结论（对方会再补一套说辞）",
+    "自己也报出一串编的名字，跟对方别苗头",
+    "替对方补一个更离谱的细节，把谎编得更圆",
+    "声称自己也见过同样的事，帮着作证",
+    "把对方的话往下推一层，说得更煞有介事",
+    "抢着说自己那边的说法更厉害",
+    "纠正对方编错的地方，改成自己那版",
 )
 
 
@@ -712,6 +710,7 @@ def merge_seed_consecutive_kid_rows(
 _RE_ASK_INTENT = re.compile(r"追问|质问|反问|设问|问：|什么意思|谁教|哪来|怎么|谁")
 
 
+_N_DECLARED_TOKEN_SEARCH = re.compile(r"「[^」]{2,6}」|怪词|自造词")
 _RE_SEED_TOKEN_OUT = re.compile(r"只说出这个词|说出这个词|蹦出")
 _RE_SEED_TOKEN_EXPLAIN = re.compile(r"解释这个词")
 
@@ -985,15 +984,50 @@ def spread_kid_beats(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str
         default=len(rows) - 1,
     )
 
-    # 旁观孩子的拍必须排在机制孩子**说过话之后**：
-    # 他还没开口，她无从「加码/拆台/断言编的」（#87 实测被排到第2拍）。
+    # 旁观孩子的拍必须排在**机制已经展开之后**。
+    # 只要求「机制孩子说过话」不够：他刚报完名字还没进入机制，她就来一句
+    # 「我心里直打鼓」，必然无话头可接（#87 实测反复）。所以要排到
+    # 第一个**机制拍**（讲圆/解释/说出怪词）之后。
+    mech_sp = ""
+    _mech_count: dict[str, int] = {}
+    for r in rows:
+        sp_r = str(r.get("speaker") or "").strip()
+        if sp_r in kids and _N_MECHANISM_CHILD_RE.search(
+            str(r.get("intent") or r.get("beat") or "")
+        ):
+            _mech_count[sp_r] = _mech_count.get(sp_r, 0) + 1
+    if _mech_count:
+        mech_sp = max(_mech_count, key=lambda k: _mech_count[k])
+    first_kid_idx = next(
+        (
+            i
+            for i, r in enumerate(rows)
+            if mech_sp
+            and str(r.get("speaker") or "").strip() == mech_sp
+            and _N_MECHANISM_CHILD_RE.search(
+                str(r.get("intent") or r.get("beat") or "")
+            )
+        ),
+        -1,
+    )
+    if first_kid_idx < 0:
+        first_kid_idx = next(
+            (
+                i
+                for i, r in enumerate(rows)
+                if str(r.get("speaker") or "").strip() in kids
+            ),
+            -1,
+        )
+    # 同伙加码不依赖机制是否展开：她可以紧跟对方报名字就跟着报一个。
+    # 所以这里退回到「对方说过话之后即可」。
     first_kid_idx = next(
         (
             i
             for i, r in enumerate(rows)
             if str(r.get("speaker") or "").strip() in kids
         ),
-        -1,
+        first_kid_idx,
     )
 
     def _safe_positions() -> list[int]:
@@ -1248,6 +1282,56 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
     if _align_notes:
         out["dialogue_seed"] = _seed_final
         notes.extend(_align_notes)
+    # 旁观主角的 seed 行按契约拍序刷新意图（契约已改成同伙加码，
+    # seed 若还留着旧的「不信/拆台」写法，模型会照旧写成旁观者）
+    _seed_rows = [dict(r) for r in (out.get("dialogue_seed") or []) if isinstance(r, dict)]
+    _beats = [
+        r for r in (out.get("scene_contract") or {}).get("beat_chain") or []
+        if isinstance(r, dict)
+    ]
+    if _seed_rows and _beats:
+        _mech: dict[str, int] = {}
+        for r in _beats:
+            sp_r = str(r.get("speaker") or "").strip()
+            if sp_r and sp_r not in _PARENT_SPEAKER_SET and _N_MECHANISM_CHILD_RE.search(
+                str(r.get("intent") or "")
+            ):
+                _mech[sp_r] = _mech.get(sp_r, 0) + 1
+        # 词槽持有者才是机制主体（他负责那个怪词）
+        _slot_owner = ""
+        for r in _beats:
+            if _N_DECLARED_TOKEN_SEARCH.search(str(r.get("intent") or "")):
+                _slot_owner = str(r.get("speaker") or "").strip()
+                break
+        _main = _slot_owner or (max(_mech, key=lambda k: _mech[k]) if _mech else "")
+        _partner = next(
+            (
+                k
+                for k in ("昭昭", "灿灿")
+                if k != _main
+            ),
+            "",
+        )
+        if _partner:
+            _partner_beats = [
+                str(r.get("intent") or "")
+                for r in _beats
+                if str(r.get("speaker") or "").strip() == _partner
+            ]
+            _pi = 0
+            _changed_seed = 0
+            for _r in _seed_rows:
+                if str(_r.get("speaker") or "").strip() != _partner:
+                    continue
+                if _pi >= len(_partner_beats):
+                    break
+                if str(_r.get("intent") or "") != _partner_beats[_pi]:
+                    _r["intent"] = _partner_beats[_pi]
+                    _changed_seed += 1
+                _pi += 1
+            if _changed_seed:
+                out["dialogue_seed"] = _seed_rows
+                notes.append(f"刷新第二孩seed意图:{_changed_seed}条")
     # 词与解释必须相邻（中间被隔开会写成互不相连的两段因果）
     _seed_pair, _p2 = keep_seed_token_pair_adjacent(
         out.get("dialogue_seed") or []
