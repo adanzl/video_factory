@@ -3135,6 +3135,14 @@ def apply_cast_membership_patch(
     return out, [f"删除契约外说话人:{'、'.join(dict.fromkeys(dropped))}"]
 
 
+_N_BRIDGE_LINES: tuple[str, ...] = (
+    "等等，你刚才说啥？",
+    "我怎么越听越糊涂了。",
+    "你先等等，我还没听懂。",
+    "这话我可不敢信。",
+    "你确定？我可记着呢。",
+)
+
 _N_REACT_LINES: tuple[str, ...] = (
     "哎哟，这我可学不来。",
     "你还真敢说。",
@@ -3415,6 +3423,8 @@ def apply_n_alternation_local_patch(
             beat_hits[beat_no] = beat_hits.get(beat_no, 0) + 1
 
     changed = False
+    # 需要在某句前插入的对方接话：{行下标: 说话人}
+    bridge: dict[int, str] = {}
     # 1) 换词重复：后出现的包含句/被包含句删掉（若其拍仍被别句覆盖）
     drop: set[int] = set()
     for i, row in enumerate(dlg):
@@ -3481,7 +3491,19 @@ def apply_n_alternation_local_patch(
         current.append(i)
     if len(current) > 1:
         runs.append(current)
+    # 禁止孩子连说（用户硬规则）：不再「只在拍被覆盖时删」——那样会留下连说。
+    # 处理顺序：
+    #   1) 拍仍被别句覆盖 → 直接删，最省事；
+    #   2) 删不得（本拍唯一落地点）→ 在该句前插另一个孩子的接话，把连说拆开。
+    # 绝不豁免、也不靠删句把正文砍空。
     for run in runs:
+        kid_run = {
+            str(dlg[i].get("speaker") or "").strip()
+            for i in run
+        }
+        # 只处理孩子之间的连说（家长连说由额度与家长侧规则管）
+        if not kid_run or not kid_run <= {"昭昭", "灿灿"}:
+            continue
         keeper = max(
             run,
             key=lambda i: (
@@ -3489,25 +3511,52 @@ def apply_n_alternation_local_patch(
                 len(str(dlg[i].get("line") or "")),
             ),
         )
-        for i in run:
+        for pos, i in enumerate(run):
             if i == keeper:
                 continue
             beats = _beats_of(dlg[i])
-            # 对不上契约拍的句子不在这里删：删它们会把正文砍空（篇幅另有闸门）
-            if not beats:
+            droppable = bool(beats) and not any(
+                beat_hits.get(b, 0) <= 1 for b in beats
+            )
+            if droppable:
+                for b in beats:
+                    beat_hits[b] = max(0, beat_hits.get(b, 1) - 1)
+                drop.add(i)
+                changed = True
                 continue
-            if any(beat_hits.get(b, 0) <= 1 for b in beats):
+            # 删不得 → 插对方一句接话
+            speaker_i = str(dlg[i].get("speaker") or "").strip()
+            other = "灿灿" if speaker_i == "昭昭" else "昭昭"
+            if i in bridge:
                 continue
-            for b in beats:
-                beat_hits[b] = max(0, beat_hits.get(b, 1) - 1)
-            drop.add(i)
+            bridge[i] = other
             changed = True
 
     if not changed:
         return story, False
     out = copy.deepcopy(story)
-    out["dialogue"] = [row for i, row in enumerate(dlg) if i not in drop]
-    return out, True
+    rebuilt: list[dict[str, Any]] = []
+    for i, row in enumerate(dlg):
+        if i in drop:
+            continue
+        if i in bridge:
+            other = bridge[i]
+            line_pick = ""
+            for cand in _N_BRIDGE_LINES:
+                if not any(
+                    str(r.get("line") or "").strip() == cand for r in rebuilt
+                ):
+                    line_pick = cand
+                    break
+            if line_pick:
+                rebuilt.append({"speaker": other, "line": line_pick})
+        rebuilt.append(row)
+    out["dialogue"] = rebuilt
+    # 桥接后可能仍有残留连说（插入位置使相邻关系变化）：再收敛一轮，
+    # 直到没有孩子连说或用尽轮次。收敛不动就交给上层重掷，绝不返回带连说的稿。
+    out, extra = apply_n_alternation_lines_patch(out, beat_chain=beat_chain)
+    changed = changed or bool(extra)
+    return out, changed
 
 
 def _trim_n_parent_overflow(
