@@ -623,20 +623,30 @@ def clean_seed_fragments(seed: list[Any]) -> tuple[list[Any], list[str]]:
     完整解释由其它 seed 行提供。
     """
     rows: list[Any] = []
-    dropped = 0
+    fixed = 0
     for item in seed or []:
         if not isinstance(item, dict):
             rows.append(item)
             continue
         intent = str(item.get("intent") or "")
         m = _RE_SEED_EXPLAIN_PREFIX.match(intent)
-        if m and _RE_SEED_HALF_CAUSAL.match(intent[m.end():].strip()):
-            dropped += 1
-            continue
+        if m:
+            tail = intent[m.end():].strip()
+            if _RE_SEED_HALF_CAUSAL.match(tail):
+                # 残句不能直接删！它是「解释这词」那一行，删了孩子就没解释过，
+                # 后面家长再问「这词什么意思」会判「引用无据」（#87 实测）。
+                # 换成一条完整的荒诞解释（保持抽象，不绑剧情物件）。
+                row = dict(item)
+                row["intent"] = (
+                    "解释这个词是什么意思：一本正经给个荒诞但自洽的说法"
+                )
+                rows.append(row)
+                fixed += 1
+                continue
         rows.append(item)
-    if not dropped:
+    if not fixed:
         return seed or [], []
-    return rows, [f"清除seed因果残句:{dropped}条"]
+    return rows, [f"修正seed因果残句:{fixed}条"]
 
 
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
