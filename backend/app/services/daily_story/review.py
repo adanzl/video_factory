@@ -1015,37 +1015,33 @@ def _n_type_token_premise_exempt(
     issue: dict[str, Any],
     story: dict,
 ) -> bool:
-    """N 类「怪词突现」不算缺前提（机制本身要求突然出现）。
+    """N 类「怪词/补词」不算缺前提（机制本身要求突然出现）。
 
-    N 类的机制是：孩子**突然**蹦出一个自造词 → 家长愣住追问 → 孩子再解释。
-    「先抛怪词、后补解释」正是机制，不是缺陷。而语义审读按常识判
-    「第4句突然蹦出某个词、前文没有交代」，会稳定否掉合格稿
-    （#87 实测：这一条反复出现在终检第一名）。
+    N 的机制是：孩子**突然**蹦出一个自造词 → 家长愣住追问 → 孩子再解释，
+    以及答完再「淡定补一句」更离谱的词。这两处按常识判必然被判
+    「前文没有交代 / 答非所问」，但它们正是机制（#87 实测：这类判词
+    长期霸占终检第一名，导致合格稿永远过不了）。
 
-    只豁免这一种：kind=缺前提/引用无据，且被点名的句子正是**契约声明的
-    词槽句**（含怪词）。其它缺前提（凭空冒出人物/道具/旧事）照旧硬拦。
+    豁免范围严格限定：
+      - 只对 N 类；
+      - 只对 kind ∈ {缺前提, 引用无据, 语病, 接不上}；
+      - 被点名的句子必须**确实指向**契约声明的怪词，或是**孩子**说出的
+        极短独立补词（「苹果。」这类），或与之相邻的延续拍；
+      - 描述里若指控的是「凭空多出人物/道具/旧事/身份」，一律不豁免。
     """
-    # 也覆盖「语病」类里针对怪词本身的判定：
-    # 「怪词和这个意思之间没有关联」「不知道这词到底指什么」——这类判词的
-    # 前提是「词应当有公认含义」，而 N 的机制就是**自造词 + 荒诞解释**，
-    # 按常识判必然判死（#87 实测）。只在描述确实指向怪词时豁免。
     kind = str(issue.get("kind") or "")
     if kind not in {"缺前提", "引用无据", "语病", "接不上"}:
         return False
     if str(story.get("story_type") or "").strip().upper() != "N":
         return False
-    rows = _dialogue(story)
-    lines = [
-        str(r.get("line") or "")
-        for r in rows
-        if isinstance(r, dict) and str(r.get("line") or "").strip()
-    ]
+    rows = [r for r in _dialogue(story) if isinstance(r, dict)]
+    lines = [str(r.get("line") or "") for r in rows if str(r.get("line") or "").strip()]
     if not lines:
         return False
     nos = _normalize_issue_line_numbers(issue.get("lines"))
     if not nos:
         return False
-    # 怪词集合来自契约词槽（与机检同源）
+
     from app.services.gold_story.gold_chat.validate import _n_declared_word_token
 
     # 契约链可能在 gold_beat_chain，也可能在 beat_chain（终检传的是后者）。
@@ -1065,38 +1061,40 @@ def _n_type_token_premise_exempt(
             tokens.add(tok.lower())
     if not tokens:
         return False
+
+    # 补词位置：**孩子**说的、去掉标点 ≤4 字的独立短句（「苹果。」）。
+    # 必须排除家长句，否则「哪个好人。」这种短问句会被误当补词。
+    parent_speakers = {"妈妈", "爸爸"}
+    addon_idxs: set[int] = set()
+    for k, row in enumerate(rows):
+        line = str(row.get("line") or "")
+        if not line.strip():
+            continue
+        if str(row.get("speaker") or "").strip() in parent_speakers:
+            continue
+        bare = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", line)
+        if 0 < len(bare) <= 4 and line.strip().endswith(("。", "！", "…")):
+            addon_idxs.add(k)
+
     hit_tokens = False
-    hit_addon = False
     for n in nos:
         idx = n - 1
-        if not (0 <= idx < len(lines)):
-            continue
-        line_lower = lines[idx].lower()
-        if any(tok in line_lower for tok in tokens):
+        if 0 <= idx < len(lines) and any(
+            tok in lines[idx].lower() for tok in tokens
+        ):
             hit_tokens = True
             break
-        # 「补词」及其**后续两拍**：机制孩子随手抛出的荒诞词（如「苹果」），
-        # 以及对方紧接着围绕它的顶撞。N 的机制就是「答完再补一个更离谱的」，
-        # 这部分天生没有前因；语义审读按常识要求「可追踪的转场」，必然判
-        # 缺前提（#87 实测：这条反复卡住收尾）。
-        bare = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", lines[idx])
-        if 0 < len(bare) <= 4 and lines[idx].strip().endswith(("。", "！", "…")):
-            hit_addon = True
-            break
-        # 被点名的句子本身较短的「延续拍」，且前面 1–2 句里出现过极短补词
-        for back in (1, 2):
-            j = idx - back
-            if not (0 <= j < len(lines)):
-                continue
-            prev_bare = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", lines[j])
-            if 0 < len(prev_bare) <= 4:
-                hit_addon = True
-                break
-        if hit_addon:
-            break
+
+    # 补词及其延续拍：被点名的这一段（含紧邻其外一句）里有补词即算
+    hit_addon = False
+    lo = max(0, min(nos) - 2)
+    hi = min(len(rows) - 1, max(nos))
+    if any(j in addon_idxs for j in range(lo, hi + 1)):
+        hit_addon = True
+
     if not hit_tokens and not hit_addon:
         return False
-    # 描述里若点的是「人/物/旧事」而不是「这个词」，不算怪词豁免
+
     desc = str(issue.get("desc") or "")
     # 只排除「凭空多出人物/道具/旧事/身份」这类真缺前提。
     # 不能用「关系」二字做排除——审读会把机制本身的因果关系写成
@@ -1104,20 +1102,19 @@ def _n_type_token_premise_exempt(
     if any(k in desc for k in ("人物", "道具", "旧事", "身份", "身份关系")):
         return False
     if kind == "语病":
-        # 语病类必须是在说「这个词没有含义/关联不上」，不是别的语法问题
         token_focus = any(
             k in desc
-            for k in ("这个词", "这词", "怪词", "自造", "没有任何可理解的关联",
-                      "到底指什么", "不知道这词")
+            for k in (
+                "这个词", "这词", "怪词", "自造",
+                "没有任何可理解的关联", "到底指什么", "不知道这词",
+            )
         )
-        if not token_focus:
+        if not token_focus and not hit_addon:
             return False
-    if kind == "接不上":
-        # 接不上类：只有被点名的就是**补词句本身**（荒诞秒答）才豁免。
-        # 「离谱秒答」正是 N 的机制，按常识判必然「答非所问」。
-        if not hit_addon:
-            return False
+    if kind == "接不上" and not hit_addon:
+        return False
     return True
+
 
 
 def partition_llm_export_blocking_issues(

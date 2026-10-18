@@ -198,15 +198,18 @@ def test_consecutive_sibling_always_penalized():
 
 
 def test_n_token_premise_exemption_is_narrow():
-    """N 类怪词突现属机制，不算缺前提；其它缺前提照旧硬拦。"""
+    """N 类怪词/补词属机制，不算缺前提；其它缺前提照旧硬拦。"""
     from app.services.daily_story.review import _n_type_token_premise_exempt
 
     chain = [
         {"beat": 1, "speaker": "妈妈", "intent": "立规"},
         {"beat": 2, "speaker": "昭昭", "intent": "报出一串编的名字"},
-        {"beat": 3, "speaker": "昭昭", "intent": "蹦出一个自造词「waka」"},
-        {"beat": 4, "speaker": "妈妈", "intent": "追问什么意思"},
-        {"beat": 5, "speaker": "妈妈", "intent": "服了收束"},
+        {"beat": 3, "speaker": "妈妈", "intent": "追问哪个好人"},
+        {"beat": 4, "speaker": "昭昭", "intent": "给好人下定义"},
+        {"beat": 5, "speaker": "妈妈", "intent": "追问谁教的"},
+        {"beat": 6, "speaker": "昭昭", "intent": "蹦出一个自造词「哇卡」"},
+        {"beat": 7, "speaker": "妈妈", "intent": "追问什么意思"},
+        {"beat": 8, "speaker": "妈妈", "intent": "服了收束"},
     ]
     story = {
         "story_type": "N",
@@ -214,30 +217,38 @@ def test_n_token_premise_exemption_is_narrow():
         "dialogue": [
             {"speaker": "妈妈", "line": "我要记下你说的每句话。"},
             {"speaker": "昭昭", "line": "我要找个好人来。"},
-            {"speaker": "昭昭", "line": "waka。"},
+            {"speaker": "妈妈", "line": "哪个好人。"},
+            {"speaker": "昭昭", "line": "就是会给我钱的那种。"},
+            {"speaker": "妈妈", "line": "谁教你的。"},
+            {"speaker": "昭昭", "line": "哇卡。"},
             {"speaker": "妈妈", "line": "什么意思？"},
             {"speaker": "妈妈", "line": "行吧我服了。"},
         ],
     }
-    # 豁免：怪词句 + 缺前提
+    # 豁免：怪词句 + 缺前提（机制要求突然，本来没有前因）
     assert _n_type_token_premise_exempt(
-        {"kind": "缺前提", "lines": [3], "desc": "第3句突然蹦出「waka」"}, story
+        {"kind": "缺前提", "lines": [6], "desc": "第6句突然蹦出「哇卡」"}, story
     )
-    # 不豁免：非怪词句
+    # 豁免：把补词与其后续拍一起点名的整条
+    assert _n_type_token_premise_exempt(
+        {"kind": "缺前提", "lines": [6, 7], "desc": "苹果线"}, story
+    )
+    # 不豁免：远离补词的普通句
     assert not _n_type_token_premise_exempt(
-        {"kind": "缺前提", "lines": [2], "desc": "第2句突然冒出好人"}, story
+        {"kind": "缺前提", "lines": [1], "desc": "第1句突然冒出好人"}, story
     )
     # 不豁免：人物类缺前提
     assert not _n_type_token_premise_exempt(
-        {"kind": "缺前提", "lines": [3], "desc": "前文没交代这个人物"}, story
+        {"kind": "缺前提", "lines": [6], "desc": "前文没交代这个人物"}, story
     )
     # 不豁免：其它 kind
     assert not _n_type_token_premise_exempt(
-        {"kind": "重复", "lines": [3], "desc": "重复"}, story
+        {"kind": "重复", "lines": [6], "desc": "重复"}, story
     )
     # 不豁免：非 N 类
     other = dict(story)
     other["story_type"] = "C"
     assert not _n_type_token_premise_exempt(
-        {"kind": "缺前提", "lines": [3], "desc": "x"}, other
+        {"kind": "缺前提", "lines": [6], "desc": "x"}, other
     )
+
