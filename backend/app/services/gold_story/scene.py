@@ -550,6 +550,58 @@ _N_SECOND_KID_LINES: tuple[str, ...] = (
 )
 
 
+def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """把**契约与 seed 一起**做词槽归一化（唯一入口）。
+
+    踩过的坑：只归一化 scene_contract 而漏掉 dialogue_seed，结果契约写「哇卡」、
+    seed 还写「waka」，模型两边都看到，成稿中途改口 → 判「缺前提/接不上」
+    （#87 实测）。词槽是同一件事，必须在同一处一起改。
+    """
+    if not isinstance(payload, dict):
+        return payload, []
+    out = dict(payload)
+    notes: list[str] = []
+    contract = out.get("scene_contract")
+    if isinstance(contract, dict):
+        new_contract, c_notes = neutralize_mechanism_token(contract)
+        if c_notes:
+            out["scene_contract"] = new_contract
+            notes.extend(c_notes)
+    seed = out.get("dialogue_seed")
+    if isinstance(seed, list) and seed:
+        new_seed, s_notes = neutralize_seed_tokens(seed)
+        if s_notes:
+            out["dialogue_seed"] = new_seed
+            notes.extend(s_notes)
+    return out, notes
+
+
+def neutralize_seed_tokens(seed: list[Any]) -> tuple[list[Any], list[str]]:
+    """seed 里的机制怪词同样换成中性词（与契约保持同一个词）。"""
+    rows: list[Any] = []
+    replaced: list[str] = []
+    for item in seed or []:
+        if not isinstance(item, dict):
+            rows.append(item)
+            continue
+        row = dict(item)
+        for key in ("intent", "line"):
+            text = row.get(key)
+            if not isinstance(text, str) or not text:
+                continue
+            new_text = text
+            for old, new in _GOLD_CHAT_NEUTRAL_TOKEN_MAP.items():
+                pat = re.compile(
+                    r"(?<![A-Za-z])" + re.escape(old) + r"(?![A-Za-z])", re.I
+                )
+                if pat.search(new_text):
+                    new_text = pat.sub(new, new_text)
+                    replaced.append(f"{old}→{new}")
+            row[key] = new_text
+        rows.append(row)
+    return rows, (["seed怪词中性化:" + "、".join(dict.fromkeys(replaced))] if replaced else [])
+
+
 def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """出厂设定落地：契约的角色表与 beat 里必须有两个孩子。
 

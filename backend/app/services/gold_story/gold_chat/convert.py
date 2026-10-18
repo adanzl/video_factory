@@ -1733,42 +1733,38 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
     # 只有契约缺失/校验不过时才重建。
     existing_contract = payload.get("scene_contract")
     if isinstance(existing_contract, dict) and existing_contract.get("beat_chain"):
-        from app.services.gold_story.scene import validate_scene
+        from app.services.gold_story.scene import (
+            enforce_two_kid_cast,
+            ensure_n_two_kid_alternation,
+            normalize_payload_tokens,
+            validate_scene,
+        )
 
+        # ── 复用前的归一化：**无条件执行** ─────────────────────────────
+        # 踩过的坑：原来把它放在 `if not validate_scene(...)` 里，意思是
+        # 「契约不合法才修」。但带英文词槽/单孩的契约**是合法的**，
+        # 于是归一化从来没跑过，waka 一直留在库里（#87 实测多轮）。
+        # 归一化是幂等的，每次都跑才是对的。
+        _normalized, _neutral_notes = normalize_payload_tokens(payload)
+        existing_contract = _normalized.get("scene_contract", existing_contract)
+        payload = _normalized
+        if _neutral_notes:
+            logger.info(
+                "[GOLD_CHAT] reuse token normalize id=%s: %s",
+                row.get("id"),
+                _neutral_notes[:2],
+            )
+        existing_contract, _kid_notes = enforce_two_kid_cast(existing_contract)
+        existing_contract, _alt_notes = ensure_n_two_kid_alternation(
+            existing_contract
+        )
+        if _kid_notes or _alt_notes:
+            logger.info(
+                "[GOLD_CHAT] reuse cast normalize id=%s: %s",
+                row.get("id"),
+                (_kid_notes + _alt_notes)[:3],
+            )
         if not validate_scene(existing_contract):
-            # 复用前也要过「双孩交替」：库里旧契约可能是「只有一个孩子」的
-            # 两人手形态，直接复用就会让孩子连说（用户明令禁止）。
-            # 这里补齐第二个孩子的反应拍，再写回 payload。
-            from app.services.gold_story.scene import (
-                enforce_two_kid_cast,
-                ensure_n_two_kid_alternation,
-                neutralize_mechanism_token,
-            )
-
-            # 复用路径同样要过「两孩出场」（出厂设定），否则库里旧契约只有
-            # 一个孩子，下游 cast 补丁会把补进来的孩子当「契约外」删掉，
-            # 与「插反应句拆连说」形成删-插死循环（#87 实测）。
-            # 词槽中性化：库里旧契约可能还带着英文串（waka/banana），
-            # 复用路径不经过 H3a，必须在这里也做一次（否则英文词进成稿）。
-            existing_contract, _neutral_notes = neutralize_mechanism_token(
-                existing_contract
-            )
-            if _neutral_notes:
-                logger.info(
-                    "[GOLD_CHAT] reuse token neutralize id=%s: %s",
-                    row.get("id"),
-                    _neutral_notes[:2],
-                )
-            existing_contract, _kid_notes = enforce_two_kid_cast(existing_contract)
-            existing_contract, _alt_notes = ensure_n_two_kid_alternation(
-                existing_contract
-            )
-            if _kid_notes or _alt_notes:
-                logger.info(
-                    "[GOLD_CHAT] reuse cast normalize id=%s: %s",
-                    row.get("id"),
-                    (_kid_notes + _alt_notes)[:3],
-                )
             logger.info(
                 "[GOLD_CHAT] reuse existing scene_contract id=%s beats=%s mom_max=%s",
                 row.get("id"),
@@ -1782,10 +1778,14 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             # 归一化结果要**落库**：否则下一次复用又读到旧的英文词槽/单孩契约，
             # 永远修不好（#87 实测：waka 一直留在库里）。
             gid = int(row.get("id") or 0)
-            if gid > 0 and existing_contract is not payload.get("scene_contract"):
+            if gid > 0:
                 try:
                     repo_gold_story.patch_story_payload(
-                        gid, {"scene_contract": existing_contract}
+                        gid,
+                        {
+                            "scene_contract": existing_contract,
+                            "dialogue_seed": payload.get("dialogue_seed"),
+                        },
                     )
                 except Exception as exc:
                     logger.warning(
