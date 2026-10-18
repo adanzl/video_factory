@@ -631,7 +631,8 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
     # 每拍可以扩成 2 句，所以「拍数」≈ 句数的一半。契约拍数是骨架，
     # 不是最终句数——按句数直接给拍会让她的拍塞不进交替位置。
     per_kid = -(-per_kid_lines // 2)
-    # 交替位置最多等于另一个孩子的拍数（一拍对一拍）
+    # 交替位置最多等于另一个孩子的拍数 + 1（她可以在末尾多接一拍），
+    # 但至少要与她对称：契约拍数不等时，扩写必然把差额压给同一个人 → 连说。
     solo_beats = sum(
         1
         for r in out_rows
@@ -646,6 +647,9 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
     pool_i = partner_beats
     # 交错分布：每次插在**下一个该孩子拍之后**，避免她的拍全堆在末尾
     # （堆在末尾会让她自己连说，等于把连说问题换个孩子重演）。
+    # 目标：与她对称（= solo_beats）。契约两侧拍数不等，扩写就会把差额
+    # 全压给同一个孩子，形成连说（#87 实测）。
+    per_kid = max(per_kid, solo_beats)
     while partner_beats < per_kid and pool_i < len(_N_SECOND_KID_LINES):
         if len(out_rows) >= CHAT_LINE_COUNT_MAX:
             break
@@ -658,40 +662,47 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
         ]
         if not kid_positions:
             break
-        # 从后往前挑一个后面还没插过搭档的位置
-        inserted_here = False
-        for pos in reversed(kid_positions[:-1] if len(kid_positions) > 1 else kid_positions):
-            nxt = out_rows[pos + 1] if pos + 1 < len(out_rows) else None
-            if (
-                isinstance(nxt, dict)
-                and str(nxt.get("speaker") or "").strip() == partner
-            ):
+        def _safe_insert(at: int) -> bool:
+            """插入后必须不产生孩子连说，否则换位置。"""
+            prev_sp = (
+                str(out_rows[at - 1].get("speaker") or "").strip() if at > 0 else ""
+            )
+            next_sp = (
+                str(out_rows[at].get("speaker") or "").strip()
+                if at < len(out_rows)
+                else ""
+            )
+            return prev_sp != partner and next_sp != partner
+
+        # 收束拍（最后一个家长拍）之后不得插入：收束必须在最后
+        close_idx = max(
+            (
+                i
+                for i, r in enumerate(out_rows)
+                if isinstance(r, dict)
+                and str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
+            ),
+            default=len(out_rows) - 1,
+        )
+        placed = False
+        candidates = list(range(close_idx, 0, -1))
+        for at in candidates:
+            if not _safe_insert(at):
+                continue
+            # 只能插在两个「已存在的孩子拍」之间或孩子拍之后，不能破坏开场
+            if at == 0:
                 continue
             out_rows.insert(
-                pos + 1,
+                at,
                 {"speaker": partner, "intent": _N_SECOND_KID_LINES[pool_i]},
             )
             partner_beats += 1
             pool_i += 1
             inserted += 1
-            inserted_here = True
+            placed = True
             break
-        if not inserted_here:
-            # 所有孩子拍后面都有她的拍了：插在最后一个孩子拍之前
-            last_kid = kid_positions[-1]
-            if (
-                last_kid > 0
-                and str(out_rows[last_kid - 1].get("speaker") or "").strip()
-                == partner
-            ):
-                break
-            out_rows.insert(
-                last_kid,
-                {"speaker": partner, "intent": _N_SECOND_KID_LINES[pool_i]},
-            )
-            partner_beats += 1
-            pool_i += 1
-            inserted += 1
+        if not placed:
+            break
     for idx, row in enumerate(out_rows, 1):
         if isinstance(row, dict):
             row["beat"] = idx
