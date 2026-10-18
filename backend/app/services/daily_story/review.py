@@ -1048,9 +1048,14 @@ def _n_type_token_premise_exempt(
     # 怪词集合来自契约词槽（与机检同源）
     from app.services.gold_story.gold_chat.validate import _n_declared_word_token
 
-    chain = story.get("gold_beat_chain")
-    if not isinstance(chain, list):
-        chain = []
+    # 契约链可能在 gold_beat_chain，也可能在 beat_chain（终检传的是后者）。
+    # 只认前者会让豁免在真实调用路径上**永远不生效**（#87 实测）。
+    chain: list[Any] = []
+    for _key in ("gold_beat_chain", "beat_chain"):
+        _c = story.get(_key)
+        if isinstance(_c, list) and _c:
+            chain = _c
+            break
     tokens: set[str] = set()
     for entry in chain:
         if not isinstance(entry, dict):

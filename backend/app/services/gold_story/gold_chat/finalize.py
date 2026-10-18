@@ -1064,9 +1064,14 @@ def run_gold_chat_final_acceptance(
             candidate=chat,
         )
 
+    # 把契约链一并带上：语义豁免（怪词/补词）需要从 story 里读拍链，
+    # chat 本身没有这个字段。
+    _chat_for_review = dict(chat)
+    _chat_for_review.setdefault("beat_chain", beat_chain)
+    _chat_for_review.setdefault("story_type", _st_for_patch or "N")
     llm_block, bad_evidence = partition_llm_export_blocking_issues(
         review.issues,
-        chat,
+        _chat_for_review,
         beat_chain=beat_chain,
     )
     if bad_evidence:
