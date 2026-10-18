@@ -93,6 +93,7 @@ STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
         "保真-N机制词槽",
         "保真-角色表外台词",
         "保真-孩子连说",
+        "保真-关键追问归属",
         "保真-N词槽语法",
         "保真-纯动作台词",
     }
@@ -1811,6 +1812,62 @@ def _append_pure_action_issues(
     )
 
 
+_RE_KEY_ASK_CONTENT = re.compile(
+    r"什么意思|啥意思|谁教|哪来|哪儿来|什么时候|几点|哪天|"
+    r"在哪儿|什么地方|哪里|几个|多少"
+)
+
+
+def _append_second_kid_ask_usurp_issues(
+    rows: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+    *,
+    beat_chain: list[Any] | None,
+) -> None:
+    """关键追问只能由立规方发；旁观孩子不得接管。
+
+    N 的机制主体是「立规方被整懵」：追问词义、出处、时间、地点、数量
+    这些**关键追问**属于立规方。旁观孩子一旦也做这类追问，妈妈的主线
+    就被挤掉，破功主体换人（专家两轮点出）。
+
+    这里只拦「旁观孩子的关键追问」，她表态/帮腔/拆台一律放行。
+    """
+    entries = _beat_chain_entries(list(beat_chain or []))
+    askers = {
+        str(entry.get("speaker") or "").strip()
+        for _n, entry in entries
+        if str(entry.get("speaker") or "").strip() in {"妈妈", "爸爸"}
+        and _RE_N_ASK_BEAT_INTENT.search(
+            str(entry.get("intent") or entry.get("beat") or "")
+        )
+    }
+    if not askers:
+        return
+    offenders: list[int] = []
+    for i, row in enumerate(rows, 1):
+        speaker = str(row.get("speaker") or "").strip()
+        if speaker not in {"昭昭", "灿灿"}:
+            continue
+        line = str(row.get("line") or "")
+        if _RE_KEY_ASK_CONTENT.search(line) and re.search(r"[？?]", line):
+            offenders.append(i)
+    if offenders:
+        issues.append(
+            _issue(
+                lines=offenders,
+                kind="保真-关键追问归属",
+                desc=(
+                    f"第{offenders}句是旁观孩子在问关键内容（词义/出处/时间/地点/数量），"
+                    "这类追问归立规方"
+                ),
+                fix=(
+                    "把这句改成表态/帮腔/拆台/复述（不提问）；"
+                    "关键追问留给立规方，否则破功主体换人"
+                ),
+            ),
+        )
+
+
 def _append_consecutive_sibling_issues(
     rows: list[dict[str, Any]],
     issues: list[dict[str, Any]],
@@ -2169,6 +2226,9 @@ def collect_align_issues(
 
     if st == "N":
         _append_consecutive_sibling_issues(rows, issues)
+        _append_second_kid_ask_usurp_issues(
+            rows, issues, beat_chain=beat_chain
+        )
 
     _append_cast_membership_issues(rows, issues, beat_chain=beat_chain)
 
