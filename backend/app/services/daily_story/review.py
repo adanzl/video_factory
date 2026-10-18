@@ -1030,7 +1030,7 @@ def _n_type_token_premise_exempt(
     # 前提是「词应当有公认含义」，而 N 的机制就是**自造词 + 荒诞解释**，
     # 按常识判必然判死（#87 实测）。只在描述确实指向怪词时豁免。
     kind = str(issue.get("kind") or "")
-    if kind not in {"缺前提", "引用无据", "语病"}:
+    if kind not in {"缺前提", "引用无据", "语病", "接不上"}:
         return False
     if str(story.get("story_type") or "").strip().upper() != "N":
         return False
@@ -1111,6 +1111,11 @@ def _n_type_token_premise_exempt(
                       "到底指什么", "不知道这词")
         )
         if not token_focus:
+            return False
+    if kind == "接不上":
+        # 接不上类：只有被点名的就是**补词句本身**（荒诞秒答）才豁免。
+        # 「离谱秒答」正是 N 的机制，按常识判必然「答非所问」。
+        if not hit_addon:
             return False
     return True
 
