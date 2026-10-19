@@ -1269,6 +1269,18 @@ def collapse_extra_parent_asks(contract: dict[str, Any]) -> tuple[dict[str, Any]
     ]
     if len(ask_idx) <= 1:
         return contract, []
+    # 「问 → 抢答 → 再问」是 N 的**核心陷阱结构**：第一个问引出抢占，
+    # 第二个问才能把「妈妈是我的」变成逻辑陷阱，让对方语塞。
+    # 两问之间夹着孩子拍时，合并就等于把陷阱拆掉（#135 实测：
+    # 合并后抢答被提前到第一问之前，第二问退化成「你的妈是谁」这种
+    # 简单问题，10 岁姐姐答不上来完全不合理，两位审稿人都点出）。
+    # 这种有回应的结构不合并，交给答非所问检查逐拍核对。
+    _span = range(ask_idx[0] + 1, ask_idx[-1])
+    if any(
+        str(rows[i].get("speaker") or "").strip() not in _PARENT_SPEAKER_SET
+        for i in _span
+    ):
+        return contract, []
     # 优先保留机制关键追问（含「这词/什么意思/谁教」）
     key = [
         i
