@@ -3582,3 +3582,168 @@ def test_final_acceptance_premise_align_runs_before_semantic_budget(monkeypatch)
     assert seen[0][3].startswith("爸你站哪边的")
     assert score == 80
     assert budget.used == 0
+
+
+def _n_adjacent_candidate() -> list[dict[str, str]]:
+    """N 稿：两个旁观拍相邻落地 → 同一个孩子连说（#138 真实形态的抽象版）。"""
+    lines = [
+        ("妈妈", "昭昭，这盘饺子好不好吃呀？"),
+        ("昭昭", "难吃无比，我没改口。"),
+        ("灿灿", "这话我可有点不信，你别蒙我。"),
+        ("灿灿", "行，那我就等着看你怎么办。"),
+        ("昭昭", "妈妈像一个暴踩的老虎。"),
+        ("妈妈", "你就不能祝我像一个公主？"),
+        ("昭昭", "她还没现出原形呢。"),
+        ("妈妈", "行吧，服了。"),
+    ]
+    return [{"speaker": sp, "line": ln} for sp, ln in lines]
+
+
+def test_terminal_adjacency_close_runs_before_gate_and_saves_budget(monkeypatch):
+    """唯一扣分项是机器可修的连说时，先拆连说再评分，不烧 LLM 修稿预算。
+
+    #138 实测：结构闸门只剩「存在同人连说」-15 就判 65，两轮 LLM 修稿都花在
+    人写的语义上，最后报「修稿预算耗尽 stage=final_acceptance；structure_score:65」。
+    """
+    from app.services.daily_story.quality import _has_consecutive_sibling
+    from app.services.gold_story.gold_chat import finalize
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+
+    def attach(chat, _row):
+        out = dict(chat)
+        score = 65 if _has_consecutive_sibling(out["dialogue"]) else 80
+        out["quality"] = {"structure_score": score, "score": score}
+        return out
+
+    def gate(chat):
+        score = int((chat.get("quality") or {}).get("structure_score") or 0)
+        if score < 75:
+            raise ValueError(f"structure_score:{score}")
+        return score
+
+    def fix(*_args, **_kwargs):  # pragma: no cover - 不该被调用
+        raise AssertionError("行序可机械修复，不该烧 LLM 修稿预算")
+
+    monkeypatch.setattr(
+        finalize,
+        "run_gold_chat_final_acceptance",
+        lambda chat, row, sid=None, **_k: chat,
+    )
+    budget = GoldChatRepairBudget(max_repairs=0)
+    out, score = finalize.run_gold_chat_final_acceptance_with_semantic_repair(
+        {"story_type": "N", "dialogue": _n_adjacent_candidate()},
+        {"title": "测试"},
+        sid="TEST",
+        st_final="N",
+        banned=[],
+        mom_max=3,
+        source_type="field",
+        attach_score=attach,
+        gate_score=gate,
+        normalize_chat=lambda c: c,
+        fix_llm=fix,
+        validate_chat=lambda c: None,
+        repair_budget=budget,
+    )
+
+    assert not _has_consecutive_sibling(out["dialogue"])
+    assert score == 80
+    assert budget.used == 0
+
+
+def test_repair_exhaustion_stores_gate_snapshot_quality(monkeypatch):
+    """预算耗尽落库的候选必须带闸门时刻的分数，而不是上一次的旧 quality。"""
+    from app.services.gold_story.gold_chat import finalize
+    from app.services.gold_story.gold_chat.repair import (
+        GoldChatRepairBudget,
+        GoldChatRepairExhausted,
+    )
+
+    def attach(chat, _row):
+        out = dict(chat)
+        out["quality"] = {
+            "structure_score": 65,
+            "score": 65,
+            "structure_cons": ["存在同人连说"],
+        }
+        return out
+
+    def gate(_chat):
+        raise ValueError("structure_score:65")
+
+    def fix(*_args, **_kwargs):  # pragma: no cover - 预算为 0 不该调用
+        raise AssertionError("预算已耗尽，不得进入 LLM 修稿")
+
+    chat = {
+        "story_type": "K",
+        "dialogue": _n_adjacent_candidate(),
+        "quality": {"structure_score": 80, "score": 80, "structure_cons": []},
+    }
+    budget = GoldChatRepairBudget(max_repairs=0)
+    with pytest.raises(GoldChatRepairExhausted) as caught:
+        finalize.run_gold_chat_final_acceptance_with_semantic_repair(
+            chat,
+            {"title": "测试"},
+            sid="TEST",
+            st_final="K",
+            banned=[],
+            mom_max=1,
+            source_type="field",
+            attach_score=attach,
+            gate_score=gate,
+            normalize_chat=lambda c: c,
+            fix_llm=fix,
+            validate_chat=lambda c: None,
+            repair_budget=budget,
+        )
+
+    pending = caught.value.candidate["quality"]
+    assert pending["structure_score"] == 65
+    assert pending["structure_cons"] == ["存在同人连说"]
+    assert pending["review_status"] == "review_pending"
+    assert "structure_score:65" in pending["review_failure_reason"]
+
+
+def test_repair_exhaustion_rescores_candidate_that_failed_before_gate(monkeypatch):
+    """校验/覆盖先失败时也要临门补算一次分，别把上一次的旧 quality 落成人审依据。"""
+    from app.services.gold_story.gold_chat import finalize
+    from app.services.gold_story.gold_chat.repair import (
+        GoldChatRepairBudget,
+        GoldChatRepairExhausted,
+    )
+
+    def attach(chat, _row):
+        out = dict(chat)
+        out["quality"] = {"structure_score": 72, "score": 72}
+        return out
+
+    def gate(_chat):  # pragma: no cover - 校验已失败
+        raise AssertionError("校验没过就不该走到结构闸门")
+
+    def validate(_chat):
+        raise ValueError("正文总字数须≥240，当前220")
+
+    chat = {
+        "story_type": "K",
+        "dialogue": _n_adjacent_candidate(),
+        "quality": {"structure_score": 80, "score": 80},
+    }
+    budget = GoldChatRepairBudget(max_repairs=0)
+    with pytest.raises(GoldChatRepairExhausted) as caught:
+        finalize.run_gold_chat_final_acceptance_with_semantic_repair(
+            chat,
+            {"title": "测试"},
+            sid="TEST",
+            st_final="K",
+            banned=[],
+            mom_max=1,
+            source_type="field",
+            attach_score=attach,
+            gate_score=gate,
+            normalize_chat=lambda c: c,
+            fix_llm=lambda *_a, **_k: {"dialogue": []},
+            validate_chat=validate,
+            repair_budget=budget,
+        )
+
+    assert caught.value.candidate["quality"]["structure_score"] == 72

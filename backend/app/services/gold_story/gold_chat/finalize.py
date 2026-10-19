@@ -174,6 +174,42 @@ def _try_final_hard_floor_one_char_close(
     return closed, True
 
 
+def _try_terminal_sibling_adjacency_close(
+    chat: dict[str, Any],
+    *,
+    validate_chat: Any,
+    beat_chain: list[Any] | None = None,
+) -> dict[str, Any]:
+    """结构评分之前的终态连说兜底：行序类问题机械修，不烧 LLM 修稿预算。
+
+    连说判据只看「说话人 + 相邻位置」，修复动作与类型补丁同源（插短反应、不删句）。
+    前面各层（类型补丁 / seed 补拍 / 契约重排）都可能把相邻同人重新排到一起，
+    而结构评分只认最终行序，所以这一步必须发生在最终行序之后、``attach_score`` 之前。
+    修完仍不合法（字数/句数/speaker 被撑破）就退回原稿，交回原有失败链路，
+    不引入新的失败方式。
+    """
+    from app.services.gold_story.gold_chat.patch import (
+        repair_sibling_adjacency_terminal,
+    )
+
+    repaired, notes = repair_sibling_adjacency_terminal(
+        dict(chat),
+        beat_chain=beat_chain,
+    )
+    if not notes:
+        return chat
+    try:
+        _validate_chat_or_repairable(validate_chat, repaired)
+    except Exception:
+        logger.info(
+            "gold_chat terminal adjacency repair rejected notes=%s",
+            notes,
+        )
+        return chat
+    logger.info("gold_chat terminal adjacency repaired notes=%s", notes)
+    return repaired
+
+
 def _is_export_repairable(exc: BaseException) -> bool:
     if isinstance(exc, GoldChatAcceptanceIncomplete):
         return False
@@ -1202,6 +1238,9 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
     last_err: str | None = None
     attempt = 0
     duplicate_rescue_used = 0
+    # 结构闸门那一刻的评分快照：失败落库必须用它，不能用 current 里上一次的旧
+    # quality（#138：库里候选写着结构 80，报错却是 65，人工确认会被误导）。
+    gate_scored: dict[str, Any] | None = None
     # 已**尝试**补过的缺拍（beat 号）：同一拍反复补说明是契约/生成根因，
     # 不是措辞问题，禁止反复插行（专家裁决）。按"尝试"记账而非"成功"，
     # 否则补行被拒（超上限/speaker 不符）时会每轮重试到天荒地老。
@@ -1220,6 +1259,7 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                 premise_align_tried = True
                 logger.info("gold_chat final beat coverage close applied")
     while True:
+        gate_scored = None
         try:
             try:
                 _validate_chat_or_repairable(validate_chat, current)
@@ -1259,7 +1299,15 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                         for sp, text in missing_coverage
                     ],
                 )
+            # 终态连说兜底：行序类缺陷机械可修，必须在评分对象定稿前拆开，
+            # 否则会白烧一轮 LLM 修稿预算（#138 实测）。
+            current = _try_terminal_sibling_adjacency_close(
+                current,
+                validate_chat=validate_chat,
+                beat_chain=_final_acceptance_row_context(current, row)[0],
+            )
             scored = attach_score(current, row)
+            gate_scored = scored
             struct = _gate_structure_or_raise(gate_score, scored)
             current = scored
             accepted = run_gold_chat_final_acceptance(current, row, sid=sid)
@@ -1306,7 +1354,17 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                         )
                     else:
                         budget.note_failure(str(exc))
-                        pending: dict[str, Any] = dict(current)
+                        pending_base: dict[str, Any] = (
+                            gate_scored if gate_scored is not None else current
+                        )
+                        if gate_scored is None:
+                            # 还没走到结构闸门就失败（校验/覆盖/语义先挂）：临门补算一次，
+                            # 落库必须是「导致失败的这一刻」的分，而不是上一次的旧快照。
+                            try:
+                                pending_base = attach_score(dict(current), row)
+                            except BaseException:
+                                pending_base = current
+                        pending: dict[str, Any] = dict(pending_base)
                         raw_pending_quality = pending.get("quality")
                         pending_quality: dict[str, Any] = (
                             dict(raw_pending_quality)
@@ -1315,6 +1373,12 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                         )
                         pending_quality["review_status"] = "review_pending"
                         pending_quality["review_failure_reason"] = str(exc)
+                        if gate_scored is None:
+                            # 分是失败后补算的，不是闸门判定值：显式标源，
+                            # 免得人工把校验/语义失败误读成「结构挂了」。
+                            pending_quality["structure_score_source"] = (
+                                "recomputed_pre_gate"
+                            )
                         pending["quality"] = pending_quality
                         raise GoldChatRepairExhausted(
                             stage="final_acceptance",

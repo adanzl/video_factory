@@ -2014,6 +2014,58 @@ def test_n_ask_patch_never_overflows_parent_budget():
     ), "追问拍须由家长落地"
 
 
+def test_n_terminal_adjacency_repair_splits_reordered_siblings():
+    """seed 重建/补拍之后又排到一起的同人连说，必须由终态兜底拆开（#138）。"""
+    from app.services.gold_story.gold_chat.patch import (
+        repair_sibling_adjacency_terminal,
+    )
+
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "问饺子好不好吃"},
+        {"beat": 2, "speaker": "灿灿", "intent": "我不信"},
+        {"beat": 3, "speaker": "灿灿", "intent": "我看你怎么办"},
+    ]
+    dialogue = [
+        {"speaker": "妈妈", "line": "昭昭，这盘饺子好不好吃呀？"},
+        {"speaker": "灿灿", "line": "我不信，你别蒙我。"},
+        {"speaker": "灿灿", "line": "行，那我就等着看你怎么办。"},
+        {"speaker": "昭昭", "line": "这饺子难吃无比。"},
+        {"speaker": "妈妈", "line": "你再说一遍试试。"},
+    ]
+    out, notes = repair_sibling_adjacency_terminal(
+        {"story_type": "N", "dialogue": dialogue},
+        beat_chain=chain,
+    )
+    assert notes
+    speakers = [str(r["speaker"]) for r in out["dialogue"]]
+    assert all(
+        a != b
+        for a, b in zip(speakers, speakers[1:], strict=False)
+        if a in {"昭昭", "灿灿"}
+    ), speakers
+    # 只插短反应、不删句，且不改动传入的原文
+    assert len(out["dialogue"]) == len(dialogue) + 1
+    assert [r["speaker"] for r in dialogue] == ["妈妈", "灿灿", "灿灿", "昭昭", "妈妈"]
+
+
+def test_terminal_adjacency_repair_is_non_n_noop():
+    """非 N 类型不归这条兜底管：调用返回原稿，交回各自类型补丁。"""
+    from app.services.gold_story.gold_chat.patch import (
+        repair_sibling_adjacency_terminal,
+    )
+
+    story = {
+        "story_type": "K",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先拿到的三轮车。"},
+            {"speaker": "灿灿", "line": "你松手！"},
+        ],
+    }
+    out, notes = repair_sibling_adjacency_terminal(story, beat_chain=[])
+    assert notes == []
+    assert out is story
+
+
 def test_parent_budget_zero_still_blocks_parent_lines():
     """反例：契约要求家长预算为 0 时，家长说话仍须被拦（别把兜底放宽成不设限）。"""
     from app.services.gold_story.gold_chat.validate import validate_chat_hard

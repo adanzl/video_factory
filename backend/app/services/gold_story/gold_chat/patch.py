@@ -4292,6 +4292,38 @@ def apply_n_alternation_lines_patch(
     return out, [f"N孩子交替补反应句:{inserted}"]
 
 
+def repair_sibling_adjacency_terminal(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    rounds: int = 3,
+) -> tuple[dict[str, Any], list[str]]:
+    """孩子相邻连说的终态兜底：最终行序确定之后、结构评分之前再清一次。
+
+    判据只认「说话人 + 相邻位置」这一抽象不变量（不认剧情/词表）：同一孩子
+    在两行相连就是连说。修复动作与类型补丁共用同一套（插一句另一个孩子的
+    短反应，不删句），属确定性可解项，不该拿 LLM 修稿预算去换。
+
+    之所以要单独做成终态动作：清连说不是单调的，任何后续重排/补拍插入都能
+    重新造出相邻同人（#138：契约重排与终检补拍都在清理之后）。调用方在最终
+    行序后跑一次，就能把「补丁被后续步骤覆盖」降级成可检测的终态违规。
+    """
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    data = dict(story)
+    notes: list[str] = []
+    for _ in range(max(1, int(rounds))):
+        data, round_notes = apply_n_alternation_lines_patch(
+            data, beat_chain=beat_chain,
+        )
+        if not round_notes:
+            break
+        notes.extend(round_notes)
+    if not notes:
+        return story, []
+    return data, notes
+
+
 def apply_n_contract_local_patches(
     story: dict[str, Any],
     *,
@@ -4471,6 +4503,15 @@ def apply_n_contract_local_patches(
     narration_notes = patch_dialogue_narration_to_speech(data)
     if narration_notes:
         notes.append(f"N旁白句转口语{len(narration_notes)}句")
+    # ── 真·终态：连说必须在**所有**重排/插入之后清，而本函数最后几步正是重排 ──
+    # 上面那个「终极收敛」循环在 seed 重建（build_n_two_kid_dialogue）之前，
+    # 重排会把刚拆开的相邻同人又排到一起，出去时带着连说（#138 实测：
+    # 候选出 refine 后仍第 9、10 句同人，结构分被扣到 65）。
+    data, _terminal_alt = repair_sibling_adjacency_terminal(
+        data, beat_chain=list(beat_chain or [])
+    )
+    if _terminal_alt:
+        notes.extend(_terminal_alt)
     if not notes:
         return story, []
     return data, notes
