@@ -27,6 +27,21 @@ from typing import Any, Iterator, Optional, TypeVar
 _T = TypeVar("_T")
 
 
+def hub_safe_lock() -> Any:
+    """gevent hub 上可让出的锁。
+
+    main.py 是 ``monkey.patch_all(..., thread=False)``，``threading.Lock`` 是真实
+    OS 锁：greenlet A 持锁并 yield 后，greenlet B 再 ``acquire()`` 会堵死整个 hub
+    （接口全部无响应）。共享状态一律用 gevent 的 Semaphore。
+    """
+    try:
+        from gevent.lock import Semaphore
+
+        return Semaphore(1)
+    except ImportError:  # pragma: no cover - gevent 是运行依赖
+        return threading.Lock()
+
+
 def run_in_background(func: Callable[[], None], *, daemon: bool = True) -> None:
     """后台 greenlet 执行，不等待结果。
 

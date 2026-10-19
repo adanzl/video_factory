@@ -10,6 +10,8 @@ playwright>=1.49
 qrcode>=8.2
 Pillow>=10.0
 redis>=5.0
+# 定时调度（每日签到等，见 ENABLE_SCHEDULER）
+apscheduler>=3.10,<4
 websocket-client>=1.8
 # 金故事 H0b（yt-dlp + faster-whisper + 烧录字幕 OCR）
 yt-dlp>=2025.3.31

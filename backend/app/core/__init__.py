@@ -1,5 +1,7 @@
 from __future__ import annotations
+import logging
 import time
+from typing import Any
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from app.api import register_api
@@ -13,6 +15,9 @@ from worker.recovery import (
 )
 app_logger, access_logger = setup_server_logging(log_dir=config.log_dir, is_production=config.is_production)
 log = app_logger
+
+# 全局 APScheduler 实例（gevent 版），由 main.py 调 start_scheduler() 拉起
+_scheduler: Any = None
 
 def _recover_stuck_jobs() -> None:
     try:
@@ -42,6 +47,59 @@ def _recover_stuck_gold_story_pending() -> None:
         log.exception(
             'startup recovery failed, gold story pending queue may still be stuck',
         )
+
+def start_scheduler() -> None:
+    """启动 APScheduler（gevent 版）并注册每日签到定时任务。
+
+    只在 `python backend/main.py` 常驻进程里调用；worker CLI / 测试不拉起调度器。
+    受 `ENABLE_SCHEDULER` 总开关控制：关闭时调度器不启动，所有定时任务（含每日签到）
+    都不会运行，手动「立即运行」不受影响。重复调用幂等。
+    """
+    global _scheduler
+    if _scheduler is not None:
+        return
+    if not config.enable_scheduler:
+        log.info('ENABLE_SCHEDULER=false，调度器未启动：定时签到等定时任务不会运行')
+        return
+    try:
+        from apscheduler.executors.gevent import GeventExecutor
+        from apscheduler.schedulers.gevent import GeventScheduler
+
+        from app.services.checkin.checkin_mgr import checkin_mgr
+
+        logging.getLogger('apscheduler').setLevel(logging.WARNING)
+        scheduler = GeventScheduler(
+            executors={'default': GeventExecutor()},
+            job_defaults={
+                'coalesce': True,
+                'max_instances': 1,
+                'misfire_grace_time': 3600,
+            },
+        )
+        scheduler.start()
+        _scheduler = scheduler
+        checkin_mgr.apply_schedule(scheduler)
+        log.info('scheduler started')
+    except Exception:
+        log.exception('scheduler start failed')
+
+
+def get_scheduler() -> Any:
+    """当前调度器实例；未启动时返回 None。"""
+    return _scheduler
+
+
+def stop_scheduler() -> None:
+    global _scheduler
+    if _scheduler is None:
+        return
+    try:
+        _scheduler.shutdown(wait=False)
+    except Exception:
+        log.exception('scheduler shutdown failed')
+    finally:
+        _scheduler = None
+
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -96,4 +154,4 @@ def create_app() -> Flask:
         _recover_stuck_daily_stories()
         _recover_stuck_gold_story_pending()
     return app
-__all__ = ['access_logger', 'app_logger', 'create_app', 'get_app', 'log']
+__all__ = ['access_logger', 'app_logger', 'create_app', 'get_app', 'log', 'get_scheduler', 'start_scheduler', 'stop_scheduler']

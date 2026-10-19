@@ -80,7 +80,7 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f("port", "PORT", "端口", "number", min_value=1, max_value=65535),
             _f("cors_origins", "CORS_ORIGINS", "跨域来源", description="逗号分隔"),
             _f("redis_url", "REDIS_URL", "Redis URL"),
-            _f("enable_scheduler", "ENABLE_SCHEDULER", "定时调度", "bool"),
+            _f("enable_scheduler", "ENABLE_SCHEDULER", "定时调度", "bool", description="总开关：关闭后调度器不启动，每日签到等定时任务不会运行（手动「立即运行」不受影响）"),
         ),
     ),
     ConfigGroupDef(
@@ -462,6 +462,21 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
                 "活动话题名",
                 "text",  # type: ignore[union-attr]
                 description="chat 投稿活动话题（topic_id），默认「闪闪发光的家庭日」",
+            ),
+        ),
+    ),
+    ConfigGroupDef(
+        id="checkin",
+        label="每日签到",
+        items=(
+            _f(
+                "dc_dir",
+                "DC_DIR",
+                "签到项目目录",
+                description=(
+                    "daily-checkin 所在目录（含 run.sh 与 dc-db）；留空则整个签到功能不启用。"
+                    "其余运行参数（脚本、结果库、超时、定时）在「工具 → 每日签到」页的设置里改，存在 Redis"
+                ),
             ),
         ),
     ),

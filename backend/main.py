@@ -79,6 +79,9 @@ if __name__ == "__main__":
         )
         env_info = "production" if IS_PRODUCTION else "development"
         log.info("Server started on http://%s:%s (using gevent, env=%s)", HOST, PORT, env_info)
+        from app.core import start_scheduler
+
+        start_scheduler()
         http_server.serve_forever()
     except ImportError as exc:
         log.error("Gevent 相关模块导入失败: %s", exc)

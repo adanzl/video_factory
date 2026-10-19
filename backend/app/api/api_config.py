@@ -32,5 +32,22 @@ def update_config_route():
     except ValueError as exc:
         raise APIError(str(exc)) from exc
 
+    _reapply_schedules(result["updated"])
     logger.info("[CONFIG] updated attrs: %s", ", ".join(result["updated"]))
     return json_ok(result)
+
+
+def _reapply_schedules(updated_attrs: list[str]) -> None:
+    """改了签到定时相关配置后立即重建定时任务，不必重启进程。"""
+    if not any(attr.startswith("dc_") for attr in updated_attrs):
+        return
+    from app.core import get_scheduler
+    from app.services.checkin.checkin_mgr import checkin_mgr
+
+    scheduler = get_scheduler()
+    if scheduler is None:
+        return
+    try:
+        checkin_mgr.apply_schedule(scheduler)
+    except Exception:
+        logger.exception("[CONFIG] 重建签到定时失败")

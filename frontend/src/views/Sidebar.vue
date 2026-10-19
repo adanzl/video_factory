@@ -39,6 +39,10 @@
           <el-icon><Search /></el-icon>
           <template #title>片段搜索</template>
         </el-menu-item>
+        <el-menu-item index="/tools">
+          <el-icon><Tools /></el-icon>
+          <template #title>工具</template>
+        </el-menu-item>
         <el-menu-item index="/config">
           <el-icon><Setting /></el-icon>
           <template #title>配置</template>
@@ -55,7 +59,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera, Search, Headset, ChatDotRound, Medal } from "@element-plus/icons-vue";
+import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera, Search, Headset, ChatDotRound, Medal, Tools } from "@element-plus/icons-vue";
 import { useAppStore } from "@/stores/app";
 
 const emit = defineEmits<{

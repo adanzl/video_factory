@@ -14,6 +14,7 @@ def register_api(app: Flask) -> None:
     from app.api.api_config import bp as config_bp
     from app.api.api_daily_story import bp as daily_story_bp
     from app.api.api_gold_chat import bp as gold_chat_bp
+    from app.api.api_checkin import bp as checkin_bp
 
     register_error_handlers(app)
     app.register_blueprint(jobs_bp)
@@ -26,3 +27,4 @@ def register_api(app: Flask) -> None:
     app.register_blueprint(config_bp)
     app.register_blueprint(daily_story_bp)
     app.register_blueprint(gold_chat_bp)
+    app.register_blueprint(checkin_bp)
