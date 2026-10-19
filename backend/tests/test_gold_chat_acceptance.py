@@ -3076,6 +3076,73 @@ def _missing_beat_exc(line_no: int, beat: int, speaker: str, intent: str):
     )
 
 
+def test_final_acceptance_skips_seed_premise_when_speaker_already_present(monkeypatch):
+    """说话人已开过口却仍缺某拍 → 该 seed 素材不可用，禁止本地把原文硬塞回对白。
+
+    #138 实测：ASR/OCR 乱码 seed 行因「缺前提」被本地补回对白，随即被判语病，
+    修稿预算被反复烧光。判据只用「整场缺席」这一抽象事实，不看具体乱码词：
+    生成端读过整条 seed 却没写这一拍，就意味着它判断这条素材不可用。
+    """
+    from app.services.daily_story import review
+    from app.services.gold_story.gold_chat import finalize
+    from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "这盘饺子好不好吃呀？"},
+        {"speaker": "灿灿", "line": "这话我可有点不信，你别蒙我。"},
+        {"speaker": "昭昭", "line": "难吃无比，我没改口。"},
+        {"speaker": "妈妈", "line": "那你就不能祝我像公主？"},
+        {"speaker": "昭昭", "line": "她还没现出原形呢。"},
+        {"speaker": "妈妈", "line": "行吧，服了。"},
+    ]
+    dialogue_seed = [
+        {"speaker": "妈妈", "intent": "这盘饺子好不好吃呀"},
+        {"speaker": "灿灿", "intent": "这话我可有点不信，你别蒙我"},
+        {"speaker": "昭昭", "intent": "难吃无比，我没改口"},
+        {"speaker": "灿灿", "intent": "行，那我就等着看你怎么办"},
+        {"speaker": "昭昭", "intent": "她还没现出原形呢"},
+        {"speaker": "妈妈", "intent": "行吧，服了"},
+    ]
+    calls = {"semantic": 0, "fix": 0}
+
+    def semantic(_theme, chat, **_kwargs):
+        calls["semantic"] += 1
+        lines = [str(item.get("line") or "") for item in chat["dialogue"]]
+        assert not any("等着看你怎么办" in ln for ln in lines), (
+            "已开口说话人的 seed 拍不得被本地硬塞回对白"
+        )
+        if calls["semantic"] == 1:
+            raise _missing_beat_exc(3, 4, "灿灿", "行，那我就等着看你怎么办")
+        return ExportSemanticReviewResult(completed=True)
+
+    def fix(story, _feedback, **_kwargs):
+        calls["fix"] += 1
+        return dict(story)
+
+    monkeypatch.setattr(review, "collect_export_blocking_local_issues", lambda _s: [])
+    monkeypatch.setattr(review, "run_export_semantic_review", semantic)
+    budget = GoldChatRepairBudget(max_repairs=1)
+
+    finalize.run_gold_chat_final_acceptance_with_semantic_repair(
+        _story(dialogue),
+        {},
+        sid="TEST",
+        st_final="N",
+        banned=[],
+        mom_max=1,
+        source_type="field",
+        attach_score=lambda c, _r: c,
+        gate_score=lambda _c: 80,
+        normalize_chat=lambda c: c,
+        fix_llm=fix,
+        validate_chat=lambda _c: None,
+        repair_budget=budget,
+        dialogue_seed=dialogue_seed,
+    )
+
+    assert calls["fix"] == 1, "该拍应进入带反馈修稿，而不是本地补回 seed 原文"
+
+
 def test_semantic_repair_allows_one_missing_beat_insertion():
     """缺拍只靠改故障行补不出前提，应放行「补拍一行」并保留其余全部原行。"""
     from app.services.gold_story.gold_chat.finalize import (

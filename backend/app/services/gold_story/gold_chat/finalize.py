@@ -1325,12 +1325,30 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                 # 机械缺陷（seed 前提拍没落地）先做确定性补拍：不消耗语义预算，
                 # 补出的稿子若仍不合法则放弃，落回原有预算修稿/重掷链路。
                 premise_align_tried = True
-                relocated = _try_local_premise_align(
-                    current,
-                    dialogue_seed,
-                    validate_chat,
-                    only_speakers=_semantic_missing_beat_speakers(exc),
+                # 只补「整场缺席」的角色拍。说话人在正文里已经开过口、却仍缺某一拍，
+                # 说明生成时读过整条 seed 却没写这一拍——即这条素材它判断不可用
+                # （源稿损坏时，这条恰恰是 ASR/OCR 的乱码原文）。此时把 seed 原文
+                # 硬塞回对白，等于用机械手段推翻那个判断，还必然被语义终检判语病
+                # （#138 实测：乱码 seed 被本地补回 → 反复报语病 → 预算耗尽）。
+                absent = (
+                    {
+                        sp
+                        for sp, _text in missing_seed_rows(
+                            current.get("dialogue"), dialogue_seed
+                        )
+                    }
+                    if dialogue_seed
+                    else set()
                 )
+                retry_speakers = _semantic_missing_beat_speakers(exc) & absent
+                relocated: dict[str, Any] | None = None
+                if retry_speakers:
+                    relocated = _try_local_premise_align(
+                        current,
+                        dialogue_seed,
+                        validate_chat,
+                        only_speakers=retry_speakers,
+                    )
                 if relocated is not None:
                     current = relocated
                     logger.info(
