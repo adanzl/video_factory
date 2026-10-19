@@ -2514,6 +2514,39 @@ def test_authority_rule_patch_refuses_narrative_disguised_as_dialogue():
     assert _intent_to_rule_line("立规：端出奖品，宣布比赛开始") == ""
 
 
+def test_intent_text_is_speakable_rejects_narrative_intents():
+    """叙述型 intent 不是台词：动作/神态、括号说明、纯陈述句都不算「说出口的话」。"""
+    from app.services.gold_story.gold_chat.patch import _intent_text_is_speakable
+
+    # 叙述发生了什么（第三人称事件）→ 不能当台词
+    assert not _intent_text_is_speakable("端来黑面饺子，问昭昭好不好吃")
+    assert not _intent_text_is_speakable("妈妈端来一盘黑面饺子，站在桌边")
+    assert not _intent_text_is_speakable("他转身走了")
+    # 带括号动作标记 → 观众听不见
+    assert not _intent_text_is_speakable("（望窗外）今天天真好")
+    # 当面说出口的话 → 放行
+    assert _intent_text_is_speakable("你就不能祝我像一个公主")
+    assert _intent_text_is_speakable("作业写完了吗")
+
+
+def test_authority_opening_line_falls_back_instead_of_narrating_and_dialogue():
+    """权威开场 intent 兜底：叙述型 intent 不再被加个问号当台词念出来。"""
+    from app.services.gold_story.gold_chat.patch import (
+        _intent_to_authority_opening_line,
+    )
+
+    story = {"conflict_core": "抢遥控器"}
+    assert (
+        _intent_to_authority_opening_line("震怒：端来黑面饺子，问昭昭好不好吃", story)
+        == "别磨蹭了，先把该做的事做完！"
+    )
+    # 已具备口语形态的 intent 仍可原样落地
+    assert (
+        _intent_to_authority_opening_line("震怒：你就不能祝我像一个公主", story)
+        == "你就不能祝我像一个公主？"
+    )
+
+
 @pytest.mark.parametrize("recover", [True, False])
 def test_local_duplicate_repair_rechecks_all_gates(monkeypatch, recover):
     from app.services.daily_story import review

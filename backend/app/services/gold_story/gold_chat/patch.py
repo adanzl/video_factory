@@ -2617,6 +2617,37 @@ def patch_authority_trim_after_cede(
     return out, True
 
 
+def _intent_text_is_speakable(text: str, *, speaker: str = "") -> bool:
+    """契约 intent 原文能否直接当台词念：只放行**已经具备口语形态**的 intent。
+
+    intent 回答「这一拍要表达什么」，台词回答「这一拍对谁说什么」——两者语义
+    层级不同。原样搬运叙述句，等于让角色念剧本提示；源稿损坏时（ASR/OCR 乱码
+    混在 intent 里）更会把乱码念出来。判据三条，均不绑定具体剧情词：
+
+    ① 不是分镜动作/神态说明（动作观众听不见）；
+    ② 不含括号说明、转述腔、站外称谓（说出来就不是角色在说话）；
+    ③ 具备当面说话的形态：第二人称/称呼，或疑问、祈使语气。
+       纯陈述句描述的是「发生了什么」，不是「对谁说了什么」，不予放行。
+    """
+    from app.services.gold_story.scene import (
+        collect_voice_errors,
+        looks_like_narration_line,
+    )
+
+    raw = str(text or "").strip()
+    if len(raw) < 4:
+        return False
+    if looks_like_narration_line(raw):
+        return False
+    if collect_voice_errors([{"speaker": speaker, "line": raw}]):
+        return False
+    addressed = bool(
+        re.search(r"你|您|咱|喂|听着|别|不许|快|赶紧|给(?:我|妈妈|爸爸)", raw)
+    )
+    modal = bool(re.search(r"[？?]|吗|呢|吧$|怎么|为什么|什么|谁|哪|几|多少", raw))
+    return addressed or modal
+
+
 def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str:
     """beat1 权威触发 intent → 可说出口首句；责备/立规/定责共用。"""
     from app.services.gold_story.gold_chat.validate import (
@@ -2649,7 +2680,9 @@ def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str
     if text and _RE_BLAME_LINE.search(text):
         line = text if text.endswith(("。", "！", "？")) else f"{text}？"
         return line[:28] + ("。" if len(line) > 28 else "")
-    if text and len(text) >= 4:
+    # 原文兜底：只在 intent 本身已经是当面说出口的话时才用（见判据注释），
+    # 叙述型 intent 一律交给 seed 或上层限定范围修稿，不在本地伪造台词。
+    if text and _intent_text_is_speakable(text):
         line = text if text.endswith(("。", "！", "？")) else f"{text}？"
         return line[:28]
     return "别磨蹭了，先把该做的事做完！"
