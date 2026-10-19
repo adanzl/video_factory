@@ -9,7 +9,7 @@
 
     <div v-else class="flex h-full min-h-0 flex-col gap-3">
       <el-alert
-        v-if="!environment.run_script_exists || !environment.db_exists || !environment.db_script_exists"
+        v-if="!environment.run_script_exists || !environment.db_script_exists"
         type="warning"
         show-icon
         :closable="false"
@@ -19,10 +19,7 @@
           <span v-else-if="!environment.run_script_exists"
             >找不到运行脚本：{{ environment.run_script }}</span
           >
-          <span v-else-if="!environment.db_script_exists"
-            >找不到查询脚本：{{ environment.db_script }}</span
-          >
-          <span v-else>结果库尚未生成：{{ environment.db_path }}（跑一次后自动出现）</span>
+          <span v-else>找不到查询脚本：{{ environment.db_script }}</span>
         </template>
       </el-alert>
 
@@ -101,7 +98,6 @@
         <span class="ml-auto flex flex-wrap items-center gap-2">
           <span class="text-xs text-gray-500">{{ scheduleText }}</span>
           <el-button size="small" link @click="openSetting">设置</el-button>
-          <el-button size="small" link @click="showDetail = true">环境 / 输出</el-button>
         </span>
       </div>
 
@@ -169,81 +165,94 @@
       />
     </div>
 
-    <el-dialog v-model="showDetail" title="签到运行详情" width="720px">
-      <el-descriptions :column="1" border size="small">
-        <el-descriptions-item label="签到目录">
-          {{ environment.dc_dir }}
-          <el-tag
-            :type="environment.dc_dir_exists ? 'success' : 'danger'"
-            size="small"
-            class="ml-2"
-          >
-            {{ environment.dc_dir_exists ? "存在" : "缺失" }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="运行脚本">
-          {{ environment.run_script }}
-          <el-tag
-            :type="environment.run_script_exists ? 'success' : 'danger'"
-            size="small"
-            class="ml-2"
-          >
-            {{ environment.run_script_exists ? "存在" : "缺失" }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="结果库">
-          {{ environment.db_path }}
-          <el-tag :type="environment.db_exists ? 'success' : 'danger'" size="small" class="ml-2">
-            {{ environment.db_exists ? "存在" : "缺失" }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="查询脚本">
-          {{ environment.db_script }}
-          <el-tag
-            :type="environment.db_script_exists ? 'success' : 'danger'"
-            size="small"
-            class="ml-2"
-          >
-            {{ environment.db_script_exists ? "存在" : "缺失" }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="定时">
-          {{ schedule.enabled ? `每天 ${schedule.run_time} (${schedule.timezone})` : "未启用" }}
-        </el-descriptions-item>
-      </el-descriptions>
+    <el-dialog v-model="showSetting" title="签到设置" width="640px" align-center>
+      <div class="flex max-h-[70vh] flex-col gap-5 overflow-auto pr-1">
+        <section class="overflow-hidden rounded-md border border-gray-200">
+          <div class="grid grid-cols-2 divide-x divide-gray-100">
+            <label class="block px-3 py-3">
+              <span class="text-xs text-gray-500">运行脚本</span>
+              <el-input
+                v-model="settingForm.run_script"
+                placeholder="run.sh"
+                size="small"
+                class="mt-1.5"
+              />
+              <span class="mt-1 block text-xs text-gray-400">DC_DIR 下的文件名</span>
+            </label>
+            <label class="block px-3 py-3">
+              <span class="text-xs text-gray-500">超时</span>
+              <div class="mt-1.5 flex items-center gap-2">
+                <el-input-number
+                  v-model="settingForm.timeout_sec"
+                  :min="60"
+                  :max="86400"
+                  :step="60"
+                  size="small"
+                  controls-position="right"
+                />
+                <span class="text-xs text-gray-400">秒</span>
+              </div>
+            </label>
+          </div>
+          <div class="flex items-center justify-between gap-3 border-t border-gray-100 px-3 py-3">
+            <div class="min-w-0">
+              <div class="text-xs text-gray-500">每天定时</div>
+              <div class="mt-1 text-xs text-gray-400">
+                {{ schedule.enabled ? `已生效 ${scheduleText}` : "当前未启用" }}
+                · 按本机时区
+              </div>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+              <el-time-picker
+                v-model="settingForm.run_time"
+                format="HH:mm"
+                value-format="HH:mm"
+                placeholder="09:00"
+                :disabled="!settingForm.auto_run"
+                size="small"
+                class="w-28!"
+              />
+              <el-switch v-model="settingForm.auto_run" />
+            </div>
+          </div>
+        </section>
 
-      <div class="mt-4 text-xs text-gray-500">上次输出（末尾 40 行）</div>
-      <pre class="mt-1 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs whitespace-pre-wrap">{{
-        runState.last_result?.output_tail || "（还没有运行记录）"
-      }}</pre>
-    </el-dialog>
+        <section>
+          <div class="mb-2 text-xs text-gray-400">环境</div>
+          <div class="overflow-hidden rounded-md border border-gray-200">
+            <div
+              v-for="row in environmentRows"
+              :key="row.label"
+              class="flex items-center gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0"
+            >
+              <span class="w-16 shrink-0 text-xs text-gray-500">{{ row.label }}</span>
+              <span class="min-w-0 flex-1 truncate font-mono text-xs text-gray-700" :title="row.path">
+                {{ row.path || "-" }}
+              </span>
+              <el-tag :type="row.ok ? 'success' : 'danger'" size="small" effect="plain">
+                {{ row.ok ? "存在" : "缺失" }}
+              </el-tag>
+            </div>
+          </div>
+        </section>
 
-    <el-dialog v-model="showSetting" title="签到设置" width="520px">
-      <el-form label-width="110px" size="small">
-        <el-form-item label="运行脚本">
-          <el-input v-model="settingForm.run_script" placeholder="run.sh" />
-          <div class="mt-1 text-xs text-gray-400">相对 DC_DIR 的文件名</div>
-        </el-form-item>
-        <el-form-item label="运行超时">
-          <el-input-number v-model="settingForm.timeout_sec" :min="60" :max="86400" :step="60" />
-          <span class="ml-2 text-xs text-gray-400">秒</span>
-        </el-form-item>
-        <el-form-item label="启用定时">
-          <el-switch v-model="settingForm.auto_run" />
-        </el-form-item>
-        <el-form-item label="每日运行时刻">
-          <el-time-picker
-            v-model="settingForm.run_time"
-            format="HH:mm"
-            value-format="HH:mm"
-            placeholder="09:00"
-            :disabled="!settingForm.auto_run"
-          />
-        </el-form-item>
-        <el-form-item label="时区">
-          <el-input v-model="settingForm.run_tz" placeholder="Asia/Shanghai" />
-        </el-form-item>
-      </el-form>
+        <section>
+          <div class="mb-2 flex items-baseline justify-between gap-3">
+            <span class="text-xs text-gray-400">上次输出</span>
+            <span
+              v-if="lastResultText"
+              class="text-xs"
+              :class="runState.last_result?.success ? 'text-gray-400' : 'text-red-500'"
+            >
+              {{ lastResultText }}
+            </span>
+          </div>
+          <pre
+            class="max-h-48 overflow-auto rounded-md border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-xs leading-5 whitespace-pre-wrap text-gray-600"
+            >{{ runState.last_result?.output_tail || "还没有运行记录" }}</pre
+          >
+        </section>
+      </div>
       <template #footer>
         <el-button size="small" @click="showSetting = false">取消</el-button>
         <el-button
@@ -307,7 +316,6 @@ interface CheckinSchedule {
   enabled: boolean;
   scheduler_enabled: boolean;
   run_time: string;
-  timezone: string;
   next_run_at: string | null;
 }
 
@@ -316,7 +324,6 @@ interface CheckinSetting {
   timeout_sec: number;
   auto_run: boolean;
   run_time: string;
-  run_tz: string;
 }
 
 interface CheckinEnvironment {
@@ -325,8 +332,6 @@ interface CheckinEnvironment {
   dc_dir_exists: boolean;
   run_script: string;
   run_script_exists: boolean;
-  db_path: string;
-  db_exists: boolean;
   db_script: string;
   db_script_exists: boolean;
 }
@@ -358,8 +363,6 @@ const environment = reactive<CheckinEnvironment>({
   dc_dir_exists: false,
   run_script: "",
   run_script_exists: false,
-  db_path: "",
-  db_exists: false,
   db_script: "",
   db_script_exists: false,
 });
@@ -374,7 +377,6 @@ const schedule = reactive<CheckinSchedule>({
   enabled: false,
   scheduler_enabled: true,
   run_time: "",
-  timezone: "",
   next_run_at: null,
 });
 const redisOk = ref(true);
@@ -385,7 +387,6 @@ const dateFilter = ref<string>();
 const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("checkinPageSize") || "15", 10));
 const total = ref(0);
-const showDetail = ref(false);
 const showSetting = ref(false);
 const saving = ref(false);
 const settingForm = reactive<CheckinSetting>({
@@ -393,7 +394,6 @@ const settingForm = reactive<CheckinSetting>({
   timeout_sec: 1800,
   auto_run: false,
   run_time: "09:00",
-  run_tz: "Asia/Shanghai",
 });
 
 const tableWrap = ref<HTMLElement | null>(null);
@@ -436,6 +436,12 @@ const scheduleText = computed(() => {
   const next = schedule.next_run_at ? ` · 下次 ${shortTime(schedule.next_run_at)}` : "";
   return `每天 ${schedule.run_time}${next}`;
 });
+
+const environmentRows = computed(() => [
+  { label: "目录", path: environment.dc_dir, ok: environment.dc_dir_exists },
+  { label: "运行脚本", path: environment.run_script, ok: environment.run_script_exists },
+  { label: "查询脚本", path: environment.db_script, ok: environment.db_script_exists },
+]);
 
 const recordRowClass = ({ row }: { row: CheckinRecord }) =>
   row.status === "fail" ? "checkin-row-fail" : "";

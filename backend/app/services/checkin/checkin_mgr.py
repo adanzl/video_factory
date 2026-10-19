@@ -1,14 +1,14 @@
 """每日签到：读 dc-db 结果、触发 run.sh、定时调度。
 
-数据源是 daily-checkin 项目自带的 SQLite（`dc-db/data/dailycheckin.db`，表
-`t_checkin_records`）。查询统一走该项目自己的 `dc-db/dcdb.py`
-（`sql ... --json`，只读连接），本模块不直接开库、不写库；
+数据源是 daily-checkin 项目自带的 SQLite（表 `t_checkin_records`）。
+查询只调用该项目自己的 `dc-db/dcdb.py`（`sql ... --json`，只读），
+不传库路径、不打开库文件，库在哪由脚本自己决定；
 签到本身由该项目的 `run.sh` 完成。
 
 运行参数分两处存放：
 
 - `.env` 只保留 `DC_DIR`（daily-checkin 所在目录）。为空即整个功能关闭。
-- 其余参数（脚本名、超时、是否定时、定时时刻与时区）存在 Redis 的
+- 其余参数（脚本名、超时、是否定时、定时时刻）存在 Redis 的。定时按本机时区。
   `video_factory:auto_checkin_setting`（JSON），见 `setting()` / `save_setting()`。
 """
 
@@ -21,7 +21,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.config import config
 from app.utils import rds
@@ -40,10 +39,8 @@ _QUERY_TIMEOUT_SEC = 30.0
 
 _SETTING_KEY = "auto_checkin_setting"
 _DEFAULT_RUN_SCRIPT = "run.sh"
-_DEFAULT_DB_RELATIVE = "dc-db/data/dailycheckin.db"
 _DEFAULT_TIMEOUT_SEC = 1800
 _DEFAULT_RUN_TIME = "09:00"
-_DEFAULT_RUN_TZ = "Asia/Shanghai"
 _TIMEOUT_MIN = 60
 _TIMEOUT_MAX = 86400
 
@@ -70,7 +67,6 @@ def _default_setting() -> dict[str, Any]:
         "timeout_sec": _DEFAULT_TIMEOUT_SEC,
         "auto_run": False,
         "run_time": _DEFAULT_RUN_TIME,
-        "run_tz": _DEFAULT_RUN_TZ,
     }
 
 
@@ -116,16 +112,7 @@ def _normalize_setting(raw: dict[str, Any], *, base: dict[str, Any] | None = Non
     if "run_time" in raw:
         merged["run_time"] = _parse_run_time(raw.get("run_time"))
 
-    if "run_tz" in raw:
-        tz = str(raw.get("run_tz") or "").strip()
-        if not tz:
-            raise CheckinSettingError("时区不能为空")
-        try:
-            ZoneInfo(tz)
-        except (ZoneInfoNotFoundError, ValueError) as exc:
-            raise CheckinSettingError(f"未知时区：{tz!r}") from exc
-        merged["run_tz"] = tz
-
+    merged.pop("run_tz", None)
     return merged
 
 
@@ -212,16 +199,9 @@ class CheckinMgr:
         dc_dir = config.dc_dir
         return dc_dir / str(setting["run_script"]) if dc_dir is not None else None
 
-    def _db_path(self) -> Path | None:
-        """结果库固定在签到项目内，不单独配置。"""
-        dc_dir = config.dc_dir
-        if dc_dir is None:
-            return None
-        return dc_dir / _DEFAULT_DB_RELATIVE
-
     @property
     def db_script(self) -> Path | None:
-        """daily-checkin 自带的查询脚本（结果库只经它读，本模块不直接开库）。"""
+        """daily-checkin 自带的查询脚本。库路径由它自己决定，这里不传、不读文件。"""
         dc_dir = config.dc_dir
         return dc_dir / _DB_SCRIPT_RELATIVE if dc_dir is not None else None
 
@@ -262,7 +242,6 @@ class CheckinMgr:
             "enabled": config.dc_enabled and bool(setting["auto_run"]),
             "scheduler_enabled": config.enable_scheduler,
             "run_time": setting["run_time"],
-            "timezone": setting["run_tz"],
             "next_run_at": next_run,
         }
 
@@ -274,8 +253,6 @@ class CheckinMgr:
             "dc_dir_exists": False,
             "run_script": "",
             "run_script_exists": False,
-            "db_path": "",
-            "db_exists": False,
             "db_script": "",
             "db_script_exists": False,
         }
@@ -285,9 +262,8 @@ class CheckinMgr:
             setting = self.setting()
         dc_dir = self.dc_dir
         run_script = self._run_script_path(setting)
-        db_path = self._db_path()
         db_script = self.db_script
-        if dc_dir is None or run_script is None or db_path is None or db_script is None:
+        if dc_dir is None or run_script is None or db_script is None:
             return disabled
         return {
             "enabled": True,
@@ -295,8 +271,6 @@ class CheckinMgr:
             "dc_dir_exists": dc_dir.is_dir(),
             "run_script": str(run_script),
             "run_script_exists": run_script.is_file(),
-            "db_path": str(db_path),
-            "db_exists": db_path.is_file(),
             "db_script": str(db_script),
             "db_script_exists": db_script.is_file(),
         }
@@ -311,25 +285,19 @@ class CheckinMgr:
                 return str(venv_python)
         return sys.executable
 
-    def _run_sql(
-        self, sql: str, params: dict[str, Any] | None, db_path: Path | None
-    ) -> list[dict[str, Any]]:
+    def _run_sql(self, sql: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
         """通过 dc-db/dcdb.py 执行一条只读 SQL，返回对象数组。
 
-        走脚本而不是直接开库：库是 daily-checkin 的私有产物，表名迁移、只读连接
-        等约定都由它维护；这里任何异常都只记日志并返回空，页面不会 500。
+        不传 --db、也不先看库文件在不在：库路径、只读连接由表脚本自己决定。
+        任何异常都只记日志并返回空，页面不会 500。
         """
         db_script = self.db_script
-        if not config.dc_enabled or db_path is None or db_script is None:
-            return []
-        if not db_script.is_file() or not db_path.is_file():
+        if not config.dc_enabled or db_script is None or not db_script.is_file():
             return []
 
         cmd = [
             self._dcdb_python(),
             str(db_script),
-            "--db",
-            str(db_path),
             "sql",
             sql,
             "--json",
@@ -357,11 +325,9 @@ class CheckinMgr:
             return []
         return [row for row in payload if isinstance(row, dict)]
 
-    def _query(
-        self, sql: str, params: dict[str, Any] | None, db_path: Path | None
-    ) -> list[dict[str, Any]]:
+    def _query(self, sql: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
         """执行只读查询；SQL 里的 `{table}` 会换成结果表名。"""
-        return self._run_sql(sql.format(table=_TABLE), params, db_path)
+        return self._run_sql(sql.format(table=_TABLE), params)
 
     def list_records(
         self,
@@ -388,16 +354,14 @@ class CheckinMgr:
             where.append("substr(created_at, 1, 10) = :date")
             params["date"] = date
         clause = f" WHERE {' AND '.join(where)}" if where else ""
-        db_path = self._db_path()
 
-        total_rows = self._query(f"SELECT COUNT(*) AS n FROM {{table}}{clause}", params, db_path)
+        total_rows = self._query(f"SELECT COUNT(*) AS n FROM {{table}}{clause}", params)
         total = int(total_rows[0]["n"]) if total_rows else 0
         offset = max(page - 1, 0) * page_size
         items = self._query(
             "SELECT id, created_at, platform, platform_name, account_index, status, message"
             f" FROM {{table}}{clause} ORDER BY id DESC LIMIT {int(page_size)} OFFSET {int(offset)}",
             params,
-            db_path,
         )
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 
@@ -407,14 +371,12 @@ class CheckinMgr:
             setting, degraded = self.read_setting()
         else:
             setting, degraded = _default_setting(), False
-        db_path = self._db_path()
 
         today = datetime.now().strftime("%Y-%m-%d")
         today_rows = self._query(
             "SELECT status, COUNT(*) AS n FROM {table}"
             " WHERE substr(created_at, 1, 10) = :today GROUP BY status",
             {"today": today},
-            db_path,
         )
         today_map = {str(row["status"]): int(row["n"]) for row in today_rows}
         ok_today = today_map.get(_STATUS_OK, 0)
@@ -432,7 +394,6 @@ class CheckinMgr:
             " FROM {table} t GROUP BY platform, platform_name"
             " ORDER BY fail_count DESC, platform ASC",
             None,
-            db_path,
         )
         for row in platforms:
             row["total"] = int(row["total"] or 0)
@@ -526,7 +487,6 @@ class CheckinMgr:
         """构造 CronTrigger；配置非法时返回 None（此时不动现有任务）。"""
         try:
             run_time = _parse_run_time(setting["run_time"])
-            ZoneInfo(str(setting["run_tz"]))
         except CheckinSettingError as exc:
             logger.error("[CHECKIN] 定时配置非法，保留现有定时任务：%s", exc)
             return None
@@ -534,9 +494,8 @@ class CheckinMgr:
         from apscheduler.triggers.cron import CronTrigger
 
         hour_text, minute_text = run_time.split(":", 1)
-        return CronTrigger(
-            hour=int(hour_text), minute=int(minute_text), timezone=setting["run_tz"]
-        )
+        # 不传 timezone：CronTrigger 用本机时区
+        return CronTrigger(hour=int(hour_text), minute=int(minute_text))
 
     def _drop_job(self, scheduler: Any, reason: str) -> None:
         if scheduler.get_job("daily_checkin") is not None:
@@ -590,7 +549,7 @@ class CheckinMgr:
             replace_existing=True,
         )
         logger.info(
-            "[CHECKIN] 已注册定时签到：每天 %s (%s)", setting["run_time"], setting["run_tz"]
+            "[CHECKIN] 已注册定时签到：每天 %s（本机时区）", setting["run_time"]
         )
 
     def _scheduled_run(self) -> None:
