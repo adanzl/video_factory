@@ -2949,6 +2949,142 @@ def _numeral_set(text: str) -> set[str]:
     return {m.group(0) for m in _RE_NUMERAL.finditer(str(text or ""))}
 
 
+def apply_n_stun_close_window_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """N：把孩子的「愣住/接不住」句移进**末四句窗口**。
+
+    N 的机制终点是「对方被问住」，机检只在末四句里找愣住。但 seed 的拍序
+    常把语塞排在中段（#135 实测：妈妈设问→灿灿「呃……我……」→妈妈再追问，
+    语塞被夹在两个家长问句之间），于是语句上是接得住的，闸门却判「收束须愣住」。
+
+    做法：句子内容不动，只调整位置——把该句移到**最后一个家长句之前**
+    （家长的收尾句保持最末）。移动后若造成同一孩子连说，就近换位。
+    """
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if len(dlg) < 5:
+        return story, []
+    from app.services.daily_story.story_types.n.validate import (
+        RE_STUN_CLOSE,
+        stun_close_hit,
+    )
+
+    lines = [str(r.get("line") or "") for r in dlg]
+    if stun_close_hit(lines):
+        return story, []
+    parents = {"妈妈", "爸爸"}
+    kids = {"昭昭", "灿灿"}
+
+    # 找最后一句「孩子被问住」：含愣住词、且不是反问（问句是追问不是破功）
+    stun_idx = -1
+    for i, row in enumerate(dlg):
+        sp = str(row.get("speaker") or "").strip()
+        ln = str(row.get("line") or "").strip()
+        if sp not in kids or not ln:
+            continue
+        if not RE_STUN_CLOSE.search(ln):
+            continue
+        if ln.rstrip().endswith(("？", "?")):
+            continue
+        stun_idx = i
+    if stun_idx < 0:
+        return story, []
+
+    parent_idx = [i for i, r in enumerate(dlg) if str(r.get("speaker") or "").strip() in parents]
+    target = parent_idx[-1] if parent_idx and parent_idx[-1] > stun_idx else len(dlg) - 1
+    if target == stun_idx:
+        return story, []
+
+    row = dlg.pop(stun_idx)
+    if stun_idx < target:
+        target -= 1
+    target = max(0, min(target, len(dlg)))
+    dlg.insert(target, row)
+
+    def _adjacent(rows: list[dict[str, Any]]) -> bool:
+        sp = [str(r.get("speaker") or "").strip() for r in rows]
+        return any(a == b and a in kids for a, b in zip(sp, sp[1:]))
+
+    if _adjacent(dlg):
+        # 就近换位：原位置往前后各试一格，仍不行就放弃（交给上层重掷）
+        dlg.pop(target)
+        for alt in (target - 1, target + 1, target - 2):
+            if 0 <= alt <= len(dlg):
+                dlg.insert(alt, row)
+                if not _adjacent(dlg):
+                    break
+                dlg.pop(alt)
+        else:
+            return story, []
+    if not stun_close_hit([str(r.get("line") or "") for r in dlg]):
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, [f"N愣住句移入末四段:{stun_idx + 1}→{target + 1}"]
+
+
+_RE_SELF_THIRD_PERSON = re.compile(
+    r"(?:不能这样弄|别这样弄|别这么弄|别欺负|不能这么弄|别弄)(昭昭|灿灿)"
+)
+
+
+def apply_n_parent_beat_ownership_patch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """N：孩子用**第三人称说自己**时，把这句还给家长。
+
+    判据窄且确定：孩子不会说「不能这样弄<自己的名字>」——那是大人打圆场的口气
+    （#135 实测：妈妈那句「不能这样弄X，跟他玩吧」被写进灿灿名下，
+    变成灿灿在骂自己，读者直接读不通）。
+
+    只认「劝止词 + 自己的名字」这一种形态。**不要**用 `_line_fulfills_beat`
+    按 beat 宽匹配：它会把「这玩具是妈妈买的，归我」误判成家长的追问拍，
+    于是把昭昭的开场句改挂到妈妈名下，反而制造 `保真-seed角色`（实测 20 次）。
+    """
+    if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if len(dlg) < 3:
+        return story, []
+    kids = {"昭昭", "灿灿"}
+    parents = ["妈妈", "爸爸"]
+    # 本场谁是家长：优先用契约里出现过的家长名
+    present_parent = ""
+    for item in beat_chain or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        if sp in parents:
+            present_parent = sp
+            break
+    if not present_parent:
+        present_parent = "妈妈"
+
+    notes: list[str] = []
+    changed = 0
+    for row in dlg:
+        sp = str(row.get("speaker") or "").strip()
+        if sp not in kids:
+            continue
+        line = str(row.get("line") or "").strip()
+        m = _RE_SELF_THIRD_PERSON.search(line)
+        if not m or m.group(1) != sp:
+            continue
+        row["speaker"] = present_parent
+        notes.append(f"劝止句误挂孩子:{sp}→{present_parent}")
+        changed += 1
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, notes[:3]
+
 def apply_n_seed_numeral_fidelity_patch(
     story: dict[str, Any],
     *,
@@ -2982,43 +3118,51 @@ def apply_n_seed_numeral_fidelity_patch(
         src_bare = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", src)
         if not src_bare:
             continue
-        best_i, best_score = -1, 0.0
+        # 逐个候选句：所有「同说话人 + 提到同一批数量词」的句子都要还原。
+        # 不能只改重合度最高的那一句——LLM 会在稿子里**重复**同一个数量主张，
+        # 只改第一处就会留下前后矛盾（#135 实测：第5句已是「二十年」，
+        # 第14句又写「我喊了七年，你才两年」，两位审稿人同时判自相矛盾）。
+        fixed_any = False
         for i, row in enumerate(dlg):
             if str(row.get("speaker") or "").strip() != sp:
                 continue
-            cur_bare = re.sub(
-                r"[^\u4e00-\u9fffA-Za-z0-9]", "", str(row.get("line") or "")
-            )
+            cur_line = str(row.get("line") or "")
+            cur_nums = _numeral_set(cur_line)
+            if not cur_nums or cur_nums == src_nums:
+                continue
+            # 必须与 seed 句共享至少一个数量词，否则是无关句，不要动
+            if not (cur_nums & src_nums):
+                continue
+            cur_bare = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", cur_line)
             if not cur_bare:
                 continue
-            same = sum(1 for a, b in zip(src_bare, cur_bare) if a == b)
-            score = same / max(len(src_bare), len(cur_bare))
-            if score > best_score:
-                best_i, best_score = i, score
-        # 重合度阈值：太低说明是另一句话，不要动
-        if best_i < 0 or best_score < 0.55:
-            continue
-        cur_line = str(dlg[best_i].get("line") or "")
-        cur_nums = _numeral_set(cur_line)
-        if not cur_nums or cur_nums == src_nums:
-            continue
-        # 按**出现顺序**逐个对齐：句子结构没变时，第 i 个数量词对应第 i 个。
-        # 不能按长度/内容匹配——「两年→两年」（本来就有）和「七年→二十年」
-        # 会互相抢位，实测把「七年」替换成了「两年」。
-        cur_seq = [m.group(0) for m in _RE_NUMERAL.finditer(cur_line)]
-        src_seq = [m.group(0) for m in _RE_NUMERAL.finditer(src)]
-        if len(cur_seq) != len(src_seq):
-            continue
-        new_line = cur_line
-        for bad, good in zip(cur_seq, src_seq):
-            if bad != good:
-                new_line = new_line.replace(bad, good, 1)
-        if new_line != cur_line:
-            dlg[best_i]["line"] = new_line
+            # 用**字符集合重合度**（Jaccard），不用位置比对：
+            # LLM 复述同一主张时会换语序（「反正我喊了七年，你才两年」
+            # vs seed「你才喊了两年妈，我喊了二十年妈妈」），位置比对得 0 分，
+            # 集合重合度约 0.47。改用集合后既能认出同一主张，又不会误吞无关句。
+            _s1, _s2 = set(src_bare), set(cur_bare)
+            if not _s1 or not _s2:
+                continue
+            if len(_s1 & _s2) / len(_s1 | _s2) < 0.4:
+                continue
+            # 按**出现顺序**逐个对齐：句子结构没变时，第 i 个数量词对应第 i 个。
+            # 按长度/内容匹配会互相抢位（实测把「七年」替换成了「两年」）。
+            cur_seq = [m.group(0) for m in _RE_NUMERAL.finditer(cur_line)]
+            src_seq = [m.group(0) for m in _RE_NUMERAL.finditer(src)]
+            if len(cur_seq) != len(src_seq):
+                continue
+            new_line = cur_line
+            for bad, good in zip(cur_seq, src_seq):
+                if bad != good:
+                    new_line = new_line.replace(bad, good, 1)
+            if new_line != cur_line:
+                dlg[i]["line"] = new_line
+                fixed_any = True
+                notes.append(
+                    f"seed数量词还原:第{i + 1}句{sp}{sorted(cur_nums)}→{sorted(src_nums)}"
+                )
+        if fixed_any:
             changed += 1
-            notes.append(
-                f"seed数量词还原:{sp}{sorted(cur_nums)}→{sorted(src_nums)}"
-            )
     if not changed:
         return story, []
     out = dict(story)
@@ -4258,6 +4402,13 @@ def apply_n_contract_local_patches(
     )
     if _final_close:
         notes.extend(_final_close)
+    # 家长拍归属：打圆场/立规/追问被安到孩子名下时改回家长
+    data, _own_notes = apply_n_parent_beat_ownership_patch(
+        data, beat_chain=list(beat_chain or [])
+    )
+    if _own_notes:
+        notes.extend(_own_notes)
+
     # seed 数量词保真：LLM 会把「不可能的数字」改合理，正好抹平荒诞笑点
     data, _num_notes = apply_n_seed_numeral_fidelity_patch(
         data, dialogue_seed=list(dialogue_seed or [])
@@ -4280,6 +4431,15 @@ def apply_n_contract_local_patches(
         data = dict(data)
         data["dialogue"] = _final_rows
         notes.extend(_final_notes)
+
+    # 愣住句必须落在末四句（N 收束是机制终点，不能夹在中段）。
+    # 必须放在 seed 重建**之后**：重建会按 seed 拍序重排，放在前面会被覆盖
+    # （#135 实测：补丁打了但成稿排序仍回到 seed 原序，闸门照旧判缺愣住）。
+    data, _stun_notes = apply_n_stun_close_window_patch(
+        data, beat_chain=list(beat_chain or [])
+    )
+    if _stun_notes:
+        notes.extend(_stun_notes)
     # 补句/改写可能带进旁白腔：最后统一过一遍旁白→口语（既有的转换器）
     from app.services.gold_story.scene import patch_dialogue_narration_to_speech
 
