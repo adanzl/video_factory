@@ -1641,6 +1641,17 @@ def _append_n_contract_role_issues(
     if any(str(row.get("speaker") or "").strip() == asker for row in stun_rows):
         return
     speaker = str(stun_rows[0].get("speaker") or "").strip() or "?"
+    # 家长**点名问某个孩子**时，那个孩子被问住是机制本身，不是「破功主体被换人」。
+    # 原规则假设「家长问 ⇒ 必是家长破功」，但「妈妈点名问灿灿 → 灿灿答不上」
+    # 是合法形态（#135 实测：判词把设计的落点当成错误，60 次全灭）。
+    # 判据窄：问句那拍的 intent 里必须出现被问住者的名字。
+    if speaker:
+        for _beat_no, entry in entries:
+            _intent = str(entry.get("intent") or entry.get("beat") or "")
+            if not _N_BEAT_QUESTION_INTENT.search(_intent):
+                continue
+            if speaker in _intent:
+                return
     issues.append(
         _issue(
             lines=[],

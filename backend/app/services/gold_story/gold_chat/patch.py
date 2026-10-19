@@ -3149,12 +3149,17 @@ def apply_n_seed_numeral_fidelity_patch(
             # 按长度/内容匹配会互相抢位（实测把「七年」替换成了「两年」）。
             cur_seq = [m.group(0) for m in _RE_NUMERAL.finditer(cur_line)]
             src_seq = [m.group(0) for m in _RE_NUMERAL.finditer(src)]
-            if len(cur_seq) != len(src_seq):
-                continue
-            new_line = cur_line
-            for bad, good in zip(cur_seq, src_seq):
-                if bad != good:
-                    new_line = new_line.replace(bad, good, 1)
+            if len(cur_seq) == len(src_seq):
+                new_line = cur_line
+                for bad, good in zip(cur_seq, src_seq):
+                    if bad != good:
+                        new_line = new_line.replace(bad, good, 1)
+            else:
+                # 数量词个数都变了：不是改写，是**整段论据被换掉**。
+                # 典型是 LLM 把「一年顶十年，我喊了七十年」压缩成「我喊了二十年」，
+                # 荒诞换算规则整条消失——恰好是笑点本体（#135 实测，两位审稿人
+                # 都以「7 岁说 20 年」判硬伤）。此时以 seed 那句为准整句还原。
+                new_line = src if len(src) <= 24 else cur_line
             if new_line != cur_line:
                 dlg[i]["line"] = new_line
                 fixed_any = True
@@ -4095,13 +4100,33 @@ def apply_n_partner_ask_to_pile_on_patch(
         for e in entries
         if str(e.get("speaker") or "").strip() in {"昭昭", "灿灿"}
     }
+    if not slot_owner:
+        # 没有声明词槽的 N 故事（机制靠「自创规则」而非某个怪词，如 #135
+        # 「一年顶十年」）就没有 slot_owner，原实现在这里直接早退，
+        # 于是搭档的关键追问完全不受约束（实测 27 次被判「追问归属」）。
+        # 退而用「机制拍最多」的孩子当机制主体，与其它 N 补丁同一口径。
+        from app.services.gold_story.scene import _N_MECHANISM_CHILD_RE
+
+        _mech: dict[str, int] = {}
+        for e in entries:
+            sp_e = str(e.get("speaker") or "").strip()
+            if sp_e in kids and _N_MECHANISM_CHILD_RE.search(
+                str(e.get("intent") or "")
+            ):
+                _mech[sp_e] = _mech.get(sp_e, 0) + 1
+        if _mech:
+            slot_owner = max(_mech, key=lambda k: _mech[k])
     partner = next((k for k in sorted(kids) if k != slot_owner), "") if slot_owner else ""
     if not partner:
         return story, []
+    # 搭档自己那些「关键追问」拍不能当改写素材，否则改出来的还是追问
+    from app.services.gold_story.gold_chat.validate import _RE_KEY_ASK_CONTENT
+
     partner_intents = [
         str(e.get("intent") or "")
         for e in entries
         if str(e.get("speaker") or "").strip() == partner
+        and not _RE_KEY_ASK_CONTENT.search(str(e.get("intent") or ""))
     ]
     dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
     existing = [str(r.get("line") or "").strip() for r in dlg]

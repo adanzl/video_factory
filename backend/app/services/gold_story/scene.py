@@ -1622,9 +1622,14 @@ def build_n_two_kid_dialogue(
         first_mom = next((i for i, r in enumerate(out) if _is_parent(r)), -1)
         if first_mom > 0:
             out.insert(0, out.pop(first_mom))
+    # 家长收束句保持在 seed 里的相对位置：只有当它后面**全是填充句**时才挪到最后。
+    # 原写法无条件把它拽到末尾，于是「语塞→打圆场→孩子回应」被改成
+    # 「语塞→孩子回应→打圆场」，收束反而离开了机制的落点（#135 实测）。
     last_parent = max((i for i, r in enumerate(out) if _is_parent(r)), default=-1)
     if last_parent >= 0 and last_parent != len(out) - 1:
-        out.append(out.pop(last_parent))
+        tail_rows = out[last_parent + 1:]
+        if all(is_n_filler_intent(str(r.get("line") or "")) for r in tail_rows):
+            out.append(out.pop(last_parent))
     # 收束后再插句会把「愣住」挤出末段窗口，插入点一律在末句之前
     close_idx = len(out) - 1
 
