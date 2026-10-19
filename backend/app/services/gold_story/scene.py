@@ -573,6 +573,20 @@ _N_STALE_PARTNER_BEAT = re.compile(
 )
 
 
+_N_FILLER_PREFIXES: tuple[str, ...] = tuple(x[:8] for x in _N_SECOND_KID_LINES)
+
+
+def is_n_filler_intent(text: str) -> bool:
+    """该意图是不是我方补的**态度填充句**（而非真实剧情）。
+
+    填充句被 `_pad_gold_chat_line` 加长过，尾巴会变，所以比前缀不比全等。
+    真实剧情（立规、反驳、语塞收束、抢答）不在此列——那些是素材，
+    任何"刷新"都不得覆盖。
+    """
+    t = str(text or "").strip()
+    return bool(t) and any(t.startswith(pref) for pref in _N_FILLER_PREFIXES)
+
+
 def refresh_second_kid_intents(
     contract: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
@@ -623,7 +637,7 @@ def refresh_second_kid_intents(
         # #135 实测：灿灿「一时语塞，答不上来」被换成「这话我可有点不信」，
         # 于是 N 类「收束须愣住」每轮必挂；昭昭的「加码立规」也被换掉，
         # 连带 seed 被写成模板句并落库，素材直接损坏。
-        if not _N_STALE_PARTNER_BEAT.search(cur):
+        if not (_N_STALE_PARTNER_BEAT.search(cur) or is_n_filler_intent(cur)):
             continue
         new_intent = _N_SECOND_KID_LINES[pool_i % len(_N_SECOND_KID_LINES)]
         pool_i += 1
@@ -1505,7 +1519,12 @@ def build_n_two_kid_dialogue(
             _n_token_of_intent(str(r.get("intent") or "")) for r in chain
         ]
         tokens_all = [t for t in tokens_all if t]
-        has_token = all(t in joined for t in tokens_all) if tokens_all else False
+        # 没有声明怪词的 N 故事（如 #135「喊妈年限」，靠荒诞规则而非某个词），
+        # tokens_all 为空 → 原写法 has_token=False 使守门**永不成立**，
+        # 于是每轮都把 LLM 精修稿整篇换成 seed 重建稿（只剩 6 句素材 + 模板填充），
+        # 连带带出「妈妈 3 句超限」「收束离开末四句」「开场因果倒置」。
+        # 没有词要守，就该视为已满足。
+        has_token = all(t in joined for t in tokens_all) if tokens_all else True
         if not siblings_adjacent and has_token:
             return [], []
     parents = {"妈妈", "爸爸"}
@@ -1589,7 +1608,17 @@ def build_n_two_kid_dialogue(
         out.append(row)
 
     # ② 顺序：家长立规在最前、收束在最后
-    if not _is_parent(out[0]):
+    #    「家长在最前」只对**契约首拍就是家长**的故事成立（家长先出题）。
+    #    若契约首拍是孩子（孩子先抢起来、家长中段才出声），强行前置会把
+    #    开场因果倒置，进而每轮被判「beat=1 须早于 beat=2」——
+    #    #135 实测 30 次全部栽在这里。这里按契约首拍定，不写死。
+    _first_beat_sp = ""
+    for _b in chain:
+        _first_beat_sp = str(_b.get("speaker") or "").strip()
+        if _first_beat_sp:
+            break
+    _want_parent_first = _first_beat_sp in parents
+    if _want_parent_first and not _is_parent(out[0]):
         first_mom = next((i for i, r in enumerate(out) if _is_parent(r)), -1)
         if first_mom > 0:
             out.insert(0, out.pop(first_mom))
@@ -1917,7 +1946,11 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
                     break
                 # 同上：只刷过期追问型 seed 行。真实素材（立规/抢答/语塞）
                 # 一律保留，否则 seed 会被写成契约叙述句甚至模板句并落库。
-                if not _N_STALE_PARTNER_BEAT.search(str(_r.get("intent") or "")):
+                _cur_seed = str(_r.get("intent") or "")
+                if not (
+                    _N_STALE_PARTNER_BEAT.search(_cur_seed)
+                    or is_n_filler_intent(_cur_seed)
+                ):
                     _pi += 1
                     continue
                 if str(_r.get("intent") or "") != _partner_beats[_pi]:
@@ -2130,9 +2163,15 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
     # 契约复用会保留库里旧意图，于是「追问时间/地点」这类旧写法一直活着，
     # 机检又拦它 → 每轮都判关键追问归属（#87 实测）。
     # 搭档的拍本来就是我方补的，每次刷新是安全的，且保证幂等。
+    # 只把**我方填充句**规整成池内规范顺序（保证幂等）；
+    # 真实剧情拍一律不动。原实现无条件覆盖搭档全部拍，会把机制方的
+    # 立规/抢答/语塞一起抹掉（#135 实测：昭昭被误判成搭档，5 条真实
+    # 拍全被换成「这话我可有点不信」，契约与 seed 双双向坏，且落库）。
     partner_rows = [
         r for r in out_rows
-        if isinstance(r, dict) and str(r.get("speaker") or "").strip() == partner
+        if isinstance(r, dict)
+        and str(r.get("speaker") or "").strip() == partner
+        and is_n_filler_intent(str(r.get("intent") or ""))
     ]
     for idx, row in enumerate(partner_rows):
         row["intent"] = _N_SECOND_KID_LINES[idx % len(_N_SECOND_KID_LINES)]

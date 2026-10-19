@@ -424,18 +424,42 @@ def _reroll_h3_on_retry(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
         or ""
     ).strip()
     h3 = structurize_story(title=title, story_raw=story_raw)
-    mech = str(h3.get("mechanism") or "").strip().upper()
-    st = str(h3.get("structure_type") or "").strip().upper()
+    # H3 原始判型要过一遍纠偏再落用：判型器的已知误判（如「家长问、孩子语塞」
+    # 被判成 M11+I）如果不纠，重掷会把已修正的类型又拉回旧值，
+    # 于是同一篇稿按旧类型的硬卡判，重掷多少次都不可能过（#135 实测：
+    # 契约已固定 N，重掷后 93 次闸门拿到 I）。
+    try:
+        from app.services.gold_story.structure_resolve import resolve_h3_structure
+
+        h3, _rer_notes = resolve_h3_structure(h3, story_raw=story_raw)
+    except Exception as rer_exc:
+        logger.info("gold_chat reroll structure resolve skipped: %s", rer_exc)
+    new_mech = str(h3.get("mechanism") or "").strip().upper()
+    new_st = str(h3.get("structure_type") or "").strip().upper()
+    cur_st = str(row.get("structure_type") or "").strip().upper()
+    cur_mech = str(row.get("mechanism") or "").strip().upper()
+
+    # 类型是**故事定性**，不是措辞旋钮：重掷只换契约写法（beat 角度）与 seed，
+    # 不换类型。原实现每次重掷都让 H3 重新判型，于是同一篇稿在 N/F/I 之间来回跳，
+    # 每轮按一个新类型的硬卡判，永远收敛不了（#135 实测：N→F→I 三轮全灭）。
+    # 类型纠偏由 resolve_structure_row 统一负责，重掷不再参与。
+    keep_type = bool(cur_st) and (cur_mech, cur_st) != ("", "")
     out = dict(row)
-    out["mechanism"] = mech
-    out["structure_type"] = st
+    if keep_type:
+        out["mechanism"] = cur_mech or new_mech
+        out["structure_type"] = cur_st
+    else:
+        out["mechanism"] = new_mech
+        out["structure_type"] = new_st
     if isinstance(h3.get("beat"), list) and h3["beat"]:
         payload["beat"] = h3["beat"]
     for key in ("structure_confidence", "structure_mapping_note", "funny_why"):
-        if h3.get(key) is not None:
+        if not keep_type and h3.get(key) is not None:
+            payload[key] = h3[key]
+        elif keep_type and key == "funny_why" and h3.get(key) is not None:
             payload[key] = h3[key]
     out["payload"] = payload
-    return out, f"{mech}+{st}"
+    return out, f"{out['mechanism']}+{out['structure_type']}"
 
 
 def _retry_structure_pair(
@@ -2068,6 +2092,22 @@ def convert_gold_chat(
             repair_budget = GoldChatRepairBudget(max_repairs=2, reserve_final=1)
             try:
                 chat = gold_story_to_gold_chat(row, repair_budget=repair_budget)
+                # 类型以**表列/契约为准**，不许草稿自己改判：LLM 每次重掷都会
+                # 顺手把 story_type 写成它自己以为的类型（#135 实测：契约已固定
+                # N，116 次闸门里 63 次拿到 I，于是按 I 的四条硬卡判一篇 N 稿，
+                # 永远不可能过）。类型是契约的一部分，不是措辞。
+                _row_st = str(row.get("structure_type") or "").strip().upper()
+                if _row_st and isinstance(chat, dict):
+                    _chat_st = str(chat.get("story_type") or "").strip().upper()
+                    if _chat_st != _row_st:
+                        logger.info(
+                            "[GOLD_CHAT] lock story_type %s -> %s source_id=%s",
+                            _chat_st or "(空)",
+                            _row_st,
+                            sid,
+                        )
+                        chat = dict(chat)
+                        chat["story_type"] = _row_st
                 finish_stage("draft")
                 chat, struct = _normalize_and_finalize(chat, row, repair_budget)
                 if draft_attempt > 1:
