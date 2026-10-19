@@ -2938,6 +2938,94 @@ def _close_line_index(
     return max(0, min(len(dlg) - 1, idx))
 
 
+# 中文数字 + 阿拉伯数字（含「二十」「七年」「两天」这类数量词）
+_RE_NUMERAL = re.compile(
+    r"[零一二两三四五六七八九十百千万亿]+(?:年|天|次|岁|个|块|分钟|小时|遍|口)|"
+    r"\d+(?:年|天|次|岁|个|块|分钟|小时|遍|口)?"
+)
+
+
+def _numeral_set(text: str) -> set[str]:
+    return {m.group(0) for m in _RE_NUMERAL.finditer(str(text or ""))}
+
+
+def apply_n_seed_numeral_fidelity_patch(
+    story: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """把 seed 里的**数量词**还原回正文。
+
+    seed 是素材事实：数字（喊了几年妈、几岁、几天…）来自原片，不是措辞。
+    LLM 修稿会以"这不合理"为由把它改成合理数字，恰好把童言无忌的荒诞抹平
+    （#135 实测：seed「我喊了二十年妈妈」被改写为「七年」——7 岁孩子说 7 年
+    是事实不是胡说，笑点当场消失，两位审稿人都因此判不成立）。
+
+    只对「同一个说话人 + 字符重合度高」的那一句还原数字，不做整句替换，
+    避免把 LLM 的扩写成果覆盖掉。
+    """
+    if not isinstance(dialogue_seed, list) or not dialogue_seed:
+        return story, []
+    dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    if not dlg:
+        return story, []
+    notes: list[str] = []
+    changed = 0
+    for item in dialogue_seed:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        src = str(item.get("line") or item.get("intent") or "").strip()
+        src_nums = _numeral_set(src)
+        if not sp or not src_nums:
+            continue
+        src_bare = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", src)
+        if not src_bare:
+            continue
+        best_i, best_score = -1, 0.0
+        for i, row in enumerate(dlg):
+            if str(row.get("speaker") or "").strip() != sp:
+                continue
+            cur_bare = re.sub(
+                r"[^\u4e00-\u9fffA-Za-z0-9]", "", str(row.get("line") or "")
+            )
+            if not cur_bare:
+                continue
+            same = sum(1 for a, b in zip(src_bare, cur_bare) if a == b)
+            score = same / max(len(src_bare), len(cur_bare))
+            if score > best_score:
+                best_i, best_score = i, score
+        # 重合度阈值：太低说明是另一句话，不要动
+        if best_i < 0 or best_score < 0.55:
+            continue
+        cur_line = str(dlg[best_i].get("line") or "")
+        cur_nums = _numeral_set(cur_line)
+        if not cur_nums or cur_nums == src_nums:
+            continue
+        # 按**出现顺序**逐个对齐：句子结构没变时，第 i 个数量词对应第 i 个。
+        # 不能按长度/内容匹配——「两年→两年」（本来就有）和「七年→二十年」
+        # 会互相抢位，实测把「七年」替换成了「两年」。
+        cur_seq = [m.group(0) for m in _RE_NUMERAL.finditer(cur_line)]
+        src_seq = [m.group(0) for m in _RE_NUMERAL.finditer(src)]
+        if len(cur_seq) != len(src_seq):
+            continue
+        new_line = cur_line
+        for bad, good in zip(cur_seq, src_seq):
+            if bad != good:
+                new_line = new_line.replace(bad, good, 1)
+        if new_line != cur_line:
+            dlg[best_i]["line"] = new_line
+            changed += 1
+            notes.append(
+                f"seed数量词还原:{sp}{sorted(cur_nums)}→{sorted(src_nums)}"
+            )
+    if not changed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = dlg
+    return out, notes[:3]
+
+
 def apply_n_seed_coverage_local_patch(
     story: dict[str, Any],
     *,
@@ -3479,11 +3567,16 @@ _N_META_TALK_RE = re.compile(
 # 早前这一池写过 #87 的具体内容（「好人给我钱」），于是任何 N 类故事
 # 只要用到这一池，就会凭空冒出「好人确实给我钱」这种别的故事的情节
 # （#135 实测：正文里出现了 #87 的台词）。态度池必须与剧情无关。
+# 这一池专门替换「空话/元话语」句，位置几乎总是**紧跟在对方一句主张之后**
+# （对方宣示所有权、放话、指责）。所以每条都必须能接住「主张」这个话头：
+# 表态不认、顶回去，且不引用任何具体剧情。
+# 早前写的是「我说的是真的，你爱信不信」——对方还没质疑真实性，这话头对不上，
+# 终检直接判「接不上」（#135 实测）。
 _N_INSIST_LINES: tuple[str, ...] = (
-    "反正我就是这么说的，你爱记不记都行。",
-    "我这人说话向来算数，你记下来就对了。",
-    "你怎么问都是这一句，我不会再改了。",
-    "我说出口的话从不反悔，你随便怎么想。",
+    "反正我就是不让，你能拿我怎么样！",
+    "我说不给就是不给，你别再问了！",
+    "你说了半天也没用，我还是这句！",
+    "我不管你怎么说，反正我不松口！",
 )
 
 # 第二个孩子的台词**按上一句的类型**选——这样位置就保证了咬合：
@@ -3665,11 +3758,16 @@ def apply_n_meta_talk_and_side_patch(
         return ""
 
     # ① 空话 → 有内容的嘴硬（孩子句）
-    for row in dlg:
+    for i, row in enumerate(dlg):
         sp = str(row.get("speaker") or "").strip()
         if sp in parents:
             continue
         if not _N_META_TALK_RE.search(str(row.get("line") or "")):
+            continue
+        # 紧跟在家长提问后的孩子句是**应答槽**，不能换成「反正我就是不让」
+        # 这类顶嘴——换成顶嘴就是答非所问（#135 实测：妈妈问「你妈是谁」，
+        # 昭昭被换成「不给就是不给」，终检判接不上）。
+        if i > 0 and str(dlg[i - 1].get("speaker") or "").strip() in parents:
             continue
         cand = _first_unused(_N_INSIST_LINES)
         if not cand:
@@ -4160,6 +4258,13 @@ def apply_n_contract_local_patches(
     )
     if _final_close:
         notes.extend(_final_close)
+    # seed 数量词保真：LLM 会把「不可能的数字」改合理，正好抹平荒诞笑点
+    data, _num_notes = apply_n_seed_numeral_fidelity_patch(
+        data, dialogue_seed=list(dialogue_seed or [])
+    )
+    if _num_notes:
+        notes.extend(_num_notes)
+
     # ── 最终成稿：按 seed 重排（内容来自 seed/契约，不写死剧情）──────────
     # 必须放在**所有**润色之后：LLM 扩写/修稿会自己发明情节
     # （实测过「上回在菜市场，好人塞给我五块钱」这类凭空事件），
