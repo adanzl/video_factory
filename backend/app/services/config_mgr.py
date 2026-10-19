@@ -475,7 +475,7 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
                 "签到项目目录",
                 description=(
                     "daily-checkin 所在目录（含 run.sh 与 dc-db）；留空则整个签到功能不启用。"
-                    "其余运行参数（脚本、结果库、超时、定时）在「工具 → 每日签到」页的设置里改，存在 Redis"
+                    "其余运行参数（脚本、超时、定时）在「工具 → 每日签到」页的设置里改，存在 Redis"
                 ),
             ),
         ),

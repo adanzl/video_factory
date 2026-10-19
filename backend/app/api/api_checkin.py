@@ -82,7 +82,7 @@ def post_run_route():
 
 @bp.get("/setting")
 def get_setting_route():
-    """运行参数（存在 Redis）：脚本名、结果库、超时、定时。未启用时返回空。"""
+    """运行参数（存在 Redis）：脚本名、超时、定时。未启用时返回空。"""
     enabled = checkin_mgr.is_enabled()
     setting, degraded = checkin_mgr.read_setting()
     return json_ok(

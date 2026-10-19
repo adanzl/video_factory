@@ -1,55 +1,18 @@
 <template>
-  <div>
+  <div class="checkin-page flex h-full min-h-0 flex-col bg-white">
     <el-empty
       v-if="!environment.enabled"
       description="未在 .env 配置 DC_DIR，每日签到功能未启用"
       :image-size="80"
+      class="m-auto"
     />
 
-    <template v-else>
-      <div class="mb-4 flex flex-wrap items-center gap-3">
-        <el-button
-          type="primary"
-          :disabled="loading"
-          :icon="Refresh"
-          size="small"
-          @click="fetchAll"
-        />
-        <el-button
-          type="success"
-          size="small"
-          :loading="runState.running"
-          :disabled="!environment.run_script_exists"
-          @click="handleRun"
-        >
-          {{ runState.running ? "运行中…" : "立即运行" }}
-        </el-button>
-        <el-tag v-if="runState.running" type="warning" size="small">
-          已跑 {{ runState.elapsed_sec }}s（{{
-            runState.trigger === "schedule" ? "定时" : "手动"
-          }}）
-        </el-tag>
-        <el-tag
-          v-else-if="runState.last_result"
-          :type="runState.last_result.success ? 'success' : 'danger'"
-          size="small"
-        >
-          上次 {{ runState.last_result.finished_at }} · exit {{ runState.last_result.exit_code }}
-        </el-tag>
-        <el-tag v-if="schedule.enabled" type="info" size="small">
-          定时 {{ schedule.run_time }} · 下次 {{ schedule.next_run_at || "-" }}
-        </el-tag>
-        <el-tag v-else type="info" size="small">未启用定时</el-tag>
-        <el-button size="small" link @click="openSetting">设置</el-button>
-        <el-button size="small" link @click="showDetail = true">环境 / 输出</el-button>
-      </div>
-
+    <div v-else class="flex h-full min-h-0 flex-col gap-3">
       <el-alert
         v-if="!environment.run_script_exists || !environment.db_exists || !environment.db_script_exists"
         type="warning"
         show-icon
         :closable="false"
-        class="mb-4"
       >
         <template #title>
           <span v-if="!environment.dc_dir_exists">签到目录不存在：{{ environment.dc_dir }}</span>
@@ -68,7 +31,6 @@
         :type="redisOk ? 'warning' : 'error'"
         show-icon
         :closable="false"
-        class="mb-4"
       >
         <template #title>
           <span v-if="!redisOk"
@@ -80,103 +42,132 @@
         </template>
       </el-alert>
 
-      <div class="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <el-card shadow="never" class="[&_.el-card__body]:py-3">
-          <div class="text-xs text-gray-500">今日签到</div>
-          <div class="text-xl font-medium">{{ today.date }}</div>
-        </el-card>
-        <el-card shadow="never" class="[&_.el-card__body]:py-3">
-          <div class="text-xs text-gray-500">成功</div>
-          <div class="text-xl font-medium text-green-600">{{ today.ok }}</div>
-        </el-card>
-        <el-card shadow="never" class="[&_.el-card__body]:py-3">
-          <div class="text-xs text-gray-500">失败</div>
-          <div class="text-xl font-medium text-red-600">{{ today.fail }}</div>
-        </el-card>
-        <el-card shadow="never" class="[&_.el-card__body]:py-3">
-          <div class="text-xs text-gray-500">平台数</div>
-          <div class="text-xl font-medium">{{ platforms.length }}</div>
-        </el-card>
+      <div class="flex flex-wrap items-center gap-2">
+        <el-button
+          type="primary"
+          :disabled="loading"
+          :icon="Refresh"
+          size="small"
+          @click="fetchAll"
+        />
+        <el-button
+          type="success"
+          size="small"
+          :loading="runState.running"
+          :disabled="!environment.run_script_exists"
+          @click="handleRun"
+        >
+          {{ runState.running ? "运行中…" : "立即运行" }}
+        </el-button>
+        <span v-if="runState.running" class="text-xs text-amber-600">
+          已跑 {{ runState.elapsed_sec }}s · {{ runState.trigger === "schedule" ? "定时" : "手动" }}
+        </span>
+        <span
+          v-else-if="lastResultText"
+          class="text-xs"
+          :class="runState.last_result?.success ? 'text-gray-500' : 'text-red-600'"
+        >
+          {{ lastResultText }}
+        </span>
+        <el-radio-group v-model="statusFilter" size="small" @change="onFilterChange">
+          <el-radio-button value="">全部</el-radio-button>
+          <el-radio-button value="ok">成功</el-radio-button>
+          <el-radio-button value="fail">失败</el-radio-button>
+        </el-radio-group>
+        <el-select
+          v-model="platformFilter"
+          placeholder="全部平台"
+          clearable
+          class="w-40!"
+          size="small"
+          @change="onFilterChange"
+        >
+          <el-option
+            v-for="item in platforms"
+            :key="item.platform"
+            :label="`${item.platform_name} · 成功 ${item.ok_count} / 失败 ${item.fail_count}`"
+            :value="item.platform"
+          />
+        </el-select>
+        <el-date-picker
+          v-model="dateFilter"
+          type="date"
+          placeholder="全部日期"
+          value-format="YYYY-MM-DD"
+          size="small"
+          class="w-36!"
+          @change="onFilterChange"
+        />
+        <span class="ml-auto flex flex-wrap items-center gap-2">
+          <span class="text-xs text-gray-500">{{ scheduleText }}</span>
+          <el-button size="small" link @click="openSetting">设置</el-button>
+          <el-button size="small" link @click="showDetail = true">环境 / 输出</el-button>
+        </span>
       </div>
 
-      <el-radio-group v-model="statusFilter" size="small" class="mb-3" @change="onFilterChange">
-        <el-radio-button value="">全部</el-radio-button>
-        <el-radio-button value="ok">成功</el-radio-button>
-        <el-radio-button value="fail">失败</el-radio-button>
-      </el-radio-group>
-      <el-select
-        v-model="platformFilter"
-        placeholder="全部平台"
-        clearable
-        class="mb-3 ml-2 w-40!"
-        size="small"
-        @change="onFilterChange"
-      >
-        <el-option
-          v-for="item in platforms"
-          :key="item.platform"
-          :label="`${item.platform_name} · 成功 ${item.ok_count} / 失败 ${item.fail_count}`"
-          :value="item.platform"
-        />
-      </el-select>
-      <el-date-picker
-        v-model="dateFilter"
-        type="date"
-        placeholder="全部日期"
-        value-format="YYYY-MM-DD"
-        size="small"
-        class="mb-3 ml-2 w-36!"
-        @change="onFilterChange"
-      />
-
-      <el-table :data="records" stripe class="w-full" v-loading="loading">
-        <el-table-column type="expand">
-          <template #default="{ row }">
-            <pre
-              class="m-2 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs whitespace-pre-wrap"
-              >{{ row.message || "（无输出）" }}</pre
-            >
-          </template>
-        </el-table-column>
-        <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column label="时间" width="170">
-          <template #default="{ row }">
-            {{ row.created_at }}
-          </template>
-        </el-table-column>
-        <el-table-column label="平台" width="140">
-          <template #default="{ row }">
-            {{ row.platform_name }}
-            <el-tag v-if="row.account_index > 0" size="small" type="info" class="ml-1">
-              #{{ row.account_index + 1 }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'ok' ? 'success' : 'danger'" size="small">
-              {{ row.status === "ok" ? "成功" : "失败" }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="信息" min-width="260" show-overflow-tooltip>
-          <template #default="{ row }">
-            {{ firstLine(row.message) }}
-          </template>
-        </el-table-column>
-      </el-table>
+      <div ref="tableWrap" class="min-h-0 flex-1 overflow-hidden">
+        <el-table
+          :data="records"
+          :height="tableHeight"
+          stripe
+          class="checkin-table w-full"
+          v-loading="loading"
+          :row-class-name="recordRowClass"
+        >
+          <el-table-column type="expand">
+            <template #default="{ row }">
+              <pre
+                class="m-2 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs whitespace-pre-wrap"
+                >{{ row.message || "（无输出）" }}</pre
+              >
+            </template>
+          </el-table-column>
+          <el-table-column label="时间" width="170">
+            <template #default="{ row }">
+              {{ row.created_at }}
+            </template>
+          </el-table-column>
+          <el-table-column label="平台" width="150">
+            <template #default="{ row }">
+              {{ row.platform_name }}
+              <el-tag v-if="row.account_index > 0" size="small" type="info" class="ml-1">
+                #{{ row.account_index + 1 }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.status === 'ok' ? 'success' : 'danger'" size="small">
+                {{ row.status === "ok" ? "成功" : "失败" }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="信息" min-width="220">
+            <template #default="{ row }">
+              <el-tooltip placement="top" :show-after="300" :disabled="!row.message">
+                <template #content>
+                  <pre class="max-h-64 max-w-md overflow-auto text-xs whitespace-pre-wrap">{{
+                    row.message
+                  }}</pre>
+                </template>
+                <span class="block truncate">{{ briefMessage(row.message) }}</span>
+              </el-tooltip>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
 
       <el-pagination
         v-model:current-page="page"
         v-model:page-size="pageSize"
         :total="total"
         :page-sizes="[15, 20, 50]"
-        layout="sizes, prev, pager, next"
-        class="mt-4 justify-start"
+        layout="total, sizes, prev, pager, next"
+        class="shrink-0 justify-start"
         @current-change="fetchRecords"
         @size-change="onPageSizeChange"
       />
-    </template>
+    </div>
 
     <el-dialog v-model="showDetail" title="签到运行详情" width="720px">
       <el-descriptions :column="1" border size="small">
@@ -233,12 +224,6 @@
           <el-input v-model="settingForm.run_script" placeholder="run.sh" />
           <div class="mt-1 text-xs text-gray-400">相对 DC_DIR 的文件名</div>
         </el-form-item>
-        <el-form-item label="结果库路径">
-          <el-input v-model="settingForm.db_path" placeholder="留空则用 dc-db/data/dailycheckin.db" />
-          <div class="mt-1 text-xs text-gray-400">
-            相对路径按 DC_DIR 解析，且必须位于 DC_DIR 目录内
-          </div>
-        </el-form-item>
         <el-form-item label="运行超时">
           <el-input-number v-model="settingForm.timeout_sec" :min="60" :max="86400" :step="60" />
           <span class="ml-2 text-xs text-gray-400">秒</span>
@@ -276,7 +261,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { api } from "@/api/config";
@@ -328,7 +313,6 @@ interface CheckinSchedule {
 
 interface CheckinSetting {
   run_script: string;
-  db_path: string;
   timeout_sec: number;
   auto_run: boolean;
   run_time: string;
@@ -368,7 +352,6 @@ const { handleError } = useErrorHandler();
 const loading = ref(false);
 const records = ref<CheckinRecord[]>([]);
 const platforms = ref<CheckinPlatformStat[]>([]);
-const today = reactive({ date: "", ok: 0, fail: 0, total: 0 });
 const environment = reactive<CheckinEnvironment>({
   enabled: false,
   dc_dir: "",
@@ -407,13 +390,15 @@ const showSetting = ref(false);
 const saving = ref(false);
 const settingForm = reactive<CheckinSetting>({
   run_script: "run.sh",
-  db_path: "",
   timeout_sec: 1800,
   auto_run: false,
   run_time: "09:00",
   run_tz: "Asia/Shanghai",
 });
 
+const tableWrap = ref<HTMLElement | null>(null);
+const tableHeight = ref(280);
+let tableObserver: ResizeObserver | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
 const firstLine = (message: string | null) => {
@@ -422,12 +407,52 @@ const firstLine = (message: string | null) => {
   return line ? line.trim() : "-";
 };
 
+const briefMessage = (message: string | null | undefined) => {
+  const line = firstLine(message ?? null);
+  return line === "-" ? "无输出" : line;
+};
+
+const shortTime = (value: string | null | undefined) => {
+  if (!value) return "-";
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const todayPrefix = `${now.getFullYear()}-${month}-${day}`;
+  if (value.startsWith(todayPrefix)) return value.slice(11, 16);
+  if (value.length >= 16) return value.slice(5, 16);
+  return value;
+};
+
+const lastResultText = computed(() => {
+  const result = runState.last_result;
+  if (!result?.finished_at) return "";
+  const time = shortTime(result.finished_at);
+  if (result.success) return `上次 ${time} 成功`;
+  return `上次 ${time} 失败 · exit ${result.exit_code}`;
+});
+
+const scheduleText = computed(() => {
+  if (!schedule.enabled) return "未启用定时";
+  const next = schedule.next_run_at ? ` · 下次 ${shortTime(schedule.next_run_at)}` : "";
+  return `每天 ${schedule.run_time}${next}`;
+});
+
+const recordRowClass = ({ row }: { row: CheckinRecord }) =>
+  row.status === "fail" ? "checkin-row-fail" : "";
+
+watch(tableWrap, element => {
+  tableObserver?.disconnect();
+  tableObserver = null;
+  if (!element) return;
+  tableObserver = new ResizeObserver(entries => {
+    const height = entries[0]?.contentRect.height ?? 0;
+    if (height > 80) tableHeight.value = Math.floor(height);
+  });
+  tableObserver.observe(element);
+});
+
 const applyOverview = (data: CheckinOverview) => {
   platforms.value = data.platforms;
-  today.date = data.today.date;
-  today.ok = data.today.ok;
-  today.fail = data.today.fail;
-  today.total = data.today.total;
   Object.assign(environment, data.environment);
   Object.assign(runState, data.run_state);
   Object.assign(schedule, data.schedule);
@@ -566,7 +591,17 @@ onMounted(async () => {
   }
 });
 
-onBeforeUnmount(stopPoll);
+onBeforeUnmount(() => {
+  stopPoll();
+  tableObserver?.disconnect();
+  tableObserver = null;
+});
 
 defineExpose({ refresh: fetchAll });
 </script>
+
+<style scoped>
+.checkin-table :deep(.el-table__body tr.checkin-row-fail > td.el-table__cell) {
+  background-color: #fff1f2;
+}
+</style>

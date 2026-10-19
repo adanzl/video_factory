@@ -8,7 +8,7 @@
 运行参数分两处存放：
 
 - `.env` 只保留 `DC_DIR`（daily-checkin 所在目录）。为空即整个功能关闭。
-- 其余参数（脚本名、结果库路径、超时、是否定时、定时时刻与时区）存在 Redis 的
+- 其余参数（脚本名、超时、是否定时、定时时刻与时区）存在 Redis 的
   `video_factory:auto_checkin_setting`（JSON），见 `setting()` / `save_setting()`。
 """
 
@@ -67,7 +67,6 @@ def _now_text() -> str:
 def _default_setting() -> dict[str, Any]:
     return {
         "run_script": _DEFAULT_RUN_SCRIPT,
-        "db_path": "",
         "timeout_sec": _DEFAULT_TIMEOUT_SEC,
         "auto_run": False,
         "run_time": _DEFAULT_RUN_TIME,
@@ -88,23 +87,6 @@ def _parse_run_time(raw: Any) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-def _normalize_db_path(raw: str) -> str:
-    """校验结果库路径：相对路径按 DC_DIR 解析，且不许越出 DC_DIR。"""
-    if not raw:
-        return ""
-    dc_dir = config.dc_dir
-    if dc_dir is None:
-        return raw
-    candidate = Path(raw)
-    if not candidate.is_absolute():
-        candidate = dc_dir / candidate
-    base = dc_dir.resolve()
-    resolved = candidate.resolve()
-    if resolved != base and base not in resolved.parents:
-        raise CheckinSettingError("结果库路径必须位于 DC_DIR 目录内")
-    return raw
-
-
 def _normalize_setting(raw: dict[str, Any], *, base: dict[str, Any] | None = None) -> dict[str, Any]:
     """把外部传入的字段合并进基准配置并逐项校验，缺项沿用基准值。"""
     merged = dict(base or _default_setting())
@@ -116,9 +98,6 @@ def _normalize_setting(raw: dict[str, Any], *, base: dict[str, Any] | None = Non
         if "/" in script or "\\" in script or script in (".", ".."):
             raise CheckinSettingError("脚本名只能是 DC_DIR 下的文件名，例如 run.sh")
         merged["run_script"] = script
-
-    if "db_path" in raw:
-        merged["db_path"] = _normalize_db_path(str(raw.get("db_path") or "").strip())
 
     if "timeout_sec" in raw:
         try:
@@ -210,7 +189,7 @@ class CheckinMgr:
         """校验并整体写回 Redis；只传部分字段时与当前值合并。
 
         Redis 连不上时直接把 `RedisUnavailable` 抛给调用方，绝不拿默认值当基准
-        写回——否则会把用户原来的脚本名 / 库路径 / 定时覆盖掉。
+        写回——否则会把用户原来的脚本名 / 定时覆盖掉。
         """
         stored = self._stored_setting()
         base = _default_setting()
@@ -233,16 +212,12 @@ class CheckinMgr:
         dc_dir = config.dc_dir
         return dc_dir / str(setting["run_script"]) if dc_dir is not None else None
 
-    def _db_path(self, setting: dict[str, Any]) -> Path | None:
-        """结果库路径：相对路径按 DC_DIR 解析（保存时已保证不越出 DC_DIR）。"""
+    def _db_path(self) -> Path | None:
+        """结果库固定在签到项目内，不单独配置。"""
         dc_dir = config.dc_dir
         if dc_dir is None:
             return None
-        custom = str(setting.get("db_path") or "").strip()
-        if not custom:
-            return dc_dir / _DEFAULT_DB_RELATIVE
-        path = Path(custom)
-        return path if path.is_absolute() else dc_dir / path
+        return dc_dir / _DEFAULT_DB_RELATIVE
 
     @property
     def db_script(self) -> Path | None:
@@ -310,7 +285,7 @@ class CheckinMgr:
             setting = self.setting()
         dc_dir = self.dc_dir
         run_script = self._run_script_path(setting)
-        db_path = self._db_path(setting)
+        db_path = self._db_path()
         db_script = self.db_script
         if dc_dir is None or run_script is None or db_path is None or db_script is None:
             return disabled
@@ -413,7 +388,7 @@ class CheckinMgr:
             where.append("substr(created_at, 1, 10) = :date")
             params["date"] = date
         clause = f" WHERE {' AND '.join(where)}" if where else ""
-        db_path = self._db_path(self._path_setting())
+        db_path = self._db_path()
 
         total_rows = self._query(f"SELECT COUNT(*) AS n FROM {{table}}{clause}", params, db_path)
         total = int(total_rows[0]["n"]) if total_rows else 0
@@ -432,7 +407,7 @@ class CheckinMgr:
             setting, degraded = self.read_setting()
         else:
             setting, degraded = _default_setting(), False
-        db_path = self._db_path(setting)
+        db_path = self._db_path()
 
         today = datetime.now().strftime("%Y-%m-%d")
         today_rows = self._query(

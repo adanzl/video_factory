@@ -1,7 +1,7 @@
 <template>
   <div class="tool-page flex h-[calc(100vh-120px)] min-h-0 flex-col overflow-hidden">
     <el-tabs v-model="activeTab" class="tool-page-tabs flex min-h-0 flex-1 flex-col">
-      <el-tab-pane label="每日签到" name="checkin" class="h-full min-h-0 overflow-y-auto">
+      <el-tab-pane label="每日签到" name="checkin" class="h-full min-h-0 overflow-hidden">
         <TabCheckin ref="checkinTabRef" />
       </el-tab-pane>
     </el-tabs>
