@@ -3847,3 +3847,99 @@ def test_repair_exhaustion_rescores_candidate_that_failed_before_gate(monkeypatc
         )
 
     assert caught.value.candidate["quality"]["structure_score"] == 72
+
+
+def test_perbeat_final_acceptance_preserves_dialogue_without_inserting_seed_or_reassigning_roles(
+    monkeypatch,
+):
+    import copy
+
+    from app.services.gold_story.gold_chat import finalize
+
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "1")
+    chat = {
+        "story_type": "N",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "今天为什么舍得夸我好看？"},
+            {"speaker": "昭昭", "line": "因为你刚才瞪我那一眼，像只老虎。"},
+        ],
+    }
+    original = copy.deepcopy(chat)
+    row = {
+        "payload": {
+            "scene_contract": {
+                "beat_chain": [
+                    {"beat": 1, "speaker": "妈妈", "intent": "狐疑追问"},
+                    {"beat": 2, "speaker": "昭昭", "intent": "说妈妈像老虎"},
+                ],
+            },
+            "dialogue_seed": [
+                {"speaker": "妈妈", "line": "你再盯着我看，我可就瞪你。"},
+            ],
+        },
+    }
+    with (
+        patch("app.services.gold_story.gold_chat.patch.apply_opening_causality_local_patch") as opening,
+        patch("app.services.gold_story.gold_chat.validate.apply_n_beat_role_speaker_align") as roles,
+    ):
+        result = finalize.apply_final_acceptance_local_patches(chat, row)
+        repeated = finalize.apply_final_acceptance_local_patches(result, row)
+    opening.assert_not_called()
+    roles.assert_not_called()
+    assert result == repeated == original
+    assert chat == original
+
+
+def test_perbeat_final_acceptance_still_rejects_missing_opening_beat(monkeypatch):
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "1")
+    chat = _story([
+        {"speaker": "昭昭", "line": "妈，我屁股Q弹，你打一下试试嘛！"},
+        {"speaker": "妈妈", "line": "你……我一时接不住话。"},
+    ])
+    chat["story_type"] = "N"
+    row = {
+        "payload": {"scene_contract": {
+            "beat_chain": _MOM_ZHAO_MOM_OPENING_BEAT, "mom_lines_max": 2,
+        }},
+    }
+    with (
+        patch("app.services.gold_story.gold_chat.patch.apply_n_contract_local_patches") as contract,
+        patch("app.services.daily_story.review.run_export_semantic_review") as review,
+        pytest.raises(GoldChatValidationRepairableError, match="opening_causality"),
+    ):
+        run_gold_chat_final_acceptance(chat, row, sid="TEST")
+    contract.assert_not_called()
+    review.assert_not_called()
+
+
+def test_perbeat_final_acceptance_reviews_original_dialogue_and_keeps_semantic_gate(monkeypatch):
+    import copy
+
+    from app.services.daily_story import review
+
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "1")
+    chat = _story([
+        {"speaker": "灿灿", "line": "你今天带伞了吗？"},
+        {"speaker": "昭昭", "line": "我早餐吃了鸡蛋。"},
+    ])
+    chat["story_type"] = "N"
+    original = copy.deepcopy(chat["dialogue"])
+    issue = {
+        "lines": [1, 2], "kind": "接不上",
+        "desc": "上一句问带伞，下一句却回答早餐",
+        "fix": "让第2句直接回应是否带伞",
+        "evidence": [{"line": 1, "quote": "带伞"}, {"line": 2, "quote": "早餐"}],
+    }
+    monkeypatch.setattr(review, "collect_export_blocking_local_issues", lambda _c: [])
+    with (
+        patch("app.services.gold_story.gold_chat.patch.apply_n_contract_local_patches") as contract,
+        patch.object(review, "run_export_semantic_review", return_value=ExportSemanticReviewResult(
+            completed=True, issues=[issue],
+        )) as semantic,
+        pytest.raises(GoldChatSemanticBlocked) as caught,
+    ):
+        run_gold_chat_final_acceptance(chat, {"title": "测试"}, sid="TEST")
+    contract.assert_not_called()
+    assert semantic.call_args.args[1]["dialogue"] == original
+    assert caught.value.issues == [issue]
+    assert chat["dialogue"] == original

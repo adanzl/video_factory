@@ -1084,6 +1084,22 @@ def test_narration_catches_self_reported_blurt():
     assert not looks_like_narration_line("你别冒出这种话！")
 
 
+def test_narration_keeps_spoken_commitment_after_stage_direction():
+    """动作前缀后的收束台词必须保留，不能换成通用认输句。"""
+    from app.services.gold_story.scene import rewrite_narration_to_speech
+
+    spoken = rewrite_narration_to_speech(
+        "行吧，我举着筷子半天没落下，以后说话得先打草稿。",
+        speaker="妈妈",
+    )
+    assert spoken == "以后说话得先打草稿。"
+    spoken = rewrite_narration_to_speech(
+        "行吧，这筷子我半天没落下，以后说话得先打草稿。",
+        speaker="妈妈",
+    )
+    assert spoken == "以后说话得先打草稿。"
+
+
 def test_parent_beat_ownership_strips_and_merges():
     """拍位所有权：孩子拍里的家长动作剥离并归并到最近家长拍；超额追问合并。"""
     contract = {

@@ -2714,6 +2714,12 @@ def apply_n_viewer_trim_patch(
 
     if str(story.get("story_type") or "").strip().upper() != "N":
         return story, False
+    # 逐拍模式：骨架 `_perbeat_slots()` 已把搭档句数钉在 ≤5 且禁代问，
+    # 这一步按「旁观者句数 ≤2」的口径会砍掉正常的功能句（#138 实测：
+    # 14 句被砍到 11 句、灿灿只剩「你别过来！」，字数掉到 216 触发
+    # 「修稿把已达标正文压短」）。
+    if _perbeat_mode():
+        return story, False
     chain = (
         beat_chain
         if isinstance(beat_chain, list) and beat_chain
@@ -3436,7 +3442,7 @@ _ACTION_TO_SPEECH: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (re.compile(r"点头|点头|嗯"), ("行，我信你。", "那就这么定了。")),
     (re.compile(r"摇头|撇嘴|翻白眼"), ("我可不信。", "你这话太离谱了。")),
     (re.compile(r"愣|发愣|无语|僵"), ("你再说一遍？", "我没听明白。")),
-    (re.compile(r"皱眉|瞪|挑眉"), ("你说的这是什么意思？", "你认真的吗？")),
+    (re.compile(r"皱眉|瞪|挑眉"), ("你这么说我可不服。", "你这话我可不爱听。")),
     (re.compile(r"叹|深吸|倒吸"), ("唉，随你吧。", "我真拿你没办法。")),
 )
 
@@ -3508,6 +3514,11 @@ def apply_n_token_repeat_patch(
     )
 
     if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, []
+    # 逐拍填词的每一句都已强制「照搬上一句的具体词」咬合（_perbeat_anchor_ok），
+    # 这里再按上一句的语义类型换词库句，只会把好句子换成「反正我就是不让」
+    # 这类态度句（#138 实测：第 3、12 句被子换成池子句，终检判接不上）。
+    if _perbeat_mode():
         return story, []
     chain = (
         beat_chain
@@ -3834,6 +3845,11 @@ def apply_n_addon_prune_patch(
 
     if str(story.get("story_type") or "").strip().upper() != "N":
         return story, []
+    # 逐拍模式：这里会把「提到未确立第三方」的句子换成嘴硬句
+    # （「你说了半天也没用，我还是这句！」），而逐拍稿的每个第三方提及
+    # 都已在生成阶段限定为契约在场角色，不该再被替换（#138 实测）。
+    if _perbeat_mode():
+        return story, []
     chain = (
         beat_chain
         if isinstance(beat_chain, list) and beat_chain
@@ -3916,6 +3932,12 @@ def apply_n_meta_talk_and_side_patch(
 
     if str(story.get("story_type") or "").strip().upper() != "N":
         return story, []
+    # 逐拍模式：逐拍稿的每一句都由 _perbeat_anchor_ok 强制咬合上一句，
+    # 这里「空话→嘴硬句」「按上一句类型换词库句」两步只会把好句子换成
+    # 「反正我就是不让」「我说不给就是不给」这类无剧情态度句，终检必判
+    # 接不上/错位（#138 实测：第 3、7 句被子换成池子句后整稿退回）。
+    if _perbeat_mode():
+        return story, []
     chain = (
         beat_chain
         if isinstance(beat_chain, list) and beat_chain
@@ -3942,6 +3964,8 @@ def apply_n_meta_talk_and_side_patch(
     used = {str(r.get("line") or "").strip() for r in dlg}
     changed_meta = 0
     changed_side = 0
+    dropped_meta = 0
+    drop_idx: set[int] = set()
 
     def _first_unused(options: tuple[str, ...]) -> str:
         for cand in options:
@@ -4033,9 +4057,26 @@ def apply_n_meta_talk_and_side_patch(
         # 昭昭被换成「不给就是不给」，终检判接不上）。
         if i > 0 and str(dlg[i - 1].get("speaker") or "").strip() in parents:
             continue
-        cand = _best_line(sp, _N_INSIST_LINES)
+        # seed/契约都取不到内容时，**删掉这句空话**而不是拿态度池顶。
+        # 「不给就是不给」「我不松口」这类态度句不含剧情，插到饭桌对话里
+        # 必被终检判「接不上」（#111 实测：一整段被子换成嘴硬句，结构分掉到 48）。
+        cand = _take_seed(sp) or _next_contract(sp)
         if not cand:
-            continue
+            prev_sp = str(dlg[i - 1].get("speaker") or "").strip() if i > 0 else ""
+            next_sp = (
+                str(dlg[i + 1].get("speaker") or "").strip()
+                if i + 1 < len(dlg)
+                else ""
+            )
+            # 删掉会让孩子连说：这种情况下退回态度池兜底，宁可句子空一点
+            if prev_sp and prev_sp == next_sp:
+                cand = _first_unused(_N_INSIST_LINES)
+                if not cand:
+                    continue
+            else:
+                drop_idx.add(i)
+                dropped_meta += 1
+                continue
         row["line"] = cand
         used.add(cand)
         changed_meta += 1
@@ -4081,13 +4122,17 @@ def apply_n_meta_talk_and_side_patch(
             used.add(cand)
             changed_side += 1
 
-    if not changed_meta and not changed_side:
+    if drop_idx:
+        dlg = [row for j, row in enumerate(dlg) if j not in drop_idx]
+    if not changed_meta and not changed_side and not dropped_meta:
         return story, []
     out = dict(story)
     out["dialogue"] = dlg
     notes: list[str] = []
     if changed_meta:
         notes.append(f"N空话句换嘴硬句:{changed_meta}句")
+    if dropped_meta:
+        notes.append(f"N空话句删除:{dropped_meta}句")
     if changed_side:
         notes.append(f"第二孩按上句类型咬合:{changed_side}句")
     return out, notes
@@ -4362,6 +4407,13 @@ def apply_n_alternation_lines_patch(
 
     if str(story.get("story_type") or "").strip().upper() != "N":
         return story, []
+    # 逐拍模式：骨架 `_perbeat_slots()` 已保证「不相邻同人」，走到这里还出现
+    # 连说必然是别处插句造成；此时再靠插「另一个孩子的短反应」去拆，会插入
+    # 契约/seed 里的原始意图句，把已经顺好的对白打乱（#138 实测：14 句被补到
+    # 19 句，第 8/10 句随即判「接不上/错位」）。这里只做删除式收口，
+    # 交给 repair_sibling_adjacency_terminal。
+    if _perbeat_mode():
+        return story, []
     dlg = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
     # 可交替的孩子 = 对白里已出现 ∪ 契约 beat 里登记的
     # （契约里有灿灿、成稿只写了昭昭时，正是要靠她来拆连说）
@@ -4538,6 +4590,25 @@ def repair_sibling_adjacency_terminal(
     return data, notes
 
 
+def _perbeat_mode() -> bool:
+    """逐拍填词模式（GOLD_CHAT_PERBEAT=1）。
+
+    逐拍模式用「一句一槽、说话人锁死」的骨架生成，契约拍全部在生成阶段就已
+    落地。此时再跑那些「替自由扩写补齐/归位契约拍」的种子补丁，只会把成稿
+    重新按 seed 行铺一遍：昭昭的包袱被搬到妈妈名下、seed 原句重复铺陈、妈妈
+    句数超契约（#138 实测 妈妈 4→5 被导入硬卡判死）。所以这些补丁在逐拍
+    模式下必须跳过，只保留纯机械收口（角色表/连说/额度/去重/旁白转口语）。
+    """
+    import os
+
+    return str(os.environ.get("GOLD_CHAT_PERBEAT") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def apply_n_contract_local_patches(
     story: dict[str, Any],
     *,
@@ -4562,16 +4633,18 @@ def apply_n_contract_local_patches(
     # 旁观主角的台词**直接换成契约里的具体台词**（确定性兜底）。
     # 模型自由发挥的句子反复被判「接不上/答非所问/换词重复」，
     # 而契约里给她写的是自足的具体台词，照用即可（#87 实测 30+ 轮）。
-    data, _beatpin_notes = apply_n_beat_line_pin_patch(
-        data, beat_chain=beat_chain
-    )
-    if _beatpin_notes:
-        notes.extend(_beatpin_notes)
-    data, _pin_notes = apply_n_partner_line_pin_patch(
-        data, beat_chain=beat_chain
-    )
-    if _pin_notes:
-        notes.extend(_pin_notes)
+    _perbeat = _perbeat_mode()
+    if not _perbeat:
+        data, _beatpin_notes = apply_n_beat_line_pin_patch(
+            data, beat_chain=beat_chain
+        )
+        if _beatpin_notes:
+            notes.extend(_beatpin_notes)
+        data, _pin_notes = apply_n_partner_line_pin_patch(
+            data, beat_chain=beat_chain
+        )
+        if _pin_notes:
+            notes.extend(_pin_notes)
     # 钉完必须检查是否咬住上一句（自足句放进对话就是答非所问）
     data, _echo_notes = apply_n_meta_talk_and_side_patch(
         data, beat_chain=beat_chain, dialogue_seed=dialogue_seed
@@ -4615,22 +4688,23 @@ def apply_n_contract_local_patches(
     )
     if token_patched:
         notes.append("N机制词槽已补回")
-    data, ask_patched = apply_n_ask_beat_local_patch(
-        data,
-        beat_chain=beat_chain,
-        dialogue_seed=dialogue_seed,
-        mom_lines_max=mom_lines_max,
-    )
-    if ask_patched:
-        notes.append("N关键追问拍已补回")
-    data, coverage_patched = apply_n_seed_coverage_local_patch(
-        data,
-        beat_chain=beat_chain,
-        dialogue_seed=dialogue_seed,
-        mom_lines_max=mom_lines_max,
-    )
-    if coverage_patched:
-        notes.append("N未落地拍按拍序补回")
+    if not _perbeat:
+        data, ask_patched = apply_n_ask_beat_local_patch(
+            data,
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
+            mom_lines_max=mom_lines_max,
+        )
+        if ask_patched:
+            notes.append("N关键追问拍已补回")
+        data, coverage_patched = apply_n_seed_coverage_local_patch(
+            data,
+            beat_chain=beat_chain,
+            dialogue_seed=dialogue_seed,
+            mom_lines_max=mom_lines_max,
+        )
+        if coverage_patched:
+            notes.append("N未落地拍按拍序补回")
     data, budget_trimmed = _trim_n_parent_overflow(
         data,
         beat_chain=beat_chain,
@@ -4677,11 +4751,12 @@ def apply_n_contract_local_patches(
     if _final_close:
         notes.extend(_final_close)
     # 家长拍归属：打圆场/立规/追问被安到孩子名下时改回家长
-    data, _own_notes = apply_n_parent_beat_ownership_patch(
-        data, beat_chain=list(beat_chain or [])
-    )
-    if _own_notes:
-        notes.extend(_own_notes)
+    if not _perbeat:
+        data, _own_notes = apply_n_parent_beat_ownership_patch(
+            data, beat_chain=list(beat_chain or [])
+        )
+        if _own_notes:
+            notes.extend(_own_notes)
 
     # seed 数量词保真：LLM 会把「不可能的数字」改合理，正好抹平荒诞笑点
     data, _num_notes = apply_n_seed_numeral_fidelity_patch(
@@ -4696,15 +4771,26 @@ def apply_n_contract_local_patches(
     # 而 seed 是真实素材，照着它排出来的对白不会凭空多出东西。
     from app.services.gold_story.scene import build_n_two_kid_dialogue
 
-    _final_rows, _final_notes = build_n_two_kid_dialogue(
-        {"story_type": "N", "beat_chain": list(beat_chain or [])},
-        existing=list(data.get("dialogue") or []),
-        dialogue_seed=list(dialogue_seed or []),
-    )
-    if _final_rows:
-        data = dict(data)
-        data["dialogue"] = _final_rows
-        notes.extend(_final_notes)
+    if not _perbeat:
+        _final_rows, _final_notes = build_n_two_kid_dialogue(
+            {"story_type": "N", "beat_chain": list(beat_chain or [])},
+            existing=list(data.get("dialogue") or []),
+            dialogue_seed=list(dialogue_seed or []),
+        )
+        if _final_rows:
+            data = dict(data)
+            data["dialogue"] = _final_rows
+            notes.extend(_final_notes)
+        # seed 重建会按 seed 行数重新铺家长句，可能超契约额度（#138 实测
+        # 妈妈 4→5，导入硬卡「妈妈台词须≤4句」照旧判死）。契约预算是硬卡，
+        # 必须放在重建之后。
+        data, _rebuild_trimmed = _trim_n_parent_overflow(
+            data,
+            beat_chain=beat_chain,
+            mom_lines_max=mom_lines_max,
+        )
+        if _rebuild_trimmed:
+            notes.append("N家长句数按seed重建后收束")
 
     # 愣住句必须落在末四句（N 收束是机制终点，不能夹在中段）。
     # 必须放在 seed 重建**之后**：重建会按 seed 拍序重排，放在前面会被覆盖
@@ -4756,6 +4842,12 @@ def apply_n_alternation_local_patch(
     )
 
     if str(story.get("story_type") or "").strip().upper() != "N":
+        return story, False
+    # 逐拍模式：这一步是**删除式**收口。逐拍稿里同人连说根本不会出现，
+    # 而「换词重复」判据会把刻意照搬上一句关键词（专家要求的咬合证据）当成
+    # 重复删掉——#138 实测：14 句被删到 10 句，直接掉到「句数须≥12，当前10」。
+    # 连说收口交给 repair_sibling_adjacency_terminal（只在真出现时动手）。
+    if _perbeat_mode():
         return story, False
     entries = _beat_chain_entries(
         beat_chain

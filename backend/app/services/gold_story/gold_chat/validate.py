@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -2572,6 +2573,16 @@ def _looks_like_dialogue_line(line: str) -> bool:
     return bool(re.search(r"我|俺|咱", text))
 
 
+def _perbeat_validation_enabled() -> bool:
+    """逐拍填词模式（GOLD_CHAT_PERBEAT=1）的终检语义放宽开关。"""
+    return str(os.environ.get("GOLD_CHAT_PERBEAT") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _bigrams(text: str) -> set[str]:
     """中文双字词集合（滑窗）。用于跨改写的语义近邻判定。"""
     out: set[str] = set()
@@ -2772,9 +2783,18 @@ def _line_fulfills_beat(
     if anchors and any(_anchor_matches_line(token, line) for token in anchors):
         return True
     # 口语改写兜底：叙述性 intent 与对白字面必然不同，用双字词交集认落地。
-    # 只对**像对白的句子**启用——叙述句（「蛋挞烤鸭上桌，绕口令抢吃」）
-    # 即使语义命中，也不是台词，不能拿它满足拍（我们要的是对话稿）。
-    if _looks_like_dialogue_line(line) and _intent_line_overlap(intent, line):
+    # 像对白的句子用常规阈值。逐拍模式的台词由骨架锁定说话人和拍序，
+    # 陈述型对白可能没有「我/你/问/吗」等标记（「黑面芯子难吃无比，不过
+    # 妈妈眉清目秀的。」），此时允许更高重合度兜底；整篇扩写仍只认带
+    # 对话标记的句子，避免叙述性 seed 借语义相近冒充台词。
+    overlap_need = 3 if _looks_like_dialogue_line(line) else 0
+    if (
+        not overlap_need
+        and _perbeat_validation_enabled()
+        and _intent_line_overlap(intent, line, need=4)
+    ):
+        overlap_need = 4
+    if overlap_need and _intent_line_overlap(intent, line, need=overlap_need):
         return True
     if "rebuttal" in acts and _opening_rebuttal_matches(intent, line):
         return True

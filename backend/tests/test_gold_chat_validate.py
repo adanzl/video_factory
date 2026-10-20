@@ -927,6 +927,36 @@ def test_opening_causality_accepts_rebuttal_semantic_paraphrase():
     )
 
 
+def test_opening_causality_accepts_declarative_dialogue_without_pronoun_markers(
+    monkeypatch,
+):
+    """N 类陈述型台词没有「我/你」也仍是台词，不能因对话标记缺失判缺拍。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "1")
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "端来黑面饺子问昭昭好不好吃"},
+        {
+            "beat": 2,
+            "speaker": "昭昭",
+            "intent": "嫌黑面芯子难吃无比，又补一句妈妈眉清目秀",
+        },
+        {"beat": 3, "speaker": "妈妈", "intent": "半信半疑地问是不是又想讨什么好处"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭，这盘黑面饺子刚出锅，你尝尝好不好吃。"},
+            {
+                "speaker": "昭昭",
+                "line": "黑面芯子难吃无比，不过妈妈眉清目秀的。",
+            },
+            {"speaker": "妈妈", "line": "你夸我眉清目秀，到底为啥，想讨啥好处？"},
+        ],
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=2)
+
+
 def test_opening_causality_patch_uses_seed_for_missing_middle_beat():
     """beat1/beat3 已在场但 beat2 真缺失时，复用 H3b seed 落地，不烧 LLM 修稿预算。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch

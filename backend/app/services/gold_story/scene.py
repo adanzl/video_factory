@@ -3633,6 +3633,7 @@ _NARRATION_LINE_RE = re.compile(
     # 这类句子必须由人称+身体动作+持续态构成，才不会被「举起杯子」这类
     # 正常台词误伤（后者没有「半天没落下」这种持续结果）。
     r"举着[^。！？]{0,12}(?:没|不)(?:落|放)下|"
+    r"(?:这|那)?(?:筷子|笔|杯子|碗)[^。！？]{0,10}(?:没|不)(?:落|放)下|"
     r"(?:筷子|笔|杯子|碗)[^。！？]{0,8}举(?:在|着)[^。！？]{0,8}(?:没|不)|"
     r"(?:按倒在|追着)(?:灿灿|昭昭|沙发)|"
     r"(?:灿灿|昭昭)腰侧|"
@@ -3746,6 +3747,22 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
         if tail and not looks_like_narration_line(tail):
             mark = "？" if re.search(r"不|吗|么|啥|什么|怎么|为什么", tail) else "！"
             return tail + mark
+
+    # 「举着筷子…，认栽说以后…」：动作/神态只是前缀，真正要说出口的是后面的
+    # 承诺或改口。优先保留这段，别掉到「我管不了你们了」这类通用兜底，
+    # 否则契约收束（以后打草稿/改口祝公主）会被抹掉（#138 实测）。
+    m_commitment = re.search(
+        r"(?:认栽说|认输说|服软说|改口说|开口说)?"
+        r"(?:以后|下次|往后|从今以后|保证|答应|改口|认错|道歉)"
+        r"[^。！？]{2,}",
+        raw,
+    )
+    if m_commitment:
+        tail = re.sub(
+            r"^(?:认栽说|认输说|服软说|改口说|开口说)", "", m_commitment.group(0)
+        ).strip("，。！？ ")
+        if tail and not looks_like_narration_line(tail):
+            return tail + ("。" if tail[-1] not in "？！。!?" else "")
 
     # 一锤动作+对方秒怂是分镜结果，不让角色自述动作过程；保留“一巴掌/老实”结构锚。
     if re.search(r"(?:抬手|扬手|挥手).{0,18}(?:一巴掌|巴掌|拍|打)", raw):

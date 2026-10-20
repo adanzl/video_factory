@@ -3604,3 +3604,735 @@ def test_single_authoritative_line_length_hint():
     generic = gp._SYSTEM + blk
     for bad in ("16–22 字", "12–18 字"):
         assert bad not in generic, f"通用提示词里仍有旧口径: {bad}"
+
+
+def test_perbeat_compound_requirements_do_not_replace_mechanism_words():
+    slots = gex._perbeat_apply_intent_cover([
+        {
+            "intent": "追问原因，又补一句妈妈眉清目秀，并说明饺子难吃",
+            "function": "推进",
+            "must_words": ["为啥", "为什么"],
+        },
+    ])
+    groups = gex._perbeat_required_word_groups(slots[0])
+
+    assert len(groups) == 3
+    assert not gex._perbeat_words_ok("为什么今天这么高兴？", groups)
+    assert not gex._perbeat_words_ok("为什么妈妈眉清目秀？", groups)
+    assert not gex._perbeat_words_ok("妈妈眉清目秀，但饺子难吃。", groups)
+    assert gex._perbeat_words_ok("为什么妈妈眉清目秀，但饺子难吃？", groups)
+
+
+@pytest.mark.parametrize("words", [["为啥", "为什么"], ["因为", "所以"]])
+def test_perbeat_legacy_word_list_remains_one_alternative_group(words):
+    groups = gex._perbeat_required_word_groups({"must_words": words})
+    assert gex._perbeat_words_ok(f"{words[1]}这么说。", groups)
+    assert not gex._perbeat_words_ok("今天这件事已经结束。", groups)
+
+
+def test_perbeat_stage_direction_is_rejected_and_cleaned_from_intent():
+    from app.services.gold_story.gold_chat.prompts import _perbeat_clean_intent
+
+    assert not gex._perbeat_line_ok(
+        "我不是讨好处，一本正经说妈妈像只暴躁老虎。", "昭昭"
+    )
+    assert not gex._perbeat_line_ok(
+        "不慌不忙回老虎一吼公主也得现出原形。", "昭昭"
+    )
+    assert gex._perbeat_strip_stage_direction(
+        "我不是想讨好处，我一本正经说妈妈像暴躁老虎。"
+    ) == "我不是想讨好处，妈妈像暴躁老虎。"
+    filled = {1: "我不是想讨好处，我一本正经说妈妈像暴躁老虎。"}
+    gex._perbeat_validate_fill(
+        [_perbeat_test_slot("昭昭", intent="说妈妈像暴躁老虎")], filled
+    )
+    assert filled[1] == "我不是想讨好处，妈妈像暴躁老虎。"
+    cleaned = _perbeat_clean_intent(
+        "说自己不是想讨好处，再一本正经说妈妈像一个暴躁的老虎"
+    )
+    assert "一本正经说" not in cleaned
+    assert cleaned.startswith("说自己不是想讨好处")
+
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "我筷子停在半空，看着妈妈，这盘饺子没人动了。",
+        [],
+    )
+    assert "不得自述动作/旁白或转述别人的话" in reasons
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "这盘饺子我夹着，可我真接不上昭昭这句话。",
+        [],
+    )
+    assert "不得自述动作/旁白或转述别人的话" in reasons
+    assert "插话须有具体内容（不许抽象词）" in reasons
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "你这一吼，我筷子都停在半空，实在接不上话了。",
+        [("昭昭", "真的，老虎发威的时候可吓人了。")],
+    )
+    assert "不得自述动作/旁白或转述别人的话" in reasons
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "你说妈妈眉清目秀，我同意，她今天脸色确实白净。",
+        [("昭昭", "这黑面饺子芯子难吃无比，不过妈妈眉清目秀。")],
+    )
+    assert "插话不得另起上一句没提的新物件细节" in reasons
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "你说妈妈眉清目秀，我同意，她今早还梳了头。",
+        [("昭昭", "这黑面饺子芯子难吃无比，不过妈妈眉清目秀。")],
+    )
+    assert "插话不得另起上一句没提的新物件细节" in reasons
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "你说妈妈像老虎，可这盘饺子皮捏得挺老实。",
+        [("昭昭", "我不是想讨好处，妈妈像一个暴躁的老虎。")],
+    )
+    assert "插话不得另起上一句没提的新物件细节" in reasons
+
+
+def test_perbeat_invalid_middle_filler_is_reordered_without_adjacent_siblings():
+    slots = [
+        _perbeat_test_slot("妈妈", intent="问饺子先尝一口"),
+        _perbeat_test_slot("灿灿", filler=True, intent="说饺子皮厚"),
+        _perbeat_test_slot("昭昭", filler=True, intent="说饺子发苦"),
+        _perbeat_test_slot("灿灿", filler=True, intent="说饺子芯子发苦"),
+        _perbeat_test_slot("昭昭", filler=True, intent="说饺子皮厚芯子苦"),
+        _perbeat_test_slot("妈妈", intent="说饺子先搁着"),
+    ]
+    kept = [
+        (1, "这盘黑面饺子刚端上桌，你先尝一口。"),
+        (2, "这盘黑面饺子皮厚，我瞧着像鞋底。"),
+        (4, "这黑面饺子芯子发苦，你俩还吃得下。"),
+        (5, "这饺子皮厚归厚，芯子可真是发苦。"),
+        (6, "行了，这盘黑面饺子先搁着，待会儿再说。"),
+    ]
+
+    ordered = gex._perbeat_order_kept_slots(slots, kept)
+
+    assert [idx for idx, _line in ordered] == [1, 2, 5, 4, 6]
+    speakers = [slots[idx - 1]["speaker"] for idx, _line in ordered]
+    assert all(a != b for a, b in zip(speakers, speakers[1:]))
+
+
+def test_perbeat_filler_may_reprise_current_beat_but_not_later_ones():
+    from app.services.gold_story.gold_chat.validate import _beat_chain_entries
+
+    entries = _beat_chain_entries(
+        [
+            {
+                "beat": 2,
+                "speaker": "昭昭",
+                "intent": "嫌黑面芯子难吃无比，又补一句妈妈眉清目秀",
+            },
+            {
+                "beat": 4,
+                "speaker": "昭昭",
+                "intent": "一本正经说妈妈像一个暴躁的老虎",
+            },
+        ]
+    )
+    slot = _perbeat_test_slot("灿灿", filler=True, intent="接一句")
+    slot["beat_id"] = 2
+    slot["_beat_entries"] = entries
+    reasons = gex._perbeat_check(
+        slot,
+        "芯子难吃我也吃出来了，可妈妈眉清目秀也没说错。",
+        [("昭昭", "这黑面芯子难吃无比，可妈妈眉清目秀真好看。")],
+    )
+    assert "插话不得顶替契约拍的台词" not in reasons
+
+
+def test_perbeat_filler_stance_requires_reason():
+    prev = [("昭昭", "我不是想讨好处，妈妈像一个暴躁的老虎。")]
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "你说妈妈像暴躁的老虎，我不同意。",
+        prev,
+    )
+    assert "插话表态须给出理由" in reasons
+
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "你说老虎发威吓人，我同意，可妈妈现在没发威啊。",
+        prev,
+    )
+    assert "插话表态须给出理由" not in reasons
+
+
+def test_perbeat_filler_cannot_recall_unestablished_event():
+    prev = [
+        ("昭昭", "我不是想讨好处，妈妈像一个暴躁的老虎。"),
+        ("灿灿", "你说妈妈像暴躁的老虎，我不同意。"),
+    ]
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("昭昭", filler=True, intent="接一句"),
+        "真的，老虎发威的时候可吓人了，你刚才也瞧见了吧。",
+        prev,
+    )
+    assert "不得引用前文没发生的事件" in reasons
+
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("昭昭", filler=True, intent="接一句"),
+        "真的，老虎发威的时候可吓人了，你刚才也瞧见了吧。",
+        prev + [("妈妈", "我刚才发威是我不对，可你也别乱说。")],
+    )
+    assert "不得引用前文没发生的事件" not in reasons
+
+
+def test_perbeat_contract_line_repairs_parent_subject_and_princess_logic():
+    filled = {1: "行行行，那我改口，祝妈妈像一个公主总行了吧。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "妈妈",
+                intent="气笑要求改口祝妈妈像一个公主",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "行行行，那你改口，祝我像一个公主总行了吧。"
+
+    filled = {1: "老虎一吼公主也得现出原形，所以你还是老虎。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "昭昭",
+                intent="不慌不忙回老虎一吼公主也得现出原形",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "老虎一吼，公主也得先让路，所以你还是老虎。"
+
+    filled = {1: "所以老虎一吼，公主的架子也端不住，你信不信？"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "昭昭",
+                intent="不慌不忙回老虎一吼公主也得现出原形",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "老虎一吼，公主也得先让路，你信不信？"
+
+    filled = {
+        1: "你改口，祝我像公主，别拿老虎编排我。",
+        2: "老虎一吼，公主也得先让路，你信不信？",
+    }
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot("妈妈", intent="要求昭昭改口祝妈妈像公主"),
+            _perbeat_test_slot(
+                "昭昭",
+                intent="不慌不忙回老虎一吼公主也得现出原形",
+            ),
+        ],
+        filled,
+    )
+    assert filled[2] == "改口也没用，因为老虎一吼，公主也得现出原形。"
+
+    filled = {1: "这黑面饺子的芯子难吃无比，可妈妈眉清目秀真好看。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "昭昭",
+                intent="嫌黑面芯子难吃无比，又补一句妈妈眉清目秀",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "这黑面饺子好难吃，不过妈妈眉清目秀真好看。"
+
+    filled = {1: "我不是想讨好处，妈妈像一个暴躁的老虎。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "昭昭",
+                intent="说自己不是想讨好处，再一本正经说妈妈像一个暴躁的老虎",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "我不是想讨好处，妈妈像只暴躁老虎。"
+
+    filled = {1: "你改口，祝我像公主，别再说那老虎不发威的事。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "妈妈",
+                intent="要求昭昭改口祝妈妈像公主",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "你改口，祝我像公主，别再说我像老虎了。"
+
+    filled = {1: "你改口，祝我像一个公主，别再说那老虎的事了。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "妈妈",
+                intent="要求昭昭改口祝妈妈像公主",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "你改口，祝我像一个公主，别再说我像老虎了。"
+
+    filled = {
+        1: "你夸我眉清目秀，到底为啥，又想讨什么好处？",
+        2: "因为我不是想讨好处，妈妈像一个暴躁的老虎。",
+    }
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot("妈妈", intent="问昭昭是不是又想讨好处"),
+            _perbeat_test_slot(
+                "昭昭",
+                intent="说自己不是想讨好处，再一本正经说妈妈像一个暴躁的老虎",
+            ),
+        ],
+        filled,
+    )
+    assert filled[2] == "我不是想讨好处，妈妈像只暴躁老虎。"
+
+
+def test_perbeat_filler_rejects_empty_agreement_and_repeated_move():
+    prev = [
+        ("昭昭", "黑面芯子难吃无比，不过妈妈眉清目秀挺好看。"),
+        ("灿灿", "你说妈妈眉清目秀，我倒是觉得这夸得挺对。"),
+    ]
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("昭昭", filler=True, intent="接一句"),
+        "你说这夸得挺对，那我可就把好话收下了。",
+        prev,
+    )
+    assert "插话不得只附和或收下夸奖" in reasons
+
+    prev = [
+        ("昭昭", "真的，老虎发威的时候可吓人了。"),
+        ("灿灿", "你说妈妈像暴躁的老虎，我不同意，她刚才没吼人。"),
+    ]
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "你说老虎发威吓人，我不同意，那回吼的是我。",
+        prev,
+    )
+    assert "同一表态动作不得反复用" in reasons
+
+
+def test_perbeat_self_audience_reacting_is_rejected_and_contract_repair():
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", intent="接不上话，愣住看妈妈"),
+        "你这一句我接不上，只能愣着看妈妈怎么回。",
+        [("昭昭", "老虎一吼，装公主也得露馅，所以你还是老虎。")],
+    )
+    assert "不得自述动作/旁白或转述别人的话" in reasons
+
+    filled = {1: "老虎一吼，装公主也得露馅，所以你别改口了。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "昭昭",
+                intent="不慌不忙回老虎一吼公主也得现出原形",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "老虎一吼，装公主也得露馅，这道理不变。"
+
+
+def test_perbeat_filler_quote_must_come_from_previous_line():
+    prev = [("昭昭", "我不是想讨好处，妈妈像暴躁老虎。")]
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "你说老虎发威吓人，我不同意，妈妈没冲你吼过。",
+        prev,
+    )
+    assert "引述上一句时必须真有出处" in reasons
+
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("灿灿", filler=True, intent="接一句"),
+        "你说妈妈像暴躁的老虎，我不同意，她刚才没吼人。",
+        prev,
+    )
+    assert "引述上一句时必须真有出处" not in reasons
+
+
+def test_perbeat_repairs_causal_opener_and_stage_audience_tail():
+    filled = {1: "因为老虎一吼，装公主也得露馅，改不了口。"}
+    gex._perbeat_validate_fill(
+        [_perbeat_test_slot("昭昭", intent="坚持老虎一吼公主露馅")],
+        filled,
+    )
+    assert filled[1].startswith("所以老虎一吼")
+
+    filled = {1: "你俩这一来一回，我实在接不上，只能看妈妈。"}
+    gex._perbeat_validate_fill(
+        [_perbeat_test_slot("灿灿", intent="接不上话，愣住看妈妈")],
+        filled,
+    )
+    assert filled[1] == "你俩这一来一回，我实在接不上。"
+
+
+def test_perbeat_repairs_missing_why_word_and_pause_self_action():
+    slot = _perbeat_test_slot("妈妈", intent="听昭昭夸自己，问是不是想讨好处")
+    slot["must_words"] = ["为啥", "为什么", "凭什么", "什么意思", "啥意思"]
+    filled = {1: "夸我眉清目秀，你是不是又想讨什么好处？"}
+    gex._perbeat_validate_fill([slot], filled)
+    assert "为啥" in filled[1]
+
+    filled = {1: "你俩这一句接一句，我筷子举着都不知道往哪落了。"}
+    gex._perbeat_validate_fill(
+        [_perbeat_test_slot("灿灿", intent="接不上话，愣住看妈妈")],
+        filled,
+    )
+    assert filled[1] == "你俩这一句接一句，我实在接不上话。"
+
+    filled = {1: "你这话我接不上，我看看妈妈手里的筷子落不落。"}
+    gex._perbeat_validate_fill(
+        [_perbeat_test_slot("灿灿", intent="接不上话，愣住看妈妈")],
+        filled,
+    )
+    assert filled[1] == "你这话我接不上，妈妈你倒是说句话呀。"
+
+    filled = {
+        1: "改口也没用，老虎一吼就露馅，所以你还是老虎。",
+        2: "这盘饺子还冒着热气，我可接不上这话了。",
+    }
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "昭昭",
+                intent="不慌不忙回老虎一吼公主也得现出原形",
+            ),
+            _perbeat_test_slot("灿灿", intent="接不上话，愣住看妈妈"),
+        ],
+        filled,
+    )
+    assert filled[2] == "昭昭你这话也太狠了，妈妈你倒是管管他。"
+
+
+def test_perbeat_repairs_tiger_rebuttal_that_drifts_back_to_dumplings():
+    filled = {
+        1: "昭昭，这盘黑面饺子刚端上来，你尝尝好不好吃？",
+        2: "我不是想讨好处，妈妈像暴躁老虎。",
+        3: "你说妈妈像暴躁老虎，可她刚还问你饺子好不好吃。",
+    }
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot("妈妈", intent="端来黑面饺子问昭昭好不好吃"),
+            _perbeat_test_slot("昭昭", intent="说妈妈像一个暴躁的老虎"),
+            _perbeat_test_slot("灿灿", filler=True, intent="接住老虎比喻"),
+        ],
+        filled,
+    )
+    assert filled[3] == "昭昭你这不是夸，是拐着弯说妈妈凶。"
+
+
+def test_perbeat_repairs_princess_claim_that_loses_the_princess():
+    filled = {1: "你让我改口也没用，因为老虎一吼就变回原形。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "昭昭", intent="不慌不忙回老虎一吼公主也得现出原形"
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "改口也没用，因为老虎一吼，公主也得现出原形。"
+
+
+def test_perbeat_filler_rejects_repeated_specific_phrase():
+    prev = [
+        ("妈妈", "昭昭，这盘黑面饺子刚端上来，你尝尝好不好吃？"),
+        ("昭昭", "黑面饺子芯子难吃无比，可妈妈眉清目秀真好看。"),
+        ("灿灿", "芯子难吃我也吃出来了，可妈妈听了准高兴。"),
+    ]
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("昭昭", filler=True, intent="接夸奖"),
+        "妈妈眉清目秀我天天看见，这盘饺子可差远了。",
+        prev,
+    )
+    assert "不得复述前文的具体说法" in reasons
+
+    filled = {
+        1: prev[0][1],
+        2: prev[1][1],
+        3: prev[2][1],
+        4: "妈妈眉清目秀我天天看见，这盘饺子可差远了。",
+    }
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot("妈妈", intent="端来黑面饺子问昭昭好不好吃"),
+            _perbeat_test_slot("昭昭", intent="嫌饺子难吃又夸妈妈眉清目秀"),
+            _perbeat_test_slot("灿灿", filler=True, intent="接住批评"),
+            _perbeat_test_slot("昭昭", filler=True, intent="接夸奖并说明理由"),
+        ],
+        filled,
+    )
+    assert filled[4] == "我夸妈妈是真心的，不是嘴变快，你别冤枉我。"
+
+
+def test_perbeat_repair_checks_quote_after_reorder():
+    items = [
+        (3, "灿灿", "你说老虎发威吓人，我不同意，那得先有老虎才行。"),
+        (4, "昭昭", "真的，老虎发威的时候可吓人了。"),
+    ]
+    chosen = gex._perbeat_choose_filler_order(
+        items,
+        prev_speaker="昭昭",
+        prev_line="我不是讨好处，妈妈像暴躁的老虎。",
+        next_speaker="妈妈",
+    )
+    assert chosen == []
+
+
+def test_perbeat_repairs_pause_look_and_alternative_refusal():
+    filled = {1: "那我先看看妈妈这筷子还举不举得下去。"}
+    gex._perbeat_validate_fill(
+        [_perbeat_test_slot("灿灿", intent="接不上话，愣住看妈妈")],
+        filled,
+    )
+    assert filled[1] == "我实在接不上话，妈妈你倒是说句话呀。"
+
+    filled = {1: "老虎一吼，装公主也得露馅，所以还是别改口。"}
+    gex._perbeat_validate_fill(
+        [_perbeat_test_slot("昭昭", intent="不慌不忙回老虎一吼公主也得现出原形")],
+        filled,
+    )
+    assert filled[1] == "老虎一吼，装公主也得露馅，这道理不变。"
+
+
+def test_perbeat_repairs_plural_premise_when_only_one_kid_yields():
+    filled = {1: "你俩这一说，我实在接不上话。"}
+    gex._perbeat_validate_fill(
+        [_perbeat_test_slot("灿灿", intent="接不上话，愣住看妈妈")],
+        filled,
+    )
+    assert filled[1] == "你这一句我可接不住，妈妈你倒是说句话呀。"
+
+    filled = {
+        1: "你这一句我可接不住，妈妈你倒是说句话呀。",
+        2: "行吧，以后我说话得先打草稿，省得被你俩噎住。",
+    }
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot("灿灿", intent="接不上话，愣住看妈妈"),
+            _perbeat_test_slot(
+                "妈妈",
+                intent="举着筷子没落下，认栽说以后说话先打草稿",
+            )
+        ],
+        filled,
+    )
+    assert filled[2] == "行吧，以后我说话得先打草稿，省得被你噎住。"
+
+    filled = {1: "行吧，唉，我管不了你们了。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "妈妈",
+                intent="举着筷子没落下，认栽说以后说话先打草稿",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "行吧，管不了，你这张嘴，以后我得先打草稿。"
+
+    filled = {1: "行吧，我这筷子举半天没落下，以后说话得先打草稿。"}
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "妈妈",
+                intent="举着筷子没落下，认栽说以后说话先打草稿",
+            )
+        ],
+        filled,
+    )
+    assert filled[1] == "行吧，以后我说话得先打草稿。"
+
+    filled = {
+        1: "改口也没用，老虎一吼就露馅，所以你还是老虎。",
+        2: "你这话绕得我接不上，妈妈你评评理。",
+        3: "行吧，说不过你，以后我说话得先打草稿。",
+    }
+    gex._perbeat_validate_fill(
+        [
+            _perbeat_test_slot(
+                "昭昭", intent="不慌不忙回老虎一吼公主也得现出原形"
+            ),
+            _perbeat_test_slot("灿灿", filler=True, intent="接不上话，愣住看妈妈"),
+            _perbeat_test_slot(
+                "妈妈",
+                intent="举着筷子没落下，认栽说以后说话先打草稿",
+            ),
+        ],
+        filled,
+    )
+    assert filled[3] == "行吧，管不了，昭昭你这张嘴，以后我得先打草稿。"
+
+
+def test_perbeat_seed_already_covered_by_contract_is_not_reused_as_filler():
+    beats = [
+        {
+            "speaker": "昭昭",
+            "intent": "嫌黑面芯子难吃无比，又补一句妈妈眉清目秀",
+        }
+    ]
+    seed = [
+        {"speaker": "昭昭", "intent": "不过我妈妈倒是眉清目秀的"},
+        {"speaker": "灿灿", "intent": "昭昭你这话我可接不住"},
+    ]
+
+    queues = gex._perbeat_seed_queues(seed, beats=beats)
+
+    assert queues.get("昭昭", []) == []
+    assert queues.get("灿灿") == ["昭昭你这话我可接不住"]
+
+
+def test_perbeat_prompt_keeps_independent_requirement_groups_and_retry_feedback():
+    from app.services.gold_story.gold_chat.prompts import format_perbeat_user
+
+    prompt = format_perbeat_user(
+        scene_contract={}, punchline="", prev_lines=[], speaker="昭昭",
+        intent="解释", function="推进", beat_id=1, beat_count=1,
+        used_details=[], required_word_groups=[["因为", "所以"], ["清秀"]],
+        upcoming=[(2, "妈妈", "收束")], retry_feedback="上次漏掉夸奖，请重写。",
+    )
+    assert "第1组：因为/所以" in prompt
+    assert "第2组：清秀" in prompt
+    assert "组须全部满足" in prompt
+    assert "上次漏掉夸奖，请重写。" in prompt
+    assert "拍2 妈妈：收束" in prompt
+
+
+def _stub_perbeat_generation(monkeypatch, slots, candidate_batches):
+    """只替换模型和最终整稿校验，保留逐拍候选的真实筛选。"""
+    users = []
+    responses = iter(candidate_batches)
+    monkeypatch.delenv("GOLD_CHAT_DEBUG_DUMP", raising=False)
+    monkeypatch.setattr(gex, "_perbeat_slots", lambda *_a, **_k: slots)
+    monkeypatch.setattr(gex, "_validate_expand_chat", lambda chat, **_k: chat)
+
+    def generate(_system, user, **_kwargs):
+        users.append(user)
+        lines = next(responses)
+        return {
+            "lines": [
+                {"i": i, "line": line}
+                for i, line in enumerate(lines[: len(slots)], 1)
+            ]
+        }
+
+    monkeypatch.setattr(gex, "_chat_json", generate)
+    return users
+
+
+def _perbeat_test_slot(speaker="昭昭", *, filler=False, intent="陈述"):
+    return {
+        "beat_id": 1, "speaker": speaker, "intent": intent,
+        "function": "推进", "is_filler": filler,
+    }
+
+
+def test_perbeat_overlong_candidate_is_rewritten_without_truncating_required_tail(monkeypatch):
+    slot = _perbeat_test_slot(intent="说饺子难吃但妈妈眉清目秀")
+    slot["must_words"] = ["清秀"]
+    long_line = "这盘饺子苦得我实在有点吃不下去，可妈妈眉眼依然清秀。"
+    valid_line = "这盘饺子实在难吃，可妈妈眉眼倒清秀。"
+    users = _stub_perbeat_generation(
+        monkeypatch, [slot], [[long_line], [valid_line]],
+    )
+
+    result = gex._generate_perbeat_candidate(scene_contract={}, beat_chain=[])
+
+    assert result["dialogue"] == [{"speaker": "昭昭", "line": valid_line}]
+    assert len(users) == 2
+    assert "必须出现指定词" in users[1]
+    assert "必须落地本拍要交代的内容" in users[1]
+
+
+def test_perbeat_prompt_consumes_previous_semantic_review_feedback(monkeypatch):
+    slot = _perbeat_test_slot("昭昭", intent="说老虎一吼公主也得让路")
+    users = _stub_perbeat_generation(
+        monkeypatch, [slot], [["真的，老虎一吼，公主也得先让路。"]],
+    )
+    row = {
+        "gold_chat_retry_feedback": {
+            "semantic_constraints": ["每句须直接回应上一句的问/答/挑衅，不得答非所问"]
+        }
+    }
+
+    gex._generate_perbeat_candidate(
+        scene_contract={}, beat_chain=[], row=row,
+    )
+
+    assert "【上一轮终检问题·勿重复】" in users[0]
+    assert "不得答非所问" in users[0]
+
+
+@pytest.mark.parametrize("filler", [False, True])
+def test_perbeat_invalid_candidates_are_never_kept_as_fallback(monkeypatch, filler):
+    slot = _perbeat_test_slot(filler=filler)
+    users = _stub_perbeat_generation(
+        monkeypatch, [slot], [["太苦了。"]] * 3,
+    )
+
+    if filler:
+        result = gex._generate_perbeat_candidate(scene_contract={}, beat_chain=[])
+        assert result["dialogue"] == []
+    else:
+        with pytest.raises(ValueError, match="line\\(s\\) invalid"):
+            gex._generate_perbeat_candidate(scene_contract={}, beat_chain=[])
+    assert len(users) == 3
+
+
+@pytest.mark.parametrize("filler", [False, True])
+def test_perbeat_unrelated_candidate_cannot_bypass_anchor_via_scene_word_or_fallback(
+    monkeypatch, filler,
+):
+    slots = [
+        _perbeat_test_slot("妈妈", intent="说汤太烫，先放一会儿再喝"),
+        _perbeat_test_slot(filler=filler, intent="追问原因"),
+    ]
+    # 新现场词也不能冒充承接上句；原实现会从 soft/fallback 放行。
+    slots[1]["topic_terms"] = ["盘子"]
+    users = _stub_perbeat_generation(
+        monkeypatch, slots,
+        [
+            ["这碗汤太烫了，先放一会儿再喝。", "盘子边上留着一双筷子，先拿过来。"],
+            ["这碗汤太烫了，先放一会儿再喝。", "盘子边上留着一双筷子，先拿过来。"],
+            ["这碗汤太烫了，先放一会儿再喝。", "盘子边上留着一双筷子，先拿过来。"],
+        ],
+    )
+
+    if filler:
+        result = gex._generate_perbeat_candidate(scene_contract={}, beat_chain=[])
+        assert len(result["dialogue"]) == 1
+        assert "必须接住上一句的具体说法" in users[-1]
+    else:
+        with pytest.raises(ValueError, match="line\\(s\\) invalid"):
+            gex._generate_perbeat_candidate(scene_contract={}, beat_chain=[])
+        assert "必须落地本拍要交代的内容" in users[-1]
+
+
+def test_perbeat_question_cannot_be_answered_with_another_question_via_fallback(monkeypatch):
+    slots = [
+        _perbeat_test_slot("妈妈", intent="问汤先尝尝再说味道"),
+        _perbeat_test_slot(intent="回答放了多少盐"),
+    ]
+    bad_answer = "这碗汤放了多少盐，你自己尝过了吗？"
+    users = _stub_perbeat_generation(
+        monkeypatch, slots,
+        [
+            ["今天这碗汤你先尝尝，再说味道怎么样？", bad_answer],
+            ["今天这碗汤你先尝尝，再说味道怎么样？", bad_answer],
+            ["今天这碗汤你先尝尝，再说味道怎么样？", bad_answer],
+        ],
+    )
+    with pytest.raises(ValueError, match="line\\(s\\) invalid"):
+        gex._generate_perbeat_candidate(scene_contract={}, beat_chain=[])
+    assert "必须先正面回答上一句的问题" in users[-1]

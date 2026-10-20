@@ -9,8 +9,11 @@ K 收口原则：走 ``story_types.k.patch`` 的 seal/pin，中段通用补字�
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
+from pathlib import Path
 from typing import Any, cast
 
 from app.services.daily_story.prompts import (
@@ -964,12 +967,24 @@ def apply_final_acceptance_local_patches(
 ) -> dict[str, Any]:
     """终检语义审核前本地 patch，与审核行号对齐的稿件基线。"""
     from app.services.gold_story.gold_chat.patch import (
+        _perbeat_mode,
         apply_kinship_label_patch,
         apply_opening_causality_local_patch,
     )
     from app.services.gold_story.gold_chat.validate import (
         apply_n_beat_role_speaker_align,
     )
+
+    if _perbeat_mode():
+        # 逐拍稿的角色与拍序由生成器负责。终检前插入 seed 或重挂角色会改变
+        # 待验稿的因果关系；保留原稿给统一校验/语义审核，只规范称谓。
+        patched, kin_patched = apply_kinship_label_patch(chat)
+        if kin_patched:
+            logger.info(
+                "[GOLD_CHAT] final acceptance kinship patch: %s",
+                "；".join(kin_patched),
+            )
+        return patched
 
     beat_chain, dialogue_seed, mom_max, contract_type = _final_acceptance_row_context(
         chat,
@@ -1057,11 +1072,12 @@ def run_gold_chat_final_acceptance(
         .strip()
         .upper()
     )
-    if _st_for_patch == "N":
-        from app.services.gold_story.gold_chat.patch import (
-            apply_n_contract_local_patches,
-        )
+    from app.services.gold_story.gold_chat.patch import (
+        _perbeat_mode,
+        apply_n_contract_local_patches,
+    )
 
+    if _st_for_patch == "N" and not _perbeat_mode():
         if not chat.get("story_type"):
             chat["story_type"] = "N"
         chat, pre_final_notes = apply_n_contract_local_patches(
@@ -1140,6 +1156,7 @@ def run_gold_chat_final_acceptance(
             format_export_blocking_issue_summary(it)
             for it in llm_block[:5]
         ]
+        _debug_dump_rejected_chat(chat, sid)
         raise GoldChatSemanticBlocked(
             "终检语义硬伤：" + "；".join(parts),
             issues=llm_block,
@@ -1169,6 +1186,20 @@ def run_gold_chat_final_acceptance(
         bool(review.humor),
     )
     return chat
+
+
+def _debug_dump_rejected_chat(chat: dict[str, Any], sid: str) -> None:
+    """GOLD_CHAT_DEBUG_DUMP=1 时把被终检拒掉的稿子落盘，便于本地定位语义硬伤。
+
+    生产不设该环境变量时是空操作。
+    """
+    if not os.environ.get("GOLD_CHAT_DEBUG_DUMP"):
+        return
+    path = Path("/tmp") / f"gold_chat_debug_{sid or 'unknown'}.json"
+    try:
+        path.write_text(json.dumps(chat, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        logger.warning("[GOLD_CHAT] debug dump failed %s", path)
 
 
 def _try_local_premise_align(
@@ -1326,6 +1357,16 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
             raise
         except BaseException as exc:
             if not _is_export_repairable(exc):
+                raise
+            # 逐拍填词模式：稿子是按拍写出来的，说话人与拍序由骨架锁死；
+            # 这里的 LLM 整篇修稿会重写句子并插入池子对
+            # （「你还真是照这个道理认真想的？」/「当然，我刚才就是这么认真回答的。」），
+            # 反而把 12 句 232 字的合格稿改成 15 句 277 字的错位稿
+            # （#138 实测：终检报引用无据/旁白/错位/重复六条）。
+            # 逐拍模式宁可整条 draft 重掷，也不接受整篇 LLM 修稿。
+            from app.services.gold_story.gold_chat.patch import _perbeat_mode
+
+            if _perbeat_mode():
                 raise
             if (
                 not premise_align_tried
