@@ -2622,12 +2622,14 @@ def _intent_text_is_speakable(text: str, *, speaker: str = "") -> bool:
 
     intent 回答「这一拍要表达什么」，台词回答「这一拍对谁说什么」——两者语义
     层级不同。原样搬运叙述句，等于让角色念剧本提示；源稿损坏时（ASR/OCR 乱码
-    混在 intent 里）更会把乱码念出来。判据三条，均不绑定具体剧情词：
+    混在 intent 里）更会把乱码念出来。判据均不绑定具体剧情词：
 
     ① 不是分镜动作/神态说明（动作观众听不见）；
     ② 不含括号说明、转述腔、站外称谓（说出来就不是角色在说话）；
-    ③ 具备当面说话的形态：第二人称/称呼，或疑问、祈使语气。
-       纯陈述句描述的是「发生了什么」，不是「对谁说了什么」，不予放行。
+    ③ 有说话人视角的自述：含第一人称「我」的话即便没有第二人称，也是角色当场
+       在讲自己的感受/判断（「黑面芯子难吃无比，我实在咽不下去」），不是旁白叙述。
+       只有既无第一人称、又无第二人称/疑问/祈使的句子，才是「描述发生了什么」
+       的第三人称叙述（「端来黑面饺子，问昭昭好不好吃」），不予放行。
     """
     from app.services.gold_story.scene import (
         collect_voice_errors,
@@ -2645,7 +2647,8 @@ def _intent_text_is_speakable(text: str, *, speaker: str = "") -> bool:
         re.search(r"你|您|咱|喂|听着|别|不许|快|赶紧|给(?:我|妈妈|爸爸)", raw)
     )
     modal = bool(re.search(r"[？?]|吗|呢|吧$|怎么|为什么|什么|谁|哪|几|多少", raw))
-    return addressed or modal
+    first_person = bool(re.search(r"我|俺|自个儿", raw))
+    return addressed or modal or first_person
 
 
 def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str:
@@ -3742,7 +3745,13 @@ def apply_n_beat_line_pin_patch(
 _N_META_TALK_RE = re.compile(
     r"反正我就这么说|你信不信都行|我说完了|你自己想吧|"
     r"我可要琢磨|你这话|爱信不信|随你怎么想|接着往下讲|"
-    r"这话我可"
+    r"这话我可|"
+    # 「自证真诚 / 复述自己刚才说过的话」：同样不含任何新信息，
+    # 插在问句后面就是答非所问（#138 实测：「我认真的，不是随口说说」
+    # 「当然，我刚才就是这么认真回答的」被终检判「没接住话头」）。
+    r"我是认真讲的|我认真的|不是随口|你别不信|你别打岔|"
+    r"我刚才就是这么|我刚才说了|我说的是真的|"
+    r"我是认真|说真的|真的呀$"
 )
 
 # 「嘴硬」句：只表达**坚持自己说过的话**这一态度，不含任何具体剧情。
@@ -3888,6 +3897,7 @@ def apply_n_meta_talk_and_side_patch(
     story: dict[str, Any],
     *,
     beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """① 清掉「评论说话本身」的空话；② 第二个孩子的句子按上一句类型咬合。
 
@@ -3939,6 +3949,78 @@ def apply_n_meta_talk_and_side_patch(
                 return cand
         return ""
 
+    # ── 该角色尚未落地的契约拍：优先用它替换/贴靠，而不是词库 ──────────
+    # 词库句只表态度、不含剧情，插到语义槽位上必然被终检判「答非所问」
+    # （#138 实测：「反正我就是不让」「照这说法，我也能试试」全被驳回）。
+    # 契约里该角色还没落地的拍本身就是有内容的台词。
+    from app.services.gold_story.gold_chat.validate import _line_fulfills_beat
+    from app.services.gold_story.scene import _seed_intent_to_line
+
+    from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS as _LINE_MAX
+
+    unlanded: dict[str, list[str]] = {}
+    for entry in entries:
+        owner = str(entry.get("speaker") or "").strip()
+        if owner not in {"昭昭", "灿灿"}:
+            continue
+        landed = any(
+            _line_fulfills_beat(owner, str(r.get("line") or "").strip(), entry)
+            for r in dlg
+        )
+        if landed:
+            continue
+        text = _seed_intent_to_line(str(entry.get("intent") or ""))
+        # 只收已经是「说出口的话」的 intent：叙述型（「一本正经说妈妈像老虎」）
+        # 转出来仍是旁白腔，直接插进对白会被终检判旁白/语病（#138 实测）。
+        if text and len(text) <= _LINE_MAX and _intent_text_is_speakable(
+            text, speaker=owner
+        ):
+            unlanded.setdefault(owner, []).append(text)
+
+    def _next_contract(speaker: str) -> str:
+        queue = unlanded.get(speaker) or []
+        while queue:
+            cand = queue.pop(0)
+            if cand not in used:
+                return cand
+        return ""
+
+    # seed 里该角色尚未说出口的行：本故事的**真实素材**，比态度词库更能接住话头。
+    # 词库句（「反正我就是不让」「照这说法我也能试试」）不含剧情，插进语义槽位
+    # 必被终检判「答非所问」（#138 实测数十次）。
+    from app.services.gold_story.scene import _seed_intent_to_line as _to_line
+
+    seed_queue: dict[str, list[str]] = {}
+    for _item in dialogue_seed or []:
+        if not isinstance(_item, dict):
+            continue
+        _sp = str(_item.get("speaker") or "").strip()
+        _raw = str(_item.get("intent") or _item.get("line") or "").strip()
+        if not _sp or not _raw:
+            continue
+        _txt = _to_line(_raw)
+        if not _txt or _txt in used:
+            continue
+        if not _intent_text_is_speakable(_txt, speaker=_sp):
+            continue
+        seed_queue.setdefault(_sp, []).append(_txt)
+
+    def _take_seed(speaker: str) -> str:
+        sq = seed_queue.get(speaker) or []
+        while sq:
+            cand0 = sq.pop(0)
+            if cand0 not in used:
+                return cand0
+        return ""
+
+    def _best_line(speaker: str, pool: tuple[str, ...]) -> str:
+        """seed 优先，其次契约未落地拍，最后才是态度词库。
+
+        词库只在 seed/契约都取不到时兜底：没有内容可用时，插一句无内容的话
+        仍好过让连说留在稿里（结构分直接扣 15 分过不了线）。
+        """
+        return _take_seed(speaker) or _next_contract(speaker) or _first_unused(pool)
+
     # ① 空话 → 有内容的嘴硬（孩子句）
     for i, row in enumerate(dlg):
         sp = str(row.get("speaker") or "").strip()
@@ -3951,7 +4033,7 @@ def apply_n_meta_talk_and_side_patch(
         # 昭昭被换成「不给就是不给」，终检判接不上）。
         if i > 0 and str(dlg[i - 1].get("speaker") or "").strip() in parents:
             continue
-        cand = _first_unused(_N_INSIST_LINES)
+        cand = _best_line(sp, _N_INSIST_LINES)
         if not cand:
             continue
         row["line"] = cand
@@ -3967,6 +4049,15 @@ def apply_n_meta_talk_and_side_patch(
             prev = str(dlg[i - 1].get("line") or "").strip()
             if not prev:
                 continue
+            cur = str(row.get("line") or "").strip()
+            # 已成型的契约台词不许被词库替换：这一步只负责把**空话/元语言**句
+            # 换成咬合上一句的话。若该行本来就是契约拍落地的正式台词，换掉它
+            # 等于用态度句顶掉有内容的拍，语义终检必判「答非所问」
+            # （#138 实测：灿灿的口径清晰的契约句被换成「反正我就是不让」）。
+            if cur and any(
+                _line_fulfills_beat(partner, cur, entry) for entry in entries
+            ):
+                continue
             bare_prev = re.sub(r"[^\u4e00-\u9fffA-Za-z]", "", prev)
             is_addon = 0 < len(bare_prev) <= 4
             if is_addon:
@@ -3979,7 +4070,9 @@ def apply_n_meta_talk_and_side_patch(
                         break
                 if not options:
                     options = _N_SIDE_BY_PREV[-1][1]
-            cand = _first_unused(options)
+            # 契约拍优先：灿灿自己的未落地拍是有内容的台词，比词库态度句更
+            # 容易通过语义审核（词库句被判「答非所问」，#138 实测）。
+            cand = _best_line(partner, options)
             if not cand:
                 continue
             if str(row.get("line") or "").strip() == cand:
@@ -4257,6 +4350,7 @@ def apply_n_alternation_lines_patch(
     story: dict[str, Any],
     *,
     beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """N：同一个孩子连说时，插入另一个孩子的短反应，让两人交替。
 
@@ -4290,27 +4384,110 @@ def apply_n_alternation_lines_patch(
     existing = [
         str(r.get("line") or "").strip() for r in dlg if str(r.get("line") or "").strip()
     ]
+    # ── 插句内容优先取「对方尚未落地的 seed 行」────────────────────────
+    # 词库句只表达态度、不含剧情，插在语义槽位上必然被终检判「答非所问」
+    # （#138 实测：「反正我就是不让」「照这说法，我也能试试」全被驳回）。
+    # seed 才是本故事的真实素材、本身就能说出口，用它拆连说既能补拍又能过
+    # 语义审核；契约 intent 多为叙述句（「一本正经说妈妈像老虎」）不能当台词，
+    # 所以只作次选；两者都没有才退回词库句。
+    unlanded: dict[str, list[str]] = {}
+    if dialogue_seed:
+        from app.services.gold_story.scene import _seed_intent_to_line
+
+        spoken_so_far = "".join(
+            str(r.get("line") or "") for r in dlg if isinstance(r, dict)
+        )
+        for item in dialogue_seed:
+            if not isinstance(item, dict):
+                continue
+            owner = str(item.get("speaker") or "").strip()
+            if owner not in {"昭昭", "灿灿"}:
+                continue
+            raw = str(item.get("intent") or item.get("line") or "").strip()
+            if not raw:
+                continue
+            text = _seed_intent_to_line(raw)
+            if not text or text in spoken_so_far:
+                continue
+            if not _intent_text_is_speakable(text, speaker=owner):
+                continue
+            unlanded.setdefault(owner, []).append(text)
+    if beat_chain:
+        from app.services.gold_story.gold_chat.validate import (
+            _beat_chain_entries,
+            _line_fulfills_beat,
+        )
+        from app.services.gold_story.scene import _seed_intent_to_line
+
+        from app.services.gold_story.gold_chat.prompts import CHAT_MAX_LINE_CHARS
+
+        for _beat_no, entry in _beat_chain_entries(beat_chain):
+            owner = str(entry.get("speaker") or "").strip()
+            if owner not in {"昭昭", "灿灿"}:
+                continue
+            landed = any(
+                _line_fulfills_beat(owner, str(r.get("line") or "").strip(), entry)
+                for r in dlg
+            )
+            if landed:
+                continue
+            text = _seed_intent_to_line(str(entry.get("intent") or ""))
+            if (
+                text
+                and len(text) <= CHAT_MAX_LINE_CHARS
+                and _intent_text_is_speakable(text, speaker=owner)
+                and text not in (unlanded.get(owner) or [])
+            ):
+                unlanded.setdefault(owner, []).append(text)
+
+    def _next_contract_line(speaker: str) -> str:
+        from app.services.gold_story.gold_chat.length import _pad_line_is_duplicate
+
+        queue = unlanded.get(speaker) or []
+        while queue:
+            cand = queue.pop(0)
+            if not _pad_line_is_duplicate(cand, existing):
+                return cand
+        return ""
+
+    # 是否有 seed 素材：决定「取不到内容时」能不能退回词库。
+    # 有 seed 就不退——词库句不含本场剧情，插进去必被语义终检判接不上；
+    # 缺口应交给带缺拍反馈的重掷，而不是塞一句无关的态度句。
+    _seed_unavailable = not any(
+        isinstance(x, dict)
+        and str(x.get("speaker") or "").strip() in {"昭昭", "灿灿"}
+        for x in (dialogue_seed or [])
+    )
+
     out_rows: list[dict[str, Any]] = []
     prev_sp = ""
     react_i = 0
     inserted = 0
+    inserted_contract = 0
     for row in dlg:
         sp = str(row.get("speaker") or "").strip()
         is_kid = sp in kids
         if is_kid and sp == prev_sp and len(out_rows) < CHAT_LINE_COUNT_MAX:
             other = next(k for k in sorted(kids) if k != sp)
-            # 挑一条不与现有句重复的反应
-            line = ""
-            for k in range(len(_N_REACT_LINES)):
-                cand = _N_REACT_LINES[(react_i + k) % len(_N_REACT_LINES)]
-                from app.services.gold_story.gold_chat.length import (
-                    _pad_line_is_duplicate,
-                )
+            line = _next_contract_line(other)
+            if line:
+                inserted_contract += 1
+            if not line and _seed_unavailable:
+                # 只有在**完全没有 seed 素材**时才退回词库短反应。
+                # 有 seed 却取不到可用行，说明缺口应由重掷补（带缺拍反馈），
+                # 而不是塞一句与本场无关的态度句——那种句子必被语义终检判
+                # 「凭空冒出/答非所问」（#138 实测：词库句几乎全被驳回，
+                # 还会把整段变成无来由的『给不给』拉锯）。
+                for k in range(len(_N_REACT_LINES)):
+                    cand = _N_REACT_LINES[(react_i + k) % len(_N_REACT_LINES)]
+                    from app.services.gold_story.gold_chat.length import (
+                        _pad_line_is_duplicate,
+                    )
 
-                if not _pad_line_is_duplicate(cand, existing):
-                    line = cand
-                    react_i += 1
-                    break
+                    if not _pad_line_is_duplicate(cand, existing):
+                        line = cand
+                        react_i += 1
+                        break
             if line:
                 out_rows.append({"speaker": other, "line": line})
                 existing.append(line)
@@ -4322,13 +4499,17 @@ def apply_n_alternation_lines_patch(
         return story, []
     out = dict(story)
     out["dialogue"] = out_rows
-    return out, [f"N孩子交替补反应句:{inserted}"]
+    note = f"N孩子交替补反应句:{inserted}"
+    if inserted_contract:
+        note += f"（其中契约未落地拍 {inserted_contract} 句）"
+    return out, [note]
 
 
 def repair_sibling_adjacency_terminal(
     story: dict[str, Any],
     *,
     beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
     rounds: int = 3,
 ) -> tuple[dict[str, Any], list[str]]:
     """孩子相邻连说的终态兜底：最终行序确定之后、结构评分之前再清一次。
@@ -4347,7 +4528,7 @@ def repair_sibling_adjacency_terminal(
     notes: list[str] = []
     for _ in range(max(1, int(rounds))):
         data, round_notes = apply_n_alternation_lines_patch(
-            data, beat_chain=beat_chain,
+            data, beat_chain=beat_chain, dialogue_seed=dialogue_seed,
         )
         if not round_notes:
             break
@@ -4393,7 +4574,7 @@ def apply_n_contract_local_patches(
         notes.extend(_pin_notes)
     # 钉完必须检查是否咬住上一句（自足句放进对话就是答非所问）
     data, _echo_notes = apply_n_meta_talk_and_side_patch(
-        data, beat_chain=beat_chain
+        data, beat_chain=beat_chain, dialogue_seed=dialogue_seed
     )
     if _echo_notes:
         notes.extend(_echo_notes)
@@ -4420,7 +4601,9 @@ def apply_n_contract_local_patches(
     )
     if _close_notes:
         notes.extend(_close_notes)
-    data, _alt_notes = apply_n_alternation_lines_patch(data, beat_chain=beat_chain)
+    data, _alt_notes = apply_n_alternation_lines_patch(
+        data, beat_chain=beat_chain, dialogue_seed=dialogue_seed
+    )
     if _alt_notes:
         notes.extend(_alt_notes)
     data, viewer_trimmed = apply_n_viewer_trim_patch(data, beat_chain=beat_chain)
@@ -4458,6 +4641,7 @@ def apply_n_contract_local_patches(
     data, alternation_fixed = apply_n_alternation_local_patch(
         data,
         beat_chain=beat_chain,
+        dialogue_seed=dialogue_seed,
     )
     if alternation_fixed:
         notes.append("N同人连说/换词重复已清理")
@@ -4481,7 +4665,7 @@ def apply_n_contract_local_patches(
     # 所以这里再拆一次，直到没有连说为止。
     for _ in range(3):
         data, _final_alt = apply_n_alternation_lines_patch(
-            data, beat_chain=beat_chain
+            data, beat_chain=beat_chain, dialogue_seed=dialogue_seed
         )
         if not _final_alt:
             break
@@ -4554,6 +4738,7 @@ def apply_n_alternation_local_patch(
     story: dict[str, Any],
     *,
     beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """N：清掉同人连说与换词重复（补句/垫字最常见的两笔结构扣分）。
 
@@ -4723,19 +4908,51 @@ def apply_n_alternation_local_patch(
         if i in bridge:
             other = bridge[i]
             line_pick = ""
-            for cand in _N_BRIDGE_LINES:
-                if not any(
-                    str(r.get("line") or "").strip() == cand for r in rebuilt
+            # 桥接句优先取 seed 里该角色尚未说出口的行：seed 是本故事的真实素材，
+            # 有内容、能接住话头；词库桥接句只表态度，必被语义终检判「凭空冒出」
+            # （#138 实测：桥接句在终检里几乎全被驳回，且连带把整段变成无来由拉锯）。
+            from app.services.gold_story.gold_chat.prompts import (
+                CHAT_MAX_LINE_CHARS as _BR_MAX,
+            )
+            from app.services.gold_story.scene import (
+                _seed_intent_to_line as _br_to_line,
+            )
+
+            said = {
+                str(r.get("line") or "").strip() for r in rebuilt
+            } | {str(r.get("line") or "").strip() for r in dlg}
+            for item in dialogue_seed or []:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("speaker") or "").strip() != other:
+                    continue
+                cand_seed = _br_to_line(
+                    str(item.get("intent") or item.get("line") or "")
+                )
+                if (
+                    cand_seed
+                    and cand_seed not in said
+                    and len(cand_seed) <= _BR_MAX
+                    and _intent_text_is_speakable(cand_seed, speaker=other)
                 ):
-                    line_pick = cand
+                    line_pick = cand_seed
                     break
+            if not line_pick:
+                for cand in _N_BRIDGE_LINES:
+                    if not any(
+                        str(r.get("line") or "").strip() == cand for r in rebuilt
+                    ):
+                        line_pick = cand
+                        break
             if line_pick:
                 rebuilt.append({"speaker": other, "line": line_pick})
         rebuilt.append(row)
     out["dialogue"] = rebuilt
     # 桥接后可能仍有残留连说（插入位置使相邻关系变化）：再收敛一轮，
     # 直到没有孩子连说或用尽轮次。收敛不动就交给上层重掷，绝不返回带连说的稿。
-    out, extra = apply_n_alternation_lines_patch(out, beat_chain=beat_chain)
+    out, extra = apply_n_alternation_lines_patch(
+        out, beat_chain=beat_chain, dialogue_seed=dialogue_seed
+    )
     changed = changed or bool(extra)
     return out, changed
 

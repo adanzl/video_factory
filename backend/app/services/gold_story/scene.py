@@ -1571,9 +1571,29 @@ def build_n_two_kid_dialogue(
 
     used: set[str] = {str(r["line"]) for r in rows}
     pool_i = 0
+    # seed 里该搭档尚未用掉的行：优先用它拆连说/补字数，而不是态度池。
+    # 态度池句不含本场剧情，插进语义槽位必被终检判「答非所问」
+    # （#138 实测：「越说越像真有这么回事」「我怎么听着这么玄乎」全被驳回）。
+    seed_by_sp: dict[str, list[str]] = {}
+    for _item in seed_rows:
+        _sp = str(_item.get("speaker") or "").strip()
+        _txt = _seed_intent_to_line(
+            str(_item.get("intent") or _item.get("line") or "")
+        )
+        if _sp and _txt and _txt not in used:
+            seed_by_sp.setdefault(_sp, []).append(_txt)
+
+    def _next_seed_line(speaker: str) -> str:
+        queue = seed_by_sp.get(speaker) or []
+        while queue:
+            cand = queue.pop(0)
+            if cand not in used:
+                used.add(cand)
+                return cand
+        return ""
 
     def _next_reaction() -> str:
-        """取一条还没用过的搭档反应（只表达态度，不含剧情）。"""
+        """取一条还没用过的搭档反应（seed 优先；仅无 seed 时退回态度池）。"""
         nonlocal pool_i
         while pool_i < len(_N_SECOND_KID_LINES):
             cand = _N_SECOND_KID_LINES[pool_i]
@@ -1613,7 +1633,7 @@ def build_n_two_kid_dialogue(
             and side_kid
             and str(row["speaker"]) == mech_kid
         ):
-            cand = _next_reaction()
+            cand = _next_seed_line(side_kid) or _next_reaction()
             if cand:
                 out.append({"speaker": side_kid, "line": cand})
                 used.add(cand)
@@ -1714,7 +1734,9 @@ def build_n_two_kid_dialogue(
     guard = 0
     while _total() < DAILY_STORY_BODY_CHARS_MIN and guard < 10:
         guard += 1
-        cand = _next_reaction()
+        # seed 优先：本故事的真实素材比态度池更能接住话头，
+        # 态度池句插进正文必被语义终检判「答非所问」（#138 实测）。
+        cand = _next_seed_line(side_kid) or _next_reaction()
         if not cand or not side_kid:
             break
         placed = False
@@ -3607,6 +3629,11 @@ _NARRATION_LINE_RE = re.compile(
     r"(?:不|没)说话|"
     r"没再管|"
     r"(?:把|将)(?:笔|东西)?举高|"
+    # 收拾具/悬停类自述动作链（抽象形态，不绑单篇）：观众听不见「举着筷子」，
+    # 这类句子必须由人称+身体动作+持续态构成，才不会被「举起杯子」这类
+    # 正常台词误伤（后者没有「半天没落下」这种持续结果）。
+    r"举着[^。！？]{0,12}(?:没|不)(?:落|放)下|"
+    r"(?:筷子|笔|杯子|碗)[^。！？]{0,8}举(?:在|着)[^。！？]{0,8}(?:没|不)|"
     r"(?:按倒在|追着)(?:灿灿|昭昭|沙发)|"
     r"(?:灿灿|昭昭)腰侧|"
     r"笑出眼泪后|"

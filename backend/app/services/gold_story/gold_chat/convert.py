@@ -1542,21 +1542,19 @@ def _attach_gold_chat_structure_score(
     sc_raw = payload.get("scene_contract")
     if isinstance(sc_raw, dict):
         scene_contract = sc_raw
-    mom_contract = scene_contract.get("mom_lines_max")
-    if mom_contract is not None:
-        try:
-            out["_gold_chat_mom_lines_max"] = int(mom_contract)
-        except (TypeError, ValueError):
-            pass
-    # 爸爸侧同样要注入契约额度：评分层按契约值抬阈值，否则契约要求爸爸承担 N 拍时
-    # 合规稿仍被「爸爸台词偏多」扣分打到发布线下（与硬卡 mom/dad 口径不对称）。
-    # 走 resolve_parent_lines_budget，含 beat_chain 拍数兜底，勿在此另算一套。
+    # ── 家长额度必须走 resolve_parent_lines_budget，不能照抄契约原值 ──────
+    # 该函数含两层抬额：① 按 beat_chain 拍数（契约要求谁承担 N 拍就得给 N 句）；
+    # ② 只到一位家长时，把另一位家长的默认额度让给在场的那一位。
+    # 之前妈妈侧直接写契约原值（#138：契约 3、resolve 出来 4），于是「爸爸不在场
+    # → 妈妈可多用 1 句」这一层在成稿阶段失效，妈妈第 4 句（beat4 通融问）被硬卡
+    # 判超限后裁掉，终检随即报「缺 beat4 前提」。硬卡与评分层必须同口径。
     from app.services.gold_story.scene import resolve_parent_lines_budget
 
-    _, dad_contract, _ = resolve_parent_lines_budget(
+    mom_contract, dad_contract, _parent_contract = resolve_parent_lines_budget(
         scene_contract,
         mom_lines_max=scene_contract.get("mom_lines_max"),
     )
+    out["_gold_chat_mom_lines_max"] = int(mom_contract)
     out["_gold_chat_dad_lines_max"] = int(dad_contract)
     # 按正文一体计分：勿把前 2 句 sync 成 discovery_opening 再扣开场分
     out.pop("discovery_opening", None)
@@ -2039,6 +2037,7 @@ def convert_gold_chat(
 
         current_stage = "draft"
         chat = None
+        chat_accepted = False
         struct = 0
         last_exc: Exception | None = None
         # 「缺拍耗尽」只给 1 次带反馈的重掷；其它失败类型仍用全局 3 次（专家裁决）。
@@ -2110,6 +2109,7 @@ def convert_gold_chat(
                         chat["story_type"] = _row_st
                 finish_stage("draft")
                 chat, struct = _normalize_and_finalize(chat, row, repair_budget)
+                chat_accepted = True
                 if draft_attempt > 1:
                     logger.info(
                         "[GOLD_CHAT] draft retry ok source_id=%s attempt=%s",
@@ -2153,6 +2153,15 @@ def convert_gold_chat(
                     str(exc)[:160],
                 )
         if chat is None:
+            assert last_exc is not None
+            raise last_exc
+        if not chat_accepted:
+            # 循环跑完但没有**任何一轮通过终验**：``chat`` 可能是最后一轮
+            # ``gold_story_to_gold_chat`` 的中间产物（草稿/契约阶段就赋值了），
+            # 它没过语义终检。此前这里只判 ``chat is None``，于是这种半成品会被
+            # 当作成功稿导出（#138 实测：导出稿 semantic_pending=True，人工要重审）。
+            # 语义重试还会把 ``draft_attempts`` 抬到 4，而 ``range`` 上限固定为 3，
+            # 于是「最后一轮失败」连 raise 都走不到就直接导出了。
             assert last_exc is not None
             raise last_exc
         if draft_attempt > 1:

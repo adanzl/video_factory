@@ -1993,9 +1993,16 @@ def gold_story_to_gold_chat(
         story_raw_full,
         contract=scene_contract,
     )
-    mom_max = scene_contract.get("mom_lines_max")
-    if mom_max is None:
-        mom_max = 1
+    # 家长额度必须走 resolve_parent_lines_budget，不能照抄契约原值：
+    # 该函数含「按 beat 拍数抬额」与「只到一位家长时另一位让出额度」两层。
+    # 直接读契约值会让扩写/精修阶段按比实际更紧的额度裁句，合规稿被判超限
+    # （#138 实测：契约 3、实际可用 4，妈妈第 4 句被裁 → 终检报缺前提）。
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    mom_max, _dad_budget, _parent_budget = resolve_parent_lines_budget(
+        scene_contract,
+        mom_lines_max=scene_contract.get("mom_lines_max"),
+    )
     beat = payload.get("beat") if isinstance(payload.get("beat"), list) else []
     closing = _resolve_closing_intent(
         payload,

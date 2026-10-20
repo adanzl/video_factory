@@ -106,6 +106,58 @@ def test_texts_similar_merges_duplicate_frames():
     assert tm.texts_similar("我爱学习你爱吗", "我爱学习，你爱吗")
 
 
+def test_cross_check_flags_systematic_ocr_misrecognition():
+    """两路差异过大必须判不通过：单路 OCR 会系统性地把字认错（#138 实测）。
+
+    #138 的烧录字幕被 OCR 认成「找鸡妈像一个暴踩的老虎」，实际是
+    「我妈妈像一个暴躁的老虎」——「找←我」「暴踩←暴躁」是成片的形近误认，
+    整段读起来「像话」，单路质量分也不低，只有拿另一路（ASR）印证才能发现。
+    """
+    ocr_text = (
+        "找鸡妈像一个暴踩的老虎\n"
+        "你就不能祝找妈妈像一个公王\n"
+        "那如米以后咱多兆了菲\n"
+        "找老师让找逗可"
+    )
+    asr_text = (
+        "我妈妈像一个暴躁的老虎\n"
+        "你就不能说我妈嘛像一个公主温柔大吧漂亮\n"
+        "那如果以后咱电饭的对你也是法官你会不会投入一下\n"
+        "我老是有造诀就没有造谣"
+    )
+    res = tm.cross_check_transcripts(
+        {"text": ocr_text, "source": "ocr"},
+        {"text": asr_text, "source": "asr"},
+    )
+    assert res["available"] is True
+    assert res["passed"] is False
+    assert res["agreement"] < 0.55
+
+
+def test_cross_check_passes_on_consistent_transcripts():
+    """两路一致就是可信：完全相同与轻微措辞差异都应通过。"""
+    line = "昭昭，这盘黑面饺子你尝尝，味道到底怎么样？"
+    same = tm.cross_check_transcripts(
+        {"text": line, "source": "ocr"}, {"text": line, "source": "asr"}
+    )
+    assert same["passed"] is True
+    assert same["agreement"] == 1.0
+
+    near = tm.cross_check_transcripts(
+        {"text": line, "source": "ocr"},
+        {"text": "昭昭，这盘黑面饺子你尝一下，味道怎么样？", "source": "asr"},
+    )
+    assert near["passed"] is True
+
+
+def test_cross_check_unavailable_with_single_source():
+    """只有一路时无从印证：标记 available=False，不能当失败也不能当通过。"""
+    res = tm.cross_check_transcripts({"text": "我爱学习你爱吗", "source": "ocr"}, None)
+    assert res["available"] is False
+    assert res["passed"] is None
+    assert res["agreement"] is None
+
+
 def test_should_skip_asr_after_ocr_when_quality_high():
     cfg = Config()
     cfg.gold_story_ocr_skip_asr_min = 0.55

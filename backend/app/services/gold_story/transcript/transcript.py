@@ -125,11 +125,24 @@ def _resolve_transcription(
                 candidates.append(ocr_result)
                 skip_asr = gs_subtitle_ocr.should_skip_asr_after_ocr(ocr_result, cfg)
                 if skip_asr:
-                    logger.info(
-                        "gold_story skip ASR bvid=%s ocr_quality=%.2f",
-                        ref.source_id,
-                        float(ocr_result.get("quality_score") or 0.0),
-                    )
+                    # 允许跳过 ASR 节省时间，但交叉验证需要第二路：
+                    # 用 `GOLD_STORY_TRANSCRIPT_CROSS_CHECK` 控制是否强制跑两路。
+                    # 默认开启——#138 实测 OCR 系统性形近误认（找←我、暴踩←暴躁），
+                    # 单路无法发现自己在乱认，脏 seed 会一路带进对白。
+                    if bool(getattr(cfg, "gold_story_transcript_cross_check", True)):
+                        skip_asr = False
+                        logger.info(
+                            "gold_story cross-check forces ASR bvid=%s "
+                            "ocr_quality=%.2f",
+                            ref.source_id,
+                            float(ocr_result.get("quality_score") or 0.0),
+                        )
+                    else:
+                        logger.info(
+                            "gold_story skip ASR bvid=%s ocr_quality=%.2f",
+                            ref.source_id,
+                            float(ocr_result.get("quality_score") or 0.0),
+                        )
         except Exception as exc:
             logger.warning(
                 "gold_story OCR failed bvid=%s: %s",
@@ -172,6 +185,21 @@ def _resolve_transcription(
     )
     engine = str(picked.get("engine") or picked.get("source") or "unknown")
     model = str(picked.get("model") or "")
+    # 两路交叉验证：OCR 系统性形近误认只能靠另一路印证才能发现。
+    cross_check = gs_transcript_merge.cross_check_transcripts(
+        ocr_result,
+        asr_result,
+        min_agreement=float(
+            getattr(cfg, "gold_story_transcript_cross_check_min_agreement", 0.55)
+        ),
+    )
+    if cross_check.get("available") and cross_check.get("passed") is False:
+        logger.warning(
+            "gold_story transcript cross-check FAILED bvid=%s agreement=%.3f "
+            "(ocr vs asr)；两路差异过大，至少一路在乱认，该稿不宜用于抽 seed",
+            ref.source_id,
+            float(cross_check.get("agreement") or 0.0),
+        )
     return {
         "text": str(picked.get("text") or ""),
         "segments": picked.get("segments") or [],
@@ -185,6 +213,7 @@ def _resolve_transcription(
         "ocr_attempted": ocr_result is not None,
         "asr_attempted": asr_result is not None,
         "asr_skipped": skip_asr,
+        "cross_check": cross_check,
         "candidates": [
             {
                 "source": row.get("source"),

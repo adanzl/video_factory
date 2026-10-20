@@ -1259,10 +1259,15 @@ def _seed_unique_phrase_owners(
             continue
         if 3 <= len(text) <= 14 and text not in stop:
             owners[text].add(sp)
-        for length in range(min(8, len(text)), 3, -1):
+        # 滑窗只收**长片段**（≥7 字）：短片段（4–6 字）在本篇里只属于某一人，
+        # 往往只是「这句话碰巧只由他说过」，而不是「这个短语专属于他」。
+        # 把短片段也算成专属，会把同一件事的正常换人重述判成角色错位
+        # （#138 实测：「黑面芯子难吃无比」被列为昭昭专属，任何别人复述
+        # 都报「保真-seed角色」，连他本人换个语序都算违规）。
+        for length in range(min(8, len(text)), 6, -1):
             for i in range(0, len(text) - length + 1):
                 phr = text[i : i + length]
-                if phr in stop or len(phr) < 4:
+                if phr in stop or len(phr) < 7:
                     continue
                 owners[phr].add(sp)
     unique = {
@@ -1420,7 +1425,13 @@ def apply_n_beat_role_speaker_align(
 
 
 _RE_N_ASK_BEAT_INTENT = re.compile(
-    r"追问|质问|设问|发问|问：|问什么|谁教|问出处|问来历"
+    r"追问|质问|设问|发问|问：|问什么|谁教|问出处|问来历|"
+    # 「逗问/试探」类家长拍：intent 常写成「顺势逗他：…你会不会通融一下」，
+    # 没有任何「追问/质问」标签，却是一个必须落地、且带正反问的问句拍。
+    # 漏认会让这类拍静默丢失：既不在「整场缺席」覆盖检查里（说话人已开口），
+    # 也不会被终检点名（后文没人引用它），于是契约拍了但稿中无人说（#138 实测）。
+    r"逗问|逗他|试探|打趣|"
+    r"会不会|能不能|要不要|是不是|该不该|行不行"
 )
 _N_DIALOGUE_STUN = re.compile(
     r"那……|那\.\.\.|行吧|服了|说不出|无语|愣|哭笑不得|接不住|被噎|算了|放弃"
@@ -2551,7 +2562,14 @@ def _looks_like_dialogue_line(line: str) -> bool:
         return False
     if _looks_like_pure_action(text):
         return False
-    return bool(_DIALOGUE_MARKER_RE.search(text))
+    if _DIALOGUE_MARKER_RE.search(text):
+        return True
+    # 第一人称自述也是台词：角色在讲自己的感受/判断（「黑面芯子难吃无比，
+    # 我实在咽不下去」）。第三人称叙述不会出现说话人自己的「我」，所以这
+    # 条判据能把「陈述自己的态度」和「描述别人做了什么」区分开——早前只认
+    # 第二人称/疑问，导致这类合规台词认不出落地，契约拍明明说了却被判缺拍
+    # （#138 实测：seed 原句无法满足它自己的 beat）。
+    return bool(re.search(r"我|俺|咱", text))
 
 
 def _bigrams(text: str) -> set[str]:

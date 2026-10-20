@@ -389,6 +389,16 @@ class Config:
         self.gold_story_ocr_skip_asr_min: float = float(
             os.getenv("GOLD_STORY_OCR_SKIP_ASR_MIN", "0.55")
         )
+        # 两路转写交叉验证：OCR 与 ASR 都跑一遍并比对整体相似度。
+        # 单路无法发现自己「系统性形近误认」（实测 #138：找←我、暴踩←暴躁），
+        # 脏稿抽出的 seed 会把乱码当台词写进对白。开启后即使 OCR 质量达标
+        # 也会跑 ASR 做印证；一致度低于阈值时打 warn 供人工判断。
+        self.gold_story_transcript_cross_check: bool = _bool(
+            "GOLD_STORY_TRANSCRIPT_CROSS_CHECK", True
+        )
+        self.gold_story_transcript_cross_check_min_agreement: float = float(
+            os.getenv("GOLD_STORY_TRANSCRIPT_CROSS_CHECK_MIN_AGREEMENT", "0.55")
+        )
         self.gold_story_ocr_region_detect: bool = _bool(
             "GOLD_STORY_OCR_REGION_DETECT", True
         )

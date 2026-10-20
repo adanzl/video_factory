@@ -305,6 +305,9 @@ def process_candidate(
         "audit": audit,
         **funny_payload,
         **h0c_meta,
+        # 两路转写交叉验证结果（缺失即未做验证，不是失败）。
+        # 保留在 payload 里，便于日后回看这条 seed 的原始素材可信度。
+        "transcript_cross_check": (tx or {}).get("cross_check"),
     }
     funny_ok, funny_reason = passes_funny_gate_from_payload(payload, level="l2")
     if not funny_ok:

@@ -169,6 +169,59 @@ def texts_similar(a: str, b: str, *, threshold: float = 0.92) -> bool:
     return SequenceMatcher(None, na, nb).ratio() >= threshold
 
 
+def cross_check_transcripts(
+    primary: dict[str, Any] | None,
+    secondary: dict[str, Any] | None,
+    *,
+    min_agreement: float = 0.55,
+) -> dict[str, Any]:
+    """两路转写交叉验证：OCR 与 ASR 是否描述同一段对白。
+
+    为什么需要它：单路转写无法发现自己错在哪里。烧录字幕走 OCR 时会出现
+    **系统性形近误认**（实测 #138：找←我、定←你、暴踩←暴躁、游←有），
+    整段读起来「像话」但每个关键词都错；这类稿子拿去抽 seed，会把乱码
+    当成台词写进对白，下游怎么修稿都救不回来。
+
+    两路互相印证才能发现：OCR 与 ASR 各自独立出错的方向不同，
+    若两路内容高度一致，说明这段对白基本可信；若一致度很低，
+    说明至少一路在乱认，这条素材不该用于生成。
+
+    判据只用「两路文本的整体相似度」这一抽象量，不比对具体词表。
+    """
+    a_text = str((primary or {}).get("text") or "").strip()
+    b_text = str((secondary or {}).get("text") or "").strip()
+    if not a_text or not b_text:
+        # 只有一路可用：无从交叉验证，标记为未验证（不等于失败）。
+        return {
+            "available": False,
+            "agreement": None,
+            "passed": None,
+            "a_source": (primary or {}).get("source"),
+            "b_source": (secondary or {}).get("source"),
+        }
+    na = normalize_transcript_line(a_text)
+    nb = normalize_transcript_line(b_text)
+    if not na or not nb:
+        return {
+            "available": False,
+            "agreement": None,
+            "passed": None,
+            "a_source": (primary or {}).get("source"),
+            "b_source": (secondary or {}).get("source"),
+        }
+    ratio = SequenceMatcher(None, na, nb).ratio()
+    return {
+        "available": True,
+        "agreement": round(ratio, 4),
+        "passed": ratio >= float(min_agreement),
+        "min_agreement": float(min_agreement),
+        "a_source": (primary or {}).get("source"),
+        "b_source": (secondary or {}).get("source"),
+        "a_chars": len(na),
+        "b_chars": len(nb),
+    }
+
+
 def pick_transcript_candidate(
     candidates: list[dict[str, Any]],
     *,

@@ -179,6 +179,7 @@ def _try_terminal_sibling_adjacency_close(
     *,
     validate_chat: Any,
     beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
 ) -> dict[str, Any]:
     """结构评分之前的终态连说兜底：行序类问题机械修，不烧 LLM 修稿预算。
 
@@ -195,6 +196,7 @@ def _try_terminal_sibling_adjacency_close(
     repaired, notes = repair_sibling_adjacency_terminal(
         dict(chat),
         beat_chain=beat_chain,
+        dialogue_seed=dialogue_seed,
     )
     if not notes:
         return chat
@@ -931,14 +933,16 @@ def _final_acceptance_row_context(
     beat_chain = beat_chain_raw if isinstance(beat_chain_raw, list) else None
     dialogue_seed_raw = payload.get("dialogue_seed")
     dialogue_seed = dialogue_seed_raw if isinstance(dialogue_seed_raw, list) else None
-    mom_max = 1
-    mom_contract = scene_contract.get("mom_lines_max")
-    if mom_contract is not None:
-        try:
-            mom_max = max(0, int(mom_contract))
-        except (TypeError, ValueError):
-            mom_max = 1
-    else:
+    # 妈妈额度走 resolve_parent_lines_budget：含「按拍数抬额」与「只到一位家长时
+    # 另一位让额度」两层。直接读契约原值会让硬卡比实际可用额度更紧（#138：
+    # 契约 3、实际应为 4），妈妈末拍被判超限裁掉，终检随即报缺前提。
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    mom_max, _dad_max, _parent_max = resolve_parent_lines_budget(
+        scene_contract,
+        mom_lines_max=scene_contract.get("mom_lines_max"),
+    )
+    if not mom_max:
         cached = chat.get("_gold_chat_mom_lines_max")
         if cached is not None:
             try:
@@ -1301,10 +1305,16 @@ def run_gold_chat_final_acceptance_with_semantic_repair(
                 )
             # 终态连说兜底：行序类缺陷机械可修，必须在评分对象定稿前拆开，
             # 否则会白烧一轮 LLM 修稿预算（#138 实测）。
+            # 必须带上 seed：插句优先用 seed 里的真实素材，否则会退回态度词库，
+            # 而词库句不含剧情、必被语义终检判「答非所问」。
+            _tc_chain, _tc_seed, _tc_mom, _tc_type = _final_acceptance_row_context(
+                current, row
+            )
             current = _try_terminal_sibling_adjacency_close(
                 current,
                 validate_chat=validate_chat,
-                beat_chain=_final_acceptance_row_context(current, row)[0],
+                beat_chain=_tc_chain,
+                dialogue_seed=_tc_seed,
             )
             scored = attach_score(current, row)
             gate_scored = scored
@@ -1999,9 +2009,14 @@ def run_gold_chat_finalize(
     if not isinstance(scene_contract, dict):
         scene_contract = {}
     source_type = str(payload.get("source_type") or scene_contract.get("source_type") or "field")
-    mom_max = scene_contract.get("mom_lines_max")
-    if mom_max is None:
-        mom_max = 1
+    # 同 `_final_acceptance_row_context`：家长额度走 resolve，别照抄契约原值，
+    # 否则裁句阶段会比实际可用额度更紧、把合规的家长末句裁掉。
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    mom_max, _mm_dad, _mm_parent = resolve_parent_lines_budget(
+        scene_contract,
+        mom_lines_max=scene_contract.get("mom_lines_max"),
+    )
     banned = sanitize_banned_literals(
         payload.get("banned_literals") or scene_contract.get("banned_literals"),
         scene_contract=scene_contract,
