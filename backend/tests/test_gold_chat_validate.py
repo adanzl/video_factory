@@ -927,13 +927,10 @@ def test_opening_causality_accepts_rebuttal_semantic_paraphrase():
     )
 
 
-def test_opening_causality_accepts_declarative_dialogue_without_pronoun_markers(
-    monkeypatch,
-):
+def test_opening_causality_accepts_declarative_dialogue_without_pronoun_markers():
     """N 类陈述型台词没有「我/你」也仍是台词，不能因对话标记缺失判缺拍。"""
     from app.services.gold_story.gold_chat.validate import opening_causality_passes
 
-    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "1")
     beat = [
         {"beat": 1, "speaker": "妈妈", "intent": "端来黑面饺子问昭昭好不好吃"},
         {

@@ -1796,6 +1796,12 @@ _DIALOGUE_MARKER_RE = re.compile(
     r"别|不要|说|讲|喊|叫|"
     r"[？?]|「|」|\""
 )
+# 陈述型台词常没有第二人称或疑问标记，但会带主观评价/转折/认知动词。
+# 只用于语义兜底，不参与纯动作门限，避免把「笑了一下」这类动作放行。
+_DECLARATIVE_SPEECH_RE = re.compile(
+    r"不过|但是|可是|其实|反正|倒是|觉得|知道|以为|相信|喜欢|讨厌|怕|想|"
+    r"真(?:好|香|甜|美|难看|难吃)"
+)
 
 
 def _looks_like_pure_action(line: str) -> bool:
@@ -2563,7 +2569,7 @@ def _looks_like_dialogue_line(line: str) -> bool:
         return False
     if _looks_like_pure_action(text):
         return False
-    if _DIALOGUE_MARKER_RE.search(text):
+    if _DIALOGUE_MARKER_RE.search(text) or _DECLARATIVE_SPEECH_RE.search(text):
         return True
     # 第一人称自述也是台词：角色在讲自己的感受/判断（「黑面芯子难吃无比，
     # 我实在咽不下去」）。第三人称叙述不会出现说话人自己的「我」，所以这
@@ -2571,16 +2577,6 @@ def _looks_like_dialogue_line(line: str) -> bool:
     # 第二人称/疑问，导致这类合规台词认不出落地，契约拍明明说了却被判缺拍
     # （#138 实测：seed 原句无法满足它自己的 beat）。
     return bool(re.search(r"我|俺|咱", text))
-
-
-def _perbeat_validation_enabled() -> bool:
-    """逐拍填词模式（GOLD_CHAT_PERBEAT=1）的终检语义放宽开关。"""
-    return str(os.environ.get("GOLD_CHAT_PERBEAT") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _bigrams(text: str) -> set[str]:
@@ -2783,17 +2779,10 @@ def _line_fulfills_beat(
     if anchors and any(_anchor_matches_line(token, line) for token in anchors):
         return True
     # 口语改写兜底：叙述性 intent 与对白字面必然不同，用双字词交集认落地。
-    # 像对白的句子用常规阈值。逐拍模式的台词由骨架锁定说话人和拍序，
-    # 陈述型对白可能没有「我/你/问/吗」等标记（「黑面芯子难吃无比，不过
-    # 妈妈眉清目秀的。」），此时允许更高重合度兜底；整篇扩写仍只认带
-    # 对话标记的句子，避免叙述性 seed 借语义相近冒充台词。
+    # 像对白的句子用常规阈值；陈述型对白可能没有「我/你/问/吗」等标记
+    # （「黑面芯子难吃无比，不过妈妈眉清目秀的。」），由转折/认知标记识别。
+    # 该判定不能依赖生成进程的环境变量，否则导入/复验进程会误判缺拍。
     overlap_need = 3 if _looks_like_dialogue_line(line) else 0
-    if (
-        not overlap_need
-        and _perbeat_validation_enabled()
-        and _intent_line_overlap(intent, line, need=4)
-    ):
-        overlap_need = 4
     if overlap_need and _intent_line_overlap(intent, line, need=overlap_need):
         return True
     if "rebuttal" in acts and _opening_rebuttal_matches(intent, line):
