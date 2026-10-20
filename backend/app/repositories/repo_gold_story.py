@@ -305,6 +305,31 @@ def _list_where(
     return " WHERE " + " AND ".join(clauses), params
 
 
+def list_stories_with_payload_marker(
+    marker: str,
+    *,
+    limit: int = 50,
+) -> list[dict]:
+    """按 payload_json 子串找出候选行，调用方再做字段级过滤。"""
+    text = str(marker or "").strip()
+    if not text:
+        return []
+    limit = max(1, min(int(limit), 200))
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    rows = sql.fetchall(
+        f"""
+        SELECT {_GOLD_STORY_COLUMNS}
+        FROM gold_story
+        WHERE payload_json LIKE ? ESCAPE '\\'
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (f"%{escaped}%", limit),
+    )
+    sql.commit()
+    return [_row_to_dict(row) for row in rows]
+
+
 def list_stories(
     *,
     status: str | None = None,

@@ -189,6 +189,7 @@ import {
   formatAutoScore,
   formatDailyStoryType,
   formatGoldChatQualityScores,
+  getGoldChatConvertStatus,
   getGoldStoryCollectStatus,
   getGoldStoryReimportStatus,
   listGoldChats,
@@ -213,6 +214,7 @@ const reimporting = ref(false);
 const POLL_INTERVAL_MS = 3000;
 let collectPollTimer: ReturnType<typeof setInterval> | null = null;
 let reimportPollTimer: ReturnType<typeof setInterval> | null = null;
+let convertPollTimer: ReturnType<typeof setInterval> | null = null;
 const batching = ref(false);
 const deleting = ref(false);
 const reimportBatchIds = ref<number[]>([]);
@@ -223,6 +225,8 @@ const reimportProcessingId = ref<number | null>(null);
 const reimportProcessingSourceId = ref<string | null>(null);
 const convertingIds = ref<number[]>([]);
 const convertingSourceIds = ref<string[]>([]);
+const serverConvertingIds = ref<number[]>([]);
+const serverConvertingSourceIds = ref<string[]>([]);
 const archivingId = ref<number | null>(null);
 const deletingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
@@ -502,9 +506,13 @@ function removeConvertingTargets(opts: {
 }
 
 function isGoldChatConverting(row: GoldChatListItem): boolean {
+  if (row.gold_chat_converting) return true;
   if (convertingIds.value.includes(row.id)) return true;
+  if (serverConvertingIds.value.includes(row.id)) return true;
   const sid = String(row.source_id || "").trim();
-  return !!sid && convertingSourceIds.value.includes(sid);
+  if (!sid) return false;
+  if (convertingSourceIds.value.includes(sid)) return true;
+  return serverConvertingSourceIds.value.some((raw) => sourceIdsMatch(sid, raw));
 }
 
 function stopCollectPolling() {
@@ -518,6 +526,13 @@ function stopReimportPolling() {
   if (reimportPollTimer != null) {
     clearInterval(reimportPollTimer);
     reimportPollTimer = null;
+  }
+}
+
+function stopConvertPolling() {
+  if (convertPollTimer != null) {
+    clearInterval(convertPollTimer);
+    convertPollTimer = null;
   }
 }
 
@@ -581,6 +596,44 @@ function startReimportPolling() {
   reimportPollTimer = setInterval(() => {
     void pollReimportStatus();
   }, POLL_INTERVAL_MS);
+}
+
+let convertPollErrorNotified = false;
+
+function startConvertPolling() {
+  if (convertPollTimer != null) return;
+  convertPollTimer = setInterval(() => {
+    void pollConvertStatus();
+  }, POLL_INTERVAL_MS);
+}
+
+/** 上一拍转换中的 id 集合。null 表示还没问过状态接口。 */
+let lastConvertKey: string | null = null;
+
+async function pollConvertStatus() {
+  try {
+    const res = await getGoldChatConvertStatus();
+    const ids = [...new Set((res.ids || []).map((id) => Number(id)).filter((id) => id > 0))];
+    const sourceIds = [
+      ...new Set((res.source_ids || []).map((s) => String(s || "").trim()).filter(Boolean)),
+    ];
+    serverConvertingIds.value = ids;
+    serverConvertingSourceIds.value = sourceIds;
+    const key = `${ids.join(",")}|${sourceIds.join(",")}`;
+    const changed = lastConvertKey !== null && key !== lastConvertKey;
+    const firstWithWork = lastConvertKey === null && (ids.length > 0 || sourceIds.length > 0);
+    lastConvertKey = key;
+    if (changed || firstWithWork) {
+      await fetchItems({ quiet: true });
+    }
+  } catch (e) {
+    if (!convertPollErrorNotified) {
+      convertPollErrorNotified = true;
+      handleError(e, "查询转换进度失败");
+    }
+    return;
+  }
+  convertPollErrorNotified = false;
 }
 
 async function fetchItems(opts?: { quiet?: boolean; allowPageClamp?: boolean }) {
@@ -1061,10 +1114,13 @@ onMounted(() => {
   void fetchItems();
   void pollCollectStatus();
   void pollReimportStatus();
+  startConvertPolling();
+  void pollConvertStatus();
 });
 onUnmounted(() => {
   stopCollectPolling();
   stopReimportPolling();
+  stopConvertPolling();
 });
 usePageRefresh(() => void fetchItems({ quiet: true }));
 </script>

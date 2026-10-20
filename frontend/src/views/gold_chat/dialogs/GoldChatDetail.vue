@@ -175,6 +175,13 @@
         </div>
 
         <div
+          v-if="detail.gold_chat_converting || converting"
+          class="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800"
+        >
+          转换中
+        </div>
+
+        <div
           v-if="detail.gold_chat_review_pending"
           class="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800"
         >
@@ -342,7 +349,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   archiveGoldStories,
@@ -476,22 +483,46 @@ function formatAuditStage(stage: string): string {
   return stage;
 }
 
-async function loadDetail() {
+const DETAIL_POLL_MS = 3000;
+let detailConvertTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopDetailConvertPoll() {
+  if (detailConvertTimer != null) {
+    clearInterval(detailConvertTimer);
+    detailConvertTimer = null;
+  }
+}
+
+function startDetailConvertPoll() {
+  if (detailConvertTimer != null) return;
+  detailConvertTimer = setInterval(() => {
+    void loadDetail({ quiet: true });
+  }, DETAIL_POLL_MS);
+}
+
+async function loadDetail(opts?: { quiet?: boolean }) {
+  const quiet = opts?.quiet === true;
   if (!props.goldStoryId && !props.sourceId) {
     detail.value = null;
+    stopDetailConvertPoll();
     return;
   }
-  loading.value = true;
+  if (!quiet) loading.value = true;
   try {
     detail.value = await getGoldChat({
       id: props.goldStoryId ?? undefined,
       sourceId: props.sourceId ?? undefined,
     });
+    if (visible.value && detail.value?.gold_chat_converting) {
+      startDetailConvertPoll();
+    } else {
+      stopDetailConvertPoll();
+    }
   } catch (e) {
-    detail.value = null;
+    if (!quiet) detail.value = null;
     handleError(e, "加载金故事详情失败");
   } finally {
-    loading.value = false;
+    if (!quiet) loading.value = false;
   }
 }
 
@@ -658,7 +689,15 @@ async function handleImport() {
 watch(
   () => [props.modelValue, props.goldStoryId, props.sourceId] as const,
   ([open]) => {
-    if (open) void loadDetail();
+    if (open) {
+      void loadDetail();
+      return;
+    }
+    stopDetailConvertPoll();
   },
 );
+
+onUnmounted(() => {
+  stopDetailConvertPoll();
+});
 </script>

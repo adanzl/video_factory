@@ -17,9 +17,11 @@ from app.services.gold_story.gold_chat.export import (
     load_gold_chat_for_row,
 )
 from app.services.gold_story.gold_chat.status import (
+    gold_chat_converting_from_payload,
     gold_chat_error_from_payload,
     gold_chat_failed_candidate_from_payload,
     gold_chat_review_pending_from_payload,
+    list_gold_chat_converting,
     record_gold_chat_failure,
 )
 from app.services.gold_story.gold_chat.import_story import (
@@ -366,6 +368,7 @@ def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
     )
     if gold_chat_error is not None:
         out["gold_chat_error"] = gold_chat_error
+    out["gold_chat_converting"] = gold_chat_converting_from_payload(payload)
     return out
 
 
@@ -541,6 +544,7 @@ class GoldStoryMgr:
         }
         if gold_chat_error is not None:
             out["gold_chat_error"] = gold_chat_error
+        out["gold_chat_converting"] = gold_chat_converting_from_payload(payload)
         gold_chat_review_pending = gold_chat_review_pending_from_payload(payload)
         if gold_chat_review_pending is not None:
             out["gold_chat_review_pending"] = gold_chat_review_pending
@@ -569,6 +573,10 @@ class GoldStoryMgr:
             raise KeyError("金故事不存在")
 
         return load_transcript_for_row(row, config=cfg)
+
+    def convert_status(self) -> dict[str, Any]:
+        _ensure_schema()
+        return list_gold_chat_converting()
 
     def convert_one(
         self,

@@ -10,6 +10,9 @@ from app.repositories import repo_gold_story
 
 logger = logging.getLogger(__name__)
 
+# 单条转换含多次 LLM 重试，正常会跑很久。进程中断后超过此时长不再当成转换中。
+_CONVERTING_STALE_SEC = 6 * 60 * 60
+
 _GOLD_CHAT_ERROR_CLEAR_KEYS = (
     "gold_chat_last_error",
     "gold_chat_last_failed_at",
@@ -21,6 +24,102 @@ _GOLD_CHAT_ERROR_CLEAR_KEYS = (
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def mark_gold_chat_converting(gold_story_id: int) -> None:
+    """转换开始时写入 payload，供列表/状态接口跨进程读到「转换中」。"""
+    gid = int(gold_story_id)
+    if gid <= 0:
+        return
+    try:
+        repo_gold_story.patch_story_payload(
+            gid,
+            {
+                "gold_chat_convert_status": "converting",
+                "gold_chat_convert_started_at": _now_iso(),
+            },
+        )
+    except Exception:
+        logger.warning(
+            "[GOLD_CHAT] mark converting failed id=%s",
+            gid,
+            exc_info=True,
+        )
+
+
+def clear_gold_chat_converting(gold_story_id: int) -> None:
+    """转换结束（成功或失败）后清掉「转换中」。"""
+    gid = int(gold_story_id)
+    if gid <= 0:
+        return
+    try:
+        repo_gold_story.patch_story_payload(
+            gid,
+            {
+                "gold_chat_convert_status": None,
+                "gold_chat_convert_started_at": None,
+            },
+        )
+    except Exception:
+        logger.warning(
+            "[GOLD_CHAT] clear converting failed id=%s",
+            gid,
+            exc_info=True,
+        )
+
+
+def gold_chat_converting_from_payload(
+    payload: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """payload 是否表示这条金故事正在转对话。过期标记视为已结束。"""
+    if not isinstance(payload, dict):
+        return False
+    if str(payload.get("gold_chat_convert_status") or "").strip() != "converting":
+        return False
+    started_raw = str(payload.get("gold_chat_convert_started_at") or "").strip()
+    if not started_raw:
+        return False
+    try:
+        started = datetime.fromisoformat(started_raw)
+    except ValueError:
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    age = (current - started).total_seconds()
+    return age <= _CONVERTING_STALE_SEC
+
+
+def list_gold_chat_converting() -> dict[str, Any]:
+    """当前仍在转换中的金故事。CLI 与 Web 分进程，只认库里的标记。"""
+    rows = repo_gold_story.list_stories_with_payload_marker(
+        marker='"gold_chat_convert_status": "converting"',
+    )
+    ids: list[int] = []
+    source_ids: list[str] = []
+    for row in rows:
+        payload = row.get("payload")
+        if not gold_chat_converting_from_payload(
+            payload if isinstance(payload, dict) else None,
+        ):
+            continue
+        gid = int(row.get("id") or 0)
+        if gid > 0:
+            ids.append(gid)
+        sid = str(row.get("source_id") or "").strip()
+        if sid:
+            source_ids.append(sid)
+    running = bool(ids or source_ids)
+    return {
+        "workflow": "gold_chat_convert",
+        "status": "running" if running else "idle",
+        "ids": ids,
+        "source_ids": source_ids,
+    }
 
 
 def format_gold_chat_error(exc: BaseException) -> str:

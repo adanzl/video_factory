@@ -23,6 +23,8 @@ export interface GoldChatListItem {
   humor_score?: number | null;
   gold_chat_daily_story_id?: number | null;
   gold_chat_error?: GoldChatErrorInfo | null;
+  /** 远程/本机正在把这条金故事转成对话稿 */
+  gold_chat_converting?: boolean;
   updated_at?: string;
 }
 
@@ -98,6 +100,7 @@ export interface GoldStoryDetail {
   has_gold_chat: boolean;
   gold_chat?: GoldChatPayload | null;
   gold_chat_error?: GoldChatErrorInfo | null;
+  gold_chat_converting?: boolean;
 }
 
 export interface GoldStoryTranscript {
@@ -297,6 +300,20 @@ export async function getGoldStoryTranscript(params: {
         source_id: params.sourceId,
       },
     },
+  );
+  return response.data;
+}
+
+export interface GoldChatConvertStatus {
+  workflow?: string;
+  status: "running" | "idle" | string;
+  ids: number[];
+  source_ids: string[];
+}
+
+export async function getGoldChatConvertStatus(): Promise<GoldChatConvertStatus> {
+  const response = await api.get<GoldChatConvertStatus>(
+    "/v_factory/api/gold_chat/convert",
   );
   return response.data;
 }

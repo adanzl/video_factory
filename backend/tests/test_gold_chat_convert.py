@@ -3430,10 +3430,12 @@ def test_convert_persists_pair_remap_note_after_reroll(monkeypatch):
         "update_mechanism_and_structure",
         lambda gid, **_kw: persisted.setdefault("structure", (gid, _kw)),
     )
+    # patch_story_payload 会被多次调用（转换中标记/清标记/判型重掷），逐次记录后再挑
+    payload_patches: list[tuple[int, dict]] = []
     monkeypatch.setattr(
         repo_gold_story,
         "patch_story_payload",
-        lambda gid, patch: persisted.setdefault("payload", (gid, patch)),
+        lambda gid, patch: payload_patches.append((gid, patch)),
     )
 
     result = gc.convert_gold_chat(row)
@@ -3442,7 +3444,13 @@ def test_convert_persists_pair_remap_note_after_reroll(monkeypatch):
     assert len(finalize_calls) == 2
     assert persisted["structure"][0] == 32
     assert persisted["structure"][1]["structure_type"] == "J"
-    gid, patch = persisted["payload"]
+    remap_patches = [
+        (gid, patch)
+        for gid, patch in payload_patches
+        if gc._GOLD_CHAT_PAIR_REMAP_KEY in patch
+    ]
+    assert len(remap_patches) == 1
+    gid, patch = remap_patches[0]
     assert gid == 32
     remap = patch[gc._GOLD_CHAT_PAIR_REMAP_KEY]
     assert remap["from"] == {"mechanism": "M12", "structure_type": "K"}

@@ -255,3 +255,49 @@ def test_clear_gold_chat_failure_drops_failed_candidate(app_ctx):
 
     assert gold_chat_failed_candidate_from_payload(payload) is None
     assert gold_chat_error_from_payload(payload) is None
+
+
+def test_converting_flag_visible_on_list_and_status(app_ctx):
+    from app.services.gold_story.gold_chat.status import (
+        clear_gold_chat_converting,
+        gold_chat_converting_from_payload,
+        list_gold_chat_converting,
+        mark_gold_chat_converting,
+    )
+    from app.services.gold_story.gold_story_mgr import gold_story_mgr
+
+    gid = _insert_row(app_ctx)
+    with app_ctx.app_context():
+        mark_gold_chat_converting(gid)
+        payload = repo_gold_story.get_story(gid).get("payload") or {}
+        assert gold_chat_converting_from_payload(payload) is True
+        listed = gold_story_mgr.list_items(limit=20)
+        item = next(row for row in listed["items"] if row["id"] == gid)
+        assert item["gold_chat_converting"] is True
+        running = list_gold_chat_converting()
+        assert running["status"] == "running"
+        assert gid in running["ids"]
+        clear_gold_chat_converting(gid)
+        payload = repo_gold_story.get_story(gid).get("payload") or {}
+        assert gold_chat_converting_from_payload(payload) is False
+        assert gid not in list_gold_chat_converting()["ids"]
+
+
+def test_converting_stale_or_empty_not_shown():
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.gold_story.gold_chat.status import (
+        gold_chat_converting_from_payload,
+    )
+
+    old = (datetime.now(timezone.utc) - timedelta(hours=7)).isoformat()
+    assert gold_chat_converting_from_payload(
+        {
+            "gold_chat_convert_status": "converting",
+            "gold_chat_convert_started_at": old,
+        }
+    ) is False
+    assert gold_chat_converting_from_payload({}) is False
+    assert gold_chat_converting_from_payload(
+        {"gold_chat_convert_status": "converting"}
+    ) is False

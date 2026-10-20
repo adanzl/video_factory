@@ -105,6 +105,11 @@ def transcript_route():
         raise APIError("金故事不存在", status_code=404)
 
 
+@bp.get("/convert")
+def convert_status_route():
+    return json_ok(gold_story_mgr.convert_status())
+
+
 @bp.post("/convert")
 def convert_route():
     data = get_json_body()

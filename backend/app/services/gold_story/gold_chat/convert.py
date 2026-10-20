@@ -1937,8 +1937,13 @@ def convert_gold_chat(
     """
     from app.services.gold_story.gold_chat.finalize import run_gold_chat_finalize
     from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
-    from app.services.gold_story.gold_chat.status import record_gold_chat_success_timing
+    from app.services.gold_story.gold_chat.status import (
+        clear_gold_chat_converting,
+        mark_gold_chat_converting,
+        record_gold_chat_success_timing,
+    )
 
+    gid_for_status = int(row.get("id") or 0)
     started = time.perf_counter()
     stage_started = started
     current_stage = "contract"
@@ -1964,6 +1969,8 @@ def convert_gold_chat(
         }
 
     try:
+        if gid_for_status > 0:
+            mark_gold_chat_converting(gid_for_status)
         row = _persist_m5_h_contract_if_needed(row)
         row, structure_notes = _resolve_structure_row(row)
         row = _persist_structure_correction(row, structure_notes)
@@ -2262,3 +2269,6 @@ def convert_gold_chat(
         except Exception:
             logger.debug("[GOLD_CHAT] cannot attach timing to %s", type(exc).__name__)
         raise
+    finally:
+        if gid_for_status > 0:
+            clear_gold_chat_converting(gid_for_status)
