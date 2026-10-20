@@ -101,11 +101,13 @@ class Config:
         self.log_retention_days: int = int(os.getenv("LOG_RETENTION_DAYS", "3"))
 
         # 每日签到：.env 里只留 DC_DIR（为空即整个功能关闭），
-        # 其余运行参数（脚本名、库路径、超时、定时）存在 Redis 的
+        # 其余运行参数（脚本名、超时、定时）存在 Redis 的
         # `video_factory:auto_checkin_setting`，见 checkin_mgr.setting()
         self.dc_enabled: bool = bool(_opt("DC_DIR"))
         self.dc_dir: Path | None = (
-            _path("DC_DIR", Path("/mnt/data/daily-checkin")) if self.dc_enabled else None
+            _path("DC_DIR", Path("/mnt/data/project/daily-check-in-script"))
+            if self.dc_enabled
+            else None
         )
         self.host_intro_path: Path = _path("HOST_INTRO_PATH", res_dir / "host/default/intro.png")
         self.host_boy_path: Path = _path("HOST_BOY_PATH", res_dir / "host/default/boy.png")

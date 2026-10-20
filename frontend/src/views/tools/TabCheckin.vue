@@ -19,7 +19,7 @@
           <span v-else-if="!environment.run_script_exists"
             >找不到运行脚本：{{ environment.run_script }}</span
           >
-          <span v-else>找不到查询脚本：{{ environment.db_script }}</span>
+          <span v-else>找不到查询模块：{{ environment.db_script }}</span>
         </template>
       </el-alert>
 
@@ -386,7 +386,7 @@ const scheduleText = computed(() => {
 const environmentRows = computed(() => [
   { label: "目录", path: environment.dc_dir, ok: environment.dc_dir_exists },
   { label: "运行脚本", path: environment.run_script, ok: environment.run_script_exists },
-  { label: "查询脚本", path: environment.db_script, ok: environment.db_script_exists },
+  { label: "查询模块", path: environment.db_script, ok: environment.db_script_exists },
 ]);
 
 const recordRowClass = ({ row }: { row: CheckinRecord }) =>

@@ -1,13 +1,12 @@
-"""每日签到：读 dc-db 结果、触发 run.sh、定时调度。
+"""每日签到：读结果库、触发 run.sh、定时调度。
 
-数据源是 daily-checkin 项目自带的 SQLite（表 `t_checkin_records`）。
-查询只调用该项目自己的 `dc-db/dcdb.py`（`sql ... --json`，只读），
-不传库路径、不打开库文件，库在哪由脚本自己决定；
-签到本身由该项目的 `run.sh` 完成。
+数据源是 daily-check-in-script 自带的 SQLite（表 `t_checkin_records`）。
+查库和签到都只调该项目的 `run.sh`：查库用 `--db-sql ... --db-json`（只读），
+不传库路径、不打开库文件，库在哪由脚本自己决定（默认项目根下的 `data.db`）。
 
 运行参数分两处存放：
 
-- `.env` 只保留 `DC_DIR`（daily-checkin 所在目录）。为空即整个功能关闭。
+- `.env` 只保留 `DC_DIR`（daily-check-in-script 所在目录）。为空即整个功能关闭。
 - 其余参数（脚本名、超时、是否定时、定时时刻）存在 Redis 的。定时按本机时区。
   `video_factory:auto_checkin_setting`（JSON），见 `setting()` / `save_setting()`。
 """
@@ -16,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -31,11 +30,13 @@ logger = logging.getLogger(__name__)
 _STATUS_OK = "ok"
 _STATUS_FAIL = "fail"
 
-# daily-checkin 的结果表（由 dc-db/dcdb.py 维护）
+# daily-check-in-script 的结果表（由 daily_checkin.utils.db 维护）
 _TABLE = "t_checkin_records"
 
-_DB_SCRIPT_RELATIVE = "dc-db/dcdb.py"
+# run.sh --db-sql 依赖这个模块；页面用来判断查库能不能跑。
+_DB_MODULE_FILE = Path("daily_checkin") / "utils" / "db.py"
 _QUERY_TIMEOUT_SEC = 30.0
+_SQL_PARAM = re.compile(r":([A-Za-z_][A-Za-z0-9_]*)")
 
 _SETTING_KEY = "auto_checkin_setting"
 _DEFAULT_RUN_SCRIPT = "run.sh"
@@ -43,6 +44,29 @@ _DEFAULT_TIMEOUT_SEC = 1800
 _DEFAULT_RUN_TIME = "09:00"
 _TIMEOUT_MIN = 60
 _TIMEOUT_MAX = 86400
+
+
+def _sql_literal(value: Any) -> str:
+    """把绑定值收成 SQL 字面量。run.sh --db-sql 不接收 -p。"""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _sql_with_literals(sql: str, params: dict[str, Any] | None) -> str:
+    """把 `:name` 换成已转义的字面量；未提供的占位符保持原样。"""
+    if not params:
+        return sql
+
+    def repl(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key not in params:
+            return match.group(0)
+        return _sql_literal(params[key])
+
+    return _SQL_PARAM.sub(repl, sql)
 
 
 class CheckinBusyError(RuntimeError):
@@ -201,9 +225,9 @@ class CheckinMgr:
 
     @property
     def db_script(self) -> Path | None:
-        """daily-checkin 自带的查询脚本。库路径由它自己决定，这里不传、不读文件。"""
+        """run.sh --db-sql 依赖的模块文件。只用来判断在不在，不直接执行。"""
         dc_dir = config.dc_dir
-        return dc_dir / _DB_SCRIPT_RELATIVE if dc_dir is not None else None
+        return dc_dir / _DB_MODULE_FILE if dc_dir is not None else None
 
     def _path_setting(self) -> dict[str, Any]:
         """给路径用的一份配置；未启用时不去碰 Redis。"""
@@ -276,50 +300,44 @@ class CheckinMgr:
         }
 
     # ------------------------------------------------------------------ 读库
-    def _dcdb_python(self) -> str:
-        """优先用 daily-checkin 自己的 venv 解释器，退化到当前解释器。"""
-        dc_dir = config.dc_dir
-        if dc_dir is not None:
-            venv_python = dc_dir / ".venv" / "bin" / "python"
-            if venv_python.is_file():
-                return str(venv_python)
-        return sys.executable
-
     def _run_sql(self, sql: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
-        """通过 dc-db/dcdb.py 执行一条只读 SQL，返回对象数组。
+        """通过 `run.sh --db-sql ... --db-json` 执行一条只读 SQL，返回对象数组。
 
-        不传 --db、也不先看库文件在不在：库路径、只读连接由表脚本自己决定。
+        run.sh 的 `--db-sql` 不接收绑定参数，条件在这里收成 SQL 字面量再传过去。
+        不传 --db-path、也不先看库文件在不在：库路径、只读连接由脚本自己决定。
         任何异常都只记日志并返回空，页面不会 500。
         """
-        db_script = self.db_script
-        if not config.dc_enabled or db_script is None or not db_script.is_file():
+        if not config.dc_enabled or self.db_script is None or not self.db_script.is_file():
+            return []
+        script = self._run_script_path(self._path_setting())
+        if script is None or not script.is_file():
             return []
 
         cmd = [
-            self._dcdb_python(),
-            str(db_script),
-            "sql",
-            sql,
-            "--json",
+            "/bin/bash",
+            str(script),
+            "--db-sql",
+            _sql_with_literals(sql, params),
+            "--db-json",
         ]
-        for key, value in (params or {}).items():
-            cmd += ["-p", f"{key}={value}"]
-
         try:
             code, stdout, stderr = run_subprocess_cmd(
-                cmd, timeout=_QUERY_TIMEOUT_SEC, check=False
+                cmd,
+                timeout=_QUERY_TIMEOUT_SEC,
+                check=False,
+                cwd=str(script.parent),
             )
         except (OSError, RuntimeError, TimeoutError) as exc:
-            logger.warning("[CHECKIN] 调用 dcdb.py 失败: %s", exc)
+            logger.warning("[CHECKIN] 调用 %s --db-sql 失败: %s", script.name, exc)
             return []
         if code != 0:
             detail = (stderr or stdout or "").strip().replace("\n", " ")[:300]
-            logger.warning("[CHECKIN] dcdb.py 退出码 %s: %s", code, detail)
+            logger.warning("[CHECKIN] %s --db-sql 退出码 %s: %s", script.name, code, detail)
             return []
         try:
             payload = json.loads(stdout or "[]")
         except json.JSONDecodeError as exc:
-            logger.warning("[CHECKIN] dcdb.py 输出不是 JSON: %s", exc)
+            logger.warning("[CHECKIN] %s --db-sql 输出不是 JSON: %s", script.name, exc)
             return []
         if not isinstance(payload, list):
             return []

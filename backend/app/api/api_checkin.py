@@ -1,4 +1,4 @@
-"""每日签到看板 API：只读 dc-db 结果库 + 手动/定时触发 run.sh + 运行参数读写。"""
+"""每日签到看板 API：只读签到结果库 + 手动/定时触发 run.sh + 运行参数读写。"""
 
 from __future__ import annotations
 
