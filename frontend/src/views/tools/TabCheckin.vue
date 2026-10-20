@@ -106,7 +106,7 @@
           :data="records"
           :height="tableHeight"
           stripe
-          class="checkin-table w-full"
+          class="w-full [&_.el-table\_\_body_tr.checkin-row-fail>td]:bg-rose-50!"
           v-loading="loading"
           :row-class-name="recordRowClass"
         >
@@ -118,6 +118,7 @@
               >
             </template>
           </el-table-column>
+          <el-table-column label="ID" prop="id" width="72" />
           <el-table-column label="时间" width="170">
             <template #default="{ row }">
               {{ row.created_at }}
@@ -140,11 +141,16 @@
           </el-table-column>
           <el-table-column label="信息" min-width="220">
             <template #default="{ row }">
-              <el-tooltip placement="top" :show-after="300" :disabled="!row.message">
+              <el-tooltip
+                placement="top"
+                :show-after="300"
+                :disabled="!row.message"
+                popper-class="max-w-96 [&_.el-popper\_\_arrow]:size-2.5 [&_.el-popper\_\_arrow::before]:size-2.5"
+              >
                 <template #content>
-                  <pre class="max-h-64 max-w-md overflow-auto text-xs whitespace-pre-wrap">{{
-                    row.message
-                  }}</pre>
+                  <div class="max-w-96 text-xs leading-5 break-all whitespace-pre-wrap">
+                    {{ row.message }}
+                  </div>
                 </template>
                 <span class="block truncate">{{ briefMessage(row.message) }}</span>
               </el-tooltip>
@@ -273,84 +279,24 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import { api } from "@/api/config";
+import {
+  fetchCheckinOverview,
+  fetchCheckinSetting,
+  fetchCheckinState,
+  listCheckinRecords,
+  saveCheckinSetting,
+  startCheckinRun,
+} from "@/api/api-checkin";
 import { useErrorHandler } from "@/composables/useErrorHandler";
-
-interface CheckinRecord {
-  id: number;
-  created_at: string;
-  platform: string;
-  platform_name: string;
-  account_index: number;
-  status: "ok" | "fail";
-  message: string | null;
-}
-
-interface CheckinPlatformStat {
-  platform: string;
-  platform_name: string;
-  total: number;
-  ok_count: number;
-  fail_count: number;
-  last_at: string;
-  last_status: string;
-  last_message: string;
-}
-
-interface CheckinRunResult {
-  finished_at: string;
-  exit_code: number;
-  success: boolean;
-  output_tail: string;
-}
-
-interface CheckinRunState {
-  running: boolean;
-  started_at: string;
-  elapsed_sec: number;
-  trigger: string;
-  last_result: CheckinRunResult | null;
-}
-
-interface CheckinSchedule {
-  enabled: boolean;
-  scheduler_enabled: boolean;
-  run_time: string;
-  next_run_at: string | null;
-}
-
-interface CheckinSetting {
-  run_script: string;
-  timeout_sec: number;
-  auto_run: boolean;
-  run_time: string;
-}
-
-interface CheckinEnvironment {
-  enabled: boolean;
-  dc_dir: string;
-  dc_dir_exists: boolean;
-  run_script: string;
-  run_script_exists: boolean;
-  db_script: string;
-  db_script_exists: boolean;
-}
-
-interface CheckinOverview {
-  today: { date: string; ok: number; fail: number; total: number };
-  platforms: CheckinPlatformStat[];
-  environment: CheckinEnvironment;
-  run_state: CheckinRunState;
-  schedule: CheckinSchedule;
-  redis_ok: boolean;
-}
-
-interface CheckinRecordsResponse {
-  items: CheckinRecord[];
-  total: number;
-  page: number;
-  page_size: number;
-}
+import type {
+  CheckinEnvironment,
+  CheckinOverview,
+  CheckinPlatformStat,
+  CheckinRecord,
+  CheckinRunState,
+  CheckinSchedule,
+  CheckinSetting,
+} from "@/types/checkin";
 
 const { handleError } = useErrorHandler();
 
@@ -466,24 +412,21 @@ const applyOverview = (data: CheckinOverview) => {
 };
 
 const fetchRecords = async () => {
-  const response = await api.get<CheckinRecordsResponse>("/v_factory/api/checkin/records", {
-    params: {
-      status: statusFilter.value || undefined,
-      platform: platformFilter.value || undefined,
-      date: dateFilter.value || undefined,
-      page: page.value,
-      page_size: pageSize.value,
-    },
+  const data = await listCheckinRecords({
+    status: statusFilter.value || undefined,
+    platform: platformFilter.value || undefined,
+    date: dateFilter.value || undefined,
+    page: page.value,
+    page_size: pageSize.value,
   });
-  records.value = response.data.items;
-  total.value = response.data.total;
+  records.value = data.items;
+  total.value = data.total;
 };
 
 const fetchAll = async () => {
   loading.value = true;
   try {
-    const overview = await api.get<CheckinOverview>("/v_factory/api/checkin/overview");
-    applyOverview(overview.data);
+    applyOverview(await fetchCheckinOverview());
     await fetchRecords();
     // 本页在 keep-alive 里：切回来时只剩 fetchAll，若定时任务正在跑要接着轮询，
     // 否则按钮会一直停在「运行中」
@@ -501,16 +444,11 @@ const fetchAll = async () => {
 
 const pollState = async () => {
   try {
-    const response = await api.get<{
-      run_state: CheckinRunState;
-      schedule: CheckinSchedule;
-      environment: CheckinEnvironment;
-      redis_ok: boolean;
-    }>("/v_factory/api/checkin/state");
-    Object.assign(runState, response.data.run_state);
-    Object.assign(schedule, response.data.schedule);
-    Object.assign(environment, response.data.environment);
-    redisOk.value = response.data.redis_ok !== false;
+    const data = await fetchCheckinState();
+    Object.assign(runState, data.run_state);
+    Object.assign(schedule, data.schedule);
+    Object.assign(environment, data.environment);
+    redisOk.value = data.redis_ok !== false;
     if (runState.running) {
       schedulePoll();
       return;
@@ -537,7 +475,7 @@ const schedulePoll = () => {
 
 const handleRun = async () => {
   try {
-    await api.post("/v_factory/api/checkin/run");
+    await startCheckinRun();
     ElMessage.success("已开始运行签到，完成后自动刷新");
     runState.running = true;
     runState.elapsed_sec = 0;
@@ -554,11 +492,9 @@ const onFilterChange = () => {
 
 const openSetting = async () => {
   try {
-    const response = await api.get<{ setting: CheckinSetting; redis_ok: boolean }>(
-      "/v_factory/api/checkin/setting",
-    );
-    Object.assign(settingForm, response.data.setting);
-    redisOk.value = response.data.redis_ok !== false;
+    const data = await fetchCheckinSetting();
+    Object.assign(settingForm, data.setting);
+    redisOk.value = data.redis_ok !== false;
     showSetting.value = true;
   } catch (error) {
     handleError(error, "读取签到设置失败");
@@ -568,12 +504,9 @@ const openSetting = async () => {
 const saveSetting = async () => {
   saving.value = true;
   try {
-    const response = await api.put<{
-      setting: CheckinSetting;
-      schedule: CheckinSchedule;
-    }>("/v_factory/api/checkin/setting", { ...settingForm });
-    Object.assign(settingForm, response.data.setting);
-    Object.assign(schedule, response.data.schedule);
+    const data = await saveCheckinSetting({ ...settingForm });
+    Object.assign(settingForm, data.setting);
+    Object.assign(schedule, data.schedule);
     showSetting.value = false;
     ElMessage.success("已保存，定时任务已按新配置重建");
     await fetchAll();
@@ -605,9 +538,3 @@ onBeforeUnmount(() => {
 
 defineExpose({ refresh: fetchAll });
 </script>
-
-<style scoped>
-.checkin-table :deep(.el-table__body tr.checkin-row-fail > td.el-table__cell) {
-  background-color: #fff1f2;
-}
-</style>
