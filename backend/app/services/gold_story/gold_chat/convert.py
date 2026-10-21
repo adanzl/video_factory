@@ -2050,6 +2050,11 @@ def _try_revise_draft(
         if idx not in indices or not (1 <= idx <= len(dialogue)):
             continue
         text = str(item.get("line") or "").strip()
+        # 模型偶尔把「说话人：」原样写进台词里，去掉前缀避免导出成「灿灿：灿灿：…」
+        speaker = dialogue[idx - 1]["speaker"]
+        for prefix in (f"{speaker}：", f"{speaker}:"):
+            if text.startswith(prefix):
+                text = text[len(prefix) :].strip()
         if not text or text == dialogue[idx - 1]["line"]:
             continue
         dialogue[idx - 1]["line"] = text
