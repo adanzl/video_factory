@@ -556,6 +556,26 @@ _N_SECOND_KID_LINES: tuple[str, ...] = (
     "我听着都替你捏把汗，你可别把话说漏。",
 )
 
+# 非 N 类补出的第二个孩子只承担「见证位」，不参与机制、不拆对质。
+# N 类需要两孩交替承担破功主体，故继续使用上面的态度池；其它类型若也
+# 按 N 的句数预算补拍，就会把一个单孩源硬写成旁观者不断插话的访谈稿。
+_WITNESS_KID_LINES: tuple[str, ...] = (
+    "我就在旁边听着，你慢慢说。",
+    "我听着呢，你先别急。",
+    "这事我看见了，你接着说。",
+    "你先缓缓，把话说明白。",
+    "我在这儿呢，你慢慢讲。",
+    "你先顺顺气，把话讲完。",
+    "我不催你，你慢慢说。",
+    "别慌，我听着呢。",
+    "你慢慢来，我等着。",
+    "我陪你，你把话说完。",
+)
+
+_BAD_WITNESS_LINE_RE = re.compile(
+    r"打岔|绕开|再说一遍|回答我|我问的是|没听明白|给我个准话|到底说没说"
+)
+
 
 
 # 说明：这些台词**只表达态度，不含任何剧情内容**（没有人名、怪词、道具），
@@ -585,6 +605,543 @@ def is_n_filler_intent(text: str) -> bool:
     """
     t = str(text or "").strip()
     return bool(t) and any(t.startswith(pref) for pref in _N_FILLER_PREFIXES)
+
+
+def _is_second_kid_filler_intent(text: str) -> bool:
+    """是否是流水线补出的第二孩填充句（含被拍序说明包过的旧稿）。"""
+    t = str(text or "").strip()
+    if not t:
+        return False
+    if is_n_filler_intent(t):
+        return True
+    if any(line[:8] in t for line in _N_SECOND_KID_LINES):
+        return True
+    return any(line[:8] in t for line in _WITNESS_KID_LINES)
+
+
+def supplemental_witness_kid(contract: dict[str, Any] | None) -> str:
+    """非 N 契约里由流水线补出的旁观孩子；真实双孩稿返回空串。
+
+    只为单孩源补一个见证位，避免把第二个孩子写成全程插话的访谈主持人。
+    判定不依赖具体故事：该孩子的全部拍都是流水线填充句，且另一个孩子
+    至少有一拍真实剧情，才认定他是补充角色。
+    """
+    if not isinstance(contract, dict):
+        return ""
+    story_type = str(contract.get("story_type") or "").strip().upper()
+    if story_type in {"", "N"}:
+        return ""
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return ""
+    rows = [r for r in chain if isinstance(r, dict)]
+    names = [str(r.get("speaker") or "").strip() for r in rows]
+    names += [str(c).strip() for c in (contract.get("characters") or [])]
+    kids = kid_speakers_of(names)
+    if len(kids) < 2:
+        return ""
+
+    def _kid_rows(kid: str) -> list[dict[str, Any]]:
+        return [
+            r for r in rows if str(r.get("speaker") or "").strip() == kid
+        ]
+
+    candidates: list[tuple[int, str]] = []
+    for kid in kids:
+        own = _kid_rows(kid)
+        if not own:
+            continue
+        if not all(
+            _is_second_kid_filler_intent(str(r.get("intent") or r.get("beat") or ""))
+            for r in own
+        ):
+            continue
+        others = [r for r in rows if r not in own]
+        if not any(
+            not _is_second_kid_filler_intent(str(r.get("intent") or r.get("beat") or ""))
+            for r in others
+            if str(r.get("speaker") or "").strip() in kids
+        ):
+            continue
+        candidates.append((len(own), kid))
+    if not candidates:
+        return ""
+    candidates.sort()
+    return candidates[0][1]
+
+
+def scene_contract_reuse_issues(
+    contract: dict[str, Any] | None,
+) -> list[str]:
+    """非 N 旧契约何时不能直接复用。
+
+    补充见证位只是可选角色；把它从拍序里拿掉后，如果同一个主孩子仍连续
+    承担多拍，说明旧契约是按「见证位机械拆句」搭起来的。继续复用会让扩写
+    照着旧结构写，再把见证位删掉后又退回孩子连说，语义重复也会沿旧拍序
+    反复出现。此时应重跑 H3a/H3b，而不是只做局部文本修补。
+
+    N 类依赖双孩交替，不能套用这条规则。
+    """
+    if not isinstance(contract, dict):
+        return []
+    if str(contract.get("story_type") or "").strip().upper() == "N":
+        return []
+    rows = [
+        r
+        for r in (contract.get("beat_chain") or [])
+        if isinstance(r, dict)
+    ]
+    if len(rows) < 2:
+        return []
+
+    issues: list[str] = []
+    witness = supplemental_witness_kid(contract)
+    witness_rows = [
+        r for r in rows if str(r.get("speaker") or "").strip() == witness
+    ] if witness else []
+    if len(witness_rows) > 1:
+        issues.append(f"补充见证拍过多:{witness}({len(witness_rows)}拍)")
+
+    ordered = [
+        str(r.get("speaker") or "").strip()
+        for r in rows
+        if not witness
+        or str(r.get("speaker") or "").strip() != witness
+    ]
+    for prev, cur in zip(ordered, ordered[1:]):
+        if prev and prev == cur and prev not in _PARENT_SPEAKER_SET:
+            issues.append(f"去见证位后孩子连续拍:{cur}")
+            break
+    return issues
+
+
+def _trim_supplemental_witness_beats(
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """非 N：把补充孩子的重复填充拍收成一个见证位（幂等）。"""
+    partner = supplemental_witness_kid(contract)
+    if not partner:
+        return contract, []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list):
+        return contract, []
+    rows = [dict(r) for r in chain if isinstance(r, dict)]
+    kept = False
+    out_rows: list[Any] = []
+    removed = 0
+    for row in rows:
+        speaker = str(row.get("speaker") or "").strip()
+        intent = str(row.get("intent") or row.get("beat") or "")
+        if (
+            speaker == partner
+            and _is_second_kid_filler_intent(intent)
+        ):
+            if kept:
+                removed += 1
+                continue
+            kept = True
+            row["intent"] = _WITNESS_KID_LINES[0]
+        out_rows.append(row)
+    if not removed:
+        return contract, []
+    for idx, row in enumerate(out_rows, 1):
+        if isinstance(row, dict):
+            row["beat"] = idx
+    out = dict(contract)
+    out["beat_chain"] = out_rows
+    return out, [f"非N见证位收敛:{partner}(删{removed}拍)"]
+
+
+def normalize_supplemental_kid_seed(
+    seed: list[Any] | None,
+    *,
+    contract: dict[str, Any] | None,
+) -> tuple[list[Any], list[str]]:
+    """非 N：移除流水线补出的旁观孩子 seed。
+
+    非 N 的主冲突是家长 × 主孩子；补出的旁观孩子只承担可选见证位。
+    终检会把「我听着/你慢慢说」这类无剧情信息的态度句判成打断或重复，
+    因此 seed 不给他安排固定台词，宁可让主孩子自然连说。
+    """
+    partner = supplemental_witness_kid(contract)
+    rows = list(seed or [])
+    if not partner or not rows:
+        return rows, []
+    out: list[Any] = []
+    removed = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        speaker = str(row.get("speaker") or "").strip()
+        if speaker == partner:
+            removed += 1
+            continue
+        out.append(row)
+    if removed:
+        return out, [f"非N见证位seed移除:{partner}(删{removed}句)"]
+    return out, []
+
+
+_NEGATED_RESULT_RE = re.compile(
+    r"(?:没有|没|未)(?:有)?(?P<action>[^，。；！？!?\n]{2,24})"
+)
+_REQUEST_VERB_RE = re.compile(
+    r"(?:让|叫|要求|请|吩咐|催|喊)(?P<target>[^，。；！？!?\n]{2,30})"
+)
+_REQUEST_TARGET_PREFIX_RE = re.compile(
+    r"^(?:他|她|孩子|小朋友|昭昭|灿灿|你)"
+)
+_ACTION_FILLER_RE = re.compile(
+    r"帮忙|帮|把|给|了|的|一下|赶紧|快|你|我|他|她|它|们"
+)
+
+
+def _action_core(text: str) -> str:
+    """否定结果里的动作核心：去掉人称/助词，保留动作与对象。"""
+    return _ACTION_FILLER_RE.sub("", str(text or ""))
+
+
+def _action_overlaps(left: str, right: str) -> bool:
+    """两个动作短语是否指向同一动作（短动作按包含，长动作按双字交集）。"""
+    a = _action_core(left)
+    b = _action_core(right)
+    if len(a) < 2 or len(b) < 2:
+        return False
+    if a in b or b in a:
+        return True
+    ga = {a[i : i + 2] for i in range(len(a) - 1)}
+    gb = {b[i : i + 2] for i in range(len(b) - 1)}
+    if not ga or not gb:
+        return False
+    return len(ga & gb) / min(len(ga), len(gb)) >= 0.5
+
+
+def _request_phrase_from_story_raw(
+    story_raw: str,
+    *,
+    parent: str,
+    child: str,
+    action: str,
+) -> str:
+    """从 story_raw 找家长对该动作的请求/要求，返回可并入契约的口语句。"""
+    for clause in re.split(r"[，。；！？!?\n]+", str(story_raw or "")):
+        if parent not in clause:
+            continue
+        match = _REQUEST_VERB_RE.search(clause)
+        if not match:
+            continue
+        target_text = match.group("target").strip()
+        if not _action_overlaps(target_text, action):
+            continue
+        rest = _REQUEST_TARGET_PREFIX_RE.sub("", target_text).strip()
+        if not rest:
+            continue
+        if not rest.startswith(child):
+            rest = f"{child}{rest}"
+        return f"让{rest}"
+    return ""
+
+
+def complete_request_premises(
+    contract: dict[str, Any] | None,
+    seed: list[Any] | None,
+    *,
+    story_raw: str,
+) -> tuple[dict[str, Any] | None, list[Any], list[str]]:
+    """补“被要求做某事后再拒绝/回答”的请求前因。
+
+    只在契约的否定结果句能从 story_raw 找到同一动作的家长请求时生效。
+    请求并入紧邻的前一条家长拍，seed 只给前一条同角色素材追加 clause，
+    不新增拍、不改变拍序，避免 seed 归位补丁把说话人/旁观位写错。
+    """
+    if not isinstance(contract, dict) or not isinstance(seed, list):
+        return contract, list(seed or []), []
+    chain = contract.get("beat_chain")
+    if not isinstance(chain, list) or not chain:
+        return contract, list(seed), []
+    parents = {"妈妈", "爸爸"}
+    rows = [dict(row) if isinstance(row, dict) else row for row in chain]
+    seed_rows = [dict(row) if isinstance(row, dict) else row for row in seed]
+    notes: list[str] = []
+    changed = False
+
+    for index, beat in enumerate(rows):
+        if not isinstance(beat, dict):
+            continue
+        speaker = str(beat.get("speaker") or "").strip()
+        if speaker in parents:
+            continue
+        intent = str(beat.get("intent") or "").strip()
+        negated = _NEGATED_RESULT_RE.search(intent)
+        if not negated:
+            continue
+        action = negated.group("action").strip()
+        clean_action = re.sub(r"^(?:帮忙|帮)", "", action).strip() or action
+        affection_refusal = bool(
+            re.search(r"疼(?:你|妈妈|爸爸|妈|爸)|爱你|喜欢你|心疼你", intent)
+        )
+        parent_beat_index = next(
+            (
+                i
+                for i in range(index - 1, -1, -1)
+                if isinstance(rows[i], dict)
+                and str(rows[i].get("speaker") or "").strip() in parents
+            ),
+            -1,
+        )
+        if parent_beat_index < 0:
+            continue
+        parent_beat = rows[parent_beat_index]
+        parent = str(parent_beat.get("speaker") or "").strip()
+        parent_intent = str(parent_beat.get("intent") or "").strip()
+        phrase = _request_phrase_from_story_raw(
+            story_raw,
+            parent=parent,
+            child=speaker,
+            action=action,
+        )
+        if not phrase:
+            continue
+        if phrase not in parent_intent and not _action_overlaps(
+            parent_intent, action
+        ):
+            if affection_refusal:
+                parent_beat["intent"] = (
+                    f"{parent_intent}；并主动帮{speaker}{clean_action}"
+                ).strip("；")
+            else:
+                parent_beat["intent"] = f"{parent_intent}；并{phrase}".strip("；")
+            changed = True
+            notes.append(f"契约补请求前因:{parent}{phrase}")
+        if affection_refusal:
+            beat["intent"] = (
+                f"先承认衣服是自己弄脏的，再说想自己{clean_action}、"
+                f"不让{parent}操心，因为疼{parent}"
+            )
+            changed = True
+            notes.append("契约补拒绝因果桥")
+
+        # seed 同拍追加：只改最近的前一条同角色素材，不插入新行。
+        seed_index = next(
+            (
+                i
+                for i, row in enumerate(seed_rows)
+                if isinstance(row, dict)
+                and str(row.get("speaker") or "").strip() == speaker
+                and _action_overlaps(
+                    str(row.get("intent") or row.get("line") or ""), action
+                )
+            ),
+            -1,
+        )
+        if seed_index >= 0:
+            parent_seed_index = next(
+                (
+                    i
+                    for i in range(seed_index - 1, -1, -1)
+                    if isinstance(seed_rows[i], dict)
+                    and str(seed_rows[i].get("speaker") or "").strip() == parent
+                ),
+                -1,
+            )
+            if parent_seed_index >= 0:
+                parent_seed = seed_rows[parent_seed_index]
+                key = "intent" if str(parent_seed.get("intent") or "").strip() else "line"
+                seed_text = str(parent_seed.get(key) or "").strip()
+                if phrase not in seed_text:
+                    if affection_refusal:
+                        parent_seed[key] = (
+                            f"{seed_text}；并主动帮{speaker}{clean_action}"
+                        ).strip("；")
+                    else:
+                        parent_seed[key] = f"{seed_text}；并{phrase}".strip("；")
+                    notes.append("seed同拍补请求素材")
+
+            # 同一拍的孩子回答也要自包含，避免模型只写「我没弄干净」
+            # 却把前面「你让我弄干净」的请求压掉，终检读成缺前因。
+            child_seed = seed_rows[seed_index]
+            child_key = (
+                "intent" if str(child_seed.get("intent") or "").strip() else "line"
+            )
+            child_text = str(child_seed.get(child_key) or "").strip()
+            request_action = re.sub(
+                rf"^让{re.escape(speaker)}", "", phrase
+            ).strip()
+            if affection_refusal:
+                child_seed[child_key] = (
+                    f"我疼你，才想自己{clean_action}，不让你操心。"
+                )
+                changed = True
+                notes.append("seed同拍补拒绝因果桥")
+            elif (
+                request_action
+                and "你让我" not in child_text
+                and "你让" not in child_text
+            ):
+                reason_match = re.search(r"[，,](?:因为|所以).*$", child_text)
+                reason = reason_match.group(0) if reason_match else ""
+                child_seed[child_key] = (
+                    f"你让我{request_action}，我没照做{reason}".strip()
+                )
+                changed = True
+                notes.append("seed同拍补否定回答前因")
+
+    if not changed:
+        return contract, list(seed or []), []
+    out = dict(contract)
+    out["beat_chain"] = rows
+    return out, seed_rows, notes
+
+
+_CHILD_REQUEST_ECHO_RE = re.compile(
+    r"你让我(?P<action>[^，,。；;！？!?]{2,24})，我没照做"
+)
+_AFFECTION_REASON_RE = re.compile(r"疼你|爱你|喜欢你|心疼你")
+_REFUSAL_MARKER_RE = re.compile(r"不弄|没弄|没照做|没动|不让|不肯|不想|不做|不帮")
+
+
+def ensure_request_premise_dialogue(
+    story: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """孩子已复述「你让我做某事」时，确保前一句家长真的提出过请求。
+
+    只改写已有的家长句，不插入新行、不改变说话人和拍序。优先保留家长
+    最后一句追问，再把请求拼成可说出口的短句；整句仍受 24 字上限约束。
+    """
+    if not isinstance(story, dict) or not isinstance(dialogue_seed, list):
+        return story, []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, []
+
+    requests: list[tuple[str, str]] = []
+    for row in dialogue_seed:
+        if not isinstance(row, dict):
+            continue
+        speaker = str(row.get("speaker") or "").strip()
+        text = str(row.get("intent") or row.get("line") or "").strip()
+        match = _CHILD_REQUEST_ECHO_RE.search(text)
+        if speaker and match:
+            requests.append((speaker, match.group("action").strip()))
+    if not requests:
+        return story, []
+
+    for child, _seed_action in requests:
+        child_idx = next(
+            (
+                i
+                for i, item in enumerate(dialogue)
+                if isinstance(item, dict)
+                and str(item.get("speaker") or "").strip() == child
+                and (
+                    _CHILD_REQUEST_ECHO_RE.search(str(item.get("line") or ""))
+                    or (
+                        _AFFECTION_REASON_RE.search(str(item.get("line") or ""))
+                        and _REFUSAL_MARKER_RE.search(str(item.get("line") or ""))
+                    )
+                )
+            ),
+            -1,
+        )
+        if child_idx < 0:
+            continue
+        child_line = str(dialogue[child_idx].get("line") or "")
+        child_match = _CHILD_REQUEST_ECHO_RE.search(child_line)
+        action = (
+            child_match.group("action").strip() if child_match else _seed_action
+        )
+        parent_idx = next(
+            (
+                i
+                for i in range(child_idx - 1, -1, -1)
+                if isinstance(dialogue[i], dict)
+                and str(dialogue[i].get("speaker") or "").strip() in {"妈妈", "爸爸"}
+            ),
+            -1,
+        )
+        if parent_idx < 0:
+            continue
+        parent_row = dialogue[parent_idx]
+        parent_line = str(parent_row.get("line") or "").strip()
+        if not parent_line:
+            continue
+        if "我帮你" in parent_line or "我替你" in parent_line:
+            continue
+        if "不该骂你" in parent_line:
+            continue
+
+        clean_action = re.sub(r"^(?:帮忙|帮)", "", action).strip() or action
+        questions = re.findall(r"[^，。！？!?；;]{2,16}[？?]", parent_line)
+        tail_question = next(
+            (
+                q
+                for q in reversed(questions)
+                if re.search(r"衣服|弄脏|谁", q)
+            ),
+            "",
+        )
+        parent_speaker = str(parent_row.get("speaker") or "").strip()
+        new_line = f"{parent_speaker}不该骂你，{tail_question}我来{clean_action}吧。"
+        if len(new_line) > CHAT_MAX_LINE_CHARS:
+            new_line = f"{parent_speaker}不该骂你，我来{clean_action}吧。"
+        if not new_line or len(new_line) > CHAT_MAX_LINE_CHARS:
+            continue
+        if new_line == parent_line:
+            continue
+        parent_row["line"] = new_line
+        notes = ["家长句补可见请求前提"]
+
+        # 「你让我做 X，我没照做，因为我疼你」本身因果断裂。
+        # 把请求理解为家长主动帮忙、孩子舍不得让她动手，因果才闭合：
+        # 不新增人物、动作或道具，只调整「谁替谁做」的方向。
+        reason_match = re.search(r"因为(?P<reason>[^，,。；;！？!?]{2,16})", child_line)
+        if reason_match and _AFFECTION_REASON_RE.search(reason_match.group("reason")):
+            reason = re.sub(r"[啊呀呢吧]+$", "", reason_match.group("reason").strip())
+            subject_reason = reason if reason.startswith(("我", "咱")) else f"我{reason}"
+            bridge = f"{subject_reason}，才想自己{clean_action}，不让你操心。"
+            if len(bridge) > CHAT_MAX_LINE_CHARS:
+                bridge = f"{subject_reason}，才想自己来，不让你操心。"
+            if bridge != child_line and len(bridge) <= CHAT_MAX_LINE_CHARS:
+                dialogue[child_idx]["line"] = bridge
+                notes.append("孩子句补拒绝因果桥")
+        return story, notes
+    return story, []
+
+
+def trim_supplemental_kid_dialogue(
+    story: dict[str, Any],
+    *,
+    contract: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """非 N 终稿移除流水线补出的旁观孩子。
+
+    这类角色没有源素材，模型只能写「我听着/你慢慢说」之类空态度句。
+    终检会逐条判成无效插话或同义重复，插入越多越难通过；主孩子连说
+    由质量评分按「单孩叙事」豁免，不再用见证位机械拆句。
+    """
+    partner = supplemental_witness_kid(contract)
+    if not partner or not isinstance(story, dict):
+        return story, []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, []
+    kept = [
+        row
+        for row in dialogue
+        if not (
+            isinstance(row, dict)
+            and str(row.get("speaker") or "").strip() == partner
+        )
+    ]
+    removed = len(dialogue) - len(kept)
+    if not removed:
+        return story, []
+    out = dict(story)
+    out["dialogue"] = kept
+    return out, [f"非N见证位移除:{partner}(删{removed}句)"]
 
 
 def refresh_second_kid_intents(
@@ -928,6 +1485,20 @@ def align_seed_to_contract_beats(
     beats = [r for r in (sc.get("beat_chain") or []) if isinstance(r, dict)]
     if not rows or len(beats) < 2:
         return seed or [], []
+    optional_witness = supplemental_witness_kid(sc)
+    if optional_witness:
+        # 非 N 的补充孩子只有可选见证位，不给他合成 seed；否则终检缺拍
+        # 覆盖检查会把他当成必须出场，重新灌入空态度句。
+        beats = [
+            b
+            for b in beats
+            if str(b.get("speaker") or "").strip() != optional_witness
+        ]
+        rows = [
+            r
+            for r in rows
+            if str(r.get("speaker") or "").strip() != optional_witness
+        ]
     beat_speakers = [str(b.get("speaker") or "").strip() for b in beats]
     seed_speakers = {str(r.get("speaker") or "").strip() for r in rows}
     missing = {sp for sp in beat_speakers if sp and sp not in seed_speakers}
@@ -2061,11 +2632,40 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
     names = [str(r.get("speaker") or "").strip() for r in rows]
     names += [str(c).strip() for c in (sc.get("characters") or [])]
     kids = kid_speakers_of(names)
+    story_type = str(sc.get("story_type") or "").strip().upper()
     if len(kids) >= 2:
+        if story_type != "N":
+            return _trim_supplemental_witness_beats(sc)
         return contract, []
     partner = next(k for k in _DEFAULT_KID_ORDER if k not in kids) if kids else "灿灿"
     solo = kids[0] if kids else ""
     notes: list[str] = []
+    if story_type != "N":
+        # 非 N 不靠两孩交替撑句数：只补一个见证位，主冲突仍留在
+        # 家长与主孩子之间。插在第一个孩子拍之后，避免抢开场触发拍。
+        target = next(
+            (
+                i
+                for i, r in enumerate(rows)
+                if str(r.get("speaker") or "").strip() == solo
+            ),
+            -1,
+        )
+        if target < 0:
+            return contract, []
+        rows.insert(
+            target + 1,
+            {"speaker": partner, "intent": _WITNESS_KID_LINES[0]},
+        )
+        for idx, row in enumerate(rows, 1):
+            if isinstance(row, dict):
+                row["beat"] = idx
+        out = dict(sc)
+        out["beat_chain"] = rows
+        out["characters"] = ensure_two_kid_cast(
+            [*(sc.get("characters") or []), solo, partner]
+        )
+        return out, [f"非N见证位:补{partner}(1拍)"]
     react_i = 0
     inserted = 0
     out_rows: list[Any] = []
@@ -3626,6 +4226,9 @@ _NARRATION_LINE_RE = re.compile(
     r"俯视|"
     r"问[:：]|"
     r"开口[:：]|"
+    # seed/beat 原句误当台词：第三人称「大声责备昭昭…并说出‘傻’字」
+    r"^(?:大声)?(?:责备|责骂|批评|质问|追问)(?:昭昭|灿灿|妈妈|爸爸)|"
+    r"(?:并|又)?说出?[“\"'][^”\"']{1,8}[”\"']字|"
     r"(?:不|没)说话|"
     r"没再管|"
     r"(?:把|将)(?:笔|东西)?举高|"
@@ -3720,6 +4323,17 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
     if not raw or not looks_like_narration_line(raw):
         return raw
     sp = str(speaker or "").strip()
+    # 「说出‘傻’字」：抽出被指责的原词，转成孩子能听见的当场短句。
+    m_spoken_label = re.search(
+        r"(?:并|又)?说出?[“\"']([^”\"']{1,8})[”\"']字",
+        raw,
+    )
+    if m_spoken_label:
+        label = m_spoken_label.group(1).strip()
+        if label:
+            if sp in {"妈妈", "爸爸"}:
+                return f"你怎么这么{label}！"
+            return f"你说谁{label}呢！"
     # “端碗只说一个字：喝”这类动作+原话，优先保留真正说出口的原话。
     m_only_word = re.search(
         r"只说(?:一个字|一句)[：:]\s*[“]?([^，。！？!?“”]{1,6})",
@@ -3782,6 +4396,15 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
     # 咀嚼/塞食动作 → 可说的逞强短句（抽象，不绑具体食物）
     if re.search(r"一口(?:吞下|塞进|吞了)|奶油都?(?:挤|溢)", raw):
         return "看我一口吞！"
+    # 结尾只写了「嘟囔听不清/神情没消气」：转成孩子能说出口的残留情绪，
+    # 保留 closing_intent 的「仍未消气」，勿落到通用「你别过来」。
+    if re.search(r"嘟囔[^。！？]{0,12}听不清|听不清[^。！？]{0,12}嘟囔", raw) or (
+        re.search(r"嘟囔|小嘴一撇", raw)
+        and re.search(r"没消气|未消气|还生气|气没消", raw)
+    ):
+        if sp in {"妈妈", "爸爸"}:
+            return "唉，是我说得太重了。"
+        return "哼，我还没消气呢！"
     m_pose = re.match(
         r"^(?:勾肩搭背|肩并肩|手挽手|挽着手臂)[，,]\s*(.+)$",
         raw,

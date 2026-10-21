@@ -35,16 +35,72 @@ def truncate_overlong_line(
     *,
     max_chars: int = DAILY_STORY_LINE_CHARS_MAX,
 ) -> str:
+    """截到上限内，优先保住句末实义分句。
+
+    直接在最后一个逗号处砍掉，会把「真是傻！」这类句末关键词一起丢掉，
+    而这个词往往正是机制回旋镖。只超几个字时先从前面删无信息量的虚词；
+    仍超长再保留末分句、压缩前文，最后才退回按标点截断。
+    """
+    text = str(line or "")
+    if len(text) <= max_chars:
+        return text
+
+    # 只超 1–3 字时，前面常有「又/都/就/可/个」这类可安全删的虚词。
+    # 只在最后一个分句之前删，别把句末的「真是」也删成「是」。
+    last_split = max(text.rfind("，"), text.rfind("、"), text.rfind("；"))
+    head = text[:last_split] if last_split > 0 else text
+    tail = text[last_split:] if last_split > 0 else ""
+    for filler in ("又", "都", "就", "可", "还", "个"):
+        if len(text) <= max_chars:
+            break
+        idx = head.find(filler)
+        if idx > 0:
+            head = head[:idx] + head[idx + len(filler):]
+            text = head + tail
+    if len(text) <= max_chars:
+        return text
+
+    # 优先保留最后一个实义分句，不让它被整段砍掉。
+    split = max(text.rfind("，"), text.rfind("、"), text.rfind("；"))
+    if split > 0:
+        head, tail = text[:split], text[split + 1:]
+        budget = max_chars - len(tail) - 1
+        if budget >= 6:
+            while len(head) > budget:
+                removed = False
+                for filler in ("又", "都", "就", "真", "可", "还", "个"):
+                    idx = head.find(filler)
+                    if idx > 0:
+                        head = head[:idx] + head[idx + len(filler):]
+                        removed = True
+                        break
+                if not removed:
+                    break
+            if len(head) > budget:
+                # 虚词不够删时，保留前文最靠近预算的完整分句；句末实义分句
+                # 比一个被硬切半截的长前半句更值得留下。
+                cut = -1
+                for i, ch in enumerate(head):
+                    if i >= budget:
+                        break
+                    if ch in "，、；; ":
+                        cut = i
+                if cut >= 6:
+                    head = head[:cut]
+            if len(head) <= budget:
+                return f"{head.rstrip('，、；; ')}，{tail}"
+
+    text = line
     limit = max_chars
     cut = -1
-    for i, ch in enumerate(line):
+    for i, ch in enumerate(text):
         if i >= limit:
             break
         if ch in "，、；; ":
             cut = i
     if cut >= 6:
-        return line[:cut].rstrip("，、；; ")
-    return line[:limit]
+        return text[:cut].rstrip("，、；; ")
+    return text[:limit]
 
 
 def score_opening_cinematic(

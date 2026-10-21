@@ -6,6 +6,7 @@ from app.services.daily_story.story_types.i import humor as i_humor
 from app.services.daily_story.story_types.i import opening as i_opening
 from app.services.daily_story.story_types.i.validate import (
     RE_A_BACKFIRE,
+    RE_I_CONCEDE,
     RE_SOUL_QUESTION,
     RE_SPEECHLESS,
     RE_WIN_STUBBORN,
@@ -45,12 +46,13 @@ def score_punchline(
 
     body = "".join(lines)
     tail6 = "".join(lines[-6:])
-    if RE_A_BACKFIRE.search(tail6):
+    has_concede = bool(RE_I_CONCEDE.search(tail6))
+    if RE_A_BACKFIRE.search(tail6) and not has_concede:
         return 0, ["I收束含A式反噬标记"]
 
     has_question = bool(RE_SOUL_QUESTION.search(body))
-    has_speechless = bool(RE_SPEECHLESS.search(body))
-    has_win = bool(RE_WIN_STUBBORN.search(tail6))
+    has_speechless = bool(RE_SPEECHLESS.search(body) or has_concede)
+    has_win = bool(RE_WIN_STUBBORN.search(tail6) or has_concede)
     if not has_question or not has_speechless:
         return 0, []
 
@@ -69,7 +71,16 @@ def score_punchline(
 QUALITY_PROFILE = TypeQualityProfile(
     code="I",
     score_punchline=score_punchline,
-    closing_pro_markers=("拷问", "语塞", "一招制敌", "问倒", "制敌", "服不服"),
+    closing_pro_markers=(
+        "拷问",
+        "语塞",
+        "一招制敌",
+        "问倒",
+        "制敌",
+        "服不服",
+        "认错",
+        "道歉",
+    ),
     summary_highlight_tokens=(
         "推进",
         "拷问",
@@ -85,6 +96,11 @@ QUALITY_PROFILE = TypeQualityProfile(
         "服不服",
         "说不过",
         "不爱学习",
+        "对不起",
+        "不该说",
+        "我错了",
+        "认错",
+        "道歉",
     ),
     mom_lines_penalty_at=5,
     penalize_wait_mom_end=False,

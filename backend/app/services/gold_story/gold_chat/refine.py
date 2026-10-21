@@ -211,6 +211,9 @@ def _stabilize_refine_candidate(
         )
         if seed_patched:
             logger.info("gold_chat refine local seed speaker align")
+    from app.services.gold_story.scene import patch_dialogue_narration_to_speech
+
+    patch_dialogue_narration_to_speech(data)
     data = _apply_gold_chat_local_hard_repairs(
         data,
         structure_type=structure_type,
@@ -279,6 +282,7 @@ def _stabilize_refine_candidate(
                 "gold_chat refine N contract relock: %s",
                 "；".join(n_relock_notes),
             )
+    patch_dialogue_narration_to_speech(data)
     return _normalize_chat_speakers(data)
 
 def _stabilize_refine_repair_candidate(
@@ -340,6 +344,22 @@ def _stabilize_refine_repair_candidate(
         closed_chars,
         floor,
     )
+    # LLM 修稿缩字被拒后，不能直接回退未经本地补丁的原稿：原稿可能正是
+    # 开场倒序（孩子先反问、家长触发在后）。这里只补开场，不跑整套
+    # stabilize（后者会按家长额度裁句，反而把原文缩得更短）；开场补丁通常
+    # 只重排/替换，若补后长度仍达标，保留它比回退到已知坏开场更安全。
+    opening_fixed, opening_patched = apply_opening_causality_local_patch(
+        copy.deepcopy(baseline),
+        beat_chain=beat_chain,
+        mom_lines_max=mom_lines_max,
+        dialogue_seed=dialogue_seed,
+    )
+    if opening_patched and dialogue_total_chars(opening_fixed) >= floor:
+        logger.info(
+            "gold_chat refine repair restored baseline with opening patch chars=%s",
+            dialogue_total_chars(opening_fixed),
+        )
+        return _normalize_chat_speakers(opening_fixed)
     return _normalize_chat_speakers(copy.deepcopy(baseline))
 
 

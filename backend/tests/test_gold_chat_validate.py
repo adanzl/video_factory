@@ -479,6 +479,7 @@ def test_refine_bails_on_structural_by_default():
 
 
 def test_gold_story_to_gold_chat_runs_align_pass(monkeypatch):
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "0")
     def fake_chat(system: str, _user: str, **_kwargs) -> dict:
         if "对齐精修" in system or "保真精修" in system:
             return {"fixes": _m5h_refine_fixes()}
@@ -1420,6 +1421,109 @@ def test_opening_causality_local_patch_inserts_missing_mom_blame():
     assert "作业" in fixed["dialogue"][0]["line"]
 
 
+def test_opening_causality_patch_replaces_early_blame_when_mom_quota_full():
+    """妈妈额度已满且首句漏了机制原话时，用 seed beat1 原位替换。"""
+    from app.services.gold_story.gold_chat.patch import (
+        apply_opening_causality_local_patch,
+    )
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "大声责备昭昭弄脏衣服，并说“傻”"},
+        {"beat": 2, "speaker": "昭昭", "intent": "反问为什么大声骂我"},
+        {"beat": 3, "speaker": "妈妈", "intent": "讲道理"},
+        {"beat": 4, "speaker": "昭昭", "intent": "继续反问"},
+    ]
+    seed = [
+        {"speaker": "妈妈", "intent": "你看你，吃个早餐都能把衣服弄成这样，傻不傻啊！"},
+        {"speaker": "昭昭", "intent": "你为什么要大声骂我？"},
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你干嘛那么大声骂我？"},
+            {"speaker": "妈妈", "line": "你怎么又把衣服弄这么脏，吃个早餐都不省心！"},
+            {"speaker": "昭昭", "line": "我又不是故意的。"},
+            {"speaker": "妈妈", "line": "我说你两句你还撅嘴。"},
+            {"speaker": "昭昭", "line": "可我是想帮你才弄到的呀。"},
+            {"speaker": "妈妈", "line": "那你说说，衣服是谁弄脏的？"},
+            {"speaker": "昭昭", "line": "是我弄脏的。"},
+        ],
+    }
+    fixed, changed = apply_opening_causality_local_patch(
+        story,
+        beat_chain=beat,
+        mom_lines_max=3,
+        dialogue_seed=seed,
+    )
+    assert changed
+    assert opening_causality_passes(fixed, beat, mom_lines_max=3)
+    assert fixed["dialogue"][0]["speaker"] == "妈妈"
+    assert "傻" in fixed["dialogue"][0]["line"]
+    assert sum(
+        row.get("speaker") == "妈妈" for row in fixed["dialogue"]
+    ) == 3
+
+
+def test_opening_blame_intent_accepts_verbal_abuse_without_label():
+    """「大声骂…并说傻」属于责备触发；孩子反问式复述不算。"""
+    from app.services.gold_story.gold_chat.validate import (
+        _line_fulfills_beat,
+        _opening_authority_intent_kind,
+    )
+
+    beat = {
+        "beat": 1,
+        "speaker": "妈妈",
+        "intent": "大声骂昭昭弄脏衣服，并说“傻”",
+    }
+    assert _opening_authority_intent_kind(beat["intent"]) == "blame"
+    assert _line_fulfills_beat(
+        "妈妈",
+        "你看你，吃个早餐都能把衣服弄成这样，傻不傻啊！",
+        beat,
+    )
+    assert _opening_authority_intent_kind(
+        "撅嘴生闷气，反问妈妈为什么大声骂自己"
+    ) == ""
+
+
+def test_trim_parent_quota_removes_middle_non_question():
+    """非 N 家长超额时，先删中间过渡句，保住开场/追问/收束。"""
+    from app.services.gold_story.gold_chat.patch import (
+        trim_parent_quota_overflow,
+    )
+
+    beat = [
+        {"beat": 1, "speaker": "妈妈", "intent": "责备昭昭弄脏衣服并说傻"},
+        {"beat": 2, "speaker": "昭昭", "intent": "反问为什么骂我"},
+        {"beat": 3, "speaker": "妈妈", "intent": "追问弄脏谁的衣服"},
+        {"beat": 4, "speaker": "昭昭", "intent": "回答"},
+        {"beat": 5, "speaker": "妈妈", "intent": "认错收束"},
+    ]
+    story = {
+        "story_type": "I",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "衣服怎么又弄这么脏，真是傻！"},
+            {"speaker": "昭昭", "line": "你干嘛那么大声骂我？"},
+            {"speaker": "妈妈", "line": "对不起，妈妈不该大声。"},
+            {"speaker": "妈妈", "line": "妈妈先不吼了，好好说。"},
+            {"speaker": "妈妈", "line": "你弄脏的是谁的衣服？"},
+            {"speaker": "昭昭", "line": "是我自己的衣服。"},
+            {"speaker": "妈妈", "line": "对不起，是妈妈错了。"},
+            {"speaker": "昭昭", "line": "我还没消气。"},
+        ],
+    }
+    out, notes = trim_parent_quota_overflow(
+        story, beat_chain=beat, mom_lines_max=3,
+    )
+    lines = [x["line"] for x in out["dialogue"]]
+    assert notes
+    assert sum(x["speaker"] == "妈妈" for x in out["dialogue"]) == 3
+    assert lines[0].startswith("衣服怎么")
+    assert "谁的衣服" in "".join(lines)
+    assert lines[-2].startswith("对不起")
+
+
 def test_opening_causality_local_patch_accepts_natural_imperative_rule_homework():
     """#96 形状：天然祈使句可直接落地，但不得补“说好了”之类规则前缀。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
@@ -1719,6 +1823,84 @@ def test_opening_causality_mom_blame_zhao_interrupt_mom_stun_ok():
     assert not collect_opening_causality_issues(story)
 
 
+def test_opening_causality_accepts_spoken_reproach_for_narrative_blame_intent():
+    """责备 intent 是叙述句时，落地台词只认真正的当面责备。"""
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        opening_causality_passes,
+    )
+
+    beat = [
+        {
+            "beat": 1,
+            "speaker": "妈妈",
+            "intent": "大声责备昭昭弄脏衣服，并说出“傻”字",
+        },
+        {
+            "beat": 2,
+            "speaker": "昭昭",
+            "intent": "撅嘴生闷气，反问妈妈为什么吃早餐时大声骂自己",
+        },
+    ]
+    story = {
+        "gold_beat_chain": beat,
+        "dialogue": [
+            {"speaker": "妈妈", "line": "你怎么这么傻！"},
+            {"speaker": "昭昭", "line": "吃早餐的时候你干嘛那么大声骂我，还说我傻？"},
+        ],
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=3)
+    assert not collect_opening_causality_issues(story, beat, mom_lines_max=3)
+
+
+def test_opening_causality_patch_uses_playable_blame_seed():
+    from app.services.gold_story.gold_chat.patch import (
+        apply_opening_causality_local_patch,
+    )
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+    from app.services.gold_story.scene import looks_like_narration_line
+
+    beat = [
+        {
+            "beat": 1,
+            "speaker": "妈妈",
+            "intent": "大声责备昭昭弄脏衣服，并说出“傻”字",
+        },
+        {
+            "beat": 2,
+            "speaker": "昭昭",
+            "intent": "撅嘴生闷气，反问妈妈为什么吃早餐时大声骂自己",
+        },
+        {"beat": 3, "speaker": "灿灿", "intent": "在旁边质疑"},
+    ]
+    seed = [
+        {"speaker": "妈妈", "intent": "你怎么又把衣服弄这么脏，真是傻！"},
+        {"speaker": "昭昭", "intent": "吃早餐的时候你干嘛那么大声骂我？"},
+    ]
+    story = {
+        "gold_beat_chain": beat,
+        "dialogue": [
+            {"speaker": "昭昭", "line": "吃早餐的时候你干嘛那么大声骂我？"},
+            {"speaker": "灿灿", "line": "这话我可有点不信。"},
+        ],
+    }
+
+    fixed, ok = apply_opening_causality_local_patch(
+        story,
+        beat_chain=beat,
+        mom_lines_max=3,
+        dialogue_seed=seed,
+    )
+
+    assert ok
+    assert opening_causality_passes(fixed, beat, mom_lines_max=3)
+    first = fixed["dialogue"][0]
+    assert first["speaker"] == "妈妈"
+    assert first["line"] == "你怎么又把衣服弄这么脏，真是傻！"
+    assert not looks_like_narration_line(first["line"])
+
+
 def test_opening_causality_patch_accepts_sibling_rule_seed_like_102():
     """姐姐可作为 J/M8 的立规权威；可信 H3b seed 应本地补首拍，不烧 LLM 预算。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
@@ -1779,6 +1961,36 @@ def test_short_spot_unfreezes_head_when_opening_not_ok():
     unfrozen = list_short_spot_editable_line_nos(chat, freeze_opening=False)
     assert 1 not in frozen
     assert 1 in unfrozen
+
+
+def test_injected_gold_chat_budget_wins_over_stale_contract_arg():
+    """成稿注入的家长额度优先于调用方传的契约原值。
+
+    评分层读 `_gold_chat_mom_lines_max`，硬卡若还用契约原值，会出现同一稿子
+    「评分按 5、硬卡按 4」的相反结论（#138 生产原因「妈妈台词须≤4句，当前5」）。
+    """
+    from app.services.gold_story.gold_chat.validate import validate_chat_hard
+
+    dialogue = [
+        {"speaker": "妈妈", "line": "昭昭快尝尝这黑面饺子，好不好吃呢？"},
+        {"speaker": "昭昭", "line": "这黑面芯子又苦又涩，妈你倒是眉清目秀。"},
+        {"speaker": "妈妈", "line": "你今儿嘴这么甜，是不是又想要零花钱呀？"},
+        {"speaker": "昭昭", "line": "不给就不给，我说的是实话，妈妈像只暴躁老虎。"},
+        {"speaker": "妈妈", "line": "你说我像老虎？那你改口，说我像公主。"},
+        {"speaker": "昭昭", "line": "老虎一吼，公主也得现出原形呀。"},
+        {"speaker": "灿灿", "line": "妈，他这话也太狠了。"},
+        {"speaker": "妈妈", "line": "你这张嘴，以后说话先打草稿。"},
+    ]
+    story = {
+        "story_type": "N",
+        "dialogue": dialogue,
+        "_gold_chat_mom_lines_max": 4,
+        "_gold_chat_dad_lines_max": 0,
+    }
+    errors = validate_chat_hard(story, mom_lines_max=3)
+    assert not [e for e in errors if "妈妈台词" in e], (
+        f"注入额度 4 被契约原值 3 压死，同口径回归: {errors}"
+    )
 
 
 def test_parent_budget_parity_between_validator_and_trimmer():

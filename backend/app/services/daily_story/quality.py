@@ -555,7 +555,23 @@ def _grade_from_score(score: int) -> str:
     return "偏弱"
 
 
-def _has_consecutive_sibling(dialogue: list) -> bool:
+def _has_consecutive_sibling(dialogue: list, *, story_type: str = "") -> bool:
+    child_counts: Counter[str] = Counter()
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        if sp in ("昭昭", "灿灿"):
+            child_counts[sp] += 1
+    # 非 N 单孩源只要一个孩子承担主对质，另一个孩子最多一句见证。
+    # 此时同人相邻是「孩子连续陈述」，不是两个孩子抢话时的连说；
+    # N 仍按双孩交替硬规则扣分。
+    if str(story_type or "").strip().upper() != "N" and (
+        len(child_counts) <= 1
+        or (child_counts and min(child_counts.values()) <= 1)
+    ):
+        return False
+
     prev = ""
     run = 0
     for item in dialogue:
@@ -1215,7 +1231,10 @@ def score_daily_story(
     # 孩子连说一律扣分（用户裁决：禁止连说，戏份靠两个孩子交替解决）。
     # 此前按「两人手额度封顶属数学必然」豁免过，那条豁免与「禁止连说」
     # 直接冲突，已撤销。
-    if _has_consecutive_sibling(dialogue):  # type: ignore[arg-type]
+    if _has_consecutive_sibling(
+        dialogue,  # type: ignore[arg-type]
+        story_type=str(story.get("story_type") or ""),
+    ):
         score -= 15
         cons.append("存在同人连说")
 

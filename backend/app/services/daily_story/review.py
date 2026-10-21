@@ -600,8 +600,10 @@ def _parse_issue_evidence_entries(
             return None
         if line_no < 1 or line_no > line_count:
             return None
-        if line_no not in allowed_lines:
-            return None
+        # 不再要求行号必须落在 issue.lines 内：错位/重复/接不上天然要引
+        # 「问题句 + 对照句」，在这里整条丢掉 evidence，下游的
+        # `_issue_has_line_evidence` 就只能看到空证据、判无效（放宽等于白放）。
+        # 覆盖性要求统一由 `_issue_has_line_evidence` 负责。
         quote = ev.get("quote")
         if not isinstance(quote, str):
             return None
@@ -634,7 +636,15 @@ def _issue_has_line_evidence(
     issue: dict[str, Any],
     rows: list[dict[str, Any]],
 ) -> bool:
-    """逐条核对 evidence.quote 是否为对应行的连续子串，且覆盖 issue.lines。"""
+    """逐条核对 evidence.quote 是否为对应行的连续子串，且覆盖 issue.lines。
+
+    ``evidence`` 允许引用 ``lines`` 之外的行：错位/重复/接不上这类问题天然要引
+    「出问题的一句 + 对照的一句」，审读只把问题句写进 ``lines``。旧规则要求每条
+    证据的行号都落在 ``lines`` 内，于是这几类问题永远判「证据无效」→ 降级 →
+    ``review_pending``，等于把真问题当假问题放行（#138 五条全部如此）。
+    现在只要求：``lines`` 里每一行都至少被一条逐字匹配该行的引文覆盖；多出来的
+    证据行必须是合法行号且引文逐字匹配它自己那一行，引错内容照样判无效。
+"""
     nos = issue.get("lines")
     if not isinstance(nos, list) or not nos:
         return False
@@ -658,8 +668,6 @@ def _issue_has_line_evidence(
         line_no = _strict_issue_line_number(ev.get("line"))
         if line_no is None:
             return False
-        if line_no not in issue_lines:
-            return False
         quote_raw = ev.get("quote")
         if not isinstance(quote_raw, str):
             return False
@@ -672,7 +680,8 @@ def _issue_has_line_evidence(
         line_text = str(rows[idx].get("line") or "")
         if not _quote_matches_line(quote, line_text):
             return False
-        covered.add(line_no)
+        if line_no in issue_lines:
+            covered.add(line_no)
 
     return issue_lines <= covered
 
@@ -1000,9 +1009,13 @@ def _validate_export_review_evidence_shape(
         if item.get("evidence") is None:
             continue
         if (
+            # 形状校验只查「行号存在且合法」：错位/重复这类问题天然要引
+            # 「问题句 + 对照句」，把 evidence 限制在 issue.lines 内，
+            # 整条证据会被判形状非法直接丢掉（#138 实测：跨句对照永远传不进来）。
+            # 覆盖性（issue.lines 是否都被引到）由 _issue_has_line_evidence 判。
             _parse_issue_evidence_entries(
                 item.get("evidence"),
-                allowed_lines=frozenset(nos),
+                allowed_lines=frozenset(range(1, line_count + 1)),
                 line_count=line_count,
             )
             is None
@@ -1117,6 +1130,85 @@ def _n_type_token_premise_exempt(
 
 
 
+# 「观感类」硬伤：审读凭语感就能报，但机器必须能指着具体文字复现，
+# 否则同一句稿子这次判「答非所问」、下次判「能接上」（#138 实测）。
+_QUALITY_ONLY_BLOCKING_KINDS: frozenset[str] = frozenset({
+    "重复",
+    "接不上",
+})
+
+# 逐字重复到这个长度才算「同一件事换词说两遍」里的真复述。
+_REPEAT_VERBATIM_MIN = 5
+
+
+def _longest_common_run(a: str, b: str) -> int:
+    """两句之间最长的逐字公共子串长度（短句，O(n*m) 足够）。"""
+    if not a or not b:
+        return 0
+    best = 0
+    prev = [0] * (len(b) + 1)
+    for ch in a:
+        cur = [0] * (len(b) + 1)
+        for j, bch in enumerate(b, 1):
+            if ch == bch:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best:
+                    best = cur[j]
+        prev = cur
+    return best
+
+
+_CONTENT_STOP_CHARS = frozenset(
+    "的了是我你她他它们不也就还又在有吗呢吧啊么什这那个一上下里说"
+)
+
+
+def _shared_bigrams(a: str, b: str) -> int:
+    """两句共有的双字片段数（去掉标点与纯语气词）。"""
+    def grams(text: str) -> set[str]:
+        t = re.sub(r"[\s，。！？、；：…—\"'“”‘’（）()《》〈〉【】]+", "", text)
+        # 只数实词：「不是/妈妈」这类虚词/称呼几乎任何两句都共有，
+        # 拿它们当「接上了」的依据，会把真正的跑题判成观感问题。
+        return {
+            t[i : i + 2]
+            for i in range(len(t) - 1)
+            if not (set(t[i : i + 2]) & _CONTENT_STOP_CHARS)
+        }
+
+    return len(grams(a) & grams(b))
+
+
+def _issue_is_hard_defect(issue: dict[str, Any], rows: list[dict[str, Any]]) -> bool:
+    """这条「观感类」问题是不是真硬伤：只有能指认具体文字时才算。
+
+    重复——两句之间存在 ≥5 字逐字重复；
+    接不上——回句与上一句**一个双字词都不共享**（完全换了话题）；
+    无效插话——纯修辞评价，永不硬拦。
+    """
+    kind = str(issue.get("kind") or "")
+    if kind not in _QUALITY_ONLY_BLOCKING_KINDS:
+        return True
+    nums = [int(n) for n in (issue.get("lines") or []) if isinstance(n, int)]
+    nums = [n for n in nums if 1 <= n <= len(rows)]
+    if not nums:
+        return False
+    texts = [str(rows[n - 1].get("line") or "") for n in nums]
+    if kind == "重复":
+        if len(texts) < 2:
+            return False
+        return _longest_common_run(texts[0], texts[-1]) >= _REPEAT_VERBATIM_MIN
+    if kind == "接不上":
+        # 引了两行时按「问句 vs 回句」判；只引一行时退回看它的上一句。
+        if len(texts) >= 2:
+            return _shared_bigrams(texts[0], texts[-1]) == 0
+        first = nums[0]
+        prev = str(rows[first - 2].get("line") or "") if first >= 2 else ""
+        if not prev:
+            return False
+        return _shared_bigrams(prev, texts[0]) == 0
+    return True
+
+
 def partition_llm_export_blocking_issues(
     issues: list[dict[str, Any]],
     story: dict,
@@ -1133,6 +1225,11 @@ def partition_llm_export_blocking_issues(
             continue
         # N 类怪词突现属于机制，不算缺前提（只在词槽句上豁免）
         if _n_type_token_premise_exempt(it, story):
+            continue
+        if not _issue_is_hard_defect(it, rows):
+            # 观感类且指不出具体文字：不是「证据写错」，也不该拦导出。
+            # 之前塞进 invalid_evidence，终检会把它当「审核证据无效」整稿作废，
+            # 等于一条核验不上的观感意见就能废掉一稿。
             continue
         if _issue_has_blocking_evidence(it, rows, beat_chain=beat_chain):
             valid.append(it)
@@ -1242,13 +1339,21 @@ def partition_export_blocking_for_acceptance(
     return valid, downgradable, blocked
 
 
-def format_downgraded_issue_record(issue: dict[str, Any]) -> dict[str, Any]:
-    """降级条目留档：人工抽检要能看到原始 issue 与降级原因。"""
+def format_downgraded_issue_record(
+    issue: dict[str, Any],
+    *,
+    reason: str = "invalid_evidence",
+) -> dict[str, Any]:
+    """降级条目留档：人工抽检要能看到原始 issue 与降级原因。
+
+    ``reason``：``invalid_evidence``（证据核验不过、弱核验通过）或
+    ``source_verbatim``（引文是作者原句，机器不该判它语病）。
+    """
     out: dict[str, Any] = {
         "kind": str(issue.get("kind") or ""),
         "lines": issue.get("lines"),
         "desc": str(issue.get("desc") or ""),
-        "downgrade_reason": "invalid_evidence",
+        "downgrade_reason": reason,
         "weak_verified": True,
     }
     evidence = issue.get("evidence")
@@ -1761,8 +1866,11 @@ def build_review_prompts(
         "允许角色明确提出加赛/改规则，但不能无对白依据地从一种玩法跳到另一种。\n"
         "D 事件前提：后文结果、损坏、分割、输赢、拿到某物等若依赖前文事件，须先有文本依据；"
         "若缺失，kind=缺前提，并写 missing_relation 说明『缺什么关系/事件 → 后文哪句依赖它』。\n"
-        "E 重复推进：只有新增事实、理由、动作、规则变化、关系变化、情绪升级或后果才算推进；"
-        "换词反复同一态度/同一不服而没有新增信息，要报重复。结尾一次引用前文规则作回旋镖不算重复。\n"
+        "E 重复推进：同一质问组按“质问对象 + 依据/后果 slot”比较；"
+        "只有某句与同组任一句在对象、依据、后果、时间或条件上新增 slot 数为 0 才报重复。"
+        "每句都引入新的具体依据/后果（如弄脏衣服 vs 不小心、耳朵疼 vs 不想动）算递进，"
+        "不要用句数阈值判重复。换词反复同一态度/同一不服且没有新增信息，要报重复；"
+        "结尾一次引用前文规则作回旋镖不算重复。\n"
         "只报下面这些类别，别夸、别改写全文；纯风格问题和叙事硬伤必须分开：\n"
         "1 矛盾：前后事实打架"
         "（例：说「锅里一粒米都没有」，后面又说「你把剩饭倒掉了」；"
@@ -1773,11 +1881,16 @@ def build_review_prompts(
         "（例：约定「我藏车你藏零食」，下一句却说成「你塞零食我塞车」；"
         "或某人做的事后来被说成另一人做的；"
         "或连锁里把坏结果归到对方动作上——自己挤胶却怪「你手一抖」）。\n"
+        "  例外·拆句：本片要求两个孩子都出场，而原稿某些回合只记了一个孩子，"
+        "于是同一拍的内容会被拆成「拍主说前半、另一个孩子说后半」。"
+        "只要后文按**实际说话的**那个孩子称呼，这不算错位、不算主体被换；"
+        "只有内容与拍完全无关、或后文仍硬按契约拍主称呼时才算错。\n"
         "3 示范：大人开口指导孩子去隐瞒或说谎"
         "（例：妈妈说「这事不能让奶奶知道」「别告诉爸爸」）。\n"
         "  注意：大人自己言行不一、被孩子当场抓住双标，是本片的笑点设定，"
         "不算坏示范，别报；孩子之间商量瞒着大人也是设定，别报。\n"
-        "4 重复：同一件事换词说两遍以上，或同一个质问/态度反复说而没有新信息；"
+        "4 重复：同一件事换词说两遍以上，或同一个质问/态度反复说而“对象+依据/后果 slot”"
+        "没有任何新增；"
         "帮腔开脱用同一个理由说两遍也算；"
         "段4互甩只许一轮（各1句），来回两圈（你还说我→你也怪）也算重复。\n"
         "5 塑料：不像真人会说的话"
@@ -1797,13 +1910,24 @@ def build_review_prompts(
         "不知道他在问什么；"
         "或「我够不着，你手短，你去捡」——够不着还让手更短的去捡，逻辑自相矛盾）。"
         "这不是风格问题，是硬伤，必须改。\n"
-        "9 引用无据：孩子引用大人没说过的话"
-        "（例：灿灿只说过「土湿透就行」，昭昭却说「这不就是你之前说的效果」）。\n"
+        "9 引用无据：只有**明确归因**才算引用——句子里出现「你说/你刚说/你明明说过/"
+        "你刚才还夸/你之前说」这类把某个说法归到别人身上的话，才要求前文真的出现过"
+        "那个说法（例：灿灿只说过「土湿透就行」，昭昭却说「这不就是你之前说的效果」）。"
+        "单纯使用一个评价词（眉清目秀、嘴变快、好看、结实）**不算引用**，"
+        "不需要前文出现：昭昭说「眉清目秀也压不住吼声」是自己给判断，不报。\n"
+        "  例外·现场可见：同一屋里的人都看得见/听得见的东西——表情、眼神、脸色、"
+        "手上动作、脚步、谁往谁跟前凑——属于共享的现场上下文，"
+        "**不需要前文用台词交代过**。「你刚也瞧见妈妈那眼神」「你别过来」这类，"
+        "只要现场成立就不算引用无据、也不算接不上。\n"
         "10 动作误说：把大人的动作说成“说”"
         "（例：灿灿把托盘浇满，昭昭却说「怎么现在又说托盘浇满了」）。\n"
         "11 接不上：回句没接住上一句的话头，答非所问或训错对象"
         "（例：孩子说「你自己没换鞋就进来了」，"
         "大人却回头命令孩子「赶紧脱了放鞋柜上」——孩子并没穿着鞋）。\n"
+        "  例外·在场者插话：一家人围着桌子，**没被点名的孩子可以主动接话**、"
+        "顺着现场话题补一句、甚至替某一方帮腔，这是正常的多人对话，"
+        "不要用「没人问她」「谁也没让她说」「帮腔」「硬塞进来」这类理由报接不上或错位；"
+        "只有她说的内容与现场正在聊的事**完全无关**、或把事实归错了人，才算。\n"
         "12 无效证据：追问方摆出的证据在证明一个没人否认的事，"
         "没打在对方刚说的开脱上"
         "（例：大人已承认没换鞋、只辩称「拿个东西不算」，"
@@ -1828,7 +1952,8 @@ def build_review_prompts(
         "- I 类「问倒收束」：收束前赢家「还嘴硬？我不说了还不行？」"
         "是收摊试探，末段「哼，看你还嘴硬/一招制敌」是制敌收束；"
         "两句都带「嘴硬」但是递进（先赌气收摊→对方也闭嘴→再制敌），"
-        "别当重复报；只有中段同一质问来回两圈以上才算重复。\n"
+        "别当重复报。中段连续追问若每句都新增具体依据/后果/对象（脏衣服→不小心、"
+        "耳朵疼→不想动），按递进处理；只有 slot 无新增的换词复述才算重复。\n"
         "- J 类「权威压住」：昭昭反复求放行、灿灿反复「我说了算/不行」"
         "是哀求加码与否决压住，别当重复报；末段灿灿仍占上风、昭昭怂退"
         "是标准收场，勿按 A 式末四拍反噬理解。\n"

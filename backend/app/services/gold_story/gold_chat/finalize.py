@@ -53,15 +53,8 @@ _GOLD_CHAT_STRUCTURE_LIFT_MAX = 2
 _GOLD_CHAT_EXPORT_REPAIR_MAX = 2
 _GOLD_CHAT_DUPLICATE_RESCUE_MAX = 1
 
-_REPAIRABLE_VALIDATE_MARKERS = (
-    "正文总字数须≥",
-    "正文总字数须≤",
-    "妈妈台词须≤",
-    "爸爸台词须≤",
-    "家长台词须≤",
-    "空应答占行须≤",
-    "opening_causality:",
-)
+# 可定点修的硬卡口径由 validate.chat_hard_error_is_local 单点定义，这里不再
+# 自列一份字符串表——两处口径各写一份正是此前「同一份稿两个判定」的来源。
 
 
 class GoldChatAcceptanceBlocked(ValueError):
@@ -138,6 +131,131 @@ def _gate_structure_or_raise(
         raise
 
 
+_VERBATIM_SOURCE_QUIRK_KINDS = ("语病",)
+_VERBATIM_SOURCE_QUIRK_MAX = 2
+_VERBATIM_SOURCE_QUIRK_MIN_CHARS = 8
+
+
+def _demote_verbatim_source_quirks(
+    review: Any,
+    chat: dict[str, Any],
+    *,
+    source_raw: str = "",
+) -> Any:
+    """终检把「源故事里的原句」判成语病时降级留档。
+
+    同一句「老虎一吼，公主也得现出原形」在不同轮次里时过时不过（20:21 放行、
+    15:04 判「公主不是老虎变的，谈不上现出原形」）——这是终检对非字面表达的
+    随机误读，不是稿子的问题。判据只用一条：被点名的引文在源故事里逐字存在，
+    则它是作者原句，机器无权判它语病。降级条目仍写进 review_downgraded_issues
+    供人工抽检，不静默吞掉。
+    """
+    # 逐拍路径把源文写进成稿，整篇扩写路径没有 → 两条路都要能取到源文。
+    source = re.sub(
+        r"[^\u4e00-\u9fff]",
+        "",
+        str(chat.get("source_raw") or source_raw or ""),
+    )
+    issues = getattr(review, "issues", None)
+    if not source or not issues:
+        return review
+    kept: list[dict[str, Any]] = []
+    demoted: list[dict[str, Any]] = []
+    for it in issues:
+        kind = str(it.get("kind") or "")
+        evidence = it.get("evidence") or []
+        quotes = [
+            re.sub(r"[^\u4e00-\u9fff]", "", str(ev.get("quote") or ""))
+            for ev in evidence
+            if isinstance(ev, dict)
+        ]
+        # 引文太短（<8 字）时「是源文子串」几乎必然成立，不能当豁免证据；
+        # 总数也只放 2 条，避免整稿语病被一次降级放行。
+        long_enough = all(len(q) >= _VERBATIM_SOURCE_QUIRK_MIN_CHARS for q in quotes)
+        if (
+            kind in _VERBATIM_SOURCE_QUIRK_KINDS
+            and quotes
+            and long_enough
+            and all(q and q in source for q in quotes)
+            and len(demoted) < _VERBATIM_SOURCE_QUIRK_MAX
+        ):
+            demoted.append(it)
+            continue
+        kept.append(it)
+    if not demoted:
+        return review
+    logger.info(
+        "[GOLD_CHAT] 终检误杀源故事原句 %s 条，降级留档：%s",
+        len(demoted),
+        [str(it.get("desc") or "")[:40] for it in demoted[:3]],
+    )
+    from app.services.daily_story.review import format_downgraded_issue_record
+
+    review.issues = kept
+    review.downgraded = list(getattr(review, "downgraded", None) or []) + [
+        format_downgraded_issue_record(it, reason="source_verbatim") for it in demoted
+    ]
+    return review
+
+
+# 「明确归因」标记：只有这些说法才算「引用别人说过的话」。
+_CITATION_MARKER_RE = re.compile(
+    r"你说|你说的|你说过|你刚|你刚才|你明明|你之前|你先前|你曾|"
+    r"你讲过|你提过|还夸|说过的|讲过的"
+)
+# 只有明确归因类的「引用无据」需要前文真有出处；单纯用评价词（眉清目秀、
+# 嘴变快）是角色自己的判断，不构成引用。
+_CITATION_KIND = "引用无据"
+
+
+def _demote_nonattributed_citation_issues(
+    review: Any,
+    chat: dict[str, Any],
+) -> Any:
+    """把「引用无据」里没有归因标记的条目降级。
+
+    审读模型看到「眉清目秀也压不住吼声」会判「全篇没人说过眉清目秀」——但这是
+    角色自己的评价，不是引用。判据只看被点名的那几行里有没有「你说/你刚还夸」
+    这类归因标记：没有就不是引用，不该用「引用无据」拦稿。
+    """
+    issues = getattr(review, "issues", None)
+    if not issues:
+        return review
+    dialogue = chat.get("dialogue") or []
+    kept: list[dict[str, Any]] = []
+    demoted: list[dict[str, Any]] = []
+    for it in issues:
+        if str(it.get("kind") or "") != _CITATION_KIND:
+            kept.append(it)
+            continue
+        nos = it.get("lines") if isinstance(it.get("lines"), list) else []
+        texts = [
+            str(dialogue[i - 1].get("line") or "")
+            for i in nos
+            if isinstance(i, int) and 1 <= i <= len(dialogue)
+            and isinstance(dialogue[i - 1], dict)
+        ]
+        if texts and not any(_CITATION_MARKER_RE.search(t) for t in texts):
+            demoted.append(it)
+            continue
+        kept.append(it)
+    if not demoted:
+        return review
+    from app.services.daily_story.review import format_downgraded_issue_record
+
+    logger.info(
+        "[GOLD_CHAT] 无归因的「引用无据」降级 %s 条：%s",
+        len(demoted),
+        [str(it.get("desc") or "")[:40] for it in demoted[:3]],
+    )
+    review.issues = kept
+    review.downgraded = list(getattr(review, "downgraded", None) or []) + [
+        format_downgraded_issue_record(it, reason="no_attribution")
+        for it in demoted
+    ]
+    return review
+
+
 def _validate_chat_or_repairable(
     validate_chat: Any,
     chat: dict[str, Any],
@@ -147,10 +265,11 @@ def _validate_chat_or_repairable(
     except ValueError as exc:
         msg = str(exc).strip()
         parts = [p.strip() for p in msg.split(";") if p.strip()]
-        if parts and all(
-            any(marker in part for marker in _REPAIRABLE_VALIDATE_MARKERS)
-            for part in parts
-        ):
+        from app.services.gold_story.gold_chat.validate import (
+            chat_hard_error_is_local,
+        )
+
+        if parts and all(chat_hard_error_is_local(part) for part in parts):
             raise GoldChatValidationRepairableError(msg) from exc
         raise
 
@@ -380,6 +499,22 @@ def _sanitize_semantic_scoped_repair(
         out["story_type"] = st_final
     out, _ = patch_sanitize_pad_suffix(out)
     out, _ = patch_sanitize_pad_particles(out)
+    if str(st_final or "").strip().upper() == "I":
+        from app.services.daily_story.story_types.i.patch import (
+            patch_i_acknowledge_apology,
+            patch_i_collapse_repeated_claim_questions,
+            patch_i_ground_opening_quote_assertion,
+            patch_i_parent_acknowledge_child_feeling,
+            patch_i_parent_accept_child_pause,
+            patch_i_strip_self_action_narration,
+        )
+
+        patch_i_strip_self_action_narration(out)
+        patch_i_ground_opening_quote_assertion(out)
+        patch_i_acknowledge_apology(out)
+        patch_i_parent_acknowledge_child_feeling(out)
+        patch_i_parent_accept_child_pause(out)
+        patch_i_collapse_repeated_claim_questions(out)
 
     # sanitizer 只能影响目标行；非目标行逐字回滚，speaker 永远沿用 original。
     cleaned_rows = out.get("dialogue")
@@ -395,6 +530,15 @@ def _sanitize_semantic_scoped_repair(
             cur_item = cleaned_rows[idx - 1]
             if isinstance(old_item, dict) and isinstance(cur_item, dict):
                 cur_item["speaker"] = old_item.get("speaker")
+    if str(st_final or "").strip().upper() == "I":
+        from app.services.daily_story.story_types.i.patch import (
+            patch_i_rewrite_duplicate_question_groups,
+        )
+
+        patch_i_rewrite_duplicate_question_groups(
+            out,
+            preferred_indexes=target_lines,
+        )
     return out, changed
 
 
@@ -819,6 +963,26 @@ def _sanitize_repaired_chat(
         out,
         dialogue_seed=dialogue_seed,
     )
+    if str(st_final or "").strip().upper() == "I":
+        from app.services.daily_story.story_types.i.patch import (
+            patch_i_acknowledge_apology,
+            patch_i_collapse_repeated_claim_questions,
+            patch_i_ground_opening_quote_assertion,
+            patch_i_parent_acknowledge_child_feeling,
+            patch_i_parent_accept_child_pause,
+            patch_i_repair_mirror_parent_question,
+            patch_i_strip_self_action_narration,
+            patch_i_soften_win_after_concession,
+        )
+
+        patch_i_repair_mirror_parent_question(out)
+        patch_i_strip_self_action_narration(out)
+        patch_i_ground_opening_quote_assertion(out)
+        patch_i_acknowledge_apology(out)
+        patch_i_parent_acknowledge_child_feeling(out)
+        patch_i_parent_accept_child_pause(out)
+        patch_i_collapse_repeated_claim_questions(out)
+        patch_i_soften_win_after_concession(out)
     return out
 
 
@@ -970,6 +1134,7 @@ def apply_final_acceptance_local_patches(
         _perbeat_mode,
         apply_kinship_label_patch,
         apply_opening_causality_local_patch,
+        trim_parent_quota_overflow,
     )
     from app.services.gold_story.gold_chat.validate import (
         apply_n_beat_role_speaker_align,
@@ -1003,6 +1168,60 @@ def apply_final_acceptance_local_patches(
         logger.info(
             "[GOLD_CHAT] final acceptance kinship patch: %s",
             "；".join(kin_patched),
+        )
+
+    payload_raw = row.get("payload")
+    payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
+    contract_raw = payload.get("scene_contract")
+    contract: dict[str, Any] = (
+        contract_raw if isinstance(contract_raw, dict) else {}
+    )
+    from app.services.gold_story.scene import trim_supplemental_kid_dialogue
+
+    # 裁句之前记一份：这两步会整行删孩子/家长台词，删完若不重跑硬卡，
+    # 首轮终检就通过的稿子可能被裁到「对白句数须≥12 / 正文总字数须≥」之下
+    # 直接导出。这里只在裁完仍守住下限时才采纳裁句，否则整步回滚。
+    _floor_snapshot = dict(patched)
+    patched, witness_trimmed = trim_supplemental_kid_dialogue(
+        patched,
+        contract=contract,
+    )
+    if witness_trimmed:
+        logger.info(
+            "[GOLD_CHAT] final acceptance witness trim: %s",
+            "；".join(witness_trimmed),
+        )
+
+    patched, quota_notes = trim_parent_quota_overflow(
+        patched,
+        beat_chain=beat_chain,
+        mom_lines_max=mom_max,
+    )
+    if witness_trimmed or quota_notes:
+        from app.services.gold_story.gold_chat.validate import (
+            gold_chat_effective_min_chars,
+        )
+        from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
+
+        _dialogue_now = patched.get("dialogue") or []
+        _lines_now = len(_dialogue_now) if isinstance(_dialogue_now, list) else 0
+        _chars_now = dialogue_total_chars(patched)
+        if (
+            _lines_now < CHAT_LINE_COUNT_MIN
+            or _chars_now < gold_chat_effective_min_chars(_dialogue_now)
+        ):
+            logger.warning(
+                "[GOLD_CHAT] 裁句后跌破下限（lines=%s chars=%s），回滚本次裁句",
+                _lines_now,
+                _chars_now,
+            )
+            patched = _floor_snapshot
+            witness_trimmed = []
+            quota_notes = []
+    if quota_notes:
+        logger.info(
+            "[GOLD_CHAT] final acceptance parent quota: %s",
+            "；".join(quota_notes),
         )
 
     patched, opening_patched = apply_opening_causality_local_patch(
@@ -1121,6 +1340,10 @@ def run_gold_chat_final_acceptance(
         raise error_type(message)
 
     review = run_export_semantic_review(theme, chat, beat_chain=beat_chain)
+    review = _demote_verbatim_source_quirks(
+        review, chat, source_raw=str(row.get("story_raw") or "")
+    )
+    review = _demote_nonattributed_citation_issues(review, chat)
     if not review.completed:
         raise GoldChatAcceptanceIncomplete(
             review.error

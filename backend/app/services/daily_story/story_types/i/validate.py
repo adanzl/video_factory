@@ -12,13 +12,29 @@ RE_SOUL_QUESTION = re.compile(
     r"快乐.*重要|重要.*快乐|双标|强词夺理|你自己|"
     # 抽象不可答反问：换位/资格/评论类（勿绑单篇冰箱梗）
     r"还得会|好不好|照你这么说|那照你|评论.{0,8}吗|凭啥你|"
-    r"换你|乐意吗|到处说.{0,6}乐意|你自己得行|跟你无关|也没关系"
+    r"换你|乐意吗|到处说.{0,6}乐意|你自己得行|跟你无关|也没关系|"
+    # 镜像式价值反问：抓「为什么说/骂」与「算什么道理/怎么回事」句式，
+    # 不依赖单篇台词。孩子把家长的原话抛回去时，未必写「凭啥」。
+    r"为什么.{0,8}(?:说|骂|吼|凶)|干嘛.{0,8}(?:说|骂|吼|凶)|"
+    r"(?:算|是)(?:什么|哪门子|怎么)(?:道理|回事|逻辑)|"
+    r"(?:这|那|到底).{0,6}为什么|为什么(?:呀|呢|啊)[？?]?$"
 )
 # 语塞：明示败北 + 抽象卡壳/结巴（省略号认输），勿按单篇词表堆叠
 RE_SPEECHLESS = re.compile(
     r"说不过|语塞|哑口|不说了|看.{0,2}窗外|憋不出|张了张嘴|委屈|"
     r"答不上|说不出|接不上|卡壳|服了|张口结舌|憋红|"
     r"我……|……我"
+)
+# 败北的另一条抽象出口：被问住后当场认错/道歉，不再争辩。
+# 不包含裸「道歉」，避免把「道歉也没用」这类拒和句算成服软。
+RE_I_CONCEDE = re.compile(
+    r"(?:^|[，,。！？!?])(?:对不起|抱歉)|"
+    r"(?:是|都怪)(?:我|妈妈|爸爸|妈|爸)"
+    r"(?:说错|错了|不对|不好|没弄明白|误会|错怪)|"
+    r"我(?:说错|错了|不该说|不该骂|认错)|"
+    r"不该(?:说|骂)|"
+    r"错怪你|误会你|向你道歉|给你道歉|跟你道歉|"
+    r"承认(?:自己)?(?:说错|错了|不对)"
 )
 RE_WIN_STUBBORN = re.compile(
     r"一招制敌|制敌|服不服|别跟我吵|不爱学习还|不爱学习就别|"
@@ -32,28 +48,53 @@ RE_I_SURRENDER = re.compile(
     r"认输|服了|我这就去|这就去写|行了吧|听你的|真的呀.*写|"
     r"说得对|你赢了|不跟你争|不跟你抢|我去写"
 )
+# 收束定位只认强价值拷问；「为什么骂我」这类开场镜像质问虽可作为
+# 正文的反问证据，却不足以说明已经进入收束段，否则开场道歉会被误判成败北。
+_RE_CLOSE_SOUL_QUESTION = re.compile(
+    r"爱学习|你爱吗|灵魂|拷问|凭啥|相同|为啥|"
+    r"那你怎么|你那是.*吗|为你好|你才.*呢|"
+    r"快乐.*重要|重要.*快乐|双标|强词夺理|你自己|"
+    r"还得会|好不好|照你这么说|那照你|评论.{0,8}吗|凭啥你|"
+    r"换你|乐意吗|到处说.{0,6}乐意|你自己得行|跟你无关|也没关系|"
+    r"(?:算|是)(?:什么|哪门子|怎么)(?:道理|回事|逻辑)"
+)
 # 首次收束后允许的拖尾句数（与 patch 裁尾容忍一致）
 I_CLOSING_TAIL_ALLOW = 1
 
 
 def find_i_close_index(lines: list[str]) -> int:
-    """首次收束段末尾（连续制敌/服软拍的最后一拍）下标；未出现则 -1。
+    """首次收束段末尾（连续制敌/服软/认错拍的最后一拍）下标；未出现则 -1。
 
-    收束段 = 语塞后的制敌/服软句及其后紧邻的制敌/服软拍
-    （「制敌→服软」「服软→制敌」都算收束过程），段后拖尾须裁。
+    收束段 = 语塞后的制敌/服软/认错句及其后紧邻的同类拍
+    （「制敌→服软」「服软→制敌」「认错→残余情绪」都算收束过程），
+    段后拖尾须裁。
     """
-    speechless_seen = False
+    defeat_seen = False
+    soul_seen = False
     for i, ln in enumerate(lines):
-        if RE_SPEECHLESS.search(ln):
-            speechless_seen = True
+        if _RE_CLOSE_SOUL_QUESTION.search(ln):
+            soul_seen = True
+        # 灵魂拷问之前的道歉只是铺垫/哄人，不是败北收束。
+        # 否则「对不起，妈妈不该大声，那咱讲道理」会被当成终局，
+        # 后面真正的反问与认错全被裁掉（#144 实测：只剩 8 句 132 字）。
+        if RE_SPEECHLESS.search(ln) or (
+            soul_seen and RE_I_CONCEDE.search(ln)
+        ):
+            defeat_seen = True
+        if not soul_seen:
+            continue
         if not (RE_WIN_STUBBORN.search(ln) or
-                (speechless_seen and RE_I_SURRENDER.search(ln))):
+                (defeat_seen and (
+                    RE_I_SURRENDER.search(ln) or RE_I_CONCEDE.search(ln)
+                ))):
             continue
         j = i
         while j + 1 < len(lines):
             nxt = lines[j + 1]
             if RE_WIN_STUBBORN.search(nxt) or (
-                speechless_seen and RE_I_SURRENDER.search(nxt)
+                defeat_seen and (
+                    RE_I_SURRENDER.search(nxt) or RE_I_CONCEDE.search(nxt)
+                )
             ):
                 j += 1
             else:
@@ -216,7 +257,8 @@ def append_i_body_errors(story: dict, errors: list[str]) -> None:
                         break
             if not has_parent_soul:
                 errors.append("I类：beat家长拷问须在正文由家长说出")
-    if not RE_SPEECHLESS.search(body):
+    defeat_hit = bool(RE_SPEECHLESS.search(body) or RE_I_CONCEDE.search(body))
+    if not defeat_hit:
         errors.append("I类：正文须写对方语塞/败北（说不过/看窗外等）")
     else:
         # 语塞须落在灵魂拷问之后（抽象顺序，不绑单篇词）
@@ -240,7 +282,10 @@ def append_i_body_errors(story: dict, errors: list[str]) -> None:
                     )
                 ):
                     soul_i = i
-                if speech_i < 0 and RE_SPEECHLESS.search(ln):
+                if speech_i < 0 and (
+                    RE_SPEECHLESS.search(ln)
+                    or (soul_i >= 0 and RE_I_CONCEDE.search(ln))
+                ):
                     # 嘴硬残留不算真正语塞（拷问前伪败北）
                     if re.search(
                         r"反正|没错|不怪我|没关系|偏就|不信|才能说",
@@ -250,7 +295,7 @@ def append_i_body_errors(story: dict, errors: list[str]) -> None:
                     speech_i = i
         if soul_i >= 0 and (speech_i < 0 or speech_i <= soul_i):
             errors.append("I类：语塞须在灵魂拷问之后")
-    if not RE_WIN_STUBBORN.search(tail4):
+    if not RE_WIN_STUBBORN.search(tail4) and not RE_I_CONCEDE.search(tail4):
         errors.append("I类：末段须赢家一招制敌（制敌/服不服等）")
     if RE_A_BACKFIRE.search(tail4):
         errors.append("I类：末段勿 A 式反噬/破功链")

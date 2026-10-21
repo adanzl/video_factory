@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import os
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def align_chain(
@@ -2349,6 +2351,12 @@ _RE_INTENT_TRIGGER = re.compile(
     r"责备|批评|指责|质问|训斥|催促|责骂|立规|约好|紧张|冲突",
 )
 _RE_INTENT_BLAME = re.compile(r"责备|批评|指责|训斥|责骂")
+_RE_INTENT_BLAME_ACTION = re.compile(
+    r"(?:大声|又|还|当面)?(?:骂|吼|凶|数落|训|嘲讽)"
+)
+_RE_INTENT_BLAME_ECHO = re.compile(
+    r"为什么|干嘛|凭什么|反问|被|挨|说我|骂我"
+)
 _RE_INTENT_RULE = re.compile(r"立规|约好|规定|规矩|定规|说好|约定")
 _RE_INTENT_RULE_ANNOUNCE = re.compile(
     r"宣布.{0,12}(?:规则|比赛|竞赛|抢吃|谁先|先吃|先用)",
@@ -2377,7 +2385,10 @@ _RE_PARENT_TRIGGER_LINE = re.compile(
 )
 _RE_BLAME_LINE = re.compile(
     r"(?:作业|没写|没做|磨蹭|别拖|写完了吗|赶快写|还不写|"
-    r"像什么样子|批评|责备)",
+    r"像什么样子|像什么话|不像话|批评|责备|"
+    r"(?:衣服|桌子|地板|房间).{0,6}(?:脏|乱)|"
+    r"(?:又|怎么)?弄得?这么脏|"
+    r"骂|吼|凶|傻|笨|不省心)",
 )
 _RE_ACCOUNTABILITY_LINE = re.compile(
     r"(?:谁先|先(?:动手|推|打|抢|弄|拿)|不对|不该|有错|负责|责任|道歉|补上|补完)",
@@ -2441,7 +2452,12 @@ def _opening_authority_intent_kind(intent: str) -> str:
     """自由文本 beat 标签归一成 opening 权威触发类别；只看冒号前标签。"""
     text = str(intent or "")
     tag = re.split(r"[：:]", text, maxsplit=1)[0].strip()
-    if _RE_INTENT_BLAME.search(tag):
+    # 「大声骂孩子并说傻」也是责备触发；但孩子复述/反问「为什么骂我」
+    # 是 echo，不是权威触发。不能只靠裸「骂」字判定。
+    if _RE_INTENT_BLAME.search(tag) or (
+        _RE_INTENT_BLAME_ACTION.search(tag)
+        and not _RE_INTENT_BLAME_ECHO.search(tag)
+    ):
         return "blame"
     if _RE_INTENT_RULE.search(tag) or _RE_INTENT_RULE_ANNOUNCE.search(text):
         return "rule"
@@ -3140,6 +3156,64 @@ def gold_chat_effective_min_chars(dialogue: Any) -> int:
     return DAILY_STORY_BODY_CHARS_MIN
 
 
+# ---------------------------------------------------------------------------
+# 硬卡分级（2026-10 清理）：硬卡只分两类，不再「一律整稿重来」。
+#
+# 设计初衷只有一件事：稿子必须**读得通、是这场戏**。后来每修一次线上问题
+# 就往 validate 里加一条，到 #138（黑面饺子）时已经堆到 30+ 条，全部一票否决，
+# 于是「一条句尾毛病 → 整稿重写 → 又撞另一条」反复空转。
+#
+# 现在两类：
+#   * 结构类（_CHAT_HARD_STRUCTURAL）：稿子本身不成立（不是这场戏/不是对白/
+#     句数不够），只能在生成侧重来，修不出一条一条地改。
+#   * 局部类（_CHAT_HARD_LOCAL）：单句/单行缺陷，现稿上定点改得掉，交给
+#     finalize 的定点修稿预算，不再整稿重抽。
+# 新增硬卡时必须先判断属于哪一类，并在下面登记；未登记的按局部处理（宁可
+# 多花一次定点修稿，也不要白烧一次整稿生成）。
+# ---------------------------------------------------------------------------
+_CHAT_HARD_STRUCTURAL = (
+    "dialogue 不是列表",
+    "不是字典",
+    "speaker 非法",
+    "line 为空",
+    "对白句数须≥",
+    "对白句数须≤",
+)
+
+_CHAT_HARD_LOCAL = (
+    "正文总字数须≥",
+    "正文总字数须≤",
+    "妈妈台词须≤",
+    "爸爸台词须≤",
+    "家长台词须≤",
+    "空应答占行须≤",
+    "单句过长",
+    "像说教",
+    "含括号说明",
+    "像转述",
+    "narration_not_speech",
+    "对白含禁词",
+    "tutorial_residue_in_dialogue",
+    "opening_causality:",
+    "含站外称谓",
+)
+
+
+def chat_hard_error_is_local(part: str) -> bool:
+    """单条硬卡错误字符串是否属于「现稿可定点修」类。
+
+    默认**可修**：只有明确登记为结构性的才整稿重掷。反过来写（未登记即整稿
+    弃掷）会让新加的一条小硬卡把整篇好稿打死，而这正是这个函数要消灭的行为。
+    """
+    text = str(part or "")
+    if any(marker in text for marker in _CHAT_HARD_STRUCTURAL):
+        return False
+    if any(marker in text for marker in _CHAT_HARD_LOCAL):
+        return True
+    logger.info("[GOLD_CHAT] 未登记硬卡按可局部修处理: %s", text[:120])
+    return True
+
+
 def validate_chat_hard(
     story: dict[str, Any],
     *,
@@ -3155,11 +3229,8 @@ def validate_chat_hard(
     家长合计≤parent_lines_max（默认取 mom_lines_max），妈妈≤mom_lines_max，
     爸爸≤dad_lines_max（默认取 parent_lines_max，不再硬编码 1）。
     """
-    from statistics import mean
-
     from app.services.gold_story.scene import (
         ALLOWED_SPEAKERS,
-        CHAT_AVG_LINE_CHARS_MAX,
         CHAT_LINE_COUNT_MIN,
         CHAT_MAX_LINE_CHARS,
         MOM_BANNED_IN_LINE,
@@ -3182,6 +3253,16 @@ def validate_chat_hard(
 
     allowed = set(ALLOWED_SPEAKERS)
     from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    # 成稿会注入 `_gold_chat_mom_lines_max/_dad_lines_max`（导出时用
+    # resolve_parent_lines_budget 算出并写回，评分层也读这一份）。若硬卡这边仍拿
+    # 调用方传的契约原值，同一稿子会出现「评分按 5、硬卡按 4」的错开，评分说合规、
+    # 硬卡说超限（#138 production_reasons「妈妈台词须≤4句，当前5」即此）。注入值
+    # 存在时以注入值为准，与评分层同口径。
+    if isinstance(story, dict) and story.get("_gold_chat_mom_lines_max") is not None:
+        mom_lines_max = None
+        dad_lines_max = None
+        parent_lines_max = None
 
     mom_max, dad_max, parent_max = resolve_parent_lines_budget(
         story,
@@ -3258,9 +3339,9 @@ def validate_chat_hard(
     if lenses:
         if max(lenses) > CHAT_MAX_LINE_CHARS:
             errors.append(f"单句过长(max={max(lenses)}>{CHAT_MAX_LINE_CHARS})")
-        avg = mean(lenses)
-        if avg > CHAT_AVG_LINE_CHARS_MAX:
-            errors.append(f"均句过长({avg:.1f}>{CHAT_AVG_LINE_CHARS_MAX})")
+    # 已删「均句过长」（原 CHAT_AVG_LINE_CHARS_MAX）：单句上限已经管住最长句，
+    # 均句值只反映「句子长短分布」，和故事好不好毫无关系；它把整篇平均 23 字的
+    # 通顺稿判成硬伤，属于设计初衷之外的叠加约束（2026-10 清理）。
 
     if total > DAILY_STORY_BODY_CHARS_MAX:
         errors.append(f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total}")

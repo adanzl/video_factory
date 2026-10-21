@@ -2651,7 +2651,12 @@ def _intent_text_is_speakable(text: str, *, speaker: str = "") -> bool:
     return addressed or modal or first_person
 
 
-def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str:
+def _intent_to_authority_opening_line(
+    intent: str,
+    story: dict[str, Any],
+    *,
+    speaker: str = "",
+) -> str:
     """beat1 权威触发 intent → 可说出口首句；责备/立规/定责共用。"""
     from app.services.gold_story.gold_chat.validate import (
         _RE_BLAME_LINE,
@@ -2680,6 +2685,16 @@ def _intent_to_authority_opening_line(intent: str, story: dict[str, Any]) -> str
         if spoken:
             line = spoken if spoken.endswith(("。", "！", "？")) else f"{spoken}。"
             return line[:28] + ("。" if len(line) > 28 else "")
+    if authority_kind == "blame" and text:
+        from app.services.gold_story.scene import (
+            looks_like_narration_line,
+            rewrite_narration_to_speech,
+        )
+
+        spoken = rewrite_narration_to_speech(text, speaker=speaker)
+        if spoken and not looks_like_narration_line(spoken):
+            line = spoken if spoken.endswith(("。", "！", "？")) else f"{spoken}！"
+            return line[:36]
     if text and _RE_BLAME_LINE.search(text):
         line = text if text.endswith(("。", "！", "？")) else f"{text}？"
         return line[:28] + ("。" if len(line) > 28 else "")
@@ -5122,6 +5137,82 @@ def _trim_n_parent_overflow(
     return out, True
 
 
+def trim_parent_quota_overflow(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    mom_lines_max: int | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """非 N：家长句数超契约时删中间非机制句。
+
+    保护开场、收束、灵魂拷问和机制追问；先删没有问句的过渡/哄人句。
+    这样不会为了额度删掉孩子下句要回答的那一问。
+    """
+    import copy
+
+    from app.services.daily_story.story_types.i.validate import RE_SOUL_QUESTION
+    from app.services.gold_story.gold_chat.validate import (
+        _RE_STUN_REACT_LINE,
+    )
+
+    if mom_lines_max is None:
+        return story, []
+    if str(story.get("story_type") or "").strip().upper() == "N":
+        return story, []
+    budget = max(0, int(mom_lines_max))
+    rows = [dict(x) for x in (story.get("dialogue") or []) if isinstance(x, dict)]
+    mom_idx = [
+        i for i, row in enumerate(rows)
+        if str(row.get("speaker") or "").strip() == "妈妈"
+    ]
+    if len(mom_idx) <= budget:
+        return story, []
+
+    del beat_chain  # 开场/收束/追问由可见对白直接保护，不靠锚词猜
+    protected: set[int] = set()
+    if rows:
+        protected.update({0, len(rows) - 1})
+    if mom_idx:
+        protected.add(mom_idx[-1])
+    for i in mom_idx:
+        line = str(rows[i].get("line") or "").strip()
+        if RE_SOUL_QUESTION.search(line):
+            protected.add(i)
+        # 追问是孩子下句的因果前提；额度不够时宁可不动，删过渡句。
+        if re.search(r"[？?]", line):
+            protected.add(i)
+        if _RE_STUN_REACT_LINE.search(line):
+            protected.add(i)
+
+    removed = 0
+    while True:
+        current = [
+            i for i, row in enumerate(rows)
+            if str(row.get("speaker") or "").strip() == "妈妈"
+        ]
+        if len(current) <= budget:
+            break
+        removable = [i for i in current if i not in protected]
+        if not removable:
+            break
+        non_questions = [
+            i for i in removable
+            if not re.search(r"[？?]", str(rows[i].get("line") or ""))
+        ]
+        pool = non_questions or removable
+        # 中间过渡句优先；同优先级删较短的那句，损失最小。
+        drop = min(pool, key=lambda i: (len(str(rows[i].get("line") or "")), i))
+        rows.pop(drop)
+        protected = {i - 1 if i > drop else i for i in protected if i != drop}
+        removed += 1
+
+    if not removed:
+        return story, []
+    out = copy.deepcopy(story)
+    out["dialogue"] = rows
+    return out, [f"家长额度收口:删{removed}句"]
+
+
 def apply_n_ask_beat_local_patch(
     story: dict[str, Any],
     *,
@@ -5400,10 +5491,15 @@ def apply_opening_causality_local_patch(
                 continue
             # 我们要的是**对话稿**：seed 里的叙述句（「蛋挞烤鸭上桌，绕口令抢吃」
             # 「磕巴念绕口令，口误笑场」）不是能说出口的台词，不能插进对白。
-            from app.services.gold_story.scene import looks_like_narration_line
+            from app.services.gold_story.scene import (
+                looks_like_narration_line,
+                rewrite_narration_to_speech,
+            )
 
             if looks_like_narration_line(spoken):
-                continue
+                spoken = rewrite_narration_to_speech(spoken, speaker=expected)
+                if looks_like_narration_line(spoken):
+                    continue
             if _line_fulfills_beat(expected, spoken, entry):
                 return {"speaker": expected, "line": spoken}
 
@@ -5454,6 +5550,52 @@ def apply_opening_causality_local_patch(
 
     # 对中间缺拍优先用 H3b seed 落地：seed 是已生成契约，不新增剧情事实，且不占 LLM 修稿预算。
     # 每次只补一拍后重新收集 issue，避免旧行号在插入后继续使用。
+    beat1_speaker = str(beat1_entry.get("speaker") or "").strip()
+
+    def _beat1_landed_at_head() -> bool:
+        if not dlg or not beat1_speaker:
+            return False
+        return _line_fulfills_beat(
+            str(dlg[0].get("speaker") or "").strip(),
+            str(dlg[0].get("line") or "").strip(),
+            beat1_entry,
+        )
+
+    # 开场只有一条家长责备、但没带足 beat1 的关键词时，额度可能刚好已满，
+    # 下面的 seed 插入会被 mom_max 拦住。这里不新增句数：用 seed beat1
+    # 原位替换一条早段家长触发句，再把它移到开头。典型场景是首句写成
+    # 「衣服弄这么脏」却漏掉机制原话「傻」，后续孩子台词因此失去前提。
+    if not _beat1_landed_at_head() and beat1_speaker in {"妈妈", "爸爸"}:
+        seed_beat1 = _seed_spoken_row(0, beat1_entry)
+        if seed_beat1 is not None:
+            donor = -1
+            for i, row in enumerate(dlg):
+                if i >= max(1, len(dlg) - 2):
+                    break
+                if str(row.get("speaker") or "").strip() != beat1_speaker:
+                    continue
+                line = str(row.get("line") or "").strip()
+                if _RE_STUN_REACT_LINE.search(line):
+                    continue
+                if _RE_PARENT_TRIGGER_LINE.search(line) or _RE_BLAME_LINE.search(line):
+                    donor = i
+                    break
+            if donor < 0:
+                for i, row in enumerate(dlg):
+                    if i >= max(1, len(dlg) - 2):
+                        break
+                    if str(row.get("speaker") or "").strip() != beat1_speaker:
+                        continue
+                    if _RE_STUN_REACT_LINE.search(str(row.get("line") or "")):
+                        continue
+                    donor = i
+                    break
+            if donor >= 0:
+                dlg[donor] = dict(seed_beat1)
+                if donor > 0:
+                    dlg.insert(0, dlg.pop(donor))
+                changed = True
+
     for _ in range(min(3, len(entries))):
         probe = copy.deepcopy(story)
         probe["dialogue"] = [dict(row) for row in dlg]
@@ -5542,7 +5684,11 @@ def apply_opening_causality_local_patch(
         changed = True
     elif move_idx < 0:
         intent = str(beat1_entry.get("intent") or "")
-        opening_line = _intent_to_authority_opening_line(intent, story)
+        opening_line = _intent_to_authority_opening_line(
+            intent,
+            story,
+            speaker=speaker,
+        )
         if not opening_line:
             # 立规 intent 若只是剧情描述，本地不伪造对白；保留此前安全 seed 补丁，
             # 其余缺拍交给上层限定范围修稿。

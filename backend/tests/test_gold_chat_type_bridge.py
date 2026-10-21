@@ -685,6 +685,19 @@ def test_validate_gold_chat_rejects_narration_line():
         assert "narration_not_speech" in str(exc)
 
 
+def test_narration_grumbles_rewrite_to_unresolved_closing():
+    from app.services.gold_story.scene import (
+        looks_like_narration_line,
+        rewrite_narration_to_speech,
+    )
+
+    line = "小嘴一撇，嘟囔一句听不清的话，神情还没消气。"
+    assert looks_like_narration_line(line)
+    spoken = rewrite_narration_to_speech(line, speaker="昭昭")
+    assert spoken == "哼，我还没消气呢！"
+    assert not looks_like_narration_line(spoken)
+
+
 def test_q_patch_binds_cheat_speaker_and_strips_pads():
     import re
 

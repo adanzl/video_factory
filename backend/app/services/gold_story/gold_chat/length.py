@@ -2125,19 +2125,9 @@ def _ensure_gold_chat_min_chars(
 
     剥旧灌尾 → 可读句内扩写 → 中段加句 → 粒子 near-miss（差 ≤60）。
     """
-    # 逐拍填词模式：句数与字数在骨架层就按 target_lines≥14 / 每句 18–24 字
-    # 兜住了，这里任何垫字手段都只会插池子对（「所以你不是随口乱说的？」+
-    # 「不是，我就是按自己的想法认真说的。」/「反正我就是不让…」）。
-    # #138 实测：14 句 334 字的好稿被垫成 15–18 句，终检必判接不上/语病。
-    import os as _os
-
-    if str(_os.environ.get("GOLD_CHAT_PERBEAT") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return story, False
+    # 逐拍填词模式只跳过**垫字/加句**手段（决策见下方 perbeat 早退）；
+    # 剥垫痕（叠语气词、句尾粒子、扩写絮语）两条路都要跑，否则残留的垫字
+    # 痕迹只能靠终检判语病。
     data, clutter_changed = patch_sanitize_expand_clutter(story)
     data, changed_lines = _ensure_gold_chat_min_lines(data)
     data, changed_exp = _expand_short_gold_chat_lines(data)
@@ -2152,6 +2142,19 @@ def _ensure_gold_chat_min_chars(
         changed = changed or san or san2 or san3 or san4
         if not (san or san2 or san3 or san4):
             break
+    # 逐拍填词模式：句数与字数由骨架（target≥12 句）与填词机检兜，任何垫字/
+    # 加句手段都只会插池子对（「所以你不是随口乱说的？」+「不是，我就是按自己
+    # 的想法认真说的。」）。#138 实测：14 句 334 字的好稿被垫成 15–18 句，
+    # 终检必判接不上/语病。垫痕已在上面剥完，这里直接收。
+    import os as _os
+
+    if str(_os.environ.get("GOLD_CHAT_PERBEAT") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return data, changed
     if dialogue_total_chars(data) >= gold_chat_effective_min_chars(data.get("dialogue")):
         return data, changed
     # 仅大缺口才插求否对；near-miss 交给句内扩写/粒子，避免一锤后拉锯灌尾

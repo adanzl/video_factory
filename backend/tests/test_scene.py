@@ -10,6 +10,8 @@ from app.services.gold_story.gold_chat.validate import (
 from app.services.gold_story.scene import (
     DIALOGUE_TURNS_MIN,
     apply_parent_role_budget,
+    complete_request_premises,
+    ensure_request_premise_dialogue,
     fact_attribution_review_required,
     filter_fact_bound_rows,
     format_scene_block,
@@ -27,6 +29,7 @@ from app.services.gold_story.scene import (
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
     normalize_scene_dialogue_beats,
+    scene_contract_reuse_issues,
     parent_identity_claim_target,
     realign_parent_identity_rows,
     remap_story_raw_sibling_roles,
@@ -64,6 +67,130 @@ def test_remap_story_raw_sibling_roles_already_canonical():
     assert remap_story_raw_sibling_roles(raw) == raw
 
 
+def test_complete_request_premises_appends_same_beat_without_seed_insert():
+    """P1：否定结果缺请求前因时，并进前一拍；seed 行数/顺序不变。"""
+    contract = {
+        "story_type": "I",
+        "characters": ["妈妈", "昭昭"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "问是不是弄脏了衣服、谁的"},
+            {
+                "beat": 2,
+                "speaker": "昭昭",
+                "intent": "回答是自己的衣服，但说没有帮忙弄干净，因为疼妈妈",
+            },
+        ],
+    }
+    seed = [
+        {"speaker": "妈妈", "intent": "是不是把衣服弄脏了？"},
+        {"speaker": "昭昭", "intent": "是我自己的衣服。"},
+        {"speaker": "昭昭", "intent": "我没帮忙弄干净，因为我疼你。"},
+    ]
+    out, seed_out, notes = complete_request_premises(
+        contract,
+        seed,
+        story_raw="妈妈让他帮忙弄干净，昭昭说没有。",
+    )
+    assert notes
+    assert "主动帮昭昭弄干净" in out["beat_chain"][0]["intent"]
+    assert "想自己弄干净" in out["beat_chain"][1]["intent"]
+    assert len(seed_out) == len(seed)
+    assert [r["speaker"] for r in seed_out] == [r["speaker"] for r in seed]
+    assert "主动帮昭昭弄干净" in seed_out[0]["intent"]
+    assert seed_out[2]["intent"] == "我疼你，才想自己弄干净，不让你操心。"
+
+
+def test_complete_request_premises_negative_and_idempotent():
+    """P1：story_raw 没有请求事件不补；重复调用不叠加 clause。"""
+    contract = {
+        "story_type": "I",
+        "characters": ["妈妈", "昭昭"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "问衣服是谁的"},
+            {"beat": 2, "speaker": "昭昭", "intent": "说没帮忙弄干净"},
+        ],
+    }
+    seed = [{"speaker": "昭昭", "intent": "我没帮忙弄干净。"}]
+    same, same_seed, notes = complete_request_premises(
+        contract,
+        seed,
+        story_raw="妈妈问衣服是谁的，昭昭说没帮忙弄干净。",
+    )
+    assert not notes and same is contract and same_seed == seed
+
+    story_raw = "妈妈让他帮忙弄干净，昭昭说没有。"
+    out1, seed1, notes1 = complete_request_premises(contract, seed, story_raw=story_raw)
+    out2, seed2, notes2 = complete_request_premises(out1, seed1, story_raw=story_raw)
+    assert notes1 and not notes2
+    assert out2 == out1 and seed2 == seed1
+
+
+def test_ensure_request_premise_dialogue_rewrites_parent_without_insert():
+    """孩子复述请求时，前一句家长必须真的说过请求；只改该行不插行。"""
+    story = {
+        "dialogue": [
+            {
+                "speaker": "妈妈",
+                "line": "你说，你是不是把衣服弄脏了？弄脏的是谁的衣服？",
+            },
+            {"speaker": "昭昭", "line": "是我弄脏的，弄脏的是我自己的衣服呀。"},
+            {
+                "speaker": "昭昭",
+                "line": "你让我帮忙弄干净，我没照做，因为我疼你啊。",
+            },
+        ]
+    }
+    seed = [
+        {"speaker": "妈妈", "intent": "问衣服是谁的；并让昭昭帮忙弄干净"},
+        {
+            "speaker": "昭昭",
+            "intent": "你让我帮忙弄干净，我没照做，因为我疼你啊。",
+        },
+    ]
+    before_speakers = [row["speaker"] for row in story["dialogue"]]
+
+    out, notes = ensure_request_premise_dialogue(
+        story,
+        dialogue_seed=seed,
+    )
+
+    assert notes
+    assert [row["speaker"] for row in out["dialogue"]] == before_speakers
+    assert len(out["dialogue"]) == 3
+    assert out["dialogue"][0]["line"] == (
+        "妈妈不该骂你，弄脏的是谁的衣服？我来弄干净吧。"
+    )
+    assert out["dialogue"][2]["line"] == (
+        "我疼你，才想自己弄干净，不让你操心。"
+    )
+    same, again = ensure_request_premise_dialogue(out, dialogue_seed=seed)
+    assert not again and same is out
+
+
+def test_ensure_request_premise_dialogue_handles_affection_refusal():
+    """模型未复述原请求、只写「我不弄，因为疼你」时也要补成可理解因果。"""
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "弄脏的是谁的衣服？你弄干净。"},
+            {"speaker": "昭昭", "line": "我不弄，因为我疼你啊。"},
+        ]
+    }
+    seed = [
+        {
+            "speaker": "昭昭",
+            "intent": "你让我帮忙弄干净，我没照做，因为我疼你啊。",
+        }
+    ]
+    out, notes = ensure_request_premise_dialogue(story, dialogue_seed=seed)
+    assert notes
+    assert out["dialogue"][0]["line"] == (
+        "妈妈不该骂你，弄脏的是谁的衣服？我来弄干净吧。"
+    )
+    assert out["dialogue"][1]["line"] == (
+        "我疼你，才想自己弄干净，不让你操心。"
+    )
+
+
 def _sample_contract() -> dict:
     return {
         "source_type": "field",
@@ -87,6 +214,39 @@ def _sample_contract() -> dict:
 
 def test_validate_scene_ok():
     assert validate_scene(_sample_contract()) == []
+
+
+def test_scene_contract_reuse_rejects_stale_witness_layout():
+    """去见证位后主孩子连拍 = 旧搭法，应重建契约。"""
+    contract = {
+        "story_type": "I",
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "责备"},
+            {"beat": 2, "speaker": "昭昭", "intent": "反问"},
+            {"beat": 3, "speaker": "灿灿", "intent": "我就在旁边听着，你慢慢说。"},
+            {"beat": 4, "speaker": "昭昭", "intent": "解释"},
+            {"beat": 5, "speaker": "妈妈", "intent": "追问"},
+        ],
+    }
+    issues = scene_contract_reuse_issues(contract)
+    assert any("孩子连续拍" in item for item in issues)
+
+    contract["beat_chain"][3]["speaker"] = "妈妈"
+    assert scene_contract_reuse_issues(contract) == []
+
+
+def test_scene_contract_reuse_keeps_n_alternation_exception():
+    contract = {
+        "story_type": "N",
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "beat_chain": [
+            {"speaker": "妈妈", "intent": "追问"},
+            {"speaker": "昭昭", "intent": "解释"},
+            {"speaker": "昭昭", "intent": "补充"},
+        ],
+    }
+    assert scene_contract_reuse_issues(contract) == []
 
 
 def test_validate_scene_rejects_short_chain():
@@ -1012,6 +1172,178 @@ def test_seed_gets_second_kid_on_same_side_for_parent_caught():
         characters=["灿灿"],
     )
     assert len(no_parent) == 2
+
+
+def test_non_n_single_kid_gets_one_witness_not_filler_stack():
+    """非 N 单孩源只补一个见证位，不按 N 的交替预算灌态度句。"""
+    from app.services.gold_story.scene import enforce_two_kid_cast
+
+    contract = {
+        "story_type": "I",
+        "characters": ["妈妈", "昭昭"],
+        "mom_lines_max": 3,
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "责备孩子弄脏衣服"},
+            {"beat": 2, "speaker": "昭昭", "intent": "反问为什么骂我"},
+            {"beat": 3, "speaker": "昭昭", "intent": "承认弄脏但说因为疼你"},
+            {"beat": 4, "speaker": "妈妈", "intent": "愣住后追问"},
+            {"beat": 5, "speaker": "昭昭", "intent": "抓住不小心的说法反问"},
+            {"beat": 6, "speaker": "妈妈", "intent": "道歉收束"},
+        ],
+    }
+    out, notes = enforce_two_kid_cast(contract)
+    assert notes and "见证位" in notes[0]
+    partner_rows = [
+        r for r in out["beat_chain"] if r.get("speaker") == "灿灿"
+    ]
+    assert len(partner_rows) == 1
+    assert "慢慢说" in partner_rows[0]["intent"]
+    assert [r["beat"] for r in out["beat_chain"]] == list(
+        range(1, len(out["beat_chain"]) + 1)
+    )
+    assert not enforce_two_kid_cast(out)[1], "重复归一化必须幂等"
+
+
+def test_non_n_repeated_witness_beats_collapse_to_one():
+    """旧稿里已被 N 逻辑灌入多句旁观态度时，非 N 收敛回一个见证位。"""
+    from app.services.gold_story.scene import enforce_two_kid_cast
+
+    contract = {
+        "story_type": "I",
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "责备昭昭"},
+            {"beat": 2, "speaker": "昭昭", "intent": "反问为什么骂我"},
+            {
+                "beat": 3,
+                "speaker": "灿灿",
+                "intent": "这话我可有点不信，你可得说清楚才行。",
+            },
+            {"beat": 4, "speaker": "昭昭", "intent": "说因为疼你"},
+            {
+                "beat": 5,
+                "speaker": "灿灿",
+                "intent": "先回答上一句，越说越像真有这么回事，我都快当真了。",
+            },
+            {"beat": 6, "speaker": "妈妈", "intent": "追问"},
+            {
+                "beat": 7,
+                "speaker": "灿灿",
+                "intent": "行，那我就在旁边看着你把这事说圆。",
+            },
+            {"beat": 8, "speaker": "妈妈", "intent": "道歉收束"},
+        ],
+    }
+    out, notes = enforce_two_kid_cast(contract)
+    assert notes and "删2拍" in notes[0]
+    partner_rows = [
+        r for r in out["beat_chain"] if r.get("speaker") == "灿灿"
+    ]
+    assert len(partner_rows) == 1
+    assert partner_rows[0]["intent"] == "我就在旁边听着，你慢慢说。"
+
+
+def test_non_n_seed_removes_supplemental_witness_lines():
+    from app.services.gold_story.scene import normalize_supplemental_kid_seed
+
+    contract = {
+        "story_type": "I",
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "责备昭昭"},
+            {"beat": 2, "speaker": "昭昭", "intent": "反问为什么骂我"},
+            {
+                "beat": 3,
+                "speaker": "灿灿",
+                "intent": "我就在旁边听着，你慢慢说。",
+            },
+            {"beat": 4, "speaker": "妈妈", "intent": "道歉收束"},
+        ],
+    }
+    seed = [
+        {"speaker": "妈妈", "intent": "责备昭昭"},
+        {"speaker": "昭昭", "intent": "反问为什么骂我"},
+        {"speaker": "灿灿", "intent": "这话我可有点不信，你可得说清楚才行。"},
+        {"speaker": "昭昭", "intent": "说因为疼你"},
+        {"speaker": "灿灿", "intent": "我怎么听着这么玄乎，越琢磨越觉得悬。"},
+        {"speaker": "妈妈", "intent": "道歉收束"},
+    ]
+    out, notes = normalize_supplemental_kid_seed(seed, contract=contract)
+    assert notes and "删2句" in notes[0]
+    partner_lines = [r for r in out if r.get("speaker") == "灿灿"]
+    assert partner_lines == []
+
+
+def test_non_n_final_dialogue_removes_supplemental_witness():
+    """非 N 主对质不靠旁观见证拆句：所有补充孩子台词都移除。"""
+    from app.services.gold_story.scene import trim_supplemental_kid_dialogue
+
+    contract = {
+        "story_type": "I",
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "责备昭昭"},
+            {"beat": 2, "speaker": "昭昭", "intent": "反问为什么骂我"},
+            {
+                "beat": 3,
+                "speaker": "灿灿",
+                "intent": "我就在旁边听着，你慢慢说。",
+            },
+            {"beat": 4, "speaker": "妈妈", "intent": "道歉收束"},
+        ],
+    }
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "衣服怎么又弄脏了？"},
+            {"speaker": "灿灿", "line": "嗯。"},
+            {"speaker": "昭昭", "line": "你干嘛那么大声骂我？"},
+            {"speaker": "灿灿", "line": "我就在旁边听着，你慢慢说。"},
+            {"speaker": "灿灿", "line": "你先别打岔，把刚才的话说清楚！"},
+            {"speaker": "昭昭", "line": "因为我疼你啊。"},
+            {"speaker": "灿灿", "line": "我可没听明白，你再说一遍！"},
+            {"speaker": "妈妈", "line": "对不起，是妈妈错了。"},
+        ]
+    }
+    out, notes = trim_supplemental_kid_dialogue(story, contract=contract)
+    assert notes and "删4句" in notes[0]
+    partner_lines = [
+        r["line"] for r in out["dialogue"] if r.get("speaker") == "灿灿"
+    ]
+    assert partner_lines == []
+    assert not trim_supplemental_kid_dialogue(out, contract=contract)[1]
+
+
+def test_non_n_final_dialogue_keeps_main_child_run():
+    """允许主孩子连续陈述；不再为空缺的旁观位补态度句。"""
+    from app.services.gold_story.scene import trim_supplemental_kid_dialogue
+
+    contract = {
+        "story_type": "I",
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "责备昭昭"},
+            {"beat": 2, "speaker": "昭昭", "intent": "解释"},
+            {"beat": 3, "speaker": "灿灿", "intent": "我就在旁边听着，你慢慢说。"},
+            {"beat": 4, "speaker": "妈妈", "intent": "道歉收束"},
+        ],
+    }
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "衣服怎么又弄脏了？"},
+            {"speaker": "昭昭", "line": "你干嘛那么大声骂我？"},
+            {"speaker": "昭昭", "line": "我又不是故意弄脏的。"},
+            {"speaker": "昭昭", "line": "衣服是我弄脏的，可那是因为我疼你啊。"},
+            {"speaker": "昭昭", "line": "你倒好，上来就骂我傻。"},
+            {"speaker": "妈妈", "line": "你疼我，我还骂你、说你傻？"},
+        ]
+    }
+    out, notes = trim_supplemental_kid_dialogue(story, contract=contract)
+    assert not notes
+    speakers = [r["speaker"] for r in out["dialogue"]]
+    assert speakers.count("灿灿") == 0
+    assert any(
+        a == b == "昭昭" for a, b in zip(speakers, speakers[1:])
+    )
 
 
 def test_n_seed_viewer_questions_realign_to_asker():

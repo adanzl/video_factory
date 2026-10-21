@@ -197,6 +197,38 @@ def test_consecutive_sibling_always_penalized():
     )
 
 
+def test_non_n_single_child_run_is_not_sibling_alternation():
+    """非 N 单孩叙事允许连续陈述；两个孩子都参与时才判同人连说。"""
+    from app.services.daily_story.quality import _has_consecutive_sibling
+
+    single = [
+        {"speaker": "妈妈", "line": "衣服怎么又弄脏了？"},
+        {"speaker": "昭昭", "line": "我又不是故意的。"},
+        {"speaker": "昭昭", "line": "可我是想帮你才弄到的呀。"},
+        {"speaker": "妈妈", "line": "那你好好说。"},
+    ]
+    assert not _has_consecutive_sibling(single, story_type="I")
+
+    witness = [
+        {"speaker": "妈妈", "line": "衣服怎么又弄脏了？"},
+        {"speaker": "昭昭", "line": "我又不是故意的。"},
+        {"speaker": "灿灿", "line": "我听见了。"},
+        {"speaker": "昭昭", "line": "可我是想帮你才弄到的呀。"},
+        {"speaker": "昭昭", "line": "你干嘛还骂我傻？"},
+    ]
+    assert not _has_consecutive_sibling(witness, story_type="I")
+
+    dual = [
+        {"speaker": "妈妈", "line": "你们俩别吵。"},
+        {"speaker": "昭昭", "line": "是他先抢的。"},
+        {"speaker": "昭昭", "line": "我根本没碰他的东西。"},
+        {"speaker": "灿灿", "line": "你明明拿了。"},
+        {"speaker": "妈妈", "line": "都少说一句。"},
+        {"speaker": "灿灿", "line": "他刚才还推我。"},
+    ]
+    assert _has_consecutive_sibling(dual, story_type="I")
+
+
 def test_n_token_premise_exemption_is_narrow():
     """N 类怪词/补词属机制，不算缺前提；其它缺前提照旧硬拦。"""
     from app.services.daily_story.review import _n_type_token_premise_exempt

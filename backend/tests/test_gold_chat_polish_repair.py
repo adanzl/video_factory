@@ -80,6 +80,36 @@ def test_polish_batch_fail_keeps_validated_candidate(monkeypatch):
     assert result.accepted == set()
 
 
+def test_polish_sanitizes_narration_before_validate(monkeypatch):
+    from app.services.gold_story.gold_chat import convert as gc
+    from app.services.gold_story.scene import collect_narration_dialogue_errors
+
+    chat = _story([
+        {"speaker": "妈妈", "line": "对不起，是妈妈不该说你傻。"},
+        {"speaker": "昭昭", "line": "哼，我还没消气呢！"},
+    ])
+    fixes = {
+        "fixes": [
+            {
+                "no": 2,
+                "line": "小嘴一撇，嘟囔一句听不清的话，神情还没消气。",
+            },
+        ],
+    }
+
+    def fake_validate(story, **kwargs):
+        errors = collect_narration_dialogue_errors(story["dialogue"])
+        if errors:
+            raise ValueError("；".join(errors))
+
+    monkeypatch.setattr(gc, "validate_gold_chat", fake_validate)
+    monkeypatch.setattr(gc, "patch_sanitize_pad_suffix", lambda s: (s, False))
+
+    result = _apply_gold_chat_polish_fixes(chat, fixes, mom_lines_max=3)
+    assert result.errors == []
+    assert result.candidate["dialogue"][1]["line"] == "哼，我还没消气呢！"
+
+
 def test_build_candidate_repair_feedback_lists_metrics_and_align():
     fb = build_candidate_repair_feedback(
         _story(

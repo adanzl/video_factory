@@ -1654,6 +1654,101 @@ def _sample_beat_chain() -> list[dict[str, str]]:
     ]
 
 
+def test_perbeat_key_from_object_keeps_whole_phrase():
+    """逐拍 key 不许硬切 8 字切出半截括号（#138「妈妈像什么（黑面」）。"""
+    from app.services.gold_story.gold_chat.expand import _perbeat_key_from_object
+
+    assert _perbeat_key_from_object("妈妈像什么（黑面饺子）") == "妈妈像什么"
+    assert _perbeat_key_from_object("（黑面）") == "黑面"
+    assert _perbeat_key_from_object("黑面饺子") == "黑面饺子"
+    assert _perbeat_key_from_object("") == "像什么"
+    key = _perbeat_key_from_object("一二三四五六七八九十")
+    assert len(key) <= 8
+
+
+def test_issue_evidence_may_cite_context_lines():
+    """错位/重复天然引「问题句 + 对照句」：证据行不必都在 lines 里。"""
+    from app.services.daily_story.review import (
+        partition_llm_export_blocking_issues,
+    )
+
+    story = _story([
+        {"speaker": "妈妈", "line": "这黑面饺子好不好吃？"},
+        {"speaker": "昭昭", "line": "芯子又苦又涩，妈你倒是眉清目秀。"},
+        {"speaker": "妈妈", "line": "你今儿嘴这么甜，是不是又想要零花钱？"},
+    ])
+    issue = {
+        "kind": "错位",
+        "lines": [2],
+        "desc": "夸赞对象和后续追问对不上",
+        "evidence": [
+            {"line": 2, "quote": "妈你倒是眉清目秀"},
+            {"line": 3, "quote": "你今儿嘴这么甜"},
+        ],
+    }
+    valid, invalid = partition_llm_export_blocking_issues([issue], story)
+    assert [it["kind"] for it in valid] == ["错位"]
+    assert invalid == []
+
+
+def test_issue_evidence_requires_every_issue_line_covered():
+    """多引对照行可以，但 lines 里每一行都必须被逐字匹配的引文覆盖。"""
+    from app.services.daily_story.review import (
+        partition_llm_export_blocking_issues,
+    )
+
+    story = _story([
+        {"speaker": "妈妈", "line": "这黑面饺子好不好吃？"},
+        {"speaker": "昭昭", "line": "芯子又苦又涩，难吃无比。"},
+        # 两句必须真有 ≥5 字逐字重复，才落进「硬伤」定义、才轮到查证据覆盖
+        {"speaker": "灿灿", "line": "你嫌芯子又苦又涩还夸妈，这嘴变太快。"},
+    ])
+    issue = {
+        "kind": "重复",
+        "lines": [2, 3],
+        "desc": "两句都在说嘴快",
+        "evidence": [{"line": 2, "quote": "难吃无比"}],
+    }
+    valid, invalid = partition_llm_export_blocking_issues([issue], story)
+    assert valid == []
+    assert [it["kind"] for it in invalid] == ["重复"]
+
+
+def test_issue_evidence_context_line_with_wrong_quote_still_invalid():
+    """对照行引错内容，或行号越界：照旧判证据无效。"""
+    from app.services.daily_story.review import (
+        partition_llm_export_blocking_issues,
+    )
+
+    story = _story([
+        {"speaker": "妈妈", "line": "这黑面饺子好不好吃？"},
+        {"speaker": "昭昭", "line": "芯子又苦又涩，妈你倒是眉清目秀。"},
+    ])
+    wrong_quote = {
+        "kind": "错位",
+        "lines": [2],
+        "desc": "夸赞对象和后续追问对不上",
+        "evidence": [
+            {"line": 2, "quote": "妈你倒是眉清目秀"},
+            {"line": 1, "quote": "原文里没有的一句"},
+        ],
+    }
+    out_of_range = {
+        "kind": "错位",
+        "lines": [2],
+        "desc": "夸赞对象和后续追问对不上",
+        "evidence": [
+            {"line": 2, "quote": "妈你倒是眉清目秀"},
+            {"line": 9, "quote": "妈你倒是眉清目秀"},
+        ],
+    }
+    valid, invalid = partition_llm_export_blocking_issues(
+        [wrong_quote, out_of_range], story
+    )
+    assert valid == []
+    assert len(invalid) == 2
+
+
 def test_contract_gap_blocking_and_invalid_evidence():
     beat_chain = _sample_beat_chain()
     story = _story(
@@ -2544,6 +2639,14 @@ def test_authority_opening_line_falls_back_instead_of_narrating_and_dialogue():
     assert (
         _intent_to_authority_opening_line("震怒：你就不能祝我像一个公主", story)
         == "你就不能祝我像一个公主？"
+    )
+    assert (
+        _intent_to_authority_opening_line(
+            "责备：大声责备昭昭弄脏衣服，并说出“傻”字",
+            story,
+            speaker="妈妈",
+        )
+        == "你怎么这么傻！"
     )
 
 
@@ -3943,3 +4046,341 @@ def test_perbeat_final_acceptance_reviews_original_dialogue_and_keeps_semantic_g
     assert semantic.call_args.args[1]["dialogue"] == original
     assert caught.value.issues == [issue]
     assert chat["dialogue"] == original
+
+
+# ---------------------------------------------------------------------------
+# 逐句线路计划（line plan）：#138「黑面饺子」同型契约
+# ---------------------------------------------------------------------------
+
+_LP_CONTRACT = {
+    "location": "餐桌",
+    "object": "黑面饺子",
+    "characters": ["妈妈", "昭昭", "灿灿"],
+    "conflict": "昭昭当面嫌饺子难吃，转头夸妈妈，转头说妈妈像老虎",
+    "closing_intent": "妈妈举着筷子半天没落下，认栽让昭昭以后说话先打草稿",
+    "mom_lines_max": 4,
+    "beat_chain": [
+        {"beat": 1, "speaker": "妈妈", "intent": "端来黑面饺子问昭昭好不好吃"},
+        {"beat": 2, "speaker": "昭昭", "intent": "嫌黑面芯子难吃，又补一句妈妈眉清目秀"},
+        {"beat": 3, "speaker": "妈妈", "intent": "狐疑追问今天怎么舍得夸妈妈"},
+        {"beat": 4, "speaker": "昭昭", "intent": "一本正经说妈妈像一只暴躁老虎"},
+        {"beat": 5, "speaker": "妈妈", "intent": "气笑要求改口夸妈妈像公主"},
+        {"beat": 6, "speaker": "昭昭", "intent": "不慌不忙回老虎一吼公主也得现出原形"},
+        {"beat": 7, "speaker": "灿灿", "intent": "接不上话，愣住看妈妈"},
+        {"beat": 8, "speaker": "妈妈", "intent": "举着筷子半天没落下，认栽让昭昭以后说话先打草稿"},
+    ],
+}
+
+_LP_VALID_PLAN = [
+    {"beat": 1, "speaker": "妈妈", "intent": "问昭昭黑面饺子好不好吃", "addressee": "昭昭"},
+    {"beat": 2, "speaker": "昭昭", "intent": "说黑面芯子又苦又涩", "addressee": "妈妈"},
+    {"beat": 2, "speaker": "灿灿", "intent": "追问昭昭那还夸妈妈干什么", "addressee": "昭昭"},
+    {"beat": 2, "speaker": "昭昭", "intent": "说因为妈妈眉清目秀", "addressee": "灿灿"},
+    {"beat": 3, "speaker": "妈妈", "intent": "狐疑问她今天怎么舍得夸人", "addressee": "昭昭"},
+    {"beat": 4, "speaker": "昭昭", "intent": "说妈妈像只暴躁老虎", "addressee": "妈妈"},
+    {"beat": 5, "speaker": "灿灿", "intent": "替妈妈不平说昭昭当面夸背后损", "addressee": "昭昭"},
+    {"beat": 5, "speaker": "妈妈", "intent": "让昭昭改口夸妈妈像公主", "addressee": "昭昭"},
+    {"beat": 6, "speaker": "昭昭", "intent": "说老虎一吼公主也得现原形", "addressee": "妈妈"},
+    {"beat": 7, "speaker": "灿灿", "intent": "说这嘴没人管得住", "addressee": "妈妈"},
+    {"beat": 7, "speaker": "昭昭", "intent": "说自己讲的是实话", "addressee": "灿灿"},
+    {"beat": 8, "speaker": "妈妈", "intent": "让昭昭以后说话先打草稿", "addressee": "昭昭"},
+]
+
+
+def test_line_plan_capacity_accepts_canonical_contract():
+    from app.services.gold_story.gold_chat.expand import _line_plan_capacity
+
+    assert _line_plan_capacity(
+        _LP_CONTRACT, _LP_CONTRACT["beat_chain"], target_lines=12
+    ) == []
+
+
+def test_line_plan_capacity_rejects_target_beyond_contract_capacity():
+    from app.services.gold_story.gold_chat.expand import _line_plan_capacity
+
+    # 8 拍契约的容量上界 = 家长拍 4×2 + 孩子拍 3×5 + 静场 1 = 24。
+    errors = _line_plan_capacity(
+        _LP_CONTRACT, _LP_CONTRACT["beat_chain"], target_lines=30
+    )
+    assert errors and "排不满" in errors[0]
+
+
+def test_validate_line_plan_accepts_alternating_plan():
+    from app.services.gold_story.gold_chat.expand import _validate_line_plan
+
+    assert _validate_line_plan(
+        _LP_VALID_PLAN,
+        scene_contract=_LP_CONTRACT,
+        beat_chain=_LP_CONTRACT["beat_chain"],
+        target_lines=12,
+    ) == []
+
+
+def test_validate_line_plan_rejects_mom_over_budget():
+    from app.services.gold_story.gold_chat.expand import _validate_line_plan
+
+    # 契约只给妈妈 2 拍、2 句额度（家长额度会按拍数兜底抬额，故用拍数锁死），
+    # 计划却塞了 3 句妈妈，必须被机检挡回。
+    contract = {
+        # 爸爸在场：否则「唯一在场家长」规则会把家长总预算让给妈妈，
+        # 妈妈额度被抬到 3 句，额度卡就测不出来了。
+        "characters": ["妈妈", "爸爸", "昭昭", "灿灿"],
+        "mom_lines_max": 2,
+        "beat_chain": [
+            {"beat": 1, "speaker": "妈妈", "intent": "问昭昭要不要再吃一碗"},
+            {"beat": 2, "speaker": "昭昭", "intent": "说黑面芯子苦"},
+            {"beat": 3, "speaker": "妈妈", "intent": "让昭昭把话说完"},
+        ],
+    }
+    plan = [
+        {"beat": 1, "speaker": "妈妈", "intent": "问昭昭要不要再吃一碗"},
+        {"beat": 2, "speaker": "昭昭", "intent": "说黑面芯子苦"},
+        {"beat": 2, "speaker": "妈妈", "intent": "追问他到底想说什么"},
+        {"beat": 2, "speaker": "灿灿", "intent": "说昭昭刚才还夸过妈妈"},
+        {"beat": 3, "speaker": "妈妈", "intent": "让昭昭把话说完"},
+    ]
+    errors = _validate_line_plan(
+        plan,
+        scene_contract=contract,
+        beat_chain=contract["beat_chain"],
+        target_lines=5,
+    )
+    assert any("妈妈 3 句" in item for item in errors)
+
+
+def test_validate_line_plan_rejects_adjacent_same_speaker():
+    from app.services.gold_story.gold_chat.expand import _validate_line_plan
+
+    plan = [dict(row) for row in _LP_VALID_PLAN]
+    plan[2] = {
+        "beat": 2, "speaker": "昭昭", "intent": "反过来说灿灿嘴也快",
+        "addressee": "灿灿",
+    }
+    errors = _validate_line_plan(
+        plan,
+        scene_contract=_LP_CONTRACT,
+        beat_chain=_LP_CONTRACT["beat_chain"],
+        target_lines=12,
+    )
+    assert any("同一说话人" in item for item in errors)
+
+
+def test_validate_line_plan_rejects_beat_without_owner_speaking():
+    from app.services.gold_story.gold_chat.expand import _validate_line_plan
+
+    plan = [dict(row) for row in _LP_VALID_PLAN]
+    plan[9] = {
+        "beat": 7, "speaker": "妈妈", "intent": "说灿灿别替昭昭打圆场",
+        "addressee": "灿灿",
+    }
+    plan[10] = {
+        "beat": 7, "speaker": "昭昭", "intent": "说自己讲的是实话",
+        "addressee": "妈妈",
+    }
+    errors = _validate_line_plan(
+        plan,
+        scene_contract=_LP_CONTRACT,
+        beat_chain=_LP_CONTRACT["beat_chain"],
+        target_lines=12,
+    )
+    assert any("灿灿" in item and "出声" in item for item in errors)
+
+
+def test_validate_line_plan_rejects_stage_action_intent():
+    from app.services.gold_story.gold_chat.expand import _validate_line_plan
+
+    plan = [dict(row) for row in _LP_VALID_PLAN]
+    plan[11] = {
+        "beat": 8, "speaker": "妈妈", "intent": "举着筷子气得说不出话",
+        "addressee": "昭昭",
+    }
+    errors = _validate_line_plan(
+        plan,
+        scene_contract=_LP_CONTRACT,
+        beat_chain=_LP_CONTRACT["beat_chain"],
+        target_lines=12,
+    )
+    assert any("动作" in item for item in errors)
+
+
+def test_build_line_plan_retries_with_structural_feedback(monkeypatch):
+    from app.services.gold_story.gold_chat import expand
+
+    calls: list[str] = []
+    good = {
+        "lines": [
+            {"i": idx, "intent": row["intent"]}
+            for idx, row in enumerate(_LP_VALID_PLAN, 1)
+        ]
+    }
+    # 拍主行（from_beat）的 intent 由骨架写定，模型只填反应/拆句行；
+    # 这里故意漏掉第 11 句（反应行）来触发一次带反馈的重试。
+    bad = {"lines": [row for row in good["lines"] if row["i"] != 11]}
+
+    def fake_chat_json(system, user, **_kwargs):
+        calls.append(user)
+        return bad if len(calls) == 1 else good
+
+    monkeypatch.setattr(expand, "_chat_json", fake_chat_json)
+    plan = expand._build_line_plan(
+        scene_contract=_LP_CONTRACT,
+        beat_chain=_LP_CONTRACT["beat_chain"],
+        story_raw="妈妈端来黑面饺子，昭昭嫌苦，转头夸妈妈，又补一句像老虎。",
+        target_lines=12,
+        temperature=0.5,
+    )
+    assert len(plan) == 12
+    assert "不合格" in calls[1]
+    assert "第11句缺 intent" in calls[1]
+
+
+def test_line_plan_slots_marks_reaction_lines_as_filler():
+    from app.services.gold_story.gold_chat.expand import _line_plan_slots
+
+    slots = _line_plan_slots(_LP_VALID_PLAN, _LP_CONTRACT["beat_chain"])
+    assert slots[0]["function"] == "本拍主句"
+    assert slots[0]["is_filler"] is False
+    assert slots[2]["is_filler"] is True
+    assert slots[2]["beat_id"] == 2
+
+
+def test_line_plan_skeleton_covers_beats_without_adjacent_duplicates():
+    from app.services.gold_story.gold_chat.expand import _line_plan_skeleton
+
+    rows = _line_plan_skeleton(
+        _LP_CONTRACT, _LP_CONTRACT["beat_chain"], target_lines=12
+    )
+    assert len(rows) == 12
+    speakers = [row["speaker"] for row in rows]
+    assert all(a != b for a, b in zip(speakers, speakers[1:]))
+    assert speakers.count("妈妈") <= 5
+    covered = {row["beat"] for row in rows}
+    assert covered == {1, 2, 3, 4, 5, 6, 7, 8}
+    assert rows[-1]["beat"] == 8 and rows[-1]["speaker"] == "妈妈"
+    assert rows[0]["beat"] == 1
+
+
+def test_perbeat_candidate_builds_slots_from_line_plan(monkeypatch):
+    from app.services.gold_story.gold_chat import expand
+
+    monkeypatch.delenv("GOLD_CHAT_PERBEAT", raising=False)
+    captured: dict = {}
+
+    def fake_plan(**_kwargs):
+        return _LP_VALID_PLAN
+
+    def fake_fill(slots, **_kwargs):
+        captured["slots"] = slots
+        return [
+            (slot["speaker"], f"第{i}句台词内容") for i, slot in enumerate(slots, 1)
+        ], []
+
+    monkeypatch.setattr(expand, "_build_line_plan", fake_plan)
+    monkeypatch.setattr(expand, "_perbeat_fill_slots", fake_fill)
+    # 本用例只验「槽来自计划」，篇幅硬卡由其它用例覆盖。
+    monkeypatch.setattr(expand, "_validate_expand_chat", lambda data, **_k: data)
+    data = expand._generate_perbeat_candidate(
+        scene_contract=_LP_CONTRACT,
+        beat_chain=_LP_CONTRACT["beat_chain"],
+        structure_type="N",
+        mom_lines_max=4,
+        row={"title": "黑面饺子", "story_raw": "妈妈端来黑面饺子问昭昭好不好吃。"},
+    )
+    assert [slot["speaker"] for slot in captured["slots"]] == [
+        row["speaker"] for row in _LP_VALID_PLAN
+    ]
+    assert len(data["dialogue"]) == 12
+    assert data["setting"] == "餐桌"
+
+
+def test_terminal_demotes_quirk_on_verbatim_source_line():
+    """终检把源故事原句判成语病时降级留档，不拦导出（2026-10）。
+
+    同一句「老虎一吼，公主也得现出原形」在不同轮次里时过时不过：20:21 放行、
+    15:04 判「公主不是老虎变的」。作者原句不该由机器判语病。
+    """
+    from app.services.daily_story.review import ExportSemanticReviewResult
+    from app.services.gold_story.gold_chat.finalize import (
+        _demote_verbatim_source_quirks,
+    )
+
+    quirk = {
+        "kind": "语病",
+        "lines": [10],
+        "desc": "「公主也得现出原形」说不通",
+        "evidence": [{"line": 10, "quote": "老虎一吼，公主也得现出原形"}],
+    }
+    invented = {
+        "kind": "语病",
+        "lines": [3],
+        "desc": "「嘴变快」搭配怪",
+        "evidence": [{"line": 3, "quote": "这嘴变得也太快了吧"}],
+    }
+    review = ExportSemanticReviewResult(
+        completed=True, issues=[quirk, invented]
+    )
+    chat = {"source_raw": "昭昭说老虎一吼，公主也得现出原形，满桌愣住。"}
+    out = _demote_verbatim_source_quirks(review, chat)
+    assert out.issues == [invented]
+    assert len(out.downgraded) == 1
+    record = out.downgraded[0]
+    assert record["kind"] == "语病"
+    assert record["downgrade_reason"] == "source_verbatim"
+    assert record["weak_verified"] is True
+    assert out.completed is True
+
+    # 没有源故事文本时不做任何降级（宁可拦下，也不瞎放行）。
+    plain = ExportSemanticReviewResult(completed=True, issues=[quirk])
+    assert _demote_verbatim_source_quirks(plain, {}).issues == [quirk]
+
+
+def test_line_plan_settles_stage_intent_without_crashing():
+    """静态拍的 intent 照抄拍意图时直接收口，不返工、不崩（2026-10 回归）。"""
+    from app.services.gold_story.gold_chat.expand import (
+        _line_plan_settle_stage_intents,
+    )
+
+    beats = [
+        {"speaker": "妈妈", "intent": "举着筷子半天没落下，认栽说以后说话先打草稿"},
+    ]
+    plan = [{"beat": 1, "speaker": "妈妈", "intent": "气笑说两句"}]
+    out = _line_plan_settle_stage_intents(plan, beats)
+    assert out[0]["intent"] == beats[0]["intent"]
+
+
+def test_citation_issue_without_attribution_is_demoted():
+    """「眉清目秀」这种评价词不算引用；只有「你刚还夸」这类归因才算（2026-10）。
+
+    审读模型会把「眉清目秀也压不住吼声」判成「全篇没人说过眉清目秀」，
+    但那是角色自己的判断，不是引用，不该用「引用无据」拦稿。
+    """
+    from app.services.daily_story.review import ExportSemanticReviewResult
+    from app.services.gold_story.gold_chat.finalize import (
+        _demote_nonattributed_citation_issues,
+    )
+
+    chat = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "眉清目秀也压不住吼声，你别不信。"},
+            {"speaker": "灿灿", "line": "你刚还夸她眉清目秀，转头就说吼声。"},
+        ]
+    }
+    self_judgement = {
+        "kind": "引用无据",
+        "lines": [1],
+        "desc": "全篇没人说过眉清目秀",
+        "evidence": [{"line": 1, "quote": "眉清目秀也压不住吼声"}],
+    }
+    attribution = {
+        "kind": "引用无据",
+        "lines": [2],
+        "desc": "昭昭没说过眉清目秀",
+        "evidence": [{"line": 2, "quote": "你刚还夸她眉清目秀"}],
+    }
+    review = ExportSemanticReviewResult(
+        completed=True, issues=[self_judgement, attribution]
+    )
+    out = _demote_nonattributed_citation_issues(review, chat)
+    assert out.issues == [attribution]
+    assert len(out.downgraded) == 1
+    assert out.downgraded[0]["downgrade_reason"] == "no_attribution"

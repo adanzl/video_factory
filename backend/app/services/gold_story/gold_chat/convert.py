@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -120,6 +121,7 @@ from app.services.gold_story.gold_chat.validate import (
 )
 from app.services.gold_story.collect.llm import resolve_gold_chat_snippet
 from app.services.gold_story.scene import (
+    complete_request_premises,
     format_scene_block,
     normalize_dialogue_setting_for_contract,
     sanitize_banned_literals,
@@ -1363,9 +1365,13 @@ def apply_gold_chat_normalizations(
             notes.extend(type_notes)
         from app.services.gold_story.scene import (
             patch_dialogue_narration_to_speech,
+            trim_supplemental_kid_dialogue,
         )
 
         notes.extend(patch_dialogue_narration_to_speech(chat))
+        chat, witness_notes = trim_supplemental_kid_dialogue(chat, contract=sc)
+        if witness_notes:
+            notes.extend(witness_notes)
     from app.services.gold_story.gold_chat.patch import (
         patch_gold_chat_c_seed_bridge,
         patch_gold_chat_dedupe_dialogue_loop,
@@ -1759,6 +1765,8 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             enforce_two_kid_cast,
             ensure_n_two_kid_alternation,
             normalize_payload_tokens,
+            normalize_supplemental_kid_seed,
+            scene_contract_reuse_issues,
             validate_scene,
         )
 
@@ -1786,7 +1794,14 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
                 row.get("id"),
                 (_kid_notes + _alt_notes)[:3],
             )
-        if not validate_scene(existing_contract):
+        reuse_issues = scene_contract_reuse_issues(existing_contract)
+        if reuse_issues:
+            logger.info(
+                "[GOLD_CHAT] rebuild stale scene_contract id=%s: %s",
+                row.get("id"),
+                "；".join(reuse_issues[:3]),
+            )
+        if not reuse_issues and not validate_scene(existing_contract):
             logger.info(
                 "[GOLD_CHAT] reuse existing scene_contract id=%s beats=%s mom_max=%s",
                 row.get("id"),
@@ -1794,6 +1809,31 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
                 existing_contract.get("mom_lines_max"),
             )
             existing_seed = payload.get("dialogue_seed")
+            existing_seed, _witness_notes = normalize_supplemental_kid_seed(
+                existing_seed if isinstance(existing_seed, list) else [],
+                contract=existing_contract,
+            )
+            if _witness_notes:
+                logger.info(
+                    "[GOLD_CHAT] reuse supplemental kid seed id=%s: %s",
+                    row.get("id"),
+                    _witness_notes[:3],
+                )
+            existing_contract, existing_seed, premise_notes = (
+                complete_request_premises(
+                    existing_contract,
+                    existing_seed if isinstance(existing_seed, list) else [],
+                    story_raw=story_raw,
+                )
+            )
+            if premise_notes:
+                logger.info(
+                    "[GOLD_CHAT] request premise complete id=%s: %s",
+                    row.get("id"),
+                    "；".join(premise_notes[:3]),
+                )
+            if existing_seed:
+                payload["dialogue_seed"] = existing_seed
             out = dict(row)
             out["payload"] = dict(payload)
             out["payload"]["scene_contract"] = existing_contract
@@ -1806,7 +1846,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
                         gid,
                         {
                             "scene_contract": existing_contract,
-                            "dialogue_seed": payload.get("dialogue_seed"),
+                            "dialogue_seed": existing_seed,
                         },
                     )
                 except Exception as exc:
@@ -1815,7 +1855,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
                         gid,
                         exc,
                     )
-            if not isinstance(existing_seed, list) or not existing_seed:
+            if not existing_seed:
                 from app.services.gold_story.scene import seed_from_beat_chain
 
                 out["payload"]["dialogue_seed"] = seed_from_beat_chain(
@@ -1878,6 +1918,17 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         beat=beat,
     )
     seed_list = h3b.get("dialogue_seed") or []
+    h3a, seed_list, premise_notes = complete_request_premises(
+        h3a,
+        seed_list if isinstance(seed_list, list) else [],
+        story_raw=story_raw_for_seed,
+    )
+    if premise_notes:
+        logger.info(
+            "[GOLD_CHAT] request premise complete id=%s: %s",
+            row.get("id"),
+            "；".join(premise_notes[:3]),
+        )
     remapped_core = str(h3a.get("conflict") or "").strip()
     h3a, remapped_core, _score_synced = sync_contract_exam_scores(
         h3a,
@@ -1923,6 +1974,94 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         ",".join(str(c) for c in (h3a.get("characters") or [])),
     )
     return out
+
+
+_REVISE_LINE_NO_RE = re.compile(r"第\[?(\d+(?:\s*[,，]\s*\d+)*)\]?句")
+_REVISE_MAX_LINES = 3
+_REVISE_MAX_TRIES = 3
+
+
+def _revise_line_indices(exc: BaseException, line_count: int) -> list[int]:
+    """从终检报错里抠出被点名的行号；问题太多就不改稿（改不动）。"""
+    nums: list[int] = []
+    for group in _REVISE_LINE_NO_RE.findall(str(exc)):
+        for part in re.split(r"[,，]", group):
+            part = part.strip()
+            if not part.isdigit():
+                continue
+            num = int(part)
+            if 1 <= num <= line_count and num not in nums:
+                nums.append(num)
+    return nums[:_REVISE_MAX_LINES]
+
+
+def _try_revise_draft(
+    chat: dict[str, Any],
+    exc: BaseException,
+    *,
+    temperature: float,
+    feedback: str = "",
+) -> tuple[dict[str, Any], list[int]] | None:
+    """把没过终检的稿子交给 LLM 定点改写，而不是整篇重掷。
+
+    只改被点名的 ≤3 行，其余原样保留：一次短调用（6–8s）比重掷（~40s）便宜，
+    也保住了已经写好的部分。整篇性问题（主体错位、结构崩）行号多，不走这里。
+    """
+    from app.services.gold_story.gold_chat.prompts import (
+        REVISE_SYSTEM,
+        format_revise_user,
+    )
+
+    dialogue = [
+        {
+            "speaker": str(item.get("speaker") or ""),
+            "line": str(item.get("line") or ""),
+        }
+        for item in (chat.get("dialogue") or [])
+        if isinstance(item, dict)
+    ]
+    if len(dialogue) < 4:
+        return None
+    indices = _revise_line_indices(exc, len(dialogue))
+    if not indices:
+        return None
+    data = _chat_json(
+        REVISE_SYSTEM,
+        format_revise_user(
+            dialogue=dialogue,
+            issue_text=str(exc)[:1200],
+            indices=indices,
+            feedback=feedback,
+        ),
+        temperature=temperature,
+        max_tokens=900,
+    )
+    raw = data.get("lines") if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        return None
+    changed = False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            idx = int(str(item.get("i")).strip())
+        except (TypeError, ValueError):
+            continue
+        if idx not in indices or not (1 <= idx <= len(dialogue)):
+            continue
+        text = str(item.get("line") or "").strip()
+        if not text or text == dialogue[idx - 1]["line"]:
+            continue
+        dialogue[idx - 1]["line"] = text
+        speaker = str(item.get("speaker") or "").strip()
+        if speaker:
+            dialogue[idx - 1]["speaker"] = speaker
+        changed = True
+    if not changed:
+        return None
+    revised = dict(chat)
+    revised["dialogue"] = dialogue
+    return revised, indices
 
 
 def convert_gold_chat(
@@ -2057,7 +2196,34 @@ def convert_gold_chat(
         # 首次重掷前的判型（原判型）与触发原因，成功落盘时留痕
         pair_before: tuple[str, str] | None = None
         pair_remap_reason = ""
-        for draft_attempt in range(1, GOLD_CHAT_DRAFT_ATTEMPTS + 1):
+        # 墙钟预算：一次 draft ≈ plan+填词+常化+精修+终检 10–20s，而失败重掷
+        # 会带着反馈再跑一遍同样的链路。#138 实测连跑 3 次重掷到 3 分钟还没完，
+        # 而编导那边只看「成功/失败」，等待没有收益。``GOLD_CHAT_TIME_BUDGET_S``
+        # 默认 180s（2026-10 定：一版正常 60–120s，重掷三次也够）；设 0 关闭。
+        _budget_s = float(os.environ.get("GOLD_CHAT_TIME_BUDGET_S") or 180)
+        _deadline = time.monotonic() + _budget_s if _budget_s > 0 else 0.0
+        if _deadline:
+            from app.services.gold_story.gold_chat.expand import (
+                set_gold_chat_deadline,
+            )
+
+            set_gold_chat_deadline(_deadline)
+
+        def _check_budget(stage: str, reserve: float = 0.0) -> None:
+            # reserve：一次 draft 的后半段（常化+精修+终检）约 40–60s，剩余时间
+            # 不够跑完就不该再开一次重掷，否则「预算 180s」实际跑到 200s+。
+            if _deadline and time.monotonic() > _deadline - reserve:
+                raise ValueError(
+                    f"gold_chat 生成超出时间预算 {int(_budget_s)}s（{stage}）"
+                )
+
+        # 上限用``draft_attempts``而不是常量：语义重试会把它从 3 抬到 4，
+        # 写死 range 时那一轮永远跑不到，「追加一稿」成了死代码。
+        draft_attempt = 0
+        revise_used = 0
+        while draft_attempt < draft_attempts:
+            draft_attempt += 1
+            _check_budget(f"第{draft_attempt}次重掷前", reserve=60.0 if draft_attempt > 1 else 0.0)
             if draft_attempt > 1:
                 # 重掷：换一次 H3 判型（机制/结构），再重跑 H3a/H3b 换契约，
                 # 避免同一条 prompt 反复撞同一硬卡
@@ -2126,6 +2292,60 @@ def convert_gold_chat(
                 break
             except Exception as exc:
                 last_exc = exc
+                # 先尝试「定点改稿」再考虑重掷：审读点名了 ≤3 句时，
+                # 只改那几句重跑终检，比重掷整整一稿便宜得多。
+                # 缺拍/缺前提是结构缺口，改词救不回来，直接走重掷补拍。
+                _structural_gap = (
+                    _is_missing_beat_exhausted(exc)
+                    or "缺拍" in str(exc)
+                    or "缺前提" in str(exc)
+                )
+                # 改稿最多 3 次：每次都在**上一版改完的稿子**上继续改，
+                # 并把上一版还剩什么问题一并告诉它（回合越往后越接近能过线）。
+                if not _structural_gap and isinstance(chat, dict):
+                    while revise_used < _REVISE_MAX_TRIES:
+                        revised = None
+                        try:
+                            revised = _try_revise_draft(
+                                chat,
+                                exc,
+                                temperature=0.6,
+                                feedback=str(last_exc or "")[:600] if revise_used else "",
+                            )
+                        except Exception as revise_exc:
+                            logger.info(
+                                "[GOLD_CHAT] draft revise skipped source_id=%s: %s",
+                                sid,
+                                str(revise_exc)[:120],
+                            )
+                        if revised is None:
+                            break
+                        revise_used += 1
+                        revised_chat, revised_idx = revised
+                        logger.info(
+                            "[GOLD_CHAT] draft revise %s/%s source_id=%s lines=%s",
+                            revise_used,
+                            _REVISE_MAX_TRIES,
+                            sid,
+                            revised_idx,
+                        )
+                        try:
+                            chat, struct = _normalize_and_finalize(
+                                revised_chat, row, repair_budget
+                            )
+                            chat_accepted = True
+                            logger.info(
+                                "[GOLD_CHAT] draft revise ok source_id=%s lines=%s",
+                                sid,
+                                revised_idx,
+                            )
+                            break
+                        except Exception as revise_exc2:
+                            last_exc = revise_exc2
+                            exc = revise_exc2
+                            chat = revised_chat
+                    if chat_accepted:
+                        break
                 if _is_missing_beat_exhausted(exc):
                     # 首个 draft 撞缺拍：放行**一次**带「上一轮缺拍」反馈的重掷；
                     # 第二次仍缺拍说明根因在契约/生成，不再续命（专家裁决）。

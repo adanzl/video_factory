@@ -185,6 +185,11 @@ def _apply_gold_chat_polish_fixes(
 
     accepted = set(all_nos)
     fixed, _ = patch_sanitize_pad_suffix(fixed)
+    # 润色模型常把收束改回「撇嘴/嘟囔/神态」分镜句；先统一压成可说台词，
+    # 再跑 hard 校验，避免整批 fix 因一条 narration_not_speech 被丢弃。
+    from app.services.gold_story.scene import patch_dialogue_narration_to_speech
+
+    patch_dialogue_narration_to_speech(fixed)
     try:
         validate_gold_chat(
             fixed,

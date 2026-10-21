@@ -36,6 +36,7 @@ from app.services.gold_story.scene import (
     enforce_two_kid_cast,
     ensure_n_two_kid_alternation,
     normalize_parent_beat_ownership,
+    normalize_supplemental_kid_seed,
     normalize_retrospective_topic_contract,
     normalize_retrospective_n_opening_parent_beats,
     normalize_scene_dialogue_beats,
@@ -1049,6 +1050,12 @@ def build_dialogue_seed(
             seed,
             characters=contract.get("characters") or [],
         )
+        seed, _witness_notes = normalize_supplemental_kid_seed(
+            seed,
+            contract=contract,
+        )
+        if _witness_notes:
+            logger.info("H3b supplemental kid seed=%s", _witness_notes[:3])
     # N 类家长当追问方：不补第二孩（两人手），避免旁观接管追问稀释破功
     seed, _two_hander_notes = trim_n_decorative_kid_seed(seed, contract=contract)
     if _two_hander_notes:

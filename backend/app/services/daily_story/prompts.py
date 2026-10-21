@@ -4188,6 +4188,15 @@ def _patch_body_char_budget(story: dict) -> list[str]:
     n_lines = len(dialogue)
     chars_min = DAILY_STORY_BODY_CHARS_MIN
     max_pad = DAILY_STORY_RETRY_PATCH_DEFICIT_MAX
+    # 金稿 12 句稿：联合判据（句数达标放宽一行）已把下限放到 216，这里再按 240
+    # 垫字纯属自伤——补的句尾粒子会被终检判语病（#138 实测：垫出「你尝尝好不
+    # 好吃了呢」「不过妈妈眉清目秀真好看吧」后整稿被打回）。
+    if story.get("gold_beat_chain"):
+        from app.services.gold_story.gold_chat.validate import (
+            gold_chat_effective_min_chars,
+        )
+
+        chars_min = min(chars_min, gold_chat_effective_min_chars(dialogue))
     theme_ctx = (
         str(story.get("conflict_core") or "")
         + str(story.get("_theme") or "")
