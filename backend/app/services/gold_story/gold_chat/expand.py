@@ -3928,15 +3928,12 @@ def _perbeat_check(
     # 第 4 句「你别急」把安抚对象错成了上一句的灿灿），也不许把后面自己那
     # 拍要交代的事实提前说掉（第 4 句先说「衣服是我弄脏的」，第 5 句妈妈
     # 只能重复追问、第 6 句昭昭只能重复回答）。
-    filler_party_ok = True
+    # 当事人在场反应：只拦「提前说掉后面自己那拍的事实」。劝「别急」只由
+    # 提示词引导、不做硬判——实测（服务器 #144）模型会连着三轮写「你先别急」，
+    # 每轮又触发两次定向重写，把 180s 生成预算耗光，整稿直接失败；
+    # 而这条只是终检的「观感」项，不阻断发布。
     filler_party_fact_ok = True
     if slot.get("is_filler") and not _perbeat_filler_is_witness(slot):
-        _prev_sp = str(prev_lines[-1][0]).strip() if prev_lines else ""
-        _parties = _perbeat_parties(slot)
-        if _prev_sp and _prev_sp not in _parties:
-            filler_party_ok = not any(
-                marker in line for marker in _PERBEAT_FILLER_PACIFY_MARKERS
-            )
         _next_terms = set(slot.get("_next_party_terms") or ())
         if _next_terms:
             filler_party_fact_ok = len(_perbeat_terms(line) & _next_terms) < 3
@@ -3981,7 +3978,6 @@ def _perbeat_check(
             ("插话不得认领拍主的事实/动机", filler_claim_ok),
             ("零素材插话须做旁观/递话/助威", filler_link_ok),
             ("补位句不得重复同一套安抚说法", filler_pacify_ok),
-            ("当事人补位句不许劝对方别急", filler_party_ok),
             ("当事人补位句不许提前说掉本拍的事实", filler_party_fact_ok),
             ("未消气的收束不得写成完全满意", closing_ok),
         )

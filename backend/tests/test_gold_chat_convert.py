@@ -4610,14 +4610,13 @@ def test_party_filler_must_not_pacify_or_preempt_own_beat():
         slot, "衣服是我弄脏的，我不是故意，你别急。", prev
     )
     assert "当事人补位句不许提前说掉本拍的事实" in reasons
-    assert "当事人补位句不许劝对方别急" in reasons
 
 
 def test_witness_without_speech_act_is_not_a_party():
     """只说过一句旁观话、没有 speech_act 的角色仍是旁观者（#144 灿灿）。
 
-    按「说过话」算当事人，昭昭的补位句劝灿灿「你先别急着说」就不会被拦，
-    终检每次都判「安抚对象错位、说话主体对调」。
+    按「说过话」算当事人，旁观者补位就享受不到「零素材插话」的放宽口径，
+    终检只能反复判「703 旁观者用第一人称认领当事人委屈」。
     """
     entries = [
         (1, {"beat": 1, "speaker": "妈妈", "intent": "骂人", "speech_act": "accuse"}),
@@ -4632,15 +4631,9 @@ def test_witness_without_speech_act_is_not_a_party():
         "_beat_entries": entries,
     }
     assert gex._perbeat_parties(slot) == {"妈妈", "昭昭"}
-    prev = [
-        ("妈妈", "昭昭你衣服弄这么脏，还傻站着，真傻！"),
-        ("昭昭", "妈妈你为什么要这么大声骂我？"),
-        ("灿灿", "你慢慢说，别急，把话一句句说清楚。"),
-    ]
-    reasons = gex._perbeat_check(
-        slot, "姐姐你先别急着说，让妈妈把话慢慢说完。", prev
-    )
-    assert "当事人补位句不许劝对方别急" in reasons
+    witness_slot = dict(slot, speaker="灿灿")
+    assert gex._perbeat_filler_is_witness(witness_slot) is True
+    assert gex._perbeat_filler_is_witness(slot) is False
 
 
 def test_party_filler_intent_drops_witness_function():
