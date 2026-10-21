@@ -193,6 +193,9 @@ def prepare_candidate_for_acceptance(
     from app.services.gold_story.scene import patch_dialogue_narration_to_speech
 
     patch_dialogue_narration_to_speech(cleaned)
+    from app.services.gold_story.gold_chat.patch import patch_clamp_chat_key
+
+    cleaned = patch_clamp_chat_key(cleaned)
     errors = collect_candidate_repair_errors(
         cleaned,
         mom_lines_max=mom_lines_max,
@@ -245,6 +248,9 @@ def prepare_candidate_for_acceptance_after_local_length_close(
         structure_type=structure_type,
         mechanism=mechanism,
     )
+    from app.services.gold_story.gold_chat.patch import patch_clamp_chat_key
+
+    cleaned = patch_clamp_chat_key(cleaned)
     errors = collect_candidate_repair_errors(
         cleaned,
         mom_lines_max=mom_lines_max,

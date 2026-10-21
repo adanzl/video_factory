@@ -1139,6 +1139,12 @@ def trim_supplemental_kid_dialogue(
     removed = len(dialogue) - len(kept)
     if not removed:
         return story, []
+    if len(dialogue) >= CHAT_LINE_COUNT_MIN and len(kept) < CHAT_LINE_COUNT_MIN:
+        # 逐拍骨架按契约拍铺满 12 句时，见证位可能占掉 2–3 句；整段删掉会
+        # 直接跌破句数下限（#144 实测 12→9，删完只剩对空气说话）。本来已经
+        # 达标的稿子，删见证位不该把它变成不合格稿；不足 12 句的短稿仍按
+        # 原策略移除，交给后续补字/重抽处理。
+        return story, [f"非N见证位保留:{partner}(删后仅{len(kept)}句)"]
     out = dict(story)
     out["dialogue"] = kept
     return out, [f"非N见证位移除:{partner}(删{removed}句)"]

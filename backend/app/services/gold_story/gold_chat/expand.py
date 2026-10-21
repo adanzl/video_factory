@@ -25,6 +25,8 @@ from app.services.gold_story.gold_chat.patch import (
 )
 from app.services.gold_story.gold_chat.validate import (
     _line_fulfills_beat,
+    closing_accept_marker,
+    is_sulk_closing,
 )
 from app.services.gold_story.gold_chat.length import (
     GOLD_CHAT_NEAR_MISS_DEFICIT_MAX,
@@ -115,6 +117,7 @@ from app.services.gold_story.collect.llm import resolve_gold_chat_snippet
 from app.services.gold_story.scene import (
     ensure_request_premise_dialogue,
     format_scene_block,
+    looks_like_narration_line,
     sanitize_banned_literals,
 )
 from app.services.gold_story.gold_chat.setting import (
@@ -952,6 +955,12 @@ def _validate_expand_chat(
 ) -> dict[str, Any]:
     """扩写 硬校验 + 格式 fix，直至通过或耗尽 retry。"""
     data = _normalize_chat_speakers(dict(story))
+    # LLM 修稿/重写只被提示词告知「key 2–8 字」，实际会写出 9 字。本地先收口
+    # 再校验，别为长度问题白烧一轮修稿预算（#144 实测：9 字 key 让已拼好的
+    # 12 句稿被结构分直接驳回）。
+    _key = str(data.get("key") or "").strip()
+    if len(_key) > DAILY_STORY_KEY_CHARS_MAX:
+        data["key"] = _key[:DAILY_STORY_KEY_CHARS_MAX].strip()
     st = str(structure_type or data.get("story_type") or "").strip().upper()
     mech = str(mechanism or "").strip()
     payload = cast(dict[str, Any], (row or {}).get("payload") or {})
@@ -1382,6 +1391,7 @@ def _line_plan_skeleton(
     beat_chain: list[Any],
     *,
     target_lines: int,
+    no_material_speakers: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """确定性排「第几句由谁说」：拍主各一句，多出来的按拍轮转补反应。
 
@@ -1450,8 +1460,16 @@ def _line_plan_skeleton(
     ) -> str:
         pool = [k for k in kids if k != owner]
         for parent in parents:
-            if parent != owner and counts.get(parent, 0) < budget.get(parent, 0):
-                pool.append(parent)
+            if parent == owner or counts.get(parent, 0) >= budget.get(parent, 0):
+                continue
+            # 该家长在后面还有自己的主句：插话排在这里，一开口就会把后面那拍
+            # 的话说掉，逐拍判「插话不得顶替契约拍的台词」、终检判「核心反应
+            # 被换人」（#144 实测：妈妈在 beat2 的反应连续三轮被判顶替）。
+            if any(
+                owners[j] == parent for j in range(no, len(owners))
+            ):
+                continue
+            pool.append(parent)
         pool = [c for c in pool if c not in banned]
         if not pool:
             return ""
@@ -1494,21 +1512,32 @@ def _line_plan_skeleton(
                 speaker = other_speaker(no, owner, (group[-1]["speaker"], nxt))
                 if not speaker:
                     continue
+                # 源故事里根本没出声的角色（#144 的旁人「灿灿」）不接拆句：拆句
+                # 要求它说出本拍另一半内容，而它没有素材，只能转述别人的话
+                # （实测三轮都是「她认了衣服是自己弄脏，还说疼你不想让你操心」
+                # 这种旁白）。这类行只当在场者接话（旁观/递话），交机检的
+                # 「零素材插话」口径处理。
+                _split = (
+                    is_kid_beat
+                    and speaker in kids
+                    and _beat_is_splittable(beats[no - 1])
+                    and speaker not in (no_material_speakers or set())
+                    # 旁观拍不拆：拍主只是「在旁边听着、你慢慢说」，拆给另一个
+                    # 孩子就变成当事人去演旁观者的台词（#144 每轮第 4 句实测：
+                    # 昭昭复述灿灿的安慰话，终检判「说话主体对调」）。
+                    and owner not in (no_material_speakers or set())
+                )
                 group.append(
                     {
                         "beat": no,
                         "speaker": speaker,
                         "role": "reaction",
                         # 能拆的拍才标拆句；拆不动的拍只作在场者接话。
-                        "split": (
-                            is_kid_beat
-                            and speaker in kids
-                            and _beat_is_splittable(beats[no - 1])
-                        ),
+                        "split": _split,
                         "split_half": _split_beat_halves(
                             str(beats[no - 1].get("intent") or "")
                         )[1]
-                        if is_kid_beat and speaker in kids
+                        if _split
                         else "",
                     }
                 )
@@ -1757,6 +1786,7 @@ def _build_line_plan(
     story_raw: str,
     target_lines: int,
     temperature: float,
+    no_material_speakers: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """确定性骨架 + 一次 intent 规划：结构不过关只重写 intent，不动骨架。"""
     from app.services.gold_story.gold_chat.prompts import (
@@ -1773,7 +1803,10 @@ def _build_line_plan(
             "perbeat: line_plan 契约容量不足：" + "；".join(capacity_errors)
         )
     rows = _line_plan_skeleton(
-        scene_contract, beats, target_lines=target_lines
+        scene_contract,
+        beats,
+        target_lines=target_lines,
+        no_material_speakers=no_material_speakers,
     )
     from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN as _LP_MIN
 
@@ -1792,6 +1825,7 @@ def _build_line_plan(
             story_raw=story_raw,
             rows=rows,
             feedback=feedback,
+            no_material_speakers=no_material_speakers,
         )
         data = _chat_json(
             LINE_PLAN_SYSTEM,
@@ -1851,6 +1885,8 @@ def _build_line_plan(
 def _line_plan_slots(
     plan: list[dict[str, Any]],
     beat_chain: list[Any],
+    *,
+    no_material_speakers: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """计划 → 填词槽（字段与 `_perbeat_slots` 一致，供 `_perbeat_fill_slots` 复用）。"""
     beats = [b for b in beat_chain or [] if isinstance(b, dict)]
@@ -1866,6 +1902,7 @@ def _line_plan_slots(
         beat_no = int(row.get("beat") or 0)
         beat = beats[beat_no - 1] if 0 < beat_no <= len(beats) else {}
         owner = str(beat.get("speaker") or "").strip()
+        _speaker = str(row.get("speaker") or "").strip()
         # 本拍主句 = 拍主在这一拍里的第一句。不能按「这一拍的第一句」判：
         # 骨架会在拍首插一句反应（余一句 / 修相邻同人），那时拍主的句子排在
         # 第二位，按位置判就变成「这一拍没人负责交代 intent」，整拍内容全交给
@@ -1890,6 +1927,11 @@ def _line_plan_slots(
                 ),
                 "is_filler": not main,
                 "is_split": bool(row.get("split")),
+                # 有素材的槽照旧按内容槽判；源故事里没出声的角色（#144 的旁观
+                # 角色灿灿）标 False，机检走「零素材插话」的放宽口径。
+                "has_content": bool(
+                    _speaker and _speaker not in (no_material_speakers or set())
+                ),
                 "beat_intent": str(beat.get("intent") or "").strip(),
                 # 拆句拍的主句只说前半，拆句行只说后半；后文引用这半句时
                 # 必须按实际说话人称呼（妈妈问的是「谁夸的」，不是固定问昭昭）。
@@ -1984,6 +2026,33 @@ def _perbeat_required_word_groups(slot: dict[str, Any]) -> list[list[str]]:
 
 def _perbeat_words_ok(line: str, groups: list[list[str]]) -> bool:
     return all(any(word in line for word in group) for group in groups)
+
+
+def _apply_required_semantic_points(
+    slots: list[dict[str, Any]],
+    beat_chain: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """把契约拍的必现语义点挂到槽上（批提示词里要显式写出来）。
+
+    单句只有 24 字，模型会按「哪句读着顺」砍内容：契约把语义点声明成
+    ``required_semantic_points`` 后，机检能拦住，但拦在生成之后等于白烧一轮。
+    先在分配表里写明「必现（缺一不可）」，模型才知道该砍别的地方
+    （#144 run26 实测：beat5 连续三轮都砍掉句尾的「疼妈妈」）。
+    """
+    beats = {
+        int(item.get("beat") or 0): item
+        for item in (beat_chain or [])
+        if isinstance(item, dict)
+    }
+    for slot in slots:
+        if slot.get("is_filler"):
+            continue
+        points = _perbeat_required_points(
+            beats.get(int(slot.get("beat_id") or 0))
+        )
+        if points:
+            slot["required_semantic_terms"] = [p["terms"] for p in points]
+    return slots
 
 
 def _apply_n_word_slots(
@@ -2170,6 +2239,37 @@ def _perbeat_seed_queues(
     return out
 
 
+# 零素材插话槽的「功能」池（#144 专家评审）：
+#   旁观角色（如只有一句旁白的姐姐）本来没有素材，默认那句「接住上一句里最具体
+#   的那半句 + 给理由」会被模型解成**复述上一句**——实测三轮整表重掷都在换词照抄
+#   （「说想自己弄干净，不让妈妈操心」→「她想自己弄干净，不让妈妈操心」）。
+#   改成封闭的交互功能：只做旁观/递话/助威，不陈述事实、不给理由，也不许用「我」
+#   认领别人的事。有素材的插话槽仍走 seed，不受影响。
+_PERBEAT_FILLER_FUNCTIONS = (
+    (
+        "旁观（安抚当事人）",
+        "只做旁观安抚：让上一句的说话人先别急、慢慢说、把话说完；"
+        "你是旁边看着的人，不许把上一句讲的事再说一遍，"
+        "也不许用「我」说别人做过/想过/委屈的事",
+    ),
+    (
+        "递话（把话交回当事人）",
+        "只做递话：把话交回上一句的说话人，让他把话说明白、说下去；"
+        "不许重复上一句的内容，也不许用「我」说别人做过/想过/委屈的事",
+    ),
+    (
+        "助威（明说自己站谁这边）",
+        "只给当场一句助威/帮腔：明说你站在谁那边、让他慢慢说；"
+        "不许重复上一句的内容，也不许用「我」说别人做过/想过/委屈的事",
+    ),
+)
+
+
+def _filler_function_pair(ordinal: int) -> tuple[str, str]:
+    """按槽序取一对（本句功能标签，功能 intent）。"""
+    return _PERBEAT_FILLER_FUNCTIONS[ordinal % len(_PERBEAT_FILLER_FUNCTIONS)]
+
+
 def _perbeat_slots(
     beat_chain: list[Any],
     scene_contract: dict[str, Any],
@@ -2193,21 +2293,6 @@ def _perbeat_slots(
     if not beats:
         return []
     kids = [k for k in _KID_NAMES if k in (scene_contract.get("characters") or [])]
-    funcs = [
-        "先原样复述上一句的判断（至少一个实词）；上一句若同时有批评和夸奖，"
-        "先接批评那一半，复述时必须带批评词（难吃/太贵/太吵），"
-        "再替被说的人接一句（高兴/不好意思/不服都行）；"
-        "只写一个回应，不许另起外貌/身体细节或新挑刺",
-        "先原样复述上一句的判断（至少一个实词），再替被说的人说一句公道话，"
-        "指出这个比喻哪里不成立（用前文已发生的动作作依据，不要新造手抖/手劲/脸色，"
-        "也不要说「没吼过你」这种字面反驳）；"
-        "只写一个回应",
-        "先接住上一句的一个具体词，再指出这个判断和眼前事实哪里不符"
-        "（给一个具体依据，且不得重复前文已用过的理由）；"
-        "只写一个回应，不换话题、不提新物件",
-        "先接住上一句的一个具体词，再坚持自己的判断，补一个当场能看见的细节；"
-        "只写一个回应，不评价「这话」本身",
-    ]
     pause_re = re.compile(r"愣|接不上|没落下|认栽|服了|不响|沉默")
     # 核心孩子（契约拍多的那个）可以多说几句，搭档按专家口径封在 5 句内：
     # 两个人都按 5 句封死时，骨架刚够 13 句，凑不到「每句 21 字 × 14 句」的
@@ -2350,11 +2435,8 @@ def _perbeat_slots(
         _seed_txt = _seed_intent(pick, i)
         _ordinal = filler_round.get(i, 0) + 1
         filler_round[i] = _ordinal
-        _default_intent = (
-            "先接住上一句里最具体的那半句（批评就接批评，比喻就接比喻），"
-            "再说明你为什么同意/不同意（给一个具体理由）；"
-            "只写一个回应，不许另起外貌/身体细节或第二件事"
-        )
+        # 无素材的插话槽走「功能」而不是「内容」（#144 专家评审）。
+        _default_function, _default_intent = _filler_function_pair(filler_total)
         slots.append(
             {
                 "beat_id": i,
@@ -2365,7 +2447,7 @@ def _perbeat_slots(
                     "把这条素材改写成一句现场口语（18–24 字），"
                     "保留其中的具体物件与说法，不要换话题"
                     if _seed_txt
-                    else funcs[filler_total % len(funcs)]
+                    else _default_function
                 ),
                 "is_filler": True,
                 "has_content": bool(_seed_txt),
@@ -2387,6 +2469,12 @@ def _perbeat_slots(
     if len(slots) >= target_lines or len(kids) < 2:
         return slots
 
+    # 契约是否带 speech_act 标注：只有标注过的链才分得清「旁观拍」与「冲突拍」，
+    # 没标注的旧契约不能按这条拦（否则一句补位都插不进去）。
+    _annotated_chain = any(
+        str(b.get("speech_act") or "").strip() for b in beats
+    )
+
     def _gap_ok(i: int) -> bool:
         """能否在第 i 槽与第 i+1 槽之间加插话槽。"""
         if i < 0 or i + 1 >= len(slots):
@@ -2397,6 +2485,17 @@ def _perbeat_slots(
             return False  # 家长问 → 孩子答，不许拆
         if pause_re.search(str(slots[i].get("intent") or "")):
             return False  # 停顿拍是静场，后面不加塞
+        # 旁观拍（契约里没有 speech_act 的纯围观句）后面不再加塞：旁观者刚
+        # 说完，紧跟的补位只能复述上一句或把话轮拧反（#144 run28/29 实测：
+        # 灿灿劝「你慢慢说」，下一句昭昭却「姐姐，你慢慢说，我在旁边听着」，
+        # 终检判说话主体对调）。
+        _b_idx = int(slots[i].get("beat_id") or 0) - 1
+        if (
+            _annotated_chain
+            and 0 <= _b_idx < len(beats)
+            and not str(beats[_b_idx].get("speech_act") or "").strip()
+        ):
+            return False
         # 连续插话最多两句（再多就是同一段里连甩反应，读着像卡带）。
         # 不能只数右边的 run：在两条插话之间插入会绕过上限，
         # #138 实测曾堆出 4 连插话，随后被判「同一反驳反复说」。
@@ -2438,10 +2537,8 @@ def _perbeat_slots(
             _ordinal2 = filler_round.get(_b_id, 0) + 1
             filler_round[_b_id] = _ordinal2
             _beat = beats[_b_id - 1] if 1 <= _b_id <= len(beats) else {}
-            _default_intent2 = (
-                "先接住上一句里最具体的那半句（批评就接批评，比喻就接比喻），"
-                "再说明你为什么同意/不同意（给一个具体理由）；"
-                "只写一个回应，不许另起外貌/身体细节或第二件事"
+            _default_function2, _default_intent2 = _filler_function_pair(
+                filler_total
             )
             slots.insert(
                 idx + 1,
@@ -2454,7 +2551,7 @@ def _perbeat_slots(
                         "把这条素材改写成一句现场口语（18–24 字），"
                         "保留其中的具体物件与说法，不要换话题"
                         if _seed_txt2
-                        else funcs[filler_total % len(funcs)]
+                        else _default_function2
                     ),
                     "is_filler": True,
                     "has_content": bool(_seed_txt2),
@@ -2612,6 +2709,316 @@ def _perbeat_repeats_long_phrase(
     return False
 
 
+# 插话句里表示「旁观/帮助」的框架词：带这些框架时，第一人称是在做旁观者的事
+# （看/听/劝/帮/替/递话），不是把拍主的经历说成自己的（#144 专家评审）。
+_PERBEAT_FILLER_HELPER_FRAME_RE = re.compile(
+    r"帮|替|陪|给|为|听|看|见|说|问|劝|提醒|作证|保密|递"
+)
+
+# 第一人称认领「经历/委屈/动机」的说法：旁观者说这些就是把拍主的事认到自己身上。
+# 「我」和认领词之间不许夹旁观框架词，否则「我帮你弄干净」这种帮忙句会被误杀。
+_PERBEAT_FILLER_SELF_CLAIM_RE = re.compile(
+    r"(?:我|咱)(?:(?![帮替陪给为听见说问劝递])[^，。！？；]){0,4}"
+    r"(?:被骂|挨骂|挨说|被说|委屈|没错|做错|不该|冤枉|受气|弄脏|弄了|弄干净|去弄|来弄)"
+)
+
+# 否定/转指他人的写法不算认领：「我没说你委屈」「我不觉得你错了」要放过。
+_PERBEAT_FILLER_SELF_DENY_RE = re.compile(
+    r"(?:我|咱)[^，。！？；]{0,3}(?:没|不)(?:觉得|认为|说|怪|怨|觉)"
+)
+
+
+# 零素材插话槽的「松版咬合」（#144 专家评审）：这类槽没有素材，不要求它与
+# 上一句共享实词，只要求它确实在做旁观/递话/助威（带旁观、递话、安抚词）。
+_PERBEAT_FILLER_SOFT_LINK_RE = re.compile(
+    r"别急|别气|别难过|别往心里|慢慢|听着|我在|我在这儿|旁边|看着|帮你|陪你|"
+    r"听你|说吧|接着说|说下去|说清楚|说完|先听|喘口气|消消气|别忙|我来|你先"
+)
+
+
+def _perbeat_adjacent_repeat(
+    line: str,
+    prev_line: str,
+    *,
+    min_len: int = 5,
+    min_cover: float = 0.35,
+) -> bool:
+    """插话是否照抄**紧邻上一句**（整句或长片段）。
+
+    插话必须接住上一句的具体说法（共享一两个词是要求），但照抄一整段不是「接住」。
+    #144 实测：第 10 句与第 9 句逐字相同、第 7 句照抄第 6 句 14 字，终检只判得出
+    「错位」，重掷六轮仍复现。判据只比紧邻上一句，避免和「必须接住上一句」叠加成
+    互斥规则（专家评审：共享一两词是要求，抄一整段不是）。
+    """
+    cur = re.sub(r"[^\u4e00-\u9fff]", "", str(line or ""))
+    base = re.sub(r"[^\u4e00-\u9fff]", "", str(prev_line or ""))
+    if len(cur) < min_len or len(base) < min_len:
+        return False
+    lcs = _perbeat_lcs_len(cur, base)
+    return lcs >= min_len and lcs / min(len(cur), len(base)) >= min_cover
+
+
+def _perbeat_filler_claims_owner_event(
+    line: str,
+    slot: dict[str, Any],
+    prev_lines: list[tuple[str, str]],
+) -> bool:
+    """插话是否用第一人称认领本拍拍主的事实/动机/委屈/动作。
+
+    专家评审把「第一人称立场标记 + 拍主不同」改写成「第一人称 + 本拍事件归属」：
+    旁观者说「反正我没错，你不该那样说我」是把拍主的委屈认到自己身上；而
+    「我帮你拿抹布」「我没说你委屈」是在帮忙/安抚，必须放过。
+    """
+    text = str(line or "")
+    if not text or not re.search(r"我|咱", text):
+        return False
+    beat_id = int(slot.get("beat_id") or 0)
+    owner = next(
+        (e for no, e in (slot.get("_beat_entries") or []) if no == beat_id),
+        None,
+    )
+    if not isinstance(owner, dict):
+        return False
+    if str(owner.get("speaker") or "").strip() == str(
+        slot.get("speaker") or ""
+    ).strip():
+        # 拍主自己说自己的事，不算认领。
+        return False
+    if _PERBEAT_FILLER_SELF_CLAIM_RE.search(text):
+        # 明说「我被骂/我委屈/我没错/我弄脏了」就是认领；带否定或转指他人的放过。
+        return not _PERBEAT_FILLER_SELF_DENY_RE.search(text)
+    if _PERBEAT_FILLER_HELPER_FRAME_RE.search(text):
+        # 帮忙/旁观框架（我帮你拿、我看着、我说你听）不是认领。
+        return False
+    owner_terms: set[str] = set()
+    for src in (
+        slot.get("intent"),
+        owner.get("intent"),
+        prev_lines[-1][1] if prev_lines else "",
+    ):
+        owner_terms |= _perbeat_terms(str(src or ""))
+    return len(_perbeat_terms(text) & owner_terms) >= 2
+
+
+# 封闭功能模板池（#144 专家评审的「安全模板补位」）：旁观角色写不出内容时的
+# 兜底句。要求：14–24 字、只做旁观/递话、不含上一句的事实谓宾、不含新物件、
+# 与上一句连续相同字 <5；用之前一律过 `_perbeat_check`，不过就不用。
+_PERBEAT_FILLER_TEMPLATES = (
+    # 安抚（当事人说这句最安全：不认领别人的事，也不改话轮）
+    "{to}，你先别急，我就在旁边听着，你慢慢说。",
+    "{to}，你慢慢说，我不插嘴，就在旁边听着。",
+    "你先别急，我就在旁边听着，慢慢说。",
+)
+
+# 纯围观者的补位句：只说自己看见的现场，不递话、不评理。
+# 「你先说」「谁也别让我评理」这类会改话轮/凭空加前提（#144 run28 实测：
+# 前者被判「灿灿已经说完了，昭昭却让她先说」，后者被判「没人让她评理」）。
+_PERBEAT_WITNESS_FILLER_TEMPLATES = (
+    "{to}，我在旁边看着呢，你俩谁也没让过谁。",
+    "我在旁边看着都替你们累，先歇会儿再吵。",
+    "{to}，我在旁边听着，这嗓门可不小。",
+    "{to}，我在旁边看着，你俩这火气可不小。",
+)
+
+
+def _perbeat_rewrite_filler_slot(
+    slot: dict[str, Any],
+    *,
+    scene_contract: dict[str, Any],
+    prev_lines: list[tuple[str, str]],
+    reason: str,
+    temperature: float,
+) -> str:
+    """定向重写一个插话槽（只写这一句，不整表重掷）。"""
+    from app.services.gold_story.gold_chat.prompts import (
+        PERBEAT_FILLER_REWRITE_SYSTEM,
+        format_perbeat_filler_rewrite_user,
+    )
+
+    user = format_perbeat_filler_rewrite_user(
+        speaker=str(slot.get("speaker") or ""),
+        intent=str(slot.get("intent") or ""),
+        function=str(slot.get("function") or "反应/插话"),
+        prev_lines=prev_lines,
+        reason=reason,
+        scene_contract=scene_contract,
+        party=not _perbeat_filler_is_witness(slot),
+    )
+    data = _chat_json(
+        PERBEAT_FILLER_REWRITE_SYSTEM,
+        user,
+        temperature=temperature,
+        max_tokens=200,
+    )
+    return _perbeat_strip_stage_direction(str(data.get("line") or "")).strip()
+
+
+def _perbeat_parties(slot: dict[str, Any]) -> set[str]:
+    """契约拍里的**冲突当事人**（有 speech_act 的拍主）。
+
+    只按「说过话」算会把纯围观角色（#144 的灿灿，只有一句「你慢慢说」、
+    没有 speech_act）也算成当事人，于是当事人补位句劝她「别急」就不再被拦
+    （#144 run34 第 4 句实测）。链上一条 speech_act 都没有的老契约退回旧口径。
+    """
+    entries = [
+        entry
+        for _no, entry in (slot.get("_beat_entries") or [])
+        if isinstance(entry, dict)
+    ]
+    annotated = [
+        entry
+        for entry in entries
+        if str(entry.get("speech_act") or "").strip()
+    ]
+    parties = {
+        str(entry.get("speaker") or "").strip()
+        for entry in (annotated or entries)
+    }
+    parties.discard("")
+    return parties
+
+
+def _perbeat_filler_is_witness(slot: dict[str, Any]) -> bool:
+    """补位句说话人是不是纯围观者（不在任何契约拍里说话）。
+
+    昭昭/妈妈是当事人：让当事人说「我在旁边看着」是错位（#144 run28 实测：
+    昭昭的补位句被判「说话人和被劝对象整体对调」、立场自相矛盾）。
+    """
+    speaker = str(slot.get("speaker") or "").strip()
+    if not speaker:
+        return False
+    parties = _perbeat_parties(slot)
+    if not parties:
+        return True
+    return speaker not in parties
+
+
+_PARTY_FILLER_INTENT = (
+    "当事人在场反应：只回一句态度/情绪或顶一句，接着把冲突往下推；"
+    "不许劝对方别急/慢慢说，也不许提前交代后面自己那拍的事实"
+)
+
+
+def _perbeat_party_filler_intent(intent: str) -> str:
+    """当事人补位句的意图：把「旁观/安抚/递话」那套换成当事人反应。"""
+    text = str(intent or "").strip()
+    if re.search(r"旁观|安抚|递话|助威|和事佬", text):
+        return _PARTY_FILLER_INTENT
+    if "当事人" in text:
+        return text
+    return f"{text}（说话人是当事人：只回一句态度或顶一句，不许劝对方别急，也不许提前说掉后面自己那拍的事实）"
+
+
+def _perbeat_filler_template(
+    slot: dict[str, Any],
+    prev_lines: list[tuple[str, str]],
+) -> str:
+    """从封闭功能模板池里取补位句：过机检，且与其它已写台词重复最少。
+
+    以前取「池子里第一条过检的」，于是同一个池子里全是「你先别急/慢慢说」，
+    三句补位长成一个样（#144 run27 第 3/7 句实测：换词复述，终检判重复）。
+    现在按「叫上对方 → 咬住上一句 → 与已写台词重复最少」挑；纯围观者优先
+    用见证句，当事人只用安抚句。
+    """
+    speaker = str(slot.get("speaker") or "").strip()
+    prev_speaker = str(prev_lines[-1][0]).strip() if prev_lines else ""
+    to = prev_speaker if prev_speaker and prev_speaker != speaker else ""
+    seen = {str(ln or "").strip() for _sp, ln in prev_lines}
+    pool = list(_PERBEAT_FILLER_TEMPLATES)
+    if _perbeat_filler_is_witness(slot):
+        pool = list(_PERBEAT_WITNESS_FILLER_TEMPLATES) + pool
+    prev_terms = _perbeat_terms(prev_lines[-1][1]) if prev_lines else set()
+    earlier_terms = [_perbeat_terms(txt) for _sp, txt in prev_lines[:-1]]
+    best = ""
+    best_key: tuple[int, int, int] | None = None
+    for tpl in pool:
+        if "{to}" in tpl and not to:
+            continue
+        line = tpl.format(to=to).strip()
+        if line in seen:
+            continue
+        if _perbeat_check(slot, line, prev_lines):
+            continue
+        terms = _perbeat_terms(line)
+        # 先要能叫上对方（旁观者开口先指人最自然），再要咬住上一句的实词，
+        # 最后比谁跟前面其它句子重复最少。
+        addressed = 1 if to and line.startswith(to) else 0
+        anchor = len(terms & prev_terms)
+        overlap = max(
+            (len(terms & earlier) for earlier in earlier_terms),
+            default=0,
+        )
+        key = (addressed, anchor, -overlap)
+        if best_key is None or key > best_key:
+            best, best_key = line, key
+    return best
+
+
+def _perbeat_replace_bad_fillers(
+    slots: list[dict[str, Any]],
+    filled: dict[int, str],
+    failures: list[tuple[int, str, str]],
+    *,
+    scene_contract: dict[str, Any],
+    temperature: float,
+) -> dict[int, tuple[str, str]]:
+    """插话槽判废后的本地替换链（#144 专家评审第 5 条）。
+
+    判废就丢句会让 12 句掉到 10 句、整稿直接「对白句数须≥12」篇幅驳回（实测
+    三轮都卡在这里）；而整表重掷必然复现同一批插话缺陷（模型只是换词照抄）。
+    所以先定向重写这一句（≤2 次），再退到封闭功能模板；都拿不到才丢句。
+    返回 {槽号: (新句子, 来源)}，来源是 rewrite/template。
+    """
+    bad_idx = {i for i, _ln, _why in failures}
+    fixed: dict[int, tuple[str, str]] = {}
+    for i, _ln, why in failures:
+        if not (1 <= i <= len(slots)) or not slots[i - 1].get("is_filler"):
+            continue
+        slot = slots[i - 1]
+        prev_lines = [
+            (
+                str(slots[j - 1].get("speaker") or ""),
+                str(fixed[j][0] if j in fixed else filled[j]),
+            )
+            for j in range(1, i)
+            if j in fixed or (j in filled and j not in bad_idx)
+        ]
+        line = ""
+        source = ""
+        for attempt in range(2):
+            try:
+                cand = _perbeat_rewrite_filler_slot(
+                    slot,
+                    scene_contract=scene_contract,
+                    prev_lines=prev_lines,
+                    reason=why,
+                    temperature=min(0.9, temperature + 0.3 * (attempt + 1)),
+                )
+            except Exception as exc:  # 网络/解析失败：直接退到模板池
+                logger.info(
+                    "[GOLD_CHAT] perbeat filler rewrite error slot=%s: %s",
+                    i,
+                    str(exc)[:80],
+                )
+                break
+            if cand and not _perbeat_check(slot, cand, prev_lines):
+                line, source = cand, "rewrite"
+                break
+        if not line:
+            tpl = _perbeat_filler_template(slot, prev_lines)
+            if tpl:
+                line, source = tpl, "template"
+        if line:
+            fixed[i] = (line, source)
+            logger.info(
+                "[GOLD_CHAT] perbeat filler replaced slot=%s by=%s line=%s",
+                i,
+                source,
+                line,
+            )
+    return fixed
+
+
 def _perbeat_repair_repeated_filler(
     slot: dict[str, Any],
     line: str,
@@ -2737,6 +3144,12 @@ _PERBEAT_STUB_RE = re.compile(r"你(?:问|说)(?:的)?[^，。]{0,16}[。！？�
 
 _PERBEAT_REPORT_RE = re.compile(r"^(?:昭昭|灿灿|妈妈|爸爸)(?:说|讲|问|答|接|喊|嘀咕|小声说)")
 
+# 「是我弄脏的，说想自己弄干净」：在分句里用「说想/说要」转述自己的话，
+# 等于把心理说明念成台词（#144 run28/29 终检连续判旁白）。
+_PERBEAT_SELF_REPORT_RE = re.compile(
+    r"[，,；;](?:我|俺|自己)?(?:说|讲)(?:想|要|觉得|自己)"
+)
+
 # 解说「满桌人/全场/没人接话」= 替镜头描述现场反应，不是角色说的话（#138 实测
 # 「所以满桌人半天没人接话，全被这句镇住了」被终检判旁白）。
 _PERBEAT_CROWD_NARRATION_RE = re.compile(
@@ -2856,6 +3269,8 @@ def _perbeat_speech_form_ok(line: str, speaker: str) -> bool:
         return False
     if _PERBEAT_REPORT_RE.search(text):
         return False
+    if _PERBEAT_SELF_REPORT_RE.search(text):
+        return False
     if _PERBEAT_SELF_NARRATION_RE.search(text):
         return False
     if _PERBEAT_SELF_STATE_RE.search(text):
@@ -2964,9 +3379,14 @@ _PERBEAT_ATTRIBUTION_RE = re.compile(
 )
 
 
-def _perbeat_attribution_ok(line: str, prev_text: str) -> bool:
-    """指认对方说过什么，那件事必须真在前文出现过。"""
-    haystack = _perbeat_terms(prev_text)
+def _perbeat_attribution_ok(line: str, prev_text: str, beat_text: str = "") -> bool:
+    """指认对方说过什么，那件事必须真在前文出现过。
+
+    例外：本拍契约就要求「抓住对方那句解释追问」时，被引用的说法写在拍
+    意图里（#144 beat7「抓住妈妈‘不小心’的解释」），前文没逐字出现不算
+    编造——模型是在照契约写，出处是契约本身。
+    """
+    haystack = _perbeat_terms(prev_text) | _perbeat_terms(beat_text)
     for match in _PERBEAT_ATTRIBUTION_RE.finditer(line):
         terms = {
             term
@@ -2993,6 +3413,227 @@ def _perbeat_rebuttal_ok(line: str, prev_text: str, beat_text: str) -> bool:
     return True
 
 
+_PERBEAT_REQUIRED_POINT_NEG_RE = re.compile(r"(?:不|没|别|甭|非)$|不是?$|没有$")
+
+
+def _perbeat_required_points(entry: Any) -> list[dict[str, Any]]:
+    """契约拍声明的「必现语义点」：``required_semantic_points``。
+
+    写法：``[{"surface": "疼", "synonyms": ["疼你", "心疼"]}]``。只收 1–4 字
+    的动词/名词/形容词短语，每拍至多 2 个——超过 2 个说明这一拍语义过载，
+    该拆拍，而不是把机检阈值越抬越高（#144 DeepSeek 评审口径）。
+    """
+    if not isinstance(entry, dict):
+        return []
+    raw = entry.get("required_semantic_points")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        surface = ""
+        synonyms: list[str] = []
+        if isinstance(item, str):
+            surface = item.strip()
+        elif isinstance(item, dict):
+            surface = str(item.get("surface") or "").strip()
+            synonyms = [
+                str(x).strip()
+                for x in (item.get("synonyms") or [])
+                if str(x).strip()
+            ]
+        if not surface:
+            continue
+        out.append({"surface": surface, "terms": [surface, *synonyms]})
+    return out[:2]
+
+
+def _perbeat_point_hit(line: str, term: str) -> bool:
+    """字面命中且不是否定/劝阻式提及（「不是不小心」不算落地「不小心」）。"""
+    if not term:
+        return False
+    start = 0
+    while True:
+        idx = line.find(term, start)
+        if idx < 0:
+            return False
+        if not _PERBEAT_REQUIRED_POINT_NEG_RE.search(line[max(0, idx - 3) : idx]):
+            return True
+        start = idx + 1
+
+
+def _perbeat_missing_required_points(line: str, entry: Any) -> list[str]:
+    """返回没落地的必现语义点（空列表=全部落地）。"""
+    return [
+        point["surface"]
+        for point in _perbeat_required_points(entry)
+        if not any(_perbeat_point_hit(line, term) for term in point["terms"])
+    ]
+
+
+_PERBEAT_COLLECTIVE_ADDRESSEES = ("大家", "咱们", "你们", "我们", "咱")
+_PERBEAT_ADDRESSEE_ALIASES: dict[str, tuple[str, ...]] = {
+    "妈妈": ("妈妈", "妈"),
+    "爸爸": ("爸爸", "爸"),
+}
+
+
+def _perbeat_addressee_names(raw: Any) -> list[str]:
+    """契约里的 addressee（字符串/列表，可能用「/、，和」并列）摊成名字。"""
+    if isinstance(raw, str):
+        parts = re.split(r"[/、,，和与]", raw)
+    elif isinstance(raw, list):
+        parts = [str(x) for x in raw]
+    else:
+        return []
+    return [str(x).strip() for x in parts if str(x).strip()]
+
+
+def _perbeat_slot_own_entry(slot: dict[str, Any]) -> Any:
+    """本拍契约：契约拍直接用 ``_own_entry``，插话槽从 ``_beat_entries`` 反查。"""
+    own = slot.get("_own_entry")
+    if isinstance(own, dict):
+        return own
+    beat_id = int(slot.get("beat_id") or 0)
+    for no, entry in slot.get("_beat_entries") or []:
+        if no == beat_id and isinstance(entry, dict):
+            return entry
+    return None
+
+
+def _perbeat_line_addressee(line: str, names: set[str]) -> str:
+    """句首显式呼语（「妈，你先别急」「妈你先别急」→ 妈妈）；没有返回空串。"""
+    text = str(line or "").strip()
+    for name in sorted(names, key=len, reverse=True):
+        for form in _PERBEAT_ADDRESSEE_ALIASES.get(name, (name,)):
+            if not text.startswith(form):
+                continue
+            tail = text[len(form) :]
+            if (
+                not tail
+                or tail[:1] in "，,：:、 "
+                or tail.startswith(("你", "您"))
+            ):
+                return name
+    return ""
+
+
+def _perbeat_filler_addressee_ok(
+    line: str,
+    slot: dict[str, Any],
+    prev_lines: list[tuple[str, str]],
+) -> bool:
+    """零素材插话句的呼语必须落在「上一句的人 + 本拍当事人」里。
+
+    #144 run25 第 4 句实测：上一句是灿灿劝昭昭「你慢慢说」，补位句却写
+    「妈你先别急…」——功能是旁观/递话，机检全过，终检判「错位」。这里只看
+    **句首显式呼语**，不看句中提及（「昭昭，慢慢说，妈妈会听懂的」是正常
+    递话，提到妈妈不算错位）；没有呼语就一律放行，避免误伤。
+    """
+    if not prev_lines:
+        return True
+    speaker = str(slot.get("speaker") or "").strip()
+    allowed = {
+        str(prev_lines[-1][0]).strip(),
+        *_PERBEAT_COLLECTIVE_ADDRESSEES,
+    }
+    names: set[str] = {*allowed, *_KID_NAMES, "妈妈", "爸爸"}
+    own = _perbeat_slot_own_entry(slot)
+    if isinstance(own, dict):
+        own_speaker = str(own.get("speaker") or "").strip()
+        if own_speaker:
+            allowed.add(own_speaker)
+            names.add(own_speaker)
+        for name in _perbeat_addressee_names(own.get("addressee")):
+            allowed.add(name)
+            names.add(name)
+    for _no, entry in slot.get("_beat_entries") or []:
+        if isinstance(entry, dict):
+            sp = str(entry.get("speaker") or "").strip()
+            if sp:
+                names.add(sp)
+    names.discard(speaker)
+    addr = _perbeat_line_addressee(line, names)
+    if not addr:
+        return True
+    return addr in allowed
+
+
+_PERBEAT_NONVERBAL_TEMPLATES = (
+    "哼，我还没消气呢，先不跟你说话了。",
+    "嗯……我先不说了，心里这口气还没顺。",
+    "反正我还有点不服，先这么着吧。",
+)
+
+# 「赢了但没消气」的收束模板池（契约 closing_polarity=unresolved_resentment）。
+# 每条都留着「没消气/没领这份道歉」的反差；前两条带锚词（对不起/妈妈/道歉），
+# 后两条不带锚词兜底。终检判「接不上」的硬判据是回句与上一句一个双字词都
+# 不共享，所以选句时先挑与上一句有实词交集的那条（#144 run27 实测：无锚词的
+# 收束句被判答非所问，修稿又把反差改平）。
+_PERBEAT_SULK_CLOSING_TEMPLATES = (
+    "对不起我听见了，可那声傻我还记着呢。",
+    "你说对不起，可那声傻我还记着呢。",
+    "道歉我听见了，可我还没打算原谅。",
+    "妈妈道歉归道歉，我这小脾气还没过去。",
+    "我还气着呢，这会儿先不跟你搭话。",
+)
+
+# 补位句里「零增量安抚」的说法：全篇只用一次。三句旁观补位全是
+# 「你先别急/慢慢说/我就在旁边听着」时，12 句里有 25% 是同义复述，
+# 笑点密度被摊薄，终检也会判重复（#144 run27 第 3/7/10 句实测）。
+_PERBEAT_FILLER_PACIFY_MARKERS: tuple[str, ...] = (
+    "别急",
+    "慢慢说",
+    "慢慢讲",
+    "听着",
+    "旁边",
+    "你没错",
+    "不该这样",
+)
+
+
+def _perbeat_is_nonverbal_beat(entry: Any) -> bool:
+    """非言语收束拍（静场/嘟囔）：契约标 ``beat_type: nonverbal``。"""
+    if not isinstance(entry, dict):
+        return False
+    return bool(
+        str(entry.get("beat_type") or "").strip().lower() == "nonverbal"
+        or entry.get("coherence_exempt") is True
+    )
+
+
+def _perbeat_sulk_closing_slot(slot: dict[str, Any]) -> bool:
+    """本槽是不是「赢了但没消气」的收束拍（契约极性/收束意图）。"""
+    return is_sulk_closing(slot.get("_own_entry"))
+
+
+def _perbeat_nonverbal_line(
+    slot: dict[str, Any],
+    prev_lines: list[tuple[str, str]],
+) -> str:
+    """非言语拍的收束句只从封闭模板池取（自由生成会写出带前提的清晰表态）。"""
+    seen = {str(ln or "").strip() for _sp, ln in prev_lines}
+    pool = (
+        _PERBEAT_SULK_CLOSING_TEMPLATES
+        if _perbeat_sulk_closing_slot(slot)
+        else _PERBEAT_NONVERBAL_TEMPLATES
+    )
+    prev_terms = _perbeat_terms(prev_lines[-1][1]) if prev_lines else set()
+    best = ""
+    best_anchor = -1
+    for template in pool:
+        line = template.strip()
+        if line in seen:
+            continue
+        if _perbeat_check(slot, line, prev_lines):
+            continue
+        # 同池里优先取与上一句有实词交集的那条：既不像答非所问，
+        # 也不会把上一句整段复述回来。
+        anchor = len(_perbeat_terms(line) & prev_terms)
+        if anchor > best_anchor:
+            best, best_anchor = line, anchor
+    return best
+
+
 def _perbeat_check(
     slot: dict[str, Any],
     line: str,
@@ -3000,23 +3641,77 @@ def _perbeat_check(
 ) -> list[str]:
     """单句机检，返回未通过的条目（空列表=通过）。"""
     speaker = str(slot.get("speaker") or "")
+    # 零素材插话槽（has_content=False）：旁观角色手上没有素材，却必须凑句数。
+    # 这类槽不要求「给理由/独立新内容」，咬合也从「共享实词」放宽成「做旁观/
+    # 递话」，但照抄、认领、抢拍主、新物件这些硬拦一条不减（#144 专家评审）。
+    # 拆句槽不算：拆句行要补本拍的另一半内容，必须按内容槽判。
+    zero_material_filler = bool(
+        slot.get("is_filler")
+        and not slot.get("is_split")
+        and not str(slot.get("split_role") or "")
+        and slot.get("has_content") is False
+    )
     groups = _perbeat_required_word_groups(slot)
     shape_ok = _perbeat_line_shape_ok(line)
     speech_ok = _perbeat_speech_form_ok(line, speaker)
+    # 契约拍必须真的说出本拍声明的必现语义点：#144 run25 第 6 句只落了「承认
+    # 弄脏 + 想自己弄干净」，丢了契约里的「因为疼妈妈」，连带第 8 句妈妈的
+    # 「你疼妈妈」失去前提，终检判缺前提、修稿预算耗尽。
+    missing_points = (
+        []
+        if slot.get("is_filler")
+        else _perbeat_missing_required_points(line, slot.get("_own_entry"))
+    )
+    # 零素材插话句的呼语错了人：#144 run25 第 4 句，上一句是灿灿劝昭昭慢慢说，
+    # 补位句却喊「妈你先别急」，机检全过、终检判错位。
+    addressee_ok = not zero_material_filler or _perbeat_filler_addressee_ok(
+        line, slot, prev_lines
+    )
     # 上一句是问句时，回句必须咬住问句里的词（#138 实测：昭昭问「你确定要听？」，
     # 妈妈答「老虎一吼我确实会吼」，审读判问句悬空、答非所问）。
     question_ok = True
     if (
         prev_lines
         and not slot.get("_is_closing")
+        and not zero_material_filler
         and _perbeat_is_question(prev_lines[-1][1])
     ):
-        question_ok = bool(_perbeat_terms(line) & _perbeat_terms(prev_lines[-1][1]))
+        # intent 是「连声道歉」这类不可字面核对的言语行为时，答句本来就不
+        # 必复述问句里的词（「对不起，是妈妈不对」就是正解），不拿咬词判它。
+        question_ok = bool(
+            _perbeat_terms(line) & _perbeat_terms(prev_lines[-1][1])
+        ) or not _perbeat_intent_has_literal_anchor(str(slot.get("intent") or ""))
     allowed = slot.get("_allowed_actions")
     action_ok = True
     if isinstance(allowed, set):
         action_ok = all(w in allowed for w in _PERBEAT_ACTION_WORDS if w in line)
     dup_ok = not _perbeat_restates(line, prev_lines)
+    # 追问句允许复述前文的说法：契约拍本来就要求「抓住对方的话反问」
+    # （#144：第9句「疼我为什么大声骂我、说我傻？」被判复述，但它是在
+    # 追问，不是把同一条信息换个说法再说一遍）。判据只看「问句 + 追问词
+    # + 与前文共享两个实词」，不绑具体剧情词。
+    previous_terms: set[str] = set()
+    for _spk, _prev in prev_lines:
+        previous_terms |= _perbeat_terms(_prev)
+    # 只豁免契约里真是「回声/反问」的拍（孩子追问），不是所有问句：
+    # 家长照抄孩子的问句（#144 run15 第8句「疼我为什么大声骂我…」）会被
+    # 这条误放，终检仍判「第2句与第8句换词重复」。
+    _own_entry = slot.get("_own_entry")
+    _speech_act = (
+        str(_own_entry.get("speech_act") or "").strip().lower()
+        if isinstance(_own_entry, dict)
+        else ""
+    )
+    echo_followup = (
+        _speech_act in {"echo", "retort", "question"}
+        and _perbeat_is_question(line)
+        and bool(
+            re.search(r"为什么|为啥|凭什么|怎么|难道|不是.{0,6}吗", line)
+        )
+        and len(_perbeat_terms(line) & previous_terms) >= 2
+    )
+    if echo_followup:
+        dup_ok = True
     long_dup_ok = not (
         slot.get("is_filler") and _perbeat_repeats_long_phrase(line, prev_lines)
     )
@@ -3034,7 +3729,7 @@ def _perbeat_check(
     # （#138 实测：「今天为啥舍得夸妈妈，平时你可不这么说。」被判
     # 「必须接住上一句的具体说法」，连续两轮后整篇只出 10 句）。
     # 契约拍的话头衔接交给批提示词与终检，机检只管形状。
-    need_anchor = bool(slot.get("is_filler"))
+    need_anchor = bool(slot.get("is_filler")) and not zero_material_filler
     abstract_ok = not (
         slot.get("is_filler")
         and re.search(
@@ -3055,6 +3750,21 @@ def _perbeat_check(
         dup_ok = True
         long_dup_ok = True
         quote_ok = True
+    # 插话槽只放行「共享一两词」的接话，不放行「照抄一整段」和「认领别人的事」：
+    # 这两条不属于上面那对互斥规则，是硬缺陷（#144 实测：第 7/10 句照抄上一句、
+    # 第 11 句灿灿用第一人称认领昭昭的委屈），交终检只会整稿重掷。
+    filler_copy_ok = not (
+        slot.get("is_filler") and _perbeat_adjacent_repeat(line, prev_line)
+    )
+    filler_claim_ok = not (
+        slot.get("is_filler")
+        and _perbeat_filler_claims_owner_event(line, slot, prev_lines)
+    )
+    # 零素材插话槽的「松版咬合」：不共享实词也行，但必须真在做旁观/递话/助威。
+    filler_link_ok = not zero_material_filler or bool(
+        _PERBEAT_FILLER_SOFT_LINK_RE.search(line)
+        or (prev_line and _perbeat_terms(line) & _perbeat_terms(prev_line))
+    )
     # 「新物件」指全篇从未出现过的物件，而不是「上一句没提」。
     # 只比对上一句会把桌上那盘饺子、手里的筷子都判成新物件，
     # 逼模型只能写空话（#138 实测：8 个插话槽有 6 个因这条被判废）。
@@ -3077,7 +3787,12 @@ def _perbeat_check(
     props_ok = not (
         slot.get("is_filler") and (new_props or new_prop_detail or new_body_detail)
     )
-    stance_ok = not slot.get("is_filler") or _perbeat_stance_has_reason(line)
+    # 零素材插话槽不要求「给理由」：旁观者本就没有事实可依据（#144 专家评审）。
+    stance_ok = (
+        not slot.get("is_filler")
+        or zero_material_filler
+        or _perbeat_stance_has_reason(line)
+    )
     recall_ok = not slot.get("is_filler") or _perbeat_recall_ok(line, prev_lines)
     agreement_ok = not (
         slot.get("is_filler") and _PERBEAT_EMPTY_AGREEMENT_RE.search(line)
@@ -3100,14 +3815,15 @@ def _perbeat_check(
     # 报 `opening_causality: … beat=3 在第4句，不晚于 beat=2（第7句）`
     # （#138 实测：插话槽写了一句「不过我妈妈倒是眉清目秀的」，
     # 正是 beat=2 的内容，把 beat=2 顶到第 7 句）。
-    # 契约拍必须**真的说到那一拍要交代的内容**。
-    # 这里不用 `_line_fulfills_beat`：那是给「事后审读」用的严格判据，
-    # 要求整段 intent 短语逐字出现，正确答案也过不了
-    # （#138 实测：「这黑面芯子难吃无比，不过妈妈眉清目秀的。」被判
-    # 「必须落地本拍要交代的内容」，三轮返修都修不掉）。
-    # 改用「与 intent 共享 ≥2 个实词」这一口径，剩下的交给 opening_causality
-    # 与终检。纯动作/停顿型拍（「接不上话，愣住看妈妈」）没有可核对的实词，
-    # 直接放过——它的约束由必含词（收束/愣住）负责。
+    # 契约拍必须**真的说到那一拍要交代的内容**。判据分三层：
+    # 1) 「连声道歉」「小嘴一撇，嘟囔一句…」这类 intent 只能演出来、不能
+    #    念出来，字面交集恒为 0，跳过字面检查（#144 实测：11 号位连续四轮
+    #    判废，返修理由全是「必须落地本拍要交代的内容」）；
+    # 2) 本句与 intent 共享 ≥2 个实词；
+    # 3) 或者下游 `_line_fulfills_beat` 已经认这句落地了本拍——逐拍机检
+    #    不该比终检还严（#144 第 1 句「你把衣服弄这么脏，真是个傻孩子！」
+    #    终检认 blame，逐拍只共享「衣服」一个词）。
+    # 其余交给 opening_causality 与终检。
     own_beat_ok = True
     own_beat_act_ok = True
     if slot.get("is_filler"):
@@ -3142,10 +3858,17 @@ def _perbeat_check(
             own_beat_act_ok = not _filler_takes_over_beat(line, own_now)
     else:
         intent = str(slot.get("intent") or "")
-        if not _PERBEAT_PAUSE_INTENT_RE.search(intent):
+        if _perbeat_intent_has_literal_anchor(intent):
             cover = _perbeat_terms(intent) & _perbeat_terms(line)
             cover -= {"妈妈", "爸爸", "昭昭", "灿灿", "自己", "一句", "什么"}
             own_beat_ok = len(cover) >= 2
+            if not own_beat_ok:
+                own_entry = slot.get("_own_entry")
+                own_beat_ok = isinstance(
+                    own_entry, dict
+                ) and _line_fulfills_beat(speaker, line, own_entry)
+        elif _perbeat_intent_is_performative(intent):
+            own_beat_ok = _perbeat_performative_line_ok(intent, line)
     # 插话槽要求「与上一句共用至少一个具体二字词」。曾经用更严的
     # 「独有词」口径（`_perbeat_carries_prev`，把全篇高频词排掉），
     # 结果 6 个插话槽两轮全废、整篇只剩 8 句（#138 实测：
@@ -3165,7 +3888,9 @@ def _perbeat_check(
     from app.services.gold_story.gold_chat.validate import _intent_line_overlap
 
     attribution_ok = _perbeat_attribution_ok(
-        line, "".join(text for _spk, text in prev_lines)
+        line,
+        "".join(text for _spk, text in prev_lines),
+        str(slot.get("intent") or slot.get("beat_intent") or ""),
     )
     rebuttal_ok = _perbeat_rebuttal_ok(
         line,
@@ -3182,6 +3907,39 @@ def _perbeat_check(
     answers_prev = (
         (not prev_is_q) or (not _perbeat_is_question(line)) or echo_question
     )
+    # 收束拍标了「赢了但没消气」：末句不能写成完全满意/收下道歉，
+    # 那是把反差收平，笑点余味全丢。
+    closing_ok = not (
+        _perbeat_sulk_closing_slot(slot) and bool(closing_accept_marker(line))
+    )
+    # 纯围观者的补位句不许把同一套安抚话再说一遍：三句旁观补位全是
+    # 「你先别急/慢慢说/我就在旁边听着」等于 25% 的零增量台词。只共用
+    # **一个**词不算重复；当事人（昭昭/妈妈）补位说安抚话是正常接话，不拦。
+    filler_pacify_ok = True
+    if slot.get("is_filler") and _perbeat_filler_is_witness(slot):
+        earlier_text = "".join(txt for _sp, txt in prev_lines)
+        shared = sum(
+            1
+            for marker in _PERBEAT_FILLER_PACIFY_MARKERS
+            if marker in line and marker in earlier_text
+        )
+        filler_pacify_ok = shared < 2
+    # 当事人在场反应：不当和事佬（不许劝对方「别急/慢慢说」——#144 run30
+    # 第 4 句「你别急」把安抚对象错成了上一句的灿灿），也不许把后面自己那
+    # 拍要交代的事实提前说掉（第 4 句先说「衣服是我弄脏的」，第 5 句妈妈
+    # 只能重复追问、第 6 句昭昭只能重复回答）。
+    filler_party_ok = True
+    filler_party_fact_ok = True
+    if slot.get("is_filler") and not _perbeat_filler_is_witness(slot):
+        _prev_sp = str(prev_lines[-1][0]).strip() if prev_lines else ""
+        _parties = _perbeat_parties(slot)
+        if _prev_sp and _prev_sp not in _parties:
+            filler_party_ok = not any(
+                marker in line for marker in _PERBEAT_FILLER_PACIFY_MARKERS
+            )
+        _next_terms = set(slot.get("_next_party_terms") or ())
+        if _next_terms:
+            filler_party_fact_ok = len(_perbeat_terms(line) & _next_terms) < 3
     return [
         label
         for label, passed in (
@@ -3194,7 +3952,9 @@ def _perbeat_check(
             ("插话不得提问", no_question),
             ("必须先正面回答上一句的问题", answers_prev),
             ("插话须有具体内容（不许抽象词）", abstract_ok),
-            ("插话不得另起上一句没提的新物件细节", props_ok),
+            # 上一句是问句时，「正面回答」必然要提到问句里没有的东西，
+            # 与「不得另起新物件」互斥（#144 实测：3/12 号位每轮两罪并罚）。
+            ("插话不得另起上一句没提的新物件细节", props_ok or prev_is_q),
             ("插话表态须给出理由", stance_ok),
             ("插话不得只附和或收下夸奖", agreement_ok),
             ("同一表态动作不得反复用", move_ok),
@@ -3204,6 +3964,12 @@ def _perbeat_check(
             ("引述上一句时必须真有出处", quote_ok),
             ("必须接住上一句的具体说法", anchor_ok),
             ("必须出现指定词", words_ok),
+            (
+                "必须落地本拍的必现语义点："
+                + "、".join(missing_points),
+                not missing_points,
+            ),
+            ("零素材插话的呼语须落在上一句的人身上", addressee_ok),
             ("不得提前说后面才发生的说法", premise_ok),
             (
                 "插话不得顶替契约拍的台词" if slot.get("is_filler")
@@ -3211,6 +3977,13 @@ def _perbeat_check(
                 own_beat_ok,
             ),
             ("插话不得替本拍说话人办事", own_beat_act_ok),
+            ("插话不得照抄上一句", filler_copy_ok),
+            ("插话不得认领拍主的事实/动机", filler_claim_ok),
+            ("零素材插话须做旁观/递话/助威", filler_link_ok),
+            ("补位句不得重复同一套安抚说法", filler_pacify_ok),
+            ("当事人补位句不许劝对方别急", filler_party_ok),
+            ("当事人补位句不许提前说掉本拍的事实", filler_party_fact_ok),
+            ("未消气的收束不得写成完全满意", closing_ok),
         )
         if not passed
     ]
@@ -3270,13 +4043,113 @@ def _perbeat_future_terms(
     return target - _perbeat_terms(heard) - _perbeat_terms(own)
 
 
+def _perbeat_next_party_terms(slots: list[dict[str, Any]], idx: int) -> set[str]:
+    """后面第一个「同一说话人的契约拍」要交代的实词。
+
+    当事人补位句不许抢在这拍前面把它的话说掉（#144 run30 第 4 句：
+    昭昭的补位句先说「衣服是我弄脏的」，第 5 句妈妈再问、第 6 句昭昭再答，
+    同一事实被念了三遍，终检判「重复追问 + 重复交代」）。
+    """
+    speaker = str(slots[idx].get("speaker") or "").strip() if idx < len(slots) else ""
+    if not speaker:
+        return set()
+    for j in range(idx + 1, len(slots)):
+        nxt = slots[j]
+        if not isinstance(nxt, dict) or nxt.get("is_filler"):
+            continue
+        if str(nxt.get("speaker") or "").strip() != speaker:
+            return set()
+        return _perbeat_terms(str(nxt.get("intent") or ""))
+    return set()
+
+
 # 纯动作/停顿型契约拍（没有可核对的实词内容）
 _PERBEAT_PAUSE_INTENT_RE = re.compile(
     r"愣住|接不上话|举着筷子|没落下|认栽|噎住|不吭声|沉默"
 )
 
 
-_PERBEAT_ASK_RE = re.compile(r"[？?]\s*$|吗[。！…]?$|呢[。！…]?$")
+def _perbeat_intent_has_literal_anchor(intent: str) -> bool:
+    """主句 intent 是否含可被台词字面核对的内容。
+
+    契约拍有两种写法：写清「这拍要交代什么」（骂了什么、认了什么、夸了
+    什么），台词能复述，实词交集检查有效；只写「这拍要做什么」（连声道歉、
+    占物、劝架、吐槽），或写成舞台提示（「小嘴一撇，嘟囔一句听不清的
+    话」），这些只能演出来、不能念出来，字面交集恒为 0，每轮返修都修
+    不掉（#144 实测：11 号位连续四轮判废，理由全是「必须落地本拍要交代
+    的内容」；12 号位也反复中同一类）。这类拍交给言语行为标记或终检的
+    语义审读，逐拍机检只保留形状与衔接。
+    """
+    text = str(intent or "").strip()
+    if not text:
+        return False
+    if _PERBEAT_PAUSE_INTENT_RE.search(text):
+        return False
+    if _perbeat_intent_is_performative(text):
+        return False
+    if looks_like_narration_line(text):
+        # 舞台提示里的动作描写不能字面核；但「追问为什么…」「说『…』」
+        # 这种仍带着要念的内容，按实词核，避免把有内容的拍一起放掉。
+        return bool(
+            re.search(r"[‘’“”\"「」『』]", text)
+            or _PERBEAT_ASK_WORD_RE.search(text)
+        )
+    # 引语或冒号后是可念出来的具体话。
+    if re.search(r"[“”\"「」『』：:]", text):
+        return True
+    # 2–3 字动作标签（「占物」「劝架」「吐槽」）没有可核对的实词；
+    # 4 字以上（「追问原因」）已经能说明要交代什么，仍按实词核。
+    if (
+        not re.search(r"[，,；;]", text)
+        and len(re.findall(r"[\u4e00-\u9fff]", text)) <= 3
+    ):
+        return False
+    return True
+
+
+# 「连声道歉」这类只写言语行为、不写内容的拍：台词不会复述「道歉」二字，
+# 但必须真的在道歉。用通用言语行为标记核，不绑剧情词。
+_PERBEAT_PERFORMATIVE_HEAD_RE = re.compile(
+    r"^(?:连声|连连|连忙|赶紧|急忙|主动|率先|再次|小声|哭着|哭腔|无奈|勉强|只好|当场)?"
+    r"(?:道歉|认错|服软|道谢|感谢|告别|道别)"
+    r"(?:[，,。：:]?.{0,6})?$"
+)
+_PERBEAT_PERFORMATIVE_RULES: tuple[
+    tuple[re.Pattern[str], re.Pattern[str]], ...
+] = (
+    (
+        re.compile(r"道歉|认错|服软"),
+        re.compile(r"对不起|抱歉|是我不对|是我不好|不该|原谅|认错|道歉|服了|我认输|行吧|好吧"),
+    ),
+    (re.compile(r"道谢|感谢"), re.compile(r"谢谢|多谢|感谢|谢")),
+    (re.compile(r"告别|道别"), re.compile(r"再见|回头见|拜拜|我先走")),
+)
+
+
+def _perbeat_intent_is_performative(intent: str) -> bool:
+    """intent 是否以「做这个言语行为」为主，而不是顺带提到它。
+
+    「连声道歉」「认错：下次不这样」是纯言语行为拍，台词只需真的在道歉/
+    认错；「道歉后提议讲道理，问昭昭…」这类多分句拍只是把道歉当前置动作，
+    后面还有要交代的内容，仍按实词核（#144 实测：这条被误分到道歉分支，
+    每轮判「必须落地本拍要交代的内容」）。
+    """
+    return bool(_PERBEAT_PERFORMATIVE_HEAD_RE.match(str(intent or "").strip()))
+
+
+def _perbeat_performative_line_ok(intent: str, line: str) -> bool:
+    text = str(intent or "").strip()
+    for intent_re, line_re in _PERBEAT_PERFORMATIVE_RULES:
+        if intent_re.search(text):
+            return bool(line_re.search(str(line or "")))
+    return True
+
+
+_PERBEAT_ASK_RE = re.compile(r"[？?]\s*$|吗[。！…]?$")
+_PERBEAT_ASK_NE_RE = re.compile(r"呢[。！…]?$")
+_PERBEAT_ASK_WORD_RE = re.compile(
+    r"什么|怎么|为什么|为啥|凭什么|哪|谁|几|多少|是不是|要不要|能不能|可不可以|会不会"
+)
 
 # 插话必须接着上一句的判断说。模型最常见的偷懒是「我同意，可这盘饺子皮…」
 # 用全篇都在场的东西开新挑刺；这些具体物件若上一句没提，就不许插话另起。
@@ -3305,8 +4178,18 @@ def _perbeat_is_question(line: str) -> bool:
     都含「谁/什么」），用疑问词全集判定会把正常回答当成「又反问回去」
     （#138 实测：第 6 句「因为你像一只暴躁的老虎，凶起来谁都不敢吭声。」
     被判「必须先正面回答上一句的问题」）。
+
+    「呢」有两种用法：作疑问语气（「我晚上吃什么呢」）和作陈述收尾
+    （「我还没消气呢」）。后者曾被当成问句，把 12 号位的正解判成
+    「必须先正面回答上一句的问题」（#144 实测）。句中无疑问词且不是
+    短问句（「那你呢」）时按陈述处理。
     """
-    return bool(_PERBEAT_ASK_RE.search(str(line or "").strip()))
+    text = str(line or "").strip()
+    if _PERBEAT_ASK_RE.search(text):
+        return True
+    if _PERBEAT_ASK_NE_RE.search(text):
+        return bool(_PERBEAT_ASK_WORD_RE.search(text)) or len(text) <= 6
+    return False
 
 
 def _perbeat_choose_filler_order(
@@ -3446,6 +4329,9 @@ _PERBEAT_NEVER_KEEP = (
     "不得提前说",
     "插话不得顶替",
     "插话不得替本拍说话人办事",
+    # 照抄上一句/认领别人的事是硬缺陷，留着只是把问题句交给终检（#144）。
+    "插话不得照抄上一句",
+    "插话不得认领",
 )
 
 
@@ -3514,6 +4400,14 @@ def _perbeat_fill_slots(
             _slot["_future_terms"] = sorted(
                 _perbeat_future_terms(slots, _i, punchline=punchline)
             )
+            if _slot.get("is_filler"):
+                _slot["_next_party_terms"] = sorted(
+                    _perbeat_next_party_terms(slots, _i)
+                )
+                if not _perbeat_filler_is_witness(_slot):
+                    _slot["intent"] = _perbeat_party_filler_intent(
+                        str(_slot.get("intent") or "")
+                    )
             if _slot.get("is_filler") and _entries:
                 _slot["_beat_entries"] = list(_entries)
             elif not _slot.get("is_filler"):
@@ -3629,17 +4523,29 @@ def _perbeat_fill_slots(
         # 返回 ([], [])，日志只剩「assembled lines=0 chars=0」，下游 validate
         # 报的是「句数/字数不足」，真因（模型没给 JSON）被完全掩盖。
         raise ValueError("perbeat: batch fill returned no parsable lines")
+    # 非言语收束拍（契约标 beat_type=nonverbal 的静场/嘟囔拍）不交给模型自由
+    # 命题：它写出来的是「你道歉我听见了，可我心里这口气还没顺过来」这种带
+    # 前提的清晰表态，终检会判缺前提/接不上（#144 run25 第 12 句实测）。这类拍
+    # 只从封闭模板池取含糊收束句，模板一律先过机检；换句后撤掉旧判废记录。
+    for _i, _slot in enumerate(slots, 1):
+        if not _perbeat_is_nonverbal_beat(_slot.get("_own_entry")):
+            continue
+        _prev = [
+            (str(slots[_j - 1].get("speaker") or ""), str(filled[_j]))
+            for _j in range(1, _i)
+            if _j in filled
+        ]
+        _line = _perbeat_nonverbal_line(_slot, _prev)
+        if not _line or _line == filled.get(_i):
+            continue
+        filled[_i] = _line
+        failures = [f for f in failures if f[0] != _i]
+        logger.info("[GOLD_CHAT] perbeat nonverbal slot=%s line=%s", _i, _line)
     # 剩余的插话槽直接丢掉（凑句数的槽，塞坏句比少一句更糟）；
     # 契约拍交回上一级重掷。
     # 只有**判废的**插话槽才丢；合格的插话句当然要留下。
     # （早先这里写成「不是插话槽就留下」，把合格的 6 条插话句一起筛掉了，
     # 8 拍永远只剩 8 句，稳定报「对白句数须≥12，当前8」。#138 实测。）
-    bad_idx = {i for i, _ln, _why in failures}
-    kept = [
-        (i, l) for i, l in sorted(filled.items())
-        # 1 <= i：i=0 会命中 slots[-1]，把这一句错挂到最后一句的说话人名下。
-        if 1 <= i <= len(slots) and i not in bad_idx
-    ]
     # 失败分两级（2026-10 清理）：
     #   * 契约拍的句子不合格 = 这一拍没交代清楚，整稿没意义 → 整稿重掷；
     #   * 插话槽（凑句数的补位句）不合格 = 单句瑕疵，本地修得掉 → 丢掉该句，
@@ -3654,16 +4560,40 @@ def _perbeat_fill_slots(
             hard_fail.append((i, ln, why))
         else:
             soft_fillers.append((i, ln, why))
-            logger.info(
-                "[GOLD_CHAT] perbeat filler dropped slot=%s sp=%s why=%s",
-                i,
-                slots[i - 1].get("speaker") if i <= len(slots) else "?",
-                why,
-            )
+    # 插话槽缺陷先走本地替换链（#144 专家评审第 5 条）：判废就丢句会让 12 句
+    # 掉到 10 句、整稿直接篇幅驳回；整表重掷又必然复现同一批插话缺陷（模型只是
+    # 换词照抄）。所以先定向重写该槽（≤2 次），再退到封闭功能模板，都拿不到才丢。
+    # 只在凑句数的整篇稿上做（槽数够 12）：链子的用途就是保住句数下限，
+    # 短稿里没有这条下限要保，废句照旧丢弃。
+    min_lines = 12
+    fixed: dict[int, tuple[str, str]] = {}
+    if soft_fillers and len(slots) >= min_lines:
+        fixed = _perbeat_replace_bad_fillers(
+            slots,
+            filled,
+            soft_fillers,
+            scene_contract=scene_contract,
+            temperature=temperature + 0.1 * round_i,
+        )
+        for i, (ln, _how) in fixed.items():
+            filled[i] = ln
+        soft_fillers = [f for f in soft_fillers if f[0] not in fixed]
+    bad_idx = {i for i, _ln, _why in failures} - set(fixed)
+    for i, _ln, why in soft_fillers:
+        logger.info(
+            "[GOLD_CHAT] perbeat filler dropped slot=%s sp=%s why=%s",
+            i,
+            slots[i - 1].get("speaker") if i <= len(slots) else "?",
+            why,
+        )
+    kept = [
+        (i, l) for i, l in sorted(filled.items())
+        # 1 <= i：i=0 会命中 slots[-1]，把这一句错挂到最后一句的说话人名下。
+        if 1 <= i <= len(slots) and i not in bad_idx
+    ]
     # 软问题（表态/理由/物件细节）不再无限丢句：句数掉到 12 以下时，
     # 把这类插话保留下来交给终检定点修。否则本地规则会把稿子删成 8 句，
     # 连进入语义审读的机会都没有（#138 实测）。
-    min_lines = 12
     if len(kept) < min_lines and soft_fillers:
         have = {i for i, _ln in kept}
         for i, ln, why in sorted(soft_fillers):
@@ -3702,6 +4632,7 @@ def _perbeat_validate_fill(
 ) -> tuple[list[tuple[str, str]], list[tuple[int, str, str]]]:
     """按槽序逐句机检：返回（合格句子序列, 不合格项）。"""
     lines: list[tuple[str, str]] = []
+    line_idx: list[int] = []
     failures: list[tuple[int, str, str]] = []
     trigger_speaker = ""
     for idx, slot in enumerate(slots, 1):
@@ -3728,6 +4659,7 @@ def _perbeat_validate_fill(
             continue
         speaker = str(slot.get("speaker") or "")
         lines.append((speaker, line))
+        line_idx.append(idx)
         if (
             not slot.get("is_filler")
             and speaker in _PERBEAT_KID_NAMES
@@ -3745,9 +4677,7 @@ def _perbeat_validate_fill(
         idx = int(slot.get("i") or 0)
         if not slot.get("split_role") and beat_no and beat_no not in owner_line:
             owner_line[beat_no] = str(filled.get(idx) or "")
-    kept: list[tuple[str, str]] = []
-    for speaker, line in lines:
-        kept.append((speaker, line))
+    kept: list[tuple[str, str]] = [(sp, ln) for sp, ln in lines]
     for slot in slots:
         if slot.get("split_role") != "second_half":
             continue
@@ -3765,6 +4695,41 @@ def _perbeat_validate_fill(
                 (int(slot.get("i") or 0), mine, "拆句不得复述拍主刚说的内容"),
             )
     lines = kept
+    # 句数达标后的总字数下限（联合判据 240-24=216）。单句 14 字合法，但整篇
+    # 偏短时本地垫字补不出来（#144 实测：12 句 207 字，垫到 212 就停），
+    # 与其硬塞语气词，不如把最短的几句退回让模型写长。
+    from app.services.gold_story.scene import (
+        CHAT_LINE_COUNT_MIN as _CHAT_MIN_FOR_LENGTH,
+    )
+
+    if not failures and len(lines) >= _CHAT_MIN_FOR_LENGTH:
+        from app.services.gold_story.gold_chat.validate import (
+            gold_chat_effective_min_chars,
+        )
+
+        floor = gold_chat_effective_min_chars(
+            [{"line": ln} for _sp, ln in lines]
+        )
+        total = sum(len(ln) for _sp, ln in lines)
+        # 留 12 字余量：finalize 的类型补丁（如 I 的 strip_mid_pad）会再删
+        # 语气词，卡在下限整好 216 的稿子会被删到 208（#144 run14 实测）。
+        target = floor + 12
+        if total < target:
+            need = target - total
+            for i in sorted(range(len(lines)), key=lambda i: len(lines[i][1])):
+                if need <= 0:
+                    break
+                room = 24 - len(lines[i][1])
+                if room <= 0:
+                    continue
+                failures.append(
+                    (
+                        line_idx[i],
+                        lines[i][1],
+                        f"全文还差{need}字，本句写到{min(24, len(lines[i][1]) + need)}字左右",
+                    )
+                )
+                need -= room
     return lines, failures
 
 
@@ -3848,6 +4813,22 @@ def _generate_perbeat_candidate(
     )
     slots: list[dict[str, Any]] = []
     if not (_perbeat_legacy() or not has_beats):
+        # 哪些角色「源素材里根本没出声」（#144 的旁观角色灿灿）：这些角色的补位
+        # 行没有内容可依，规划与机检都走「零素材插话」的口径（旁观/递话/助威），
+        # 否则模型只能转述/复述上一句（实测三轮都是旁白式转述）。
+        _seed_queue = _perbeat_seed_queues(
+            seed,
+            beats=[b for b in beat_chain or [] if isinstance(b, dict)],
+            punchline=str(scene_contract.get("punchline") or ""),
+        )
+        _material = {sp for sp, items in _seed_queue.items() if items}
+        _cast = {
+            str(x).strip()
+            for x in (scene_contract.get("characters") or [])
+            if str(x).strip()
+        }
+        _cast.update(_line_plan_speakers(beat_chain))
+        no_material_speakers = {sp for sp in _cast if sp not in _material}
         try:
             plan = _build_line_plan(
                 scene_contract=scene_contract,
@@ -3855,6 +4836,7 @@ def _generate_perbeat_candidate(
                 story_raw=story_raw,
                 target_lines=target,
                 temperature=temperature,
+                no_material_speakers=no_material_speakers,
             )
         except ValueError as exc:
             # 骨架排不出 / intent 两轮不合格：退回旧槽，但要让日志能看见。
@@ -3862,7 +4844,11 @@ def _generate_perbeat_candidate(
         else:
             slots = _perbeat_apply_intent_cover(
                 _apply_n_word_slots(
-                    _line_plan_slots(plan, beat_chain),
+                    _line_plan_slots(
+                        plan,
+                        beat_chain,
+                        no_material_speakers=no_material_speakers,
+                    ),
                     structure_type=structure_type,
                 )
             )
@@ -3870,6 +4856,9 @@ def _generate_perbeat_candidate(
         slots = _legacy_slots()
     if not slots:
         raise ValueError("perbeat: empty skeleton")
+    # 契约拍声明的必现语义点挂到槽上：批提示词里要写出来，否则模型不知道
+    # 哪些词不能砍（#144 run26 实测：beat5 每轮都砍掉句尾的「疼妈妈」）。
+    slots = _apply_required_semantic_points(slots, beat_chain)
     punchline = str(scene_contract.get("punchline") or "").strip()
     retry_feedback = format_retry_missing_events_block(row or {})
     lines, failures = _perbeat_fill_slots(

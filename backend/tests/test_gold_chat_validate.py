@@ -1487,6 +1487,22 @@ def test_opening_blame_intent_accepts_verbal_abuse_without_label():
     ) == ""
 
 
+def test_echo_beat_accepts_short_spoken_retort():
+    """echo 拍只要说话人正确、确实在问、共享两个实词，就算落地。"""
+    from app.services.gold_story.gold_chat.validate import _line_fulfills_beat
+
+    beat = {
+        "beat": 2,
+        "speaker": "昭昭",
+        "speech_act": "echo",
+        "intent": "撅嘴生闷气，反问妈妈为什么大声骂自己",
+    }
+    assert _line_fulfills_beat("昭昭", "你干嘛那么大声骂我？", beat)
+    # 不是问句 / 说话人不对 / 语义跑偏，都仍判未落地。
+    assert not _line_fulfills_beat("昭昭", "衣服是我自己弄脏的。", beat)
+    assert not _line_fulfills_beat("妈妈", "你干嘛那么大声骂我？", beat)
+
+
 def test_trim_parent_quota_removes_middle_non_question():
     """非 N 家长超额时，先删中间过渡句，保住开场/追问/收束。"""
     from app.services.gold_story.gold_chat.patch import (

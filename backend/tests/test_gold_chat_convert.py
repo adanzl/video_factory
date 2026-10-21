@@ -778,6 +778,23 @@ def test_shared_local_length_close_accepts_clean_near_miss():
     assert "说一不二" not in body
 
 
+def test_acceptance_clamps_key_expanded_by_kinship_patch():
+    """称谓/点题补丁把 key 撑到 9 字时，验收前本地截到 8 字，不判死。"""
+    from app.services.gold_story.gold_chat.repair import (
+        prepare_candidate_for_acceptance,
+    )
+
+    story = _sample_chat()
+    story["key"] = "一二三四五六七八九"
+    prepared, errors = prepare_candidate_for_acceptance(
+        story,
+        mom_lines_max=3,
+        banned_literals=[],
+    )
+    assert len(prepared["key"]) <= 8
+    assert not [error for error in errors if "key 须" in error]
+
+
 def test_n_post_sanitize_close_recovers_contract_without_dirty_fill():
     from app.services.daily_story.story_types.n.validate import RE_SOLEMN_REASON
     from app.services.gold_story.gold_chat import refine as grf
@@ -4003,6 +4020,331 @@ def _perbeat_test_slot(speaker="昭昭", *, filler=False, intent="陈述"):
     }
 
 
+def test_perbeat_label_intent_does_not_require_literal_overlap():
+    """#144：11 号位 intent 是「连声道歉」，台词无法逐字复述。"""
+    assert not gex._perbeat_intent_has_literal_anchor("连声道歉")
+    assert not gex._perbeat_intent_has_literal_anchor(
+        "小嘴一撇，嘟囔一句听不清的话，神情还没消气"
+    )
+    assert not gex._perbeat_intent_has_literal_anchor("接不上话，愣住看妈妈")
+    assert gex._perbeat_intent_has_literal_anchor("大声骂昭昭弄脏衣服，并说“傻”")
+    # 4 字以上能说明交代什么（「追问原因」）仍按实词核，不能借标签跳过。
+    assert gex._perbeat_intent_has_literal_anchor("追问原因")
+    # 舞台提示里带着疑问词的，仍算有可念的内容（「追问为什么…」）。
+    assert gex._perbeat_intent_has_literal_anchor(
+        "追问妈妈一胎时为什么买这么多，是不是天天查书"
+    )
+    assert not gex._perbeat_performative_line_ok("连声道歉", "这盘饺子真好吃。")
+    assert gex._perbeat_performative_line_ok("连声道歉", "你先道歉！")
+
+    reasons = gex._perbeat_check(
+        _perbeat_test_slot("妈妈", intent="连声道歉"),
+        "对不起，是妈妈不对，不该大声骂你，也不该说你傻。",
+        [("昭昭", "那你为什么要说傻呢？")],
+    )
+    assert not any("必须落地本拍" in reason for reason in reasons)
+
+
+def test_perbeat_contract_line_passes_when_downstream_beat_accepts_it():
+    """#144：1 号位「你把衣服弄这么脏」下游认 blame，逐拍不能更严。"""
+    from app.services.gold_story.gold_chat.validate import _beat_chain_entries
+
+    slot = _perbeat_test_slot(
+        "妈妈", intent="大声骂昭昭弄脏衣服，并说“傻”"
+    )
+    slot["_own_entry"] = _beat_chain_entries(
+        [{"beat": 1, "speaker": "妈妈", "intent": "大声骂昭昭弄脏衣服，并说“傻”"}]
+    )[0][1]
+    reasons = gex._perbeat_check(
+        slot, "你把衣服弄这么脏，真是个傻孩子！", []
+    )
+    assert not any("必须落地本拍" in reason for reason in reasons)
+
+
+def test_perbeat_followup_question_may_reuse_earlier_words():
+    """#144：追问句（「疼我为什么大声骂我」）不算换词复述。"""
+    prev = [
+        ("妈妈", "你把衣服弄这么脏，真是个傻孩子！"),
+        ("昭昭", "你为什么因为衣服脏了就大声骂我傻？"),
+        ("妈妈", "我大声骂你，是因为你把衣服弄脏了呀。"),
+        ("灿灿", "你先别急，慢慢说，我们都听着呢。"),
+    ]
+    slot = _perbeat_test_slot(
+        "妈妈", intent="愣住后追问：疼我为什么大声骂我、说我傻"
+    )
+    reasons = gex._perbeat_check(slot, "疼我为什么大声骂我、说我傻？", prev)
+    assert not any("不得复述前文" in reason for reason in reasons)
+    # 陈述式的原地重复仍要拦。
+    plain = gex._perbeat_check(
+        slot, "我大声骂你就是因为你把衣服弄脏了呀。", prev
+    )
+    assert "不得复述前文" in plain
+
+
+def test_perbeat_statement_ending_in_ne_is_not_a_question():
+    """「我还没消气呢」是陈述；「那你为什么要说傻呢？」才是提问。"""
+    assert not gex._perbeat_is_question("我……我还没消气呢。")
+    assert gex._perbeat_is_question("那你为什么要说傻呢？")
+    assert gex._perbeat_is_question("我晚上吃什么呢。")
+    assert gex._perbeat_is_question("那你呢。")
+
+
+def _perbeat_filler_slot_with_owner(
+    *,
+    speaker="灿灿",
+    owner="昭昭",
+    beat_id=5,
+    intent="接住上一句里最具体的那半句，说明你为什么同意或不同意",
+    owner_intent=(
+        "先直接回答上一句问的问题，先承认衣服是自己弄脏的，"
+        "再说想自己弄干净、不让妈妈操心，因为疼妈妈"
+    ),
+):
+    return {
+        "beat_id": beat_id,
+        "speaker": speaker,
+        "intent": intent,
+        "function": "反应/插话",
+        "is_filler": True,
+        "_beat_entries": [
+            (beat_id, {"beat": beat_id, "speaker": owner, "intent": owner_intent})
+        ],
+    }
+
+
+def test_perbeat_required_semantic_points_must_land():
+    """#144 run25 第6句：契约声明「疼妈妈」必现，丢了就判废。
+
+    丢「疼妈妈」会连带第8句妈妈的「你疼妈妈」失去前提，终检判缺前提、
+    修稿预算直接被耗尽——所以在逐拍机检就拦住。
+    """
+    slot = {
+        "beat_id": 5,
+        "speaker": "昭昭",
+        "intent": "先承认衣服是自己弄脏的，再说想自己弄干净，因为疼妈妈",
+        "function": "本拍主句",
+        "is_filler": False,
+        "_own_entry": {
+            "beat": 5,
+            "speaker": "昭昭",
+            "intent": "先承认衣服是自己弄脏的，再说想自己弄干净，因为疼妈妈",
+            "required_semantic_points": [
+                {"surface": "疼妈妈", "synonyms": ["疼你", "心疼你"]}
+            ],
+        },
+    }
+    prev = [("妈妈", "你是不是弄脏了衣服？弄脏谁的衣服？")]
+    dropped = gex._perbeat_check(
+        slot, "衣服是我弄脏的，可我说想自己弄干净。", prev
+    )
+    assert any("必现语义点" in item for item in dropped), dropped
+
+    landed = gex._perbeat_check(
+        slot, "衣服是我弄脏的，我想自己弄干净，因为疼你。", prev
+    )
+    assert not landed, landed
+
+    # 否定式提及不算落地（「我不疼你了」不是「疼你」）。
+    negated = gex._perbeat_check(
+        slot, "衣服是我弄脏的，我不疼你了，我自己弄干净。", prev
+    )
+    assert any("必现语义点" in item for item in negated), negated
+
+
+def test_perbeat_zero_content_filler_addressee_must_match_previous_line():
+    """#144 run25 第4句：上一句是灿灿劝昭昭，补位句却喊「妈」，终检判错位。"""
+    slot = _perbeat_filler_slot_with_owner(
+        speaker="昭昭", owner="灿灿", beat_id=3
+    )
+    slot["has_content"] = False
+    prev = [("灿灿", "你慢慢说，别急着吼，先把话讲清楚。")]
+
+    wrong = gex._perbeat_check(
+        slot, "妈你先别急，慢慢说，把话交给你自己说清楚。", prev
+    )
+    assert any("呼语" in item for item in wrong), wrong
+
+    right = gex._perbeat_check(
+        slot, "灿灿，你先别急，我就在旁边听着。", prev
+    )
+    assert not any("呼语" in item for item in right), right
+
+    # 没有显式呼语时一律不判（避免误伤正常递话）。
+    implicit = gex._perbeat_check(
+        slot, "你先别急，我就在旁边听着，慢慢说。", prev
+    )
+    assert not any("呼语" in item for item in implicit), implicit
+
+
+def test_perbeat_required_semantic_points_reach_batch_prompt():
+    """必现语义点必须写进分配表：模型不知道哪些词不能砍，就会砍掉句尾那个。"""
+    from app.services.gold_story.gold_chat.prompts import (
+        format_perbeat_batch_user,
+    )
+
+    slots = [
+        {
+            "beat_id": 5,
+            "speaker": "昭昭",
+            "intent": "先承认衣服是自己弄脏的，再说想自己弄干净，因为疼妈妈",
+            "function": "本拍主句",
+            "is_filler": False,
+        }
+    ]
+    beats = [
+        {
+            "beat": 5,
+            "speaker": "昭昭",
+            "intent": "先承认衣服是自己弄脏的，再说想自己弄干净，因为疼妈妈",
+            "required_semantic_points": [
+                {"surface": "疼妈妈", "synonyms": ["疼你"]}
+            ],
+        }
+    ]
+    filled = gex._apply_required_semantic_points(slots, beats)
+    assert filled[0]["required_semantic_terms"] == [["疼妈妈", "疼你"]]
+
+    prompt = format_perbeat_batch_user(
+        scene_contract={"characters": ["妈妈", "昭昭"]},
+        punchline="",
+        slots=filled,
+    )
+    assert "必现（缺一不可）：疼妈妈或疼你" in prompt
+
+
+def test_perbeat_nonverbal_beat_uses_closed_template_pool():
+    """#144 run25 第12句：静场/嘟囔拍不自由命题，只取封闭模板里的含糊收束句。"""
+    slot = {
+        "beat_id": 9,
+        "speaker": "昭昭",
+        "intent": "小嘴一撇，嘟囔一句听不清的话，神情还没消气",
+        "function": "本拍主句",
+        "is_filler": False,
+        "_own_entry": {"beat": 9, "speaker": "昭昭", "beat_type": "nonverbal"},
+    }
+    prev = [("妈妈", "对不起，是妈妈错了。")]
+    line = gex._perbeat_nonverbal_line(slot, prev)
+    assert line, "封闭模板池必须至少给出一句能过机检的收束句"
+    assert not gex._perbeat_check(slot, line, prev)
+    assert gex._perbeat_is_nonverbal_beat(slot["_own_entry"])
+    assert not gex._perbeat_is_nonverbal_beat({"beat": 9, "speaker": "昭昭"})
+
+
+def test_perbeat_filler_copying_adjacent_line_is_blocked():
+    """#144：插话照抄紧邻上一句（逐字或十几字长片段）要硬拦。
+
+    专家评审：插话共享一两词是要求，抄一整段不是；只比紧邻上一句，
+    避免和「必须接住上一句的具体说法」叠加成互斥规则。
+    """
+    verbatim = gex._perbeat_check(
+        _perbeat_filler_slot_with_owner(beat_id=7),
+        "弄了衣服是傻？那你为什么要说傻呢？",
+        [("昭昭", "弄了衣服是傻？那你为什么要说傻呢？")],
+    )
+    assert "插话不得照抄上一句" in verbatim
+
+    long_copy = gex._perbeat_check(
+        _perbeat_filler_slot_with_owner(beat_id=5),
+        "说想自己弄干净，不让妈妈操心，因为疼妈妈。",
+        [("昭昭", "是我弄脏的，我说想自己弄干净，不让妈妈操心。")],
+    )
+    assert "插话不得照抄上一句" in long_copy
+
+    # 只共享固定短语（「弄干净」）的正常承接不算照抄。
+    short_share = gex._perbeat_check(
+        _perbeat_filler_slot_with_owner(beat_id=5),
+        "你先别急，慢慢弄干净就好。",
+        [("昭昭", "是我弄脏的，我说想自己弄干净，不让妈妈操心。")],
+    )
+    assert "插话不得照抄上一句" not in short_share
+
+
+def test_perbeat_filler_claiming_owner_event_is_blocked():
+    """#144：旁观者用第一人称认领拍主的事实/委屈要拦，帮忙和安抚要放过。"""
+    prev = [("昭昭", "是我弄脏的，我说想自己弄干净，不让妈妈操心。")]
+    claim = gex._perbeat_check(
+        _perbeat_filler_slot_with_owner(beat_id=5),
+        "反正我没错，你不该那样说我。",
+        prev,
+    )
+    assert "插话不得认领拍主的事实/动机" in claim
+
+    # 帮忙框架、否定安抚（专家给的回归句）必须放过。
+    for line in (
+        "你先别急，我就在旁边听着，你慢慢说。",
+        "我帮你拿抹布，你别自己逞强。",
+        "我帮你弄干净，你别自己逞强。",
+        "我没说你委屈，你先别哭。",
+    ):
+        reasons = gex._perbeat_check(
+            _perbeat_filler_slot_with_owner(beat_id=5), line, prev
+        )
+        assert "插话不得认领拍主的事实/动机" not in reasons, line
+
+    # 拍主自己说自己的事不算认领。
+    own = gex._perbeat_check(
+        _perbeat_filler_slot_with_owner(speaker="昭昭", owner="昭昭", beat_id=5),
+        "是我弄脏的，我想自己弄干净。",
+        prev,
+    )
+    assert "插话不得认领拍主的事实/动机" not in own
+
+
+def test_perbeat_zero_content_filler_relaxed_but_still_blocks_copying():
+    """#144：无素材插话槽只做旁观/递话，不要求给理由；照抄/认领/纯附和照样拦。
+
+    专家评审的处置口径：has_content=False 的插话槽没有素材，别再要求它
+    「给具体理由、带独立新内容」，但它仍然是旁观角色，不是当事人。
+    """
+    slot = _perbeat_filler_slot_with_owner(beat_id=5)
+    slot["has_content"] = False
+    prev = [("昭昭", "是我弄脏的，说想自己弄干净，不让妈妈操心。")]
+    ok = gex._perbeat_check(
+        slot, "昭昭，你先别急，我就在旁边听着，你慢慢说。", prev
+    )
+    assert not ok, ok
+    copy = gex._perbeat_check(slot, "她想自己弄干净，不让妈妈操心。", prev)
+    assert "插话不得照抄上一句" in copy
+    claim = gex._perbeat_check(slot, "反正我没错，你不该那样说我。", prev)
+    assert "插话不得认领拍主的事实/动机" in claim
+    assert gex._perbeat_check(slot, "嗯，是啊，你说得对。", prev)
+
+
+def test_perbeat_zero_content_filler_template_pool_is_compliant():
+    """补位链的兜底：模板池取出的旁观句必须自己就能过机检。"""
+    slot = _perbeat_filler_slot_with_owner(beat_id=5)
+    slot["has_content"] = False
+    prev = [("昭昭", "是我弄脏的，说想自己弄干净，不让妈妈操心。")]
+    line = gex._perbeat_filler_template(slot, prev)
+    assert line
+    assert not gex._perbeat_check(slot, line, prev)
+
+
+def test_perbeat_filler_slots_without_seed_use_function_intent():
+    """#144：无素材插话槽改走旁观/递话功能，不再要「接住最具体半句 + 给理由」。"""
+    beats = [
+        {
+            "beat": i,
+            "speaker": "妈妈" if i % 2 else "昭昭",
+            "intent": f"第{i}拍要交代的具体事情",
+        }
+        for i in range(1, 10)
+    ]
+    contract = {
+        "characters": ["妈妈", "昭昭", "灿灿"],
+        "object": "衣服",
+        "location": "家里",
+        "conflict": "妈妈骂昭昭弄脏衣服",
+        "beat_chain": beats,
+    }
+    slots = gex._perbeat_slots(beats, contract, target_lines=12, seed=[])
+    fillers = [s for s in slots if s.get("is_filler")]
+    assert fillers
+    for slot in fillers:
+        assert slot.get("has_content") is False
+        assert "接住上一句里最具体的那半句" not in str(slot.get("intent"))
+
+
 def test_perbeat_overlong_candidate_is_rewritten_without_truncating_required_tail(monkeypatch):
     slot = _perbeat_test_slot(intent="说饺子难吃但妈妈眉清目秀")
     slot["must_words"] = ["清秀"]
@@ -4171,3 +4513,174 @@ def test_filler_may_not_speak_for_its_own_beat_owner():
     # 正常接话：只接情绪/态度，不带本拍要交代的内容
     assert _filler_takes_over_beat("昭昭你这不是夸，是拐着弯说妈妈凶", entry) is False
     assert _filler_takes_over_beat("灿灿你别插嘴，让昭昭自己说", entry) is False
+
+
+def _perbeat_sulk_closing_slot() -> dict:
+    """「赢了但没消气」的收束拍（#144 beat9 的契约形状）。"""
+    return {
+        "speaker": "昭昭",
+        "intent": "小嘴一撇，嘟囔一句听不清的话，神情还没消气",
+        "is_filler": False,
+        "_is_closing": True,
+        "_own_entry": {
+            "speaker": "昭昭",
+            "beat_type": "nonverbal",
+            "coherence_exempt": True,
+            "intent": "小嘴一撇，嘟囔一句听不清的话，神情还没消气",
+        },
+        "_beat_entries": [],
+    }
+
+
+def test_perbeat_sulk_closing_template_keeps_grudge_and_anchors_prev():
+    """未消气的收束句：保留反差，且与上一句（道歉句）有实词交集。
+
+    终检判「接不上」的硬判据是回句与上一句一个双字词都不共享；同时收束句
+    不许写成完全满意，否则反差余味丢失（#144 run27 实测好笑分 8）。
+    """
+    prev = [("妈妈", "对不起昭昭，是妈妈不对，妈妈不该说你傻。")]
+    line = gex._perbeat_nonverbal_line(_perbeat_sulk_closing_slot(), prev)
+    assert line
+    assert gex.closing_accept_marker(line) == ""
+    assert gex._perbeat_terms(line) & gex._perbeat_terms(prev[0][1])
+    assert not gex._perbeat_check(_perbeat_sulk_closing_slot(), line, prev)
+
+
+def test_perbeat_sulk_closing_rejects_satisfied_ending():
+    """「这还差不多」把未消气收成完全满意，机检必须判废。"""
+    prev = [("妈妈", "对不起昭昭，是妈妈不对，妈妈不该说你傻。")]
+    reasons = gex._perbeat_check(
+        _perbeat_sulk_closing_slot(), "哼，这还差不多。", prev
+    )
+    assert "未消气的收束不得写成完全满意" in reasons
+
+
+def test_perbeat_filler_cannot_repeat_same_pacify_move():
+    """三句旁观补位全是「你先别急/慢慢说」时，后一句必须判废。"""
+    slot = _perbeat_filler_slot_with_owner(beat_id=5)
+    slot["has_content"] = False
+    prev = [("灿灿", "你慢慢说，别急，先听昭昭把话讲完。")]
+    reasons = gex._perbeat_check(
+        slot, "昭昭，你先别急，我就在旁边听着，你慢慢说。", prev
+    )
+    assert "补位句不得重复同一套安抚说法" in reasons
+
+
+def test_perbeat_filler_template_picks_a_different_move():
+    """模板兜底也要换功能：前文已经劝过「慢慢说」，不能再给同一套安抚句。"""
+    slot = _perbeat_filler_slot_with_owner(beat_id=5)
+    slot["has_content"] = False
+    prev = [
+        ("妈妈", "昭昭你看你衣服脏成这样，你可真傻！"),
+        ("昭昭", "妈你干嘛这么大声骂我，我哪里傻了？"),
+        ("灿灿", "你慢慢说，别急，先听昭昭把话讲完。"),
+        ("昭昭", "妈你先别急，我听着。"),
+    ]
+    line = gex._perbeat_filler_template(slot, prev)
+    assert line
+    assert not gex._perbeat_check(slot, line, prev)
+    assert "慢慢说" not in line
+
+
+def test_party_filler_must_not_pacify_or_preempt_own_beat():
+    """#144 第4句：昭昭的补位句劝灿灿「你别急」，还提前说掉第5/6拍的事实。
+
+    当事人补位句只能表态/顶一句：不许劝上一句的围观者别急（安抚对象错位），
+    也不许把后面自己那拍要交代的事实先说掉（否则妈妈只能重复追问、
+    昭昭只能重复回答，同一事实被念三遍）。
+    """
+    owner_intent = (
+        "先直接回答上一句问的问题（点出具体答案，别绕开），先承认衣服是自己弄脏的，"
+        "再说想自己弄干净，因为疼妈妈"
+    )
+    slot = _perbeat_filler_slot_with_owner(
+        speaker="昭昭",
+        owner="昭昭",
+        beat_id=3,
+        intent="当事人在场反应：只回一句态度，不许提前交代本拍的事实",
+        owner_intent=owner_intent,
+    )
+    slot["_next_party_terms"] = sorted(gex._perbeat_terms(owner_intent))
+    prev = [
+        ("妈妈", "你把衣服弄这么脏，真是傻，傻得没边了！"),
+        ("昭昭", "你为什么这么大声骂我，还说我傻呢？"),
+        ("灿灿", "你慢慢说，别急，把话都说清楚。"),
+    ]
+    reasons = gex._perbeat_check(
+        slot, "衣服是我弄脏的，我不是故意，你别急。", prev
+    )
+    assert "当事人补位句不许提前说掉本拍的事实" in reasons
+    assert "当事人补位句不许劝对方别急" in reasons
+
+
+def test_witness_without_speech_act_is_not_a_party():
+    """只说过一句旁观话、没有 speech_act 的角色仍是旁观者（#144 灿灿）。
+
+    按「说过话」算当事人，昭昭的补位句劝灿灿「你先别急着说」就不会被拦，
+    终检每次都判「安抚对象错位、说话主体对调」。
+    """
+    entries = [
+        (1, {"beat": 1, "speaker": "妈妈", "intent": "骂人", "speech_act": "accuse"}),
+        (3, {"beat": 3, "speaker": "灿灿", "intent": "我就在旁边听着，你慢慢说。"}),
+        (5, {"beat": 5, "speaker": "昭昭", "intent": "承认", "speech_act": "admit"}),
+    ]
+    slot = {
+        "beat_id": 4,
+        "speaker": "昭昭",
+        "intent": "当事人在场反应",
+        "is_filler": True,
+        "_beat_entries": entries,
+    }
+    assert gex._perbeat_parties(slot) == {"妈妈", "昭昭"}
+    prev = [
+        ("妈妈", "昭昭你衣服弄这么脏，还傻站着，真傻！"),
+        ("昭昭", "妈妈你为什么要这么大声骂我？"),
+        ("灿灿", "你慢慢说，别急，把话一句句说清楚。"),
+    ]
+    reasons = gex._perbeat_check(
+        slot, "姐姐你先别急着说，让妈妈把话慢慢说完。", prev
+    )
+    assert "当事人补位句不许劝对方别急" in reasons
+
+
+def test_party_filler_intent_drops_witness_function():
+    """「只做旁观安抚」这种旁观功能不能派给当事人。"""
+    intent = "只做旁观安抚：让上一句的说话人先别急、慢慢说、把话说完"
+    assert gex._perbeat_party_filler_intent(intent) == gex._PARTY_FILLER_INTENT
+    own = "先把话顶回去，别认输"
+    assert "当事人" in gex._perbeat_party_filler_intent(own)
+
+
+def test_semantic_repair_cannot_flatten_sulk_closing():
+    """终检修稿把「还没消气」改成「这还差不多」时，极性守卫回退该行。"""
+    rows = [
+        {"speaker": "妈妈", "line": "对不起昭昭，是妈妈不对，妈妈不该说你傻。"},
+        {"speaker": "昭昭", "line": "妈妈现在说对不起，可我心里那根刺还没拔出来。"},
+    ]
+    chain = [
+        {"beat": 1, "speaker": "妈妈", "intent": "连声道歉", "speech_act": "admit"},
+        {
+            "beat": 2,
+            "speaker": "昭昭",
+            "beat_type": "nonverbal",
+            "coherence_exempt": True,
+            "intent": "小嘴一撇，嘟囔一句听不清的话，神情还没消气",
+        },
+    ]
+    original = {"dialogue": [dict(r) for r in rows], "gold_beat_chain": chain}
+    lifted = {
+        "dialogue": [
+            dict(rows[0]),
+            {"speaker": "昭昭", "line": "哼，这还差不多。"},
+        ],
+        "gold_beat_chain": chain,
+    }
+    out, changed = gcf._sanitize_semantic_scoped_repair(
+        original,
+        lifted,
+        target_lines={2},
+        st_final="",
+        normalize_chat=lambda c: c,
+    )
+    assert changed is False
+    assert out["dialogue"][-1]["line"] == rows[1]["line"]

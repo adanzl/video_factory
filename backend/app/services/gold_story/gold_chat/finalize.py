@@ -42,7 +42,9 @@ from app.services.gold_story.gold_chat.patch import (
 )
 from app.services.gold_story.gold_chat.prompts import format_structure_score_feedback
 from app.services.gold_story.gold_chat.validate import (
+    closing_accept_marker,
     collect_align_issues,
+    is_sulk_closing,
     split_align_issues,
 )
 from app.services.gold_story.scene import sanitize_banned_literals
@@ -454,6 +456,34 @@ def _semantic_repair_scope_block(
     return "\n".join(parts)
 
 
+def _protected_closing_line_index(chat: dict[str, Any]) -> int | None:
+    """标了「赢了但没消气」的收束拍所在行号（1 基）；没有返回 None。
+
+    修稿只许做表层改写：把「心里这口气还没顺」改成「这还差不多」等于把
+    反差收平，笑点余味全丢（#144 run27 实测：两轮修稿后好笑分 8，结构 80）。
+    """
+    chain = chat.get("gold_beat_chain") or chat.get("beat_chain") or []
+    if not isinstance(chain, list) or not chain:
+        return None
+    last = chain[-1]
+    if not isinstance(last, dict):
+        return None
+    if not is_sulk_closing(last):
+        return None
+    rows = chat.get("dialogue")
+    if not isinstance(rows, list) or not rows:
+        return None
+    tail = rows[-1]
+    speaker = str(last.get("speaker") or "").strip()
+    if (
+        speaker
+        and isinstance(tail, dict)
+        and str(tail.get("speaker") or "").strip() != speaker
+    ):
+        return None
+    return len(rows)
+
+
 def _sanitize_semantic_scoped_repair(
     original: dict[str, Any],
     lifted: dict[str, Any],
@@ -474,6 +504,7 @@ def _sanitize_semantic_scoped_repair(
     ):
         return dict(original), False
 
+    closing_idx = _protected_closing_line_index(original)
     scoped_rows: list[Any] = [dict(x) if isinstance(x, dict) else x for x in original_rows]
     changed = False
     for idx in sorted(target_lines):
@@ -490,6 +521,18 @@ def _sanitize_semantic_scoped_repair(
         new_line = str(new_item.get("line") or "").strip()
         old_line = str(old_item.get("line") or "").strip()
         if new_line and new_line != old_line:
+            # 收束拍极性守卫：「没消气」被改成「这还差不多」时回退该行，
+            # 不让修稿把设计好的反差余味抹平。
+            if (
+                closing_idx == idx
+                and closing_accept_marker(new_line)
+                and not closing_accept_marker(old_line)
+            ):
+                logger.info(
+                    "gold_chat repair guard: line=%s 收束极性被改写，回退该行",
+                    idx,
+                )
+                continue
             scoped_rows[idx - 1]["line"] = new_line
             changed = True
 

@@ -33,6 +33,62 @@ _BANNED_INVENTED_CLOSES: tuple[str, ...] = (
     "站内模板暖梗（story_raw 未出现则禁）",
 )
 
+# 收束极性：契约把收束拍标成「赢了但没消气」（closing_polarity=
+# unresolved_resentment）时，末句必须留着这份余味。写成「这还差不多/我原谅你」
+# 等于把反差收平——观众的笑点正在这个没消气上（#144 实测：终检修稿把
+# 「心里这口气还没顺」改成「这还差不多」后，好笑分从 10 档掉到 8 档）。
+CHAT_CLOSING_ACCEPT_MARKERS: tuple[str, ...] = (
+    "这还差不多",
+    "我原谅你",
+    "原谅你了",
+    "我不怪你",
+    "不怪你",
+    "没事了",
+    "好啦",
+    "行吧",
+    "算了",
+    "我接受",
+    "听你的",
+)
+
+
+def closing_polarity(entry: Any) -> str:
+    """契约拍声明的收束极性（unresolved_resentment 等）；没有返回空串。"""
+    if not isinstance(entry, dict):
+        return ""
+    return str(entry.get("closing_polarity") or "").strip().lower()
+
+
+# 非言语收束拍里出现这些写法，就说明要的是「赢了但没消气」的余味。
+_SULK_CLOSING_INTENT_RE = re.compile(
+    r"没消气|还没顺|没完全哄好|没哄好|不服|小情绪|嘟囔.{0,6}没"
+)
+
+
+def is_sulk_closing(entry: Any) -> bool:
+    """收束拍是不是「赢了但没消气」。
+
+    两种来源：契约显式声明 ``closing_polarity: unresolved_resentment``，
+    或非言语收束拍的意图本身写明「嘟囔/没消气/没哄好」。后者让既有契约
+    不用逐条补字段也能吃到这条保护。
+    """
+    if closing_polarity(entry) == "unresolved_resentment":
+        return True
+    if not isinstance(entry, dict):
+        return False
+    if str(entry.get("beat_type") or "").strip().lower() != "nonverbal":
+        return False
+    return bool(_SULK_CLOSING_INTENT_RE.search(str(entry.get("intent") or "")))
+
+
+def closing_accept_marker(text: str) -> str:
+    """命中「已接受/已满意」收束标记时返回该标记（空串=没命中）。"""
+    raw = str(text or "")
+    for marker in CHAT_CLOSING_ACCEPT_MARKERS:
+        if marker in raw:
+            return marker
+    return ""
+
 RE_RETALIATION = re.compile(
     r"也.*(?:弄坏|撕|毁|抢坏)|也(?:弄坏|撕|毁)|还.*(?:弄坏|撕|毁)"
 )
@@ -2767,6 +2823,20 @@ def _line_fulfills_beat(
     # 既不是有效台词，也不能拿它去满足 beat。）
     if _looks_like_pure_action(line):
         return False
+    # 追问/反问拍（echo/retort）：契约要的是「孩子把家长刚说的话顶回去」。
+    # 真实对白常常只留疑问句和两三个共享词，anchor 的整句短语与双字词 ≥3
+    # 都认不出（#144 实测：第 2 句「你干嘛那么大声骂我？」被判没落地
+    # beat2「撅嘴生闷气，反问妈妈为什么大声骂自己」，整稿卡在开场因果）。
+    # 对这类拍，只要说话人正确、句子确实在问、且与 intent 共享 ≥2 个双字词，
+    # 就算落地；其余拍仍走下面的严格判据。
+    if (
+        str(entry.get("speech_act") or "").strip().lower()
+        in {"echo", "retort", "question"}
+        and speaker in {"昭昭", "灿灿"}
+        and re.search(r"[？?]\s*$|为什么|为啥|凭什么|怎么|难道", line)
+        and _intent_line_overlap(intent, line, need=2)
+    ):
+        return True
     acts = _intent_speech_acts(intent)
     if (
         "trigger" in acts

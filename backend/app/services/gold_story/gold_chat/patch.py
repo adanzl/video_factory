@@ -672,6 +672,21 @@ _KINSHIP_REPLACEMENTS = {
 }
 
 
+def patch_clamp_chat_key(story: dict[str, Any]) -> dict[str, Any]:
+    """key 硬卡 2–8 字：称谓替换/点题补丁会把 key 撑长，验收前先本地截断。
+
+    #144 实测：逐拍稿 key 原本 8 字，换称谓补丁后变 9 字，结构分 80 仍被判
+    「key 须2–8字，当前9字」，白烧一轮修稿预算。
+    """
+    from app.services.daily_story.prompts import DAILY_STORY_KEY_CHARS_MAX
+
+    out = dict(story)
+    key = str(out.get("key") or "").strip()
+    if len(key) > DAILY_STORY_KEY_CHARS_MAX:
+        out["key"] = key[:DAILY_STORY_KEY_CHARS_MAX].strip()
+    return out
+
+
 def patch_replace_banned_kinship(
     story: dict[str, Any],
     *,
@@ -1319,7 +1334,9 @@ def patch_m2_c_snack_beat_rebuild(
     )
     title = str(out.get("scene_title") or story.get("scene_title") or "").strip()
     if title and not str(out.get("key") or "").strip():
-        out["key"] = title[:12]
+        # 与 validate 的 2–8 字硬卡同口径；旧实现切 12 字，C 类补出来的 key
+        # 会被自己的校验判死。
+        out["key"] = title[:8]
     if not str(out.get("key") or "").strip():
         out["key"] = "零食作业战"
     if not str(out.get("scene_title") or "").strip():

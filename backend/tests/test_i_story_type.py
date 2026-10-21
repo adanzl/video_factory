@@ -290,6 +290,23 @@ def test_i_trim_keeps_apology_close_without_forced_win():
     assert lines[-1].startswith("小嘴一撇")
 
 
+def test_i_conceding_soul_winner_gets_no_win_line():
+    """拷问方已认错时不再补「制敌」：多补一句会让家长台词超预算。"""
+    from app.services.daily_story.story_types.i.patch import _ensure_oral_win_at_end
+
+    story = {
+        "story_type": "I",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "那你为什么说我傻呢？"},
+            {"speaker": "妈妈", "line": "对不起，是妈妈不对，不该说你傻。"},
+        ],
+    }
+    before = len(story["dialogue"])
+    notes = _ensure_oral_win_at_end(story, "妈妈")
+    assert len(story["dialogue"]) == before
+    assert not notes
+
+
 def test_i_validate_rejects_missing_speechless():
     story = {
         "story_type": "I",
@@ -636,3 +653,72 @@ def test_parent_acknowledges_child_feeling_before_fact_question():
     notes = patch_i_parent_acknowledge_child_feeling(story)
     assert notes
     assert story["dialogue"][1]["line"].startswith("妈妈知道你不高兴，")
+
+
+def test_oral_win_skipped_after_parent_apology():
+    """家长已经认错：不再补「看你还嘴硬」，否则是冲着道歉继续训人。
+
+    #144 实测：昭昭的「还没消气」收束被替换成固定制敌句，终检判接不上，
+    修稿又把收束改成完全满意，未消气的反差余味全丢。
+    """
+    from app.services.daily_story.story_types.i.patch import _ensure_oral_win_at_end
+
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭你看你衣服脏成这样，你可真傻！"},
+            {"speaker": "昭昭", "line": "弄了衣服是傻？那你为什么要说傻呢？"},
+            {"speaker": "妈妈", "line": "对不起昭昭，是妈妈不对，妈妈不该说你傻。"},
+            {
+                "speaker": "昭昭",
+                "line": "妈妈现在说对不起，可我心里那根刺还没拔出来。",
+            },
+        ]
+    }
+    notes = _ensure_oral_win_at_end(story, "昭昭")
+    assert notes == []
+    assert story["dialogue"][-1]["line"] == "妈妈现在说对不起，可我心里那根刺还没拔出来。"
+
+
+def test_oral_win_keeps_existing_stubborn_closing():
+    """末句已经是嘴硬/赌气收场时，不再用固定句覆盖。"""
+    from app.services.daily_story.story_types.i.patch import _ensure_oral_win_at_end
+
+    story = {
+        "dialogue": [
+            {"speaker": "妈妈", "line": "你到底写不写作业？"},
+            {"speaker": "昭昭", "line": "我就是不服，你能拿我怎么办？"},
+        ]
+    }
+    notes = _ensure_oral_win_at_end(story, "昭昭")
+    assert notes == []
+    assert story["dialogue"][-1]["line"] == "我就是不服，你能拿我怎么办？"
+
+
+def test_patch_i_body_keeps_unresolved_sulk_closing():
+    """整条 I 类本地修稿链不得把「没消气」的收束改掉。"""
+    from app.services.daily_story.story_types.i.patch import patch_i_body
+
+    story = {
+        "story_type": "I",
+        "setting": "餐桌",
+        "conflict_core": "妈妈骂昭昭弄脏衣服还说傻，昭昭用疼你和傻反问把妈妈问住",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "昭昭你看你衣服脏成这样，你可真傻！"},
+            {"speaker": "昭昭", "line": "妈你干嘛这么大声骂我，我哪里傻了？"},
+            {"speaker": "灿灿", "line": "你慢慢说，别急，先听昭昭把话讲完。"},
+            {"speaker": "昭昭", "line": "姐姐让我慢慢说，妈你先别急，我听着。"},
+            {"speaker": "妈妈", "line": "你是不是弄脏了衣服，弄脏谁的衣服，帮妈妈弄干净。"},
+            {"speaker": "昭昭", "line": "衣服是我弄脏的，我自己弄干净，因为疼妈妈。"},
+            {"speaker": "灿灿", "line": "我在这儿看着都替你俩累，先歇会儿再吵。"},
+            {"speaker": "妈妈", "line": "你疼妈妈，妈妈还怪你不小心、说你傻，这算什么？"},
+            {"speaker": "昭昭", "line": "弄了衣服是傻？你说不小心，那你为什么要说傻呢？"},
+            {"speaker": "灿灿", "line": "昭昭，你先说，我在旁边听着，不插嘴。"},
+            {"speaker": "妈妈", "line": "对不起昭昭，是妈妈不对，妈妈不该说你傻。"},
+            {
+                "speaker": "昭昭",
+                "line": "妈妈现在说对不起，可我心里那根刺还没拔出来。",
+            },
+        ],
+    }
+    patch_i_body(story)
+    assert story["dialogue"][-1]["line"] == "妈妈现在说对不起，可我心里那根刺还没拔出来。"

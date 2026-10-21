@@ -4244,6 +4244,41 @@ def test_line_plan_slots_marks_reaction_lines_as_filler():
     assert slots[2]["beat_id"] == 2
 
 
+def test_line_plan_slots_mark_zero_content_reaction_slots():
+    """#144：源故事里没出声的角色，其补位槽标 has_content=False（走旁观口径）。"""
+    from app.services.gold_story.gold_chat.expand import _line_plan_slots
+
+    slots = _line_plan_slots(
+        _LP_VALID_PLAN,
+        _LP_CONTRACT["beat_chain"],
+        no_material_speakers={"灿灿"},
+    )
+    by_speaker = {s["speaker"]: s for s in slots if s["is_filler"]}
+    assert by_speaker["灿灿"]["has_content"] is False
+    assert by_speaker["昭昭"]["has_content"] is True
+
+
+def test_line_plan_skeleton_does_not_split_for_no_material_speaker():
+    """#144：零素材角色不接拆句——拆句要它说本拍另一半，它只能转述别人的话。"""
+    from app.services.gold_story.gold_chat.expand import _line_plan_skeleton
+
+    base = _line_plan_skeleton(
+        _LP_CONTRACT, _LP_CONTRACT["beat_chain"], target_lines=12
+    )
+    assert any(row.get("split") and row["speaker"] == "灿灿" for row in base)
+
+    rows = _line_plan_skeleton(
+        _LP_CONTRACT,
+        _LP_CONTRACT["beat_chain"],
+        target_lines=12,
+        no_material_speakers={"灿灿"},
+    )
+    assert len(rows) == 12
+    assert not any(
+        row.get("split") and row["speaker"] == "灿灿" for row in rows
+    )
+
+
 def test_line_plan_skeleton_covers_beats_without_adjacent_duplicates():
     from app.services.gold_story.gold_chat.expand import _line_plan_skeleton
 

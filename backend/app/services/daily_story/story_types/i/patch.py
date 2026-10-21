@@ -17,6 +17,10 @@ from app.services.daily_story.story_types.i.validate import (
 _I_CLOSING_TAIL_ALLOW = 1
 _RE_INDOOR_SETTING = re.compile(r"卧室|客厅|厨房|餐厅|书桌|餐桌|沙发")
 _ORAL_WIN_LINE = "看你还嘴硬！"
+# 「赢了但没消气」的收束：已经是合格收场，不许再覆盖成固定制敌句。
+_RE_UNRESOLVED_SULK = re.compile(
+    r"没消气|气还没消|还没顺|不服|不跟你多说|不跟你说话|还生着气"
+)
 _ORAL_SPEECHLESS_LINE = "我……我……"
 # ≤24 字硬上限；留余量勿贴边
 _I_SOUL_SWAP_LINE = "换你被到处说低分，你乐意吗？"
@@ -370,6 +374,11 @@ def patch_i_strip_premature_speechless(story: dict) -> list[str]:
     ai = {prop: 0, vict: 0}
     for i in range(soul_idx):
         if not isinstance(dialogue[i], dict):
+            continue
+        # 末句是收束拍，不可能是「提前」败北：孩子收在「还没消气/不说了」上
+        # 正是本类设计（#144 实测：未消气的收束被当成伪语塞改成争锋句，
+        # 反差余味丢失）。
+        if i == len(dialogue) - 1:
             continue
         sp = str(dialogue[i].get("speaker") or "").strip()
         line = str(dialogue[i].get("line") or "").strip()
@@ -1399,8 +1408,12 @@ def patch_i_collapse_repeated_claim_questions(story: dict) -> list[str]:
             old = str(dialogue[i].get("line") or "")
             claim = re.search(r"傻|笨|坏|懒|蠢", old)
             if i < kept:
+                # 靠前的追问是「第一次发难」，改成陈述句会让开场因果（beat=2
+                # 要反问）认不出来（#144 实测：第2句被改成「你骂我傻，我不
+                # 高兴。」，终检判缺 beat=2）。保留问句形式，只换说法。
                 alternatives = (
-                    f"你骂我{claim.group(0)}，我不高兴。" if claim else "",
+                    "你为什么这么说？",
+                    f"你凭什么说我{claim.group(0)}？" if claim else "",
                     "你这么说，我心里很难受。",
                 )
             else:
@@ -1608,6 +1621,35 @@ def _ensure_oral_win_at_end(story: dict, winner: str) -> list[str]:
     if not isinstance(dialogue, list) or not dialogue:
         return notes
     sp = winner or "昭昭"
+    # 拷问方已经当场认错/道歉：它不再有「制敌」资格，补一句会让认错收束
+    # 反而多出家长台词（#144 实测：妈妈认错后又补一句，妈妈 5→6 句超预算）。
+    win_lines = [
+        str(item.get("line") or "")
+        for item in dialogue
+        if isinstance(item, dict)
+        and str(item.get("speaker") or "").strip() == sp
+    ]
+    if win_lines and RE_I_CONCEDE.search(win_lines[-1]):
+        return notes
+    # 对手（家长）已在收束段落里认错/道歉：认错本身就是败北，赢家此时再补
+    # 「看你还嘴硬」等于冲着道歉继续训人，前后自相矛盾。原故事「妈妈道歉、
+    # 孩子嘟囔还没消气」要的正是这份余味（#144 run27 实测：昭昭的未消气收束
+    # 被改成「看你还嘴硬」，终检判接不上，修稿又把它改成完全满意，反差全丢）。
+    if any(
+        RE_I_CONCEDE.search(str(item.get("line") or ""))
+        for item in dialogue[-3:]
+        if isinstance(item, dict)
+        and str(item.get("speaker") or "").strip() != sp
+    ):
+        return notes
+    last = dialogue[-1] if isinstance(dialogue[-1], dict) else None
+    # 赢家末句已经收住了（嘴硬或未消气），不要拿固定句覆盖掉更好的收场。
+    if last and str(last.get("speaker") or "").strip() == sp:
+        cur_line = str(last.get("line") or "")
+        if RE_WIN_STUBBORN.search(cur_line) or _RE_UNRESOLVED_SULK.search(
+            cur_line
+        ):
+            return notes
     for item in dialogue[-4:]:
         if not isinstance(item, dict):
             continue
