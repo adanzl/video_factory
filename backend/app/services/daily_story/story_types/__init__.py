@@ -532,6 +532,11 @@ def apply_gold_chat_type_patch(
     had_locked_type = "_story_type" in out
     previous_locked_type = out.get("_story_type")
     out["_story_type"] = st
+    # 告诉各类型 patch「本次是金稿中段修」：金稿有契约逐拍生成，
+    # 不能再吃按日常母版写的通用兜底句（G 类实测会补出与上一句无关的句子）。
+    had_gold_chat_flag = "_gold_chat_patch" in out
+    previous_gold_chat_flag = out.get("_gold_chat_patch")
+    out["_gold_chat_patch"] = True
     try:
         notes = list(patch_type_body(out) or [])
     finally:
@@ -539,6 +544,10 @@ def apply_gold_chat_type_patch(
             out["_story_type"] = previous_locked_type
         else:
             out.pop("_story_type", None)
+        if had_gold_chat_flag:
+            out["_gold_chat_patch"] = previous_gold_chat_flag
+        else:
+            out.pop("_gold_chat_patch", None)
     return out, notes
 
 

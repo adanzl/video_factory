@@ -120,6 +120,13 @@ def patch_g_body(story: dict) -> list[str]:
     )
 
     notes.extend(patch_dialogue_narration_to_speech(story))
+    # 金稿的中段定点修只做旁白转台词：这里的兜底池是按日常 G 类母版写的
+    # 通用句（"那我也一起玩！"「你干嘛呀？」"一起收拾吧！"），放进金稿后
+    # 接不住契约上一句，终检必判答非所问（#154 实测：12 句稿被补成 13 句，
+    # 末句「那我也一起玩！」与「别让人欺负你」完全无关）。金稿的句数/字数
+    # 由 gold_chat 自己的垫字链负责，不在这里补。
+    if story.get("_gold_chat_patch"):
+        return notes
     # 先断同人连说、补 near-miss；再做 pivot/stun/soft 判定。
     notes.extend(_patch_g_break_consecutive(story))
     notes.extend(_patch_g_min_chars(story))

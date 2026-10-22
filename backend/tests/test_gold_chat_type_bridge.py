@@ -793,3 +793,36 @@ def test_q_consecutive_does_not_steal_cheat_lines():
     errs: list[str] = []
     append_q_body_errors(story, errs)
     assert not any("抢戏" in e for e in errs)
+
+
+def test_gold_chat_g_patch_skips_daily_canned_lines():
+    """金稿走 G patch 时不得吃日常母版兜底句（#154：13 句稿末句答非所问）。"""
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+    from app.services.daily_story.story_types.g.patch import patch_g_body
+
+    def _chat() -> dict:
+        return {
+            "dialogue": [
+                {"speaker": "灿灿", "line": "你抢我遥控器。"},
+                {"speaker": "昭昭", "line": "是你先抢的。"},
+                {"speaker": "灿灿", "line": "我没抢。"},
+                {"speaker": "昭昭", "line": "你抢了。"},
+            ],
+            "setting": "客厅",
+        }
+
+    gold = _chat()
+    patched, _ = apply_gold_chat_type_patch(gold, structure_type="G")
+    lines = [str(it.get("line") or "") for it in patched["dialogue"]]
+    assert len(lines) == 4
+    assert all("一起玩" not in ln for ln in lines)
+    assert all("干嘛呀" not in ln for ln in lines)
+    assert "_gold_chat_patch" not in patched
+    assert "_story_type" not in patched
+
+    daily = _chat()
+    daily["story_type"] = "G"
+    notes = patch_g_body(daily)
+    daily_lines = [str(it.get("line") or "") for it in daily["dialogue"]]
+    assert "那我也一起玩！" in daily_lines
+    assert any("G补" in note for note in notes)
