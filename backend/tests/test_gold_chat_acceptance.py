@@ -4279,6 +4279,61 @@ def test_line_plan_skeleton_does_not_split_for_no_material_speaker():
     )
 
 
+def test_line_plan_skeleton_split_row_keeps_second_half_for_filler():
+    """拆句时拍主只说前半，后半留给拆句行；拍主不能再把半句里的别人的话说了。"""
+    from app.services.gold_story.gold_chat.expand import _line_plan_skeleton
+
+    rows = _line_plan_skeleton(
+        _LP_CONTRACT, _LP_CONTRACT["beat_chain"], target_lines=12
+    )
+    main = next(
+        row for row in rows if row["beat"] == 2 and row["role"] == "main"
+    )
+    split = next(
+        row for row in rows if row["beat"] == 2 and row.get("split")
+    )
+    assert main["intent"] == "嫌黑面芯子难吃"
+    assert split["speaker"] == "灿灿"
+    assert split["split_half"] == "补一句妈妈眉清目秀"
+
+
+def test_line_plan_skeleton_keeps_closing_beat_owner_last():
+    """#149：12 句要把 8 拍撑满时，收束拍不能补尾巴，末行须仍是收束拍主。
+
+    姐弟交替冲突的契约里，孩子补位句几乎都被下一拍拍主占住，多出来的句子
+    会一路补到收束拍；若在收束拍主句后再追加反应，末行就成了别人的行，
+    `_validate_line_plan` 每轮都判「最后一句不是收束拍说话人」。
+    """
+    from app.services.gold_story.gold_chat.expand import _line_plan_skeleton
+
+    contract = {
+        "location": "炕上",
+        "object": "贴纸",
+        "characters": ["灿灿", "昭昭", "妈妈"],
+        "mom_lines_max": 3,
+        "beat_chain": [
+            {"beat": 1, "speaker": "灿灿", "intent": "被昭昭嘴硬顶到，回嘴并动手"},
+            {"beat": 2, "speaker": "昭昭", "intent": "一边躲一边嘴硬回呛"},
+            {"beat": 3, "speaker": "灿灿", "intent": "把昭昭按在炕上，昭昭喊救命"},
+            {"beat": 4, "speaker": "妈妈", "intent": "头也不回继续贴贴纸，不劝架"},
+            {"beat": 5, "speaker": "昭昭", "intent": "秒怂嘟囔一句"},
+            {"beat": 6, "speaker": "妈妈", "intent": "贴完拍拍手让他俩继续"},
+            {"beat": 7, "speaker": "昭昭", "intent": "停手后问要不要一起贴完"},
+            {"beat": 8, "speaker": "灿灿", "intent": "接住说好一起贴，别贴歪"},
+        ],
+    }
+    rows = _line_plan_skeleton(
+        contract, contract["beat_chain"], target_lines=12
+    )
+    assert len(rows) == 12
+    assert rows[-1]["beat"] == 8
+    assert rows[-1]["speaker"] == "灿灿"
+    assert not rows[-1].get("role") == "reaction"
+    speakers = [row["speaker"] for row in rows]
+    assert all(a != b for a, b in zip(speakers, speakers[1:]))
+    assert speakers.count("妈妈") <= 3
+
+
 def test_line_plan_skeleton_covers_beats_without_adjacent_duplicates():
     from app.services.gold_story.gold_chat.expand import _line_plan_skeleton
 

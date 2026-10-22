@@ -132,6 +132,65 @@ def test_ensure_gold_chat_min_chars_does_not_force_dirty_fill():
     assert gc.dialogue_total_chars(out_short) < gc.DAILY_STORY_BODY_CHARS_MIN
 
 
+def test_ensure_gold_chat_min_chars_skips_padding_in_default_perbeat_mode(monkeypatch):
+    """逐拍是默认路径：没显式设 GOLD_CHAT_PERBEAT 也不许垫字/插池子句。
+
+    #149 实测：12 句 232 字的逐拍稿被垫成 15 句，插入「你别想让我认输」
+    「没完就没完」池子对，还带出「别挠我了行！」截断语病，终检全判接不上。
+    """
+    monkeypatch.delenv("GOLD_CHAT_PERBEAT", raising=False)
+    dialogue = [
+        {"speaker": "昭昭", "line": "我看你咋打我啊，你追都追不上我。"},
+        {"speaker": "灿灿", "line": "我穿裙子也追得上你，你别跑。"},
+        {"speaker": "昭昭", "line": "你管得太宽了，这事没完。"},
+        {"speaker": "灿灿", "line": "我按住你了，再动一下试试。"},
+        {"speaker": "昭昭", "line": "妈妈救我，姐姐不让我起来。"},
+        {"speaker": "妈妈", "line": "你们自己看着办，我这排还没贴正。"},
+        {"speaker": "灿灿", "line": "我挠你痒痒，看你还嘴硬不。"},
+        {"speaker": "昭昭", "line": "别挠了，你纯属多余，快住手。"},
+        {"speaker": "灿灿", "line": "刚才那股横劲去哪了，怎么不喊。"},
+        {"speaker": "妈妈", "line": "你俩继续，贴完这排还有一排。"},
+        {"speaker": "灿灿", "line": "剩下这些贴纸要不要一起贴完。"},
+        {"speaker": "昭昭", "line": "好啊，一起贴，别把贴纸贴歪了。"},
+    ]
+    story = {"story_type": "K", "dialogue": dialogue}
+    before = gc.dialogue_total_chars(story)
+    out, _changed = gc._ensure_gold_chat_min_chars(story)
+    assert gc.dialogue_total_chars(out) == before
+    blob = "".join(str(row.get("line") or "") for row in out["dialogue"])
+    assert "你别想让我认输" not in blob
+    assert "没完就没完" not in blob
+
+
+def test_k_meet_min_chars_uses_effective_floor_not_240():
+    """K 补字与终检同口径：12 句 234 字已达标，不得再灌池子对。
+
+    #149 实测：12 句 233 字被 `_k_meet_min_chars` 按 240 硬线判「不够」，
+    垫成 15 句，末段三句全是「不认输/没完」换词复述，终检判重复。
+    """
+    from app.services.gold_story.gold_chat.finalize import (
+        _k_meet_min_chars,
+        _k_under_hard_floor,
+    )
+
+    line = "一二三四五六七八九十一二三四五六七八九"  # 19 字
+    rows = [
+        {"speaker": "昭昭" if i % 2 == 0 else "灿灿", "line": line}
+        for i in range(12)
+    ]
+    chat = {"story_type": "K", "dialogue": rows}
+    assert gc.dialogue_total_chars(chat) == 228
+    assert _k_under_hard_floor(chat) is False
+    assert len(_k_meet_min_chars(chat, mechanism="M12")["dialogue"]) == 12
+
+    short = dict(chat)
+    short["dialogue"] = [
+        {"speaker": "昭昭", "line": "一二三四五六七八九十一二三四五六七"}  # 17 字
+    ] * 12
+    assert gc.dialogue_total_chars(short) == 204
+    assert _k_under_hard_floor(short) is True
+
+
 def test_i_close_local_patch_uses_effective_char_floor(monkeypatch):
     """I 收口与终检同一口径：14 句达标时 228 字不得再按 240 硬卡打回。"""
     from app.services.gold_story.gold_chat.validate import (
@@ -3723,6 +3782,16 @@ def test_perbeat_legacy_word_list_remains_one_alternative_group(words):
     assert not gex._perbeat_words_ok("今天这件事已经结束。", groups)
 
 
+def test_perbeat_speech_form_allows_colloquial_kan_retort():
+    """「我看你…」是正常回呛，不得按自述动作/旁白误拦。"""
+    assert gex._perbeat_speech_form_ok("我看你咋打扰啊，你倒是来啊！", "昭昭")
+    assert gex._perbeat_speech_form_ok("我看准软地方才往那边落。", "昭昭")
+    # 镜头腔的「看看/盯着」仍按自述动作拦
+    assert not gex._perbeat_speech_form_ok(
+        "我看看妈妈手里的筷子落不落。", "灿灿"
+    )
+
+
 def test_perbeat_stage_direction_is_rejected_and_cleaned_from_intent():
     from app.services.gold_story.gold_chat.prompts import _perbeat_clean_intent
 
@@ -4288,6 +4357,24 @@ def test_perbeat_filler_claiming_owner_event_is_blocked():
         prev,
     )
     assert "插话不得认领拍主的事实/动机" not in own
+
+
+def test_perbeat_party_filler_not_blocked_as_claiming_owner_event():
+    """#149：当事人孩子接话/拆句用「我」说本拍的事，不算认领旁观对象的事。"""
+    slot = _perbeat_filler_slot_with_owner(
+        speaker="昭昭",
+        owner="灿灿",
+        beat_id=3,
+        intent="喊妈妈救命，说姐姐还在挠",
+        owner_intent="把昭昭按在炕上，昭昭喊妈妈救我，灿灿趁机又挠两下",
+    )
+    slot["has_content"] = True
+    reasons = gex._perbeat_check(
+        slot,
+        "妈妈你看她又挠我两下，我手都腾不出来！",
+        [("灿灿", "我就挠你两下怎么了。")],
+    )
+    assert "插话不得认领拍主的事实/动机" not in reasons
 
 
 def test_perbeat_zero_content_filler_relaxed_but_still_blocks_copying():

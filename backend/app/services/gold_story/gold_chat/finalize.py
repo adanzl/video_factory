@@ -44,6 +44,7 @@ from app.services.gold_story.gold_chat.prompts import format_structure_score_fee
 from app.services.gold_story.gold_chat.validate import (
     closing_accept_marker,
     collect_align_issues,
+    gold_chat_effective_min_chars,
     is_sulk_closing,
     split_align_issues,
 )
@@ -1906,8 +1907,11 @@ def _k_under_hard_floor(chat: dict[str, Any]) -> bool:
 
     dialogue = chat.get("dialogue")
     lines = len(dialogue) if isinstance(dialogue, list) else 0
+    # 与 validate_chat_hard 同口径：句数达标时字数下限放宽一行（240-24=216）。
+    # 写死 240 会把 12 句 233 字的合格稿判成「不够」，再灌 `_K_NATURAL_MID_PAIRS`
+    # 池子对（#149 实测：12 句 233 字被垫成 15 句，末段三句全是「不认输/没完」复述）。
     return (
-        dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN
+        dialogue_total_chars(chat) < gold_chat_effective_min_chars(dialogue)
         or lines < CHAT_LINE_COUNT_MIN
     )
 

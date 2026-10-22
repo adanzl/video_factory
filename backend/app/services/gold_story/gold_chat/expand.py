@@ -1505,6 +1505,12 @@ def _line_plan_skeleton(
                     continue
                 if not kid_pass and is_kid_beat:
                     continue
+                # 收束拍不补尾巴：plan 只认「末行 = 收束拍主说话人」，在收束拍
+                # 主句后再追加反应，末行就成了别人的行（#149 实测：末行成了
+                # 「8 昭昭 reaction split」，每次重排都判「最后一句不是收束拍
+                # 说话人」，只能退回旧槽）。收束拍真要补，也只能插在主句之前。
+                if no == len(beats):
+                    continue
                 group = groups[no - 1]
                 if len(group) >= cap_of(no):
                     continue
@@ -1527,6 +1533,20 @@ def _line_plan_skeleton(
                     # 昭昭复述灿灿的安慰话，终检判「说话主体对调」）。
                     and owner not in (no_material_speakers or set())
                 )
+                _first_half = ""
+                _second_half = ""
+                if _split:
+                    _first_half, _second_half = _split_beat_halves(
+                        str(beats[no - 1].get("intent") or "")
+                    )
+                    if not (_first_half and _second_half):
+                        _split = False
+                if _split:
+                    # 拆开的两半各说各的：拍主只说前半，摆到「拆句」那一行的
+                    # 意图里不能再重复后半。原先拍主整条拍意图照搬，模型会把
+                    # 后半（另一个人的话/动作）也塞进拍主嘴里（#149 实测：
+                    # 灿灿把「妈妈救我」这句昭昭的呼救说了）。
+                    group[0]["intent"] = _first_half
                 group.append(
                     {
                         "beat": no,
@@ -1534,11 +1554,7 @@ def _line_plan_skeleton(
                         "role": "reaction",
                         # 能拆的拍才标拆句；拆不动的拍只作在场者接话。
                         "split": _split,
-                        "split_half": _split_beat_halves(
-                            str(beats[no - 1].get("intent") or "")
-                        )[1]
-                        if _split
-                        else "",
+                        "split_half": _second_half if _split else "",
                     }
                 )
                 counts[speaker] = counts.get(speaker, 0) + 1
@@ -1548,6 +1564,23 @@ def _line_plan_skeleton(
                 break
         if not progress:
             break
+    # 兜底：上面避开了收束拍，句数仍不够时才在收束拍补一句，而且插在主句
+    # 之前——末行必须还是收束拍主说话人。补的这句只让孩子接话，不拆句。
+    while remaining > 0:
+        group = groups[-1]
+        owner = owners[-1]
+        if len(group) >= cap_of(len(beats)):
+            break
+        banned = {str(group[0]["speaker"])}
+        if len(groups) > 1:
+            banned.add(str(groups[-2][-1]["speaker"]))
+        pool = [k for k in kids if k != owner and k not in banned]
+        if not pool:
+            break
+        speaker = min(pool, key=lambda c: counts.get(c, 0))
+        group.insert(0, {"beat": len(beats), "speaker": speaker, "role": "reaction"})
+        counts[speaker] = counts.get(speaker, 0) + 1
+        remaining -= 1
     # 收尾修复：相邻两拍同人时，在后一拍拍首插一句反应（句数允许涨到 13/14）。
     for _ in range(len(groups) + 1):
         fixed = True
@@ -2590,7 +2623,10 @@ _ANCHOR_STOP_RE = re.compile(
 
 
 _NARRATION_HEAD_RE = re.compile(
-    r"^我(?:夹起|夹了|咬开|咬了|汤勺|筷子|把|端|推|放下|愣|看|闻|尝)"
+    # 「看/闻/尝」在口语里常带宾语或评判（「我看你咋打扰啊」「我闻着真香」
+    # 「我尝一口」），锚句首硬判会误伤正常回呛；真正的看/闻动作由
+    # `_PERBEAT_SELF_STATE_RE` 的「看看/盯着」等镜头腔单独拦。
+    r"^我(?:夹起|夹了|咬开|咬了|汤勺|筷子|把|端|推|放下|愣)"
 )
 
 
@@ -3780,6 +3816,14 @@ def _perbeat_check(
     )
     filler_claim_ok = not (
         slot.get("is_filler")
+        # 「第一人称认领拍主的事」只适用于旁观者/无素材的补位句。当事人孩子
+        # （尤其拆句行）本来就在说本拍的事，用「我」接话是正常口语——#149
+        # 实测：昭昭拆句「妈妈你看她又挠我两下」、灿灿接妈妈的话，都被按词面
+        # 重合判成认领，12 句被丢到 10 句，三次重生成全挂在篇幅上。
+        and (
+            _perbeat_filler_is_witness(slot)
+            or slot.get("has_content") is False
+        )
         and _perbeat_filler_claims_owner_event(line, slot, prev_lines)
     )
     # 零素材插话槽的「松版咬合」：不共享实词也行，但必须当场对上一句表态/顶一句。
@@ -4600,10 +4644,11 @@ def _perbeat_fill_slots(
     bad_idx = {i for i, _ln, _why in failures} - set(fixed)
     for i, _ln, why in soft_fillers:
         logger.info(
-            "[GOLD_CHAT] perbeat filler dropped slot=%s sp=%s why=%s",
+            "[GOLD_CHAT] perbeat filler dropped slot=%s sp=%s why=%s line=%s",
             i,
             slots[i - 1].get("speaker") if i <= len(slots) else "?",
             why,
+            str(_ln or "")[:40],
         )
     kept = [
         (i, l) for i, l in sorted(filled.items())

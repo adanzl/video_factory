@@ -2128,10 +2128,21 @@ def _ensure_gold_chat_min_chars(
     # 逐拍填词模式只跳过**垫字/加句**手段（决策见下方 perbeat 早退）；
     # 剥垫痕（叠语气词、句尾粒子、扩写絮语）两条路都要跑，否则残留的垫字
     # 痕迹只能靠终检判语病。
+    # 判据与 `expand._perbeat_enabled` 同口径：逐拍是主干路径，默认开启，
+    # 只有显式 0/off/false/no/legacy 才回退。原先这里只认显式 1，默认配置下
+    # 逐拍稿仍会被垫字链路插「你别想让我认输」这类池子句（#149 实测：
+    # 12 句 232 字被垫成 15 句，还带出「别挠我了行！」这种截断语病）。
+    import os as _os
+
+    _perbeat_default = str(
+        _os.environ.get("GOLD_CHAT_PERBEAT") or ""
+    ).strip().lower() not in {"0", "off", "false", "no", "legacy"}
     data, clutter_changed = patch_sanitize_expand_clutter(story)
-    data, changed_lines = _ensure_gold_chat_min_lines(data)
-    data, changed_exp = _expand_short_gold_chat_lines(data)
-    changed = clutter_changed or changed_lines or changed_exp
+    changed = clutter_changed
+    if not _perbeat_default:
+        data, changed_lines = _ensure_gold_chat_min_lines(data)
+        data, changed_exp = _expand_short_gold_chat_lines(data)
+        changed = changed or changed_lines or changed_exp
     # 先剥叠语气词/垫字痕迹，再按联合判据决定是否还需要垫字数：句数达标时字数
     # 下限放宽一行，已达标就只剥不回灌，否则为凑 240 补的句尾粒子会被终检判成语病。
     for _ in range(4):
@@ -2146,14 +2157,7 @@ def _ensure_gold_chat_min_chars(
     # 加句手段都只会插池子对（「所以你不是随口乱说的？」+「不是，我就是按自己
     # 的想法认真说的。」）。#138 实测：14 句 334 字的好稿被垫成 15–18 句，
     # 终检必判接不上/语病。垫痕已在上面剥完，这里直接收。
-    import os as _os
-
-    if str(_os.environ.get("GOLD_CHAT_PERBEAT") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
+    if _perbeat_default:
         return data, changed
     if dialogue_total_chars(data) >= gold_chat_effective_min_chars(data.get("dialogue")):
         return data, changed
