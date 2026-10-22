@@ -2727,3 +2727,18 @@ def test_short_kid_line_passes_shape_floor():
     # 补位句仍是 14 字起，避免退回空应答。
     assert not gex._perbeat_line_shape_ok("是我。", is_filler=True)
     assert not gex._perbeat_line_shape_ok("是，我声音最大。", is_filler=True)
+
+
+def test_perbeat_setting_keeps_h3b_props():
+    """设定不能只剩地点两个字（#138/#143/#144 实测）。"""
+    row = {
+        "payload": {
+            "setting": "客厅里，爸爸蹲在灿灿和昭昭面前，桌上放着两份早餐"
+        }
+    }
+    assert gex._perbeat_setting_from(row, {"location": "客厅"}).startswith("客厅里")
+    # 契约重建后地点已变：不复用旧设定，退回新地点
+    assert gex._perbeat_setting_from(row, {"location": "餐桌"}) == "餐桌"
+    # 库内没有设定：退回地点，仍缺地点时兜底餐桌
+    assert gex._perbeat_setting_from(None, {"location": "沙发"}) == "沙发"
+    assert gex._perbeat_setting_from({}, {}) == "餐桌"

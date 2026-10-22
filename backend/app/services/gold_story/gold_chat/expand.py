@@ -4750,6 +4750,26 @@ def _perbeat_validate_fill(
     return lines, failures
 
 
+def _perbeat_setting_from(
+    row: dict[str, Any] | None,
+    scene_contract: dict[str, Any],
+) -> str:
+    """逐拍稿的 setting：优先库内 H3b 设定，其次契约地点。
+
+    逐拍路径早先把 setting 直接写成 `contract["location"]`，导出到日常故事
+    就只剩「客厅」「餐桌」两个字的设定（#138/#143/#144 实测，之前同类稿是
+    「沙发上，妈妈拿着本子和笔，昭昭坐在对面，灿灿在旁边看」）。
+    契约重建后地点可能已换，只在旧设定的地点与当前契约一致时才复用。
+    """
+    payload = (row or {}).get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    stored = str(payload.get("setting") or "").strip()
+    location = str(scene_contract.get("location") or "").strip()
+    if stored and (not location or location in stored):
+        return stored
+    return location or "餐桌"
+
+
 def _perbeat_key_from_object(raw: str) -> str:
     """逐拍路径的 key：从契约 object 取一个完整短语，别硬切 8 字。
 
@@ -4914,7 +4934,10 @@ def _generate_perbeat_candidate(
         "scene_title": str((row or {}).get("title") or ""),
         # validate 的必填字段：逐拍生成只管对白，其余字段从契约原地补齐，
         # 否则缺字段会让 validate 直接失败并把整篇丢给 LLM 重写。
-        "setting": str(scene_contract.get("location") or "").strip() or "餐桌",
+        # setting 不能只取 location：H3b 产出的设定带冲突物落点（谁端着哪件），
+        # 只用地点会让导出「设定」缩成「客厅」两个字（#138/#143/#144 实测）。
+        # 契约重建后地点可能已换，所以只有地点对得上时才复用旧设定。
+        "setting": _perbeat_setting_from(row, scene_contract),
         "key": _perbeat_key_from_object(str(scene_contract.get("object") or "")),
         "conflict_core": str(scene_contract.get("conflict") or ""),
         "story_type": str(structure_type or "").strip().upper(),
