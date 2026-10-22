@@ -4678,3 +4678,37 @@ def test_semantic_repair_cannot_flatten_sulk_closing():
     )
     assert changed is False
     assert out["dialogue"][-1]["line"] == rows[1]["line"]
+
+
+def test_reroll_keeps_source_beat_readonly(monkeypatch):
+    """重掷判型不许改写源稿拍摘要（#154）。
+
+    payload.beat 同时是终验契约的绑定项（review_contract.source_beat）和导出文件
+    gold_meta.beat 的来源。重掷把 H3 重判的拍列表写回去，会让已导出的终验摘要
+    与库内记录对不上，导入一律判「正文或审核契约已改动」→ review_pending。
+    """
+    from app.services.gold_story.collect import llm as collect_llm
+
+    row = _sample_row()
+    row["mechanism"] = "M4"
+    row["structure_type"] = "G"
+    original_beat = list(row["payload"]["beat"])
+
+    monkeypatch.setattr(
+        collect_llm,
+        "structurize_story",
+        lambda **_kw: {
+            "title": "测试标题",
+            "mechanism": "M8",
+            "structure_type": "J",
+            "beat": ["重掷拍一", "重掷拍二", "重掷拍三"],
+            "structure_mapping_note": "",
+            "structure_confidence": 0.9,
+        },
+    )
+
+    out, pair = gc._reroll_h3_on_retry(row)
+
+    assert out["payload"]["beat"] == original_beat
+    assert row["payload"]["beat"] == original_beat
+    assert pair

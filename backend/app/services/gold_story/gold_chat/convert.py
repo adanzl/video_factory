@@ -453,8 +453,12 @@ def _reroll_h3_on_retry(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
     else:
         out["mechanism"] = new_mech
         out["structure_type"] = new_st
-    if isinstance(h3.get("beat"), list) and h3["beat"]:
-        payload["beat"] = h3["beat"]
+    # 源稿拍摘要（payload.beat）**只读**：它同时是终验契约的绑定项
+    # （gold_story_review_contract 的 source_beat）和导出文件 gold_meta.beat 的来源。
+    # 重掷时把 H3 重判的拍列表写回这里，会让已导出的终验摘要对不上库内记录，
+    # 导入一律判「正文或审核契约已改动」→ review_pending（#154 实测：导出 4 条、
+    # 重掷后库里 10 条，稿子其实没问题却导不进去）。重掷换的是判型与契约写法，
+    # 新拍列表只在本次契约重建里用，不落库。
     for key in ("structure_confidence", "structure_mapping_note", "funny_why"):
         if not keep_type and h3.get(key) is not None:
             payload[key] = h3[key]
