@@ -712,6 +712,24 @@ def scene_contract_reuse_issues(
         if prev and prev == cur and prev not in _PARENT_SPEAKER_SET:
             issues.append(f"去见证位后孩子连续拍:{cur}")
             break
+
+    # 护短/嘴硬拍若引用未出场的外部威胁（「别人碰一下试试」「别让人欺负你」），
+    # 而全场只有家里人、契约里也没有外部威胁拍，扩写只能凭空造一个「别人」，
+    # 终检必判缺前提（#154 三轮实测，单条驳回率最高）。这类旧契约应重跑 H3a，
+    # 让新契约只写当场关系（如「我弟只有我能打」）。
+    cast = {
+        str(x).strip()
+        for x in (contract.get("characters") or [])
+        if str(x).strip()
+    }
+    only_family = cast <= {"灿灿", "昭昭", "妈妈", "爸爸"}
+    external_threat = re.compile(
+        r"(?:别人|外人|旁人)(?:碰|动|欺负|惹|抢)|谁欺负"
+    )
+    if only_family and any(
+        external_threat.search(str(r.get("intent") or "")) for r in rows
+    ):
+        issues.append("拍意图引用未出场的外部威胁")
     return issues
 
 

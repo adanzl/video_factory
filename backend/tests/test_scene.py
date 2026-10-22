@@ -236,6 +236,26 @@ def test_scene_contract_reuse_rejects_stale_witness_layout():
     assert scene_contract_reuse_issues(contract) == []
 
 
+def test_scene_contract_reuse_rejects_unestablished_external_threat():
+    """护短拍写「别人碰一下试试」但全场只有家里人：旧契约应重建。"""
+    contract = {
+        "story_type": "G",
+        "characters": ["灿灿", "昭昭", "妈妈"],
+        "beat_chain": [
+            {"beat": 1, "speaker": "灿灿", "intent": "灿灿追着昭昭要打"},
+            {"beat": 2, "speaker": "昭昭", "intent": "昭昭还手，说遥控器是灿灿先抢的"},
+            {"beat": 3, "speaker": "妈妈", "intent": "妈妈拉开两人，骂灿灿不该打弟弟"},
+            {"beat": 4, "speaker": "灿灿", "intent": "灿灿护短，说我弟只有我能打，别人碰一下试试"},
+        ],
+    }
+    issues = scene_contract_reuse_issues(contract)
+    assert any("外部威胁" in item for item in issues)
+
+    # 契约里真有外部角色时，这句话不算未建立的前提。
+    contract["characters"] = ["灿灿", "昭昭", "妈妈", "同学"]
+    assert scene_contract_reuse_issues(contract) == []
+
+
 def test_scene_contract_reuse_keeps_n_alternation_exception():
     contract = {
         "story_type": "N",

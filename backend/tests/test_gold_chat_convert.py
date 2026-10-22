@@ -4293,16 +4293,17 @@ def test_perbeat_filler_claiming_owner_event_is_blocked():
 def test_perbeat_zero_content_filler_relaxed_but_still_blocks_copying():
     """#144：无素材插话槽只做旁观/递话，不要求给理由；照抄/认领/纯附和照样拦。
 
-    专家评审的处置口径：has_content=False 的插话槽没有素材，别再要求它
-    「给具体理由、带独立新内容」，但它仍然是旁观角色，不是当事人。
+    #154 之后的口径反转：has_content=False 的插话槽也必须接住上一句。
+    旧口径放行「先别急/慢慢说/把话交回给他」，终检会判接不上/错位/旁白
+    （单条驳回率最高），故不再放行安抚/催促/递话；照抄、认领、纯附和照样拦。
     """
     slot = _perbeat_filler_slot_with_owner(beat_id=5)
     slot["has_content"] = False
     prev = [("昭昭", "是我弄脏的，说想自己弄干净，不让妈妈操心。")]
-    ok = gex._perbeat_check(
+    pacify = gex._perbeat_check(
         slot, "昭昭，你先别急，我就在旁边听着，你慢慢说。", prev
     )
-    assert not ok, ok
+    assert any("须接住上一句" in item for item in pacify), pacify
     copy = gex._perbeat_check(slot, "她想自己弄干净，不让妈妈操心。", prev)
     assert "插话不得照抄上一句" in copy
     claim = gex._perbeat_check(slot, "反正我没错，你不该那样说我。", prev)

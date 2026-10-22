@@ -30,6 +30,12 @@ def test_a_not_a_question_xingbuxing_not_pad():
     assert collect_pad_stack_issues(story) == []
 
 
+def test_pad_sanitize_keeps_ganma_word_intact():
+    """「你干嘛呀？」只能收掉句尾「呀」，不能把词内的「嘛」剥成「你干？」。"""
+    assert sanitize_pad_stack_line("你干嘛呀？") == "你干嘛？"
+    assert sanitize_pad_stack_line("你干吗呀！") == "你干吗！"
+
+
 def test_statement_haobu_tail_stripped():
     line = "嘿嘿，我屁股Q弹，救场成功好不好呀。"
     assert not is_genuine_haobu_question(line)
