@@ -17,7 +17,10 @@ from app.services.daily_story.dialogue_text import (
     dialogue_char_count,
     truncate_overlong_line,
 )
-from app.services.daily_story.story_types import parse_story_type_code
+from app.services.daily_story.story_types import (
+    contract_parent_speaker_counts,
+    parse_story_type_code,
+)
 from app.services.daily_story.story_types.d.humor import (
     RE_BOOM_CLOSE,
     RE_FIX,
@@ -128,13 +131,14 @@ def _first_cancan_rule(dialogue: list) -> str:
 
 
 def patch_d_strip_mom(story: dict) -> list[str]:
-    """D 主戏姐弟：删掉家长插话（留给 E 类）。"""
+    """D 主戏姐弟：删掉家长插话（留给 E 类）。金稿契约点名的家长拍不删。"""
     notes: list[str] = []
     if not _is_d(story):
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return notes
+    contract_parents = contract_parent_speaker_counts(story)
     dropped_mom = 0
     dropped_dad = 0
     for i in reversed(range(len(dialogue))):
@@ -142,10 +146,10 @@ def patch_d_strip_mom(story: dict) -> list[str]:
         if not isinstance(d, dict):
             continue
         sp = str(d.get("speaker") or "").strip()
-        if sp == "妈妈":
+        if sp == "妈妈" and sp not in contract_parents:
             dialogue.pop(i)
             dropped_mom += 1
-        elif sp == "爸爸":
+        elif sp == "爸爸" and sp not in contract_parents:
             dialogue.pop(i)
             dropped_dad += 1
     if dropped_mom:
@@ -156,25 +160,36 @@ def patch_d_strip_mom(story: dict) -> list[str]:
 
 
 def patch_d_strip_mom_mentions(story: dict) -> list[str]:
-    """D 禁家长：对白里「妈妈说/爸爸说」等提法删掉或改成灿灿说。"""
+    """D 禁家长：对白里「妈妈说/爸爸说」等提法删掉或改成灿灿说。
+
+    金稿契约点名要家长上台时，孩子叫「爸爸」是正常对话而不是转述，不能删。
+    """
     notes: list[str] = []
     if not _is_d(story):
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return notes
+    contract_parents = contract_parent_speaker_counts(story)
     for i, d in enumerate(dialogue):
         if not isinstance(d, dict):
             continue
         line = str(d.get("line") or "")
-        if "妈妈" not in line and "爸爸" not in line:
+        targets = [
+            name
+            for name in ("妈妈", "爸爸")
+            if name in line and name not in contract_parents
+        ]
+        if not targets:
             continue
-        new_line = re.sub(
-            r"妈妈说|听妈妈的|别告诉妈妈|爸爸说|听爸爸的|别告诉爸爸",
-            "听我说",
-            line,
-        )
-        new_line = new_line.replace("妈妈", "").replace("爸爸", "")
+        new_line = line
+        for name in targets:
+            new_line = re.sub(
+                rf"{name}说|听{name}的|别告诉{name}",
+                "听我说",
+                new_line,
+            )
+            new_line = new_line.replace(name, "")
         new_line = re.sub(r"，，+", "，", new_line).strip("， ")
         if not new_line:
             continue

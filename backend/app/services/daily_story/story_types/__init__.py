@@ -176,6 +176,28 @@ def parse_story_type_code(
     return QUALITY_FALLBACK_CODE
 
 
+def contract_parent_speaker_counts(story: dict) -> dict[str, int]:
+    """金稿契约拍里点名要说话的家长及其拍数。
+
+    普通日常故事没有 ``gold_beat_chain``，返回空 dict，类型规则照旧；
+    金稿契约则可能让家长承担立规/破功拍（#143 实测：D 类 M7 的 beat1/4/8
+    都是爸爸），此时「D 类禁家长插话」的整类规则会把开场整拍删掉，
+    硬卡再判「禁止爸爸插话」，任何合规稿都无法通过。类型规则让位于契约：
+    契约点名几位家长，就允许该家长说几句。
+    """
+    chain = story.get("gold_beat_chain") if isinstance(story, dict) else None
+    counts: dict[str, int] = {}
+    if not isinstance(chain, list):
+        return counts
+    for item in chain:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        if sp in {"妈妈", "爸爸"}:
+            counts[sp] = counts.get(sp, 0) + 1
+    return counts
+
+
 _RE_PUNCHLINE_STD_TAG = re.compile(rf"^({_STORY_TYPE_CODE_CLASS})类")
 _RE_A_TAIL = re.compile(r"哪里不一样|都是听|大人也要听小孩")
 _RE_A_CITE = re.compile(

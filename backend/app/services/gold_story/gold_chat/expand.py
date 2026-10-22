@@ -3139,7 +3139,10 @@ _PERBEAT_THIRD_PERSON_ACTION_RE = re.compile(
     r"摇|点|叹|咽|把|跟|冲|扭|缩|撇|绷|盯)"
 )
 
-_PERBEAT_STUB_RE = re.compile(r"你(?:问|说)(?:的)?[^，。]{0,16}[。！？…]$")
+# 只拦「整句就是把对方的话还回去」的空应答（「你说的对。」）。早期版本不锚
+# 句首，凡是句尾带「你问/你说」分句的台词一律判废——#143 实测「以后都答是，
+# 爸爸你问我们就这么答。」这种有实质内容的回声答被连判三轮。
+_PERBEAT_STUB_RE = re.compile(r"^你(?:问|说)(?:的)?[^，。]{0,16}[。！？…]$")
 
 
 _PERBEAT_REPORT_RE = re.compile(r"^(?:昭昭|灿灿|妈妈|爸爸)(?:说|讲|问|答|接|喊|嘀咕|小声说)")
@@ -3379,13 +3382,25 @@ _PERBEAT_ATTRIBUTION_RE = re.compile(
 )
 
 
-def _perbeat_attribution_ok(line: str, prev_text: str, beat_text: str = "") -> bool:
+def _perbeat_attribution_ok(
+    line: str,
+    prev_text: str,
+    beat_text: str = "",
+    *,
+    speech_act: str = "",
+) -> bool:
     """指认对方说过什么，那件事必须真在前文出现过。
 
     例外：本拍契约就要求「抓住对方那句解释追问」时，被引用的说法写在拍
     意图里（#144 beat7「抓住妈妈‘不小心’的解释」），前文没逐字出现不算
     编造——模型是在照契约写，出处是契约本身。
+
+    回声拍（``speech_act=echo``）也整类放行：这一拍的职责就是把对方刚说的
+    话答回去，「爸爸你问我们就这么答」不是在编造出处，而是在复述上一句。
+    #143 实测：回声拍被这条连判三轮「指认对方说过的话须真有出处」。
     """
+    if str(speech_act or "").strip().lower() == "echo":
+        return True
     haystack = _perbeat_terms(prev_text) | _perbeat_terms(beat_text)
     for match in _PERBEAT_ATTRIBUTION_RE.finditer(line):
         terms = {
@@ -3891,6 +3906,7 @@ def _perbeat_check(
         line,
         "".join(text for _spk, text in prev_lines),
         str(slot.get("intent") or slot.get("beat_intent") or ""),
+        speech_act=_speech_act,
     )
     rebuttal_ok = _perbeat_rebuttal_ok(
         line,
@@ -5804,7 +5820,7 @@ def gold_story_to_gold_chat(
     # （#138 实测：契约 3、实际可用 4，妈妈第 4 句被裁 → 终检报缺前提）。
     from app.services.gold_story.scene import resolve_parent_lines_budget
 
-    mom_max, _dad_budget, _parent_budget = resolve_parent_lines_budget(
+    mom_max, dad_budget, parent_budget = resolve_parent_lines_budget(
         scene_contract,
         mom_lines_max=scene_contract.get("mom_lines_max"),
     )
@@ -5872,6 +5888,17 @@ def gold_story_to_gold_chat(
 
     banned_list = [str(x) for x in banned]
     mom_int = int(mom_max)
+    # 只到爸爸一位家长时，resolve 出来的是 mom=0 / dad=parent；但下面这些
+    # 额度参数既被当「妈妈句上限」又被当「家长合计上限」用，拿 0 去验收会把
+    # 爸爸的台词全部判超限（#143 实测：修稿后 4 句爸爸台词 > 上限 0，整稿被
+    # 裁成 9 句、beat1 连开场都没了）。没有妈妈在场时用家长合计额度。
+    cast_names = {
+        str(x).strip()
+        for x in (scene_contract.get("characters") or [])
+        if str(x).strip()
+    }
+    if "妈妈" not in cast_names and dad_budget > mom_int:
+        mom_int = int(parent_budget)
     last_err = ""
     expand_feedback_block = ""
     expand_temperature = 0.4

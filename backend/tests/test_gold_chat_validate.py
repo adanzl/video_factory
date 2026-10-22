@@ -955,7 +955,88 @@ def test_opening_causality_accepts_declarative_dialogue_without_pronoun_markers(
     assert opening_causality_passes(story, beat, mom_lines_max=2)
 
 
-def test_opening_causality_patch_uses_seed_for_missing_middle_beat():
+def test_opening_causality_accepts_single_char_echo_answer():
+    """#143：回声拍答案只有一个「是」字，两句齐声答「是」都该算落地。"""
+    from app.services.gold_story.gold_chat.validate import (
+        collect_opening_causality_issues,
+        opening_causality_passes,
+    )
+
+    beat = [
+        {
+            "beat": 1,
+            "speaker": "爸爸",
+            "intent": "蹲下严肃立规：被问「知道了吗」要答「是」，不许答「嗯」",
+            "speech_act": "other",
+        },
+        {
+            "beat": 2,
+            "speaker": "灿灿",
+            "intent": "站得笔直，带头齐声答「是，是」",
+            "speech_act": "echo",
+        },
+        {
+            "beat": 3,
+            "speaker": "昭昭",
+            "intent": "跟着大声答「是」，一脸听话",
+            "speech_act": "echo",
+        },
+        {
+            "beat": 4,
+            "speaker": "爸爸",
+            "intent": "叮嘱：狗吃过的那份早餐别给爸爸吃",
+            "speech_act": "other",
+        },
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "爸爸", "line": "知道了吗？知道就答是，不许答嗯。"},
+            {
+                "speaker": "灿灿",
+                "line": "是！我声音最大，爸爸你说什么我都答是。",
+            },
+            {"speaker": "昭昭", "line": "是，是，我也答是，一脸听话。"},
+            {"speaker": "爸爸", "line": "狗吃过的那份早餐别给爸爸吃。"},
+        ],
+    }
+
+    assert opening_causality_passes(story, beat, mom_lines_max=3)
+    assert not collect_opening_causality_issues(story, beat, mom_lines_max=3)
+
+
+def test_opening_causality_rejects_echo_beat_without_answer_token():
+    """回声拍没真说出那个答案时仍要判缺拍，不能因为放宽单字就一律放行。"""
+    from app.services.gold_story.gold_chat.validate import opening_causality_passes
+
+    beat = [
+        {
+            "beat": 1,
+            "speaker": "爸爸",
+            "intent": "蹲下严肃立规：被问「知道了吗」要答「是」，不许答「嗯」",
+            "speech_act": "other",
+        },
+        {
+            "beat": 2,
+            "speaker": "灿灿",
+            "intent": "站得笔直，带头齐声答「是，是」",
+            "speech_act": "echo",
+        },
+        {
+            "beat": 3,
+            "speaker": "昭昭",
+            "intent": "跟着大声答「是」，一脸听话",
+            "speech_act": "echo",
+        },
+    ]
+    story = {
+        "dialogue": [
+            {"speaker": "爸爸", "line": "知道了吗？知道就答是，不许答嗯。"},
+            {"speaker": "灿灿", "line": "我不太想理你，先让我把饭吃完。"},
+            {"speaker": "昭昭", "line": "是，是，我答是，一脸听话。"},
+        ],
+    }
+
+    assert not opening_causality_passes(story, beat, mom_lines_max=3)
     """beat1/beat3 已在场但 beat2 真缺失时，复用 H3b seed 落地，不烧 LLM 修稿预算。"""
     from app.services.gold_story.gold_chat.patch import apply_opening_causality_local_patch
     from app.services.gold_story.gold_chat.validate import opening_causality_passes
@@ -2558,3 +2639,82 @@ def test_pure_action_patch_rewrites_to_speech():
     from app.services.gold_story.gold_chat.validate import _looks_like_pure_action
 
     assert not _looks_like_pure_action(rewritten)
+
+
+_D_CONTRACT_PARENT_BEATS = [
+    {
+        "beat": 1,
+        "speaker": "爸爸",
+        "intent": "蹲下严肃立规：被问「知道了吗」要答「是」，不许答「嗯」",
+    },
+    {"beat": 2, "speaker": "灿灿", "intent": "站得笔直，带头齐声答「是，是」"},
+    {"beat": 3, "speaker": "昭昭", "intent": "跟着大声答「是」，一脸听话"},
+    {"beat": 4, "speaker": "爸爸", "intent": "叮嘱：狗吃过的那份早餐别给爸爸吃"},
+]
+
+
+def test_d_type_keeps_contract_parent_lines():
+    """#143：金稿 D 类契约点名爸爸立规时，D 类补丁/硬卡不得把爸爸台词当插话删掉。"""
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+    from app.services.daily_story.story_types.d.validate import append_d_body_errors
+
+    dialogue = [
+        {"speaker": "爸爸", "line": "以后我问你们知道了吗，你们要答是，不许答嗯。"},
+        {"speaker": "昭昭", "line": "爸爸你先别急，慢慢说，我们听着呢。"},
+        {"speaker": "灿灿", "line": "是，是，爸爸问知道了吗我们就答是。"},
+        {"speaker": "昭昭", "line": "是！我跟灿灿一起大声答了，爸爸你看我多听话。"},
+        {"speaker": "灿灿", "line": "昭昭你跟着大声应一声，让爸爸听见。"},
+        {"speaker": "爸爸", "line": "狗吃过的那份早餐，你们别端给爸爸吃。"},
+        {"speaker": "灿灿", "line": "爸爸，你慢慢说，我不插嘴，就在旁边听着。"},
+        {"speaker": "昭昭", "line": "那再跟我一起生活，狗吃过的早餐怎么办呀？"},
+    ]
+    base = {
+        "story_type": "D",
+        "punchline_explain": "D类字面执行：爸爸立规，兄弟俩歪答",
+        "dialogue": [dict(row) for row in dialogue],
+    }
+
+    patched, _ = apply_gold_chat_type_patch(
+        {**base, "gold_beat_chain": _D_CONTRACT_PARENT_BEATS},
+        structure_type="D",
+    )
+    assert len(patched["dialogue"]) == len(dialogue)
+    assert sum(1 for r in patched["dialogue"] if r["speaker"] == "爸爸") == 2
+
+    contract_errors: list[str] = []
+    append_d_body_errors(
+        {**base, "gold_beat_chain": _D_CONTRACT_PARENT_BEATS}, contract_errors
+    )
+    assert not any("禁止爸爸插话" in err for err in contract_errors)
+
+    # 没有金稿契约时维持 D 类原判：家长插话一律拦。
+    plain_errors: list[str] = []
+    append_d_body_errors(
+        {"story_type": "D", "punchline_explain": "D类字面执行", "dialogue": dialogue},
+        plain_errors,
+    )
+    assert any("禁止爸爸插话" in err for err in plain_errors)
+
+
+def test_echo_slot_accepts_reply_that_restates_the_question():
+    """回声拍照上一句的话答回去，不算旁白、也不算编造出处（#143 实测）。"""
+    line = "以后都答是，爸爸你问我们就这么答。"
+    assert gex._perbeat_speech_form_ok(line, "灿灿")
+    assert gex._perbeat_attribution_ok(
+        line,
+        "生气时要答是，不许答嗯，都听明白了吗？",
+        "是，是，我记住了，以后都答是。",
+        speech_act="echo",
+    )
+    # 非回声拍仍要审出处：同样的句子不能凭空认领对方说过的话。
+    assert not gex._perbeat_attribution_ok(
+        line,
+        "生气时要答是，不许答嗯，都听明白了吗？",
+        "",
+    )
+
+
+def test_stub_answer_regex_only_blocks_whole_line_echo():
+    """「你说的对。」整句还是空应答；后半句带实质内容的不再连坐。"""
+    assert not gex._perbeat_speech_form_ok("你说的对。", "灿灿")
+    assert gex._perbeat_speech_form_ok("以后都答是，爸爸你问我们就这么答。", "灿灿")

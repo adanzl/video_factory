@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 
-from app.services.daily_story.story_types import parse_story_type_code
+from app.services.daily_story.story_types import (
+    contract_parent_speaker_counts,
+    parse_story_type_code,
+)
 from app.services.daily_story.story_types.d.humor import (
     RE_BOOM_CLOSE,
     RE_BOOM_POINT,
@@ -115,9 +118,11 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
 
     mom_n = sum(1 for sp in speakers if sp == "妈妈")
     dad_n = sum(1 for sp in speakers if sp == "爸爸")
-    if mom_n > 0:
+    # 金稿契约点名要家长说几句时，类型层的「D 禁家长」让位于契约（#143）。
+    contract_parents = contract_parent_speaker_counts(story)
+    if mom_n > contract_parents.get("妈妈", 0):
         errors.append("D类主戏姐弟，禁止妈妈插话（留给E类）")
-    if dad_n > 0:
+    if dad_n > contract_parents.get("爸爸", 0):
         errors.append("D类主戏姐弟，禁止爸爸插话")
 
     # 唠叨门：只数灿灿前 6 句里自己立规矩的次数。

@@ -2586,6 +2586,34 @@ def _intent_anchor_tokens(intent: str) -> list[str]:
     return [p for p in parts if p not in _OPENING_INTENT_STOP][:6]
 
 
+_RE_ECHO_QUOTED = re.compile(r"[「『“\"']\s*([^」』”\"']{1,12}?)\s*[」』”\"']")
+_RE_ECHO_ANSWER = re.compile(
+    r"(?:答|回答|说|喊|应)\s*([\u4e00-\u9fffA-Za-z0-9]{1,4})"
+)
+
+
+def _echo_response_core(intent: str) -> str:
+    """回声拍要孩子复述的那个答案；支持单字回答（答「是」）。
+
+    锚点提取只收 ≥2 字中文词，于是「答「是，是」」这类回声拍一个锚点都
+    提不出来，对白里明明答了「是」也判没落地（#143 实测：兄弟俩齐声答
+    「是」被拆成两拍，整稿卡在开场因果）。这里单独把引号/答字后的答案
+    取出来，叠字回答（「是，是」）归一成单字再核对。
+    """
+    text = str(intent or "")
+    match = _RE_ECHO_QUOTED.search(text)
+    token = match.group(1) if match else ""
+    if not token:
+        match = _RE_ECHO_ANSWER.search(text)
+        token = match.group(1) if match else ""
+    token = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", token)
+    if not token:
+        return ""
+    if len(set(token)) == 1:
+        return token[0]
+    return token[:12]
+
+
 # 列举型 intent：抽象描述「说出一串/几个/一堆 名字/词」，字面 anchor 与
 # 真实对白毫无交集（intent 是叙述，对白是人名罗列）。这类拍按**列举形态**认：
 # 对白里有 ≥2 个并列项即算落地。不绑剧情词，只看结构。
@@ -2823,6 +2851,13 @@ def _line_fulfills_beat(
     # 既不是有效台词，也不能拿它去满足 beat。）
     if _looks_like_pure_action(line):
         return False
+    # 回声拍（孩子复述刚被要求的答案）常常只有一两个字：答「是」/答「不打了」。
+    # 这类拍的字面锚点只有一个字，`_intent_anchor_tokens` 提不出来，会被
+    # 误判成整拍缺失。只要说话人正确、对白里真说了那个答案，就算落地。
+    if str(entry.get("speech_act") or "").strip().lower() == "echo":
+        echo_core = _echo_response_core(intent)
+        if echo_core and echo_core in line:
+            return True
     # 追问/反问拍（echo/retort）：契约要的是「孩子把家长刚说的话顶回去」。
     # 真实对白常常只留疑问句和两三个共享词，anchor 的整句短语与双字词 ≥3
     # 都认不出（#144 实测：第 2 句「你干嘛那么大声骂我？」被判没落地
