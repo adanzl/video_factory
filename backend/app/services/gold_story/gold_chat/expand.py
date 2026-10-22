@@ -3078,11 +3078,12 @@ _PERBEAT_DANGLING_TAIL = (
 )
 
 
-def _perbeat_sentence_ok(line: str) -> bool:
+def _perbeat_sentence_ok(line: str, *, min_core: int = 10) -> bool:
     """句子必须说完整：以句末标点收尾，且不落在虚词/量词上。
 
     生成器被长度限制逼急了会交半句（「你说妈妈像暴躁的老虎。」11 字、
     「暴躁的老虎要是真来抢这盘黑面饺子。」没有下文），读起来像串词。
+    ``min_core`` 由调用方按槽位放宽：孩子短句本来就短，不能按成人长句卡。
     """
     text = str(line or "").strip()
     if not text:
@@ -3090,7 +3091,7 @@ def _perbeat_sentence_ok(line: str) -> bool:
     if not re.search(r"[。！？…!?]$", text):
         return False
     core = text.rstrip("。！？…!?")
-    if len(core) < 10:
+    if len(core) < min_core:
         return False
     return not core.endswith(_PERBEAT_DANGLING_TAIL)
 
@@ -3249,18 +3250,20 @@ def _perbeat_clip(line: str, limit: int = 22) -> str:
     return head
 
 
-def _perbeat_line_shape_ok(line: str) -> bool:
-    """长度与完整句门槛。"""
+def _perbeat_line_shape_ok(line: str, *, is_filler: bool = False) -> bool:
+    """长度与完整句门槛。
+
+    真硬卡是「单句 ≤24 字、均句 ≤22 字」（CHAT_MAX_LINE_CHARS /
+    CHAT_AVG_LINE_CHARS_MAX），下限由这里定。孩子真会说的话本来就短
+    （「是！」「我声音最大」），早先按 14 字卡，模型只能往句子里塞铺垫，
+    再被终检判接不上/旁白/重复（#143 实测连续 10 轮）。契约拍放宽到 8 字，
+    全篇均句与总字数由候选收口保证；补位句仍是 14 字起，避免退回空应答。
+    """
     text = str(line or "").strip()
-    # 真硬卡是「单句 ≤24 字、均句 ≤22 字」（CHAT_MAX_LINE_CHARS /
-    # CHAT_AVG_LINE_CHARS_MAX）。生成端把单句卡到 22 时模型几乎永远写不出
-    # （#138 实测：三连 draft 全部只差长度、「…苦得我舌根发麻，妈妈眉清目秀
-    # 倒是真的。」24 字），于是整条重掷耗尽。这里放到真硬卡 24，均句由
-    # `_generate_perbeat_candidate` 里的均值收口保证（在验收前就截好，
-    # 不会等到验过后再截掉剧情条件）。
-    if not (14 <= len(text) <= 24):
+    floor = 14 if is_filler else 8
+    if not (floor <= len(text) <= 24):
         return False
-    if not _perbeat_sentence_ok(text):
+    if not _perbeat_sentence_ok(text, min_core=10 if is_filler else 5):
         return False
     return True
 
@@ -3667,7 +3670,9 @@ def _perbeat_check(
         and slot.get("has_content") is False
     )
     groups = _perbeat_required_word_groups(slot)
-    shape_ok = _perbeat_line_shape_ok(line)
+    shape_ok = _perbeat_line_shape_ok(
+        line, is_filler=bool(slot.get("is_filler"))
+    )
     speech_ok = _perbeat_speech_form_ok(line, speaker)
     # 契约拍必须真的说出本拍声明的必现语义点：#144 run25 第 6 句只落了「承认
     # 弄脏 + 想自己弄干净」，丢了契约里的「因为疼妈妈」，连带第 8 句妈妈的
@@ -3956,7 +3961,7 @@ def _perbeat_check(
     return [
         label
         for label, passed in (
-            ("须 14–24 字且是完整句", shape_ok),
+            ("须 8–24 字且是完整句", shape_ok),
             ("不得自述动作/旁白或转述别人的话", speech_ok),
             ("不得提现场没发生的动作", action_ok),
             ("上一句是问句，回句须咬住问句", question_ok),
@@ -4335,7 +4340,7 @@ def _perbeat_order_kept_slots(
 # 插话句判废后**不允许**靠「补到 12 句」回填的失败类型：留着只会把问题句
 # 交给终检（终检照样拦，还多烧一轮修稿预算）。
 _PERBEAT_NEVER_KEEP = (
-    "须 14–24",
+    "须 8–24",
     "不得自述动作",
     "必须接住上一句",
     "不得提前说",

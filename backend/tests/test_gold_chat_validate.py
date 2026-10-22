@@ -2718,3 +2718,12 @@ def test_stub_answer_regex_only_blocks_whole_line_echo():
     """「你说的对。」整句还是空应答；后半句带实质内容的不再连坐。"""
     assert not gex._perbeat_speech_form_ok("你说的对。", "灿灿")
     assert gex._perbeat_speech_form_ok("以后都答是，爸爸你问我们就这么答。", "灿灿")
+
+
+def test_short_kid_line_passes_shape_floor():
+    """孩子短句不该被长度门槛逼成铺垫句（#143 实测）。"""
+    assert gex._perbeat_line_shape_ok("是，我声音最大。")
+    assert gex._perbeat_line_shape_ok("是！", is_filler=False) is False
+    # 补位句仍是 14 字起，避免退回空应答。
+    assert not gex._perbeat_line_shape_ok("是我。", is_filler=True)
+    assert not gex._perbeat_line_shape_ok("是，我声音最大。", is_filler=True)
