@@ -47,6 +47,16 @@ _SETTING_STRIP_RE = re.compile(
 _RE_SETTING_SELF_ACTION = re.compile(
     r"(昭昭|灿灿)(按着|按住|压着|按倒)\1"
 )
+# 设定开头的地点短语（「炕上，」「车内，」…）；只替换这一小段，
+# 后面的「谁拿着什么」是可拍细节，不能因为地点归一就整段丢掉。
+_LEADING_PLACE_RE = re.compile(
+    r"^\s*([^，,。；;：:！？!?\s]{1,12}?(?:上|里|内|边|前|中|下|口|旁))"
+    r"\s*[，,、]\s*"
+)
+# 这些「上」不是地点，别当地点短语替换（如「早上，姐弟俩…」）。
+_NON_PLACE_LEADS = frozenset(
+    {"早上", "晚上", "马上", "天上", "世上", "以上", "之后", "以前", "后来"}
+)
 
 _DEFAULT_CHARACTERS = ("灿灿", "昭昭")
 _DEFAULT_INDOOR_PLACE = "客厅"
@@ -227,6 +237,33 @@ def build_setting_line(
     return f"{p}里，{names}{act}"
 
 
+def split_setting_place_prefix(setting: str) -> tuple[str, str] | None:
+    """拆出设定开头的地点短语，返回 (地点短语, 余下细节)。
+
+    站外稿常写「炕上，姐弟俩……」。契约地点归一到「床上」后，若整条设定都换成
+    契约地点，人物与冲突物就没了；这里只识别开头那一小段，后续原样保留。
+    """
+    text = str(setting or "").strip()
+    match = _LEADING_PLACE_RE.match(text)
+    if not match:
+        return None
+    head = match.group(1).strip()
+    if not head or head in _NON_PLACE_LEADS:
+        return None
+    rest = text[match.end() :].strip(" ，,、")
+    return head, rest
+
+
+def replace_setting_place_prefix(setting: str, place: str) -> str:
+    """把设定开头的地点短语换成允许地点，保留人物/冲突物细节。"""
+    parts = split_setting_place_prefix(setting)
+    target = str(place or "").strip()
+    if not parts or not target:
+        return ""
+    _head, rest = parts
+    return f"{target}，{rest}" if rest else target
+
+
 def normalize_gold_chat_setting(
     setting: str,
     *,
@@ -252,6 +289,18 @@ def normalize_gold_chat_setting(
         return raw_setting, notes
 
     target = resolve_target_location(combined, context=ctx)
+    # 站外地点（「炕上」「车内」…）已能定位到开头那一小段时，只换地点、留细节；
+    # 整条重写成「床上里，灿灿和昭昭在吵架」会把冲突物和人物站位一起丢掉
+    # （#149 实测：导入日常故事后 setting 只剩「床上」两个字）。
+    parts = split_setting_place_prefix(raw_setting)
+    if parts is not None:
+        head, _rest = parts
+        rewritten = replace_setting_place_prefix(raw_setting, target)
+        cleaned = _SETTING_STRIP_RE.sub("", rewritten)
+        cleaned = re.sub(r"[，,；;]{2,}", "，", cleaned).strip(" ，,；;、")
+        if cleaned and has_allowed_place(cleaned):
+            notes.append(f"setting 地点归类：{head}→{target}，保留场景细节")
+            return cleaned, notes
     activity = _infer_activity_hint(raw_setting, raw_loc, activity_context)
     new_setting = build_setting_line(
         target,

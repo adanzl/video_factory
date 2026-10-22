@@ -85,6 +85,30 @@ def test_setting_violations_allow_bedroom():
     assert setting_location_violations("卧室里，灿灿和昭昭因为作业吵起来") == []
 
 
+def test_normalize_mapped_place_keeps_scene_details():
+    """地点归一（炕上→床上）不能把人物/冲突物一起重写掉（#149）。"""
+    new, notes = normalize_gold_chat_setting(
+        "炕上，姐弟俩闹着玩滚作一团，妈妈坐在炕边拿着「家和万事兴」贴纸往墙上贴",
+        scene_contract_location="床上",
+    )
+    assert new.startswith("床上，")
+    assert "滚作一团" in new
+    assert "贴纸" in new
+    assert any("归类" in n for n in notes)
+    assert setting_location_violations(new) == []
+
+
+def test_normalize_mapped_place_still_drops_unfilmable_car_words():
+    set_place_classify_hook(_hook({"车内": "卧室"}))
+    new, notes = normalize_gold_chat_setting(
+        "车内，妈妈开车，灿灿和昭昭坐在后座",
+        scene_contract_location="车内",
+    )
+    assert "卧室" in new
+    assert "开车" not in new
+    assert any("归类" in n for n in notes)
+
+
 def test_normalize_kindergarten_setting_maps_via_llm():
     set_place_classify_hook(_hook({"幼儿园午休垫子": "地板"}))
     new, notes = normalize_gold_chat_setting(

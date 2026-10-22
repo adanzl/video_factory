@@ -2742,3 +2742,17 @@ def test_perbeat_setting_keeps_h3b_props():
     # 库内没有设定：退回地点，仍缺地点时兜底餐桌
     assert gex._perbeat_setting_from(None, {"location": "沙发"}) == "沙发"
     assert gex._perbeat_setting_from({}, {}) == "餐桌"
+
+
+def test_perbeat_setting_keeps_details_when_place_is_mapped():
+    """站外地点归一到允许地点时，只换地点前缀，人物/冲突物不能丢（#149）。"""
+    row = {
+        "payload": {
+            "setting": "炕上，姐弟俩闹着玩滚作一团，妈妈坐在炕边拿着「家和万事兴」贴纸往墙上贴"
+        }
+    }
+    got = gex._perbeat_setting_from(row, {"location": "床上"})
+    assert got.startswith("床上，")
+    assert "滚作一团" in got
+    assert "贴纸" in got
+    assert gex.setting_location_violations(got) == []

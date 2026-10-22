@@ -121,7 +121,9 @@ from app.services.gold_story.scene import (
     sanitize_banned_literals,
 )
 from app.services.gold_story.gold_chat.setting import (
+    extract_allowed_place,
     normalize_gold_chat_setting,
+    replace_setting_place_prefix,
     setting_location_violations,
 )
 from app.services.gold_story.types import structure_type_label
@@ -4806,14 +4808,25 @@ def _perbeat_setting_from(
     逐拍路径早先把 setting 直接写成 `contract["location"]`，导出到日常故事
     就只剩「客厅」「餐桌」两个字的设定（#138/#143/#144 实测，之前同类稿是
     「沙发上，妈妈拿着本子和笔，昭昭坐在对面，灿灿在旁边看」）。
-    契约重建后地点可能已换，只在旧设定的地点与当前契约一致时才复用。
+    契约重建后地点可能已换，只有地点对得上（含站外地点归类到同一处，
+    如「炕上」→「床上」）时才复用旧设定；复用时只换开头地点短语，保留细节。
     """
     payload = (row or {}).get("payload")
     payload = payload if isinstance(payload, dict) else {}
     stored = str(payload.get("setting") or "").strip()
     location = str(scene_contract.get("location") or "").strip()
-    if stored and (not location or location in stored):
-        return stored
+    if stored:
+        if not location or location in stored:
+            return stored
+        old_place = extract_allowed_place(stored)
+        if old_place and old_place != location:
+            # 旧的允许地点和当前契约确实不同：不复用旧设定，退回新地点。
+            return location
+        # 旧设定写的是站外地点（如「炕上」），契约地点已归类成「床上」：
+        # 只换开头地点短语，人物站位与冲突物（贴纸等）必须留下。
+        rewritten = replace_setting_place_prefix(stored, location)
+        if rewritten:
+            return rewritten
     return location or "餐桌"
 
 
