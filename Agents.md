@@ -42,7 +42,8 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 
 ## 「专家」
 
-- DeepSeek 网页模拟 API
+- DeepSeek 网页模拟 API 
+- 如果网页API不可用，直接调用LLM，用这个backend\scripts\expert_chat.py
 - 涉及提示词方案评审时用户说「和专家商量/达成一致再落地」，指用它的专家模式评审
 - body `{"question":..., "mode":"expert", "deep_thinking":true}`
 - 新对话不带 `conversation_id`，续聊带返回 id
@@ -155,7 +156,7 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 - pi-web-access 赋予 Pi 网页搜索、URL 抓取、GitHub 仓库克隆等能力
     `pi install npm:pi-web-access`
 
-## 专家接口调通方案（2026-09-02）
+## 专家接口调通方案
 
 **问题**：异步深度思考模式经常超时或无响应，后台 curl 子进程难以捕获输出。
 

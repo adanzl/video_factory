@@ -111,6 +111,18 @@ class LLMClient:
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    def chat_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int | None = None,
+        thinking_enabled: bool | None = None,
+        temperature: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, str | None]:
+        """多轮自由对话（非 JSON 模式），返回 (正文, finish_reason)。"""
+        raise NotImplementedError
+
     def generate_topics(
         self,
         theme: str,
@@ -371,6 +383,24 @@ class LLMMgr:
             segment_target_sec=segment_target_sec,
             job=job,
             chars_per_sec=chars_per_sec,
+        )
+
+    def chat_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int | None = None,
+        thinking_enabled: bool | None = None,
+        temperature: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, str | None]:
+        """多轮自由对话入口（provider 无关）。"""
+        return self._get_client().chat_messages(
+            messages,
+            max_tokens=max_tokens,
+            thinking_enabled=thinking_enabled,
+            temperature=temperature,
+            model=model,
         )
 
     def fill_image_prompts_with_retries(

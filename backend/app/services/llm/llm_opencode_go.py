@@ -6,7 +6,11 @@ import logging
 from typing import Any
 
 from app.config import get_settings
-from app.services.llm.llm_deepseek import DeepSeekClient, _build_deepseek_chat_payload
+from app.services.llm.llm_deepseek import (
+    DeepSeekClient,
+    _build_deepseek_chat_payload,
+    _build_deepseek_messages_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +89,59 @@ def _opencode_client_class() -> type:
             if finish == "length":
                 logger.warning(
                     "OpenCode Go LLM truncated (finish_reason=length), "
+                    "max_tokens=%d model=%s",
+                    limit,
+                    use_model,
+                )
+            return content, finish
+
+        def chat_messages(
+            self,
+            messages: list[dict[str, Any]],
+            *,
+            max_tokens: int | None = None,
+            thinking_enabled: bool | None = None,
+            temperature: float | None = None,
+            model: str | None = None,
+        ) -> tuple[str, str | None]:
+            """多轮自由对话；session 头按整段 messages 派生，续聊可复用路由。"""
+            settings = get_settings()
+            limit = settings.deepseek_max_tokens if max_tokens is None else max_tokens
+            use_thinking = (
+                settings.deepseek_thinking_enabled
+                if thinking_enabled is None
+                else thinking_enabled
+            )
+            use_model = model or self._model
+            session_seed = "\0".join(
+                f"{item.get('role', '')}:{item.get('content', '')}" for item in messages
+            )
+            headers = {
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": self._user_agent,
+                "x-opencode-session": f"vf-{hashlib.sha256(session_seed.encode()).hexdigest()[:32]}",
+            }
+            resp = self._requests.post(
+                f"{self._base_url}/chat/completions",
+                headers=headers,
+                json=_build_deepseek_messages_payload(
+                    model=use_model,
+                    messages=messages,
+                    max_tokens=limit,
+                    thinking_enabled=use_thinking,
+                    json_mode=False,
+                    temperature=temperature,
+                ),
+                timeout=300,
+            )
+            resp.raise_for_status()
+            choice = resp.json()["choices"][0]
+            finish = choice.get("finish_reason")
+            content = choice.get("message", {}).get("content") or ""
+            if finish == "length":
+                logger.warning(
+                    "OpenCode Go LLM chat truncated (finish_reason=length), "
                     "max_tokens=%d model=%s",
                     limit,
                     use_model,

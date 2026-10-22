@@ -312,6 +312,29 @@ def _force_framework_fields(story: dict, framework: dict | None) -> None:
             story[field] = v
 
 
+def _build_deepseek_messages_payload(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    thinking_enabled: bool,
+    json_mode: bool = True,
+    temperature: float | None = None,
+) -> dict[str, Any]:
+    """多轮 messages 版 chat/completions JSON（专家评审等自由对话用）。"""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    return payload
+
+
 def _build_deepseek_chat_payload(
     *,
     model: str,
@@ -323,20 +346,17 @@ def _build_deepseek_chat_payload(
     temperature: float | None = None,
 ) -> dict[str, Any]:
     """构建 chat/completions JSON；V4 默认 thinking=enabled，结构化输出须显式关闭。"""
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": [
+    return _build_deepseek_messages_payload(
+        model=model,
+        messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "max_tokens": max_tokens,
-        "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
-    }
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-    if temperature is not None:
-        payload["temperature"] = temperature
-    return payload
+        max_tokens=max_tokens,
+        thinking_enabled=thinking_enabled,
+        json_mode=json_mode,
+        temperature=temperature,
+    )
 
 
 def _storyboard_length_max_attempts() -> int:
@@ -703,6 +723,56 @@ class DeepSeekClient(LLMClient):
         if finish == "length":
             logger.warning(
                 "LLM response truncated (finish_reason=length), max_tokens=%d model=%s",
+                limit,
+                use_model,
+            )
+        return content, finish
+
+    def chat_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int | None = None,
+        thinking_enabled: bool | None = None,
+        temperature: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, str | None]:
+        """多轮自由对话：messages 原样发出，不走 JSON 模式。
+
+        与 ``_chat`` 的差别是支持完整 system/user/assistant 序列，
+        供专家评审这类需要多轮上下文的场景使用。
+        """
+        settings = get_settings()
+        limit = settings.deepseek_max_tokens if max_tokens is None else max_tokens
+        use_thinking = (
+            settings.deepseek_thinking_enabled
+            if thinking_enabled is None
+            else thinking_enabled
+        )
+        use_model = model or self._model
+        resp = self._requests.post(
+            f"{self._base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            json=_build_deepseek_messages_payload(
+                model=use_model,
+                messages=messages,
+                max_tokens=limit,
+                thinking_enabled=use_thinking,
+                json_mode=False,
+                temperature=temperature,
+            ),
+            timeout=300,
+        )
+        resp.raise_for_status()
+        choice = resp.json()["choices"][0]
+        finish = choice.get("finish_reason")
+        content = choice.get("message", {}).get("content") or ""
+        if finish == "length":
+            logger.warning(
+                "LLM chat truncated (finish_reason=length), max_tokens=%d model=%s",
                 limit,
                 use_model,
             )

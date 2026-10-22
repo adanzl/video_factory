@@ -385,6 +385,13 @@ def _post_chat(*, api_key: AgnesApiKey, base_url: str, payload: dict[str, Any], 
         raise last_exc
     raise RuntimeError(f'agnes llm request failed after {max_retries} retries: {url}')
 
+def _build_chat_messages_payload(*, model: str, messages: list[dict[str, Any]], max_tokens: int, json_mode: bool = True) -> dict[str, Any]:
+    """多轮 messages 版 payload；专家评审等自由对话须 json_mode=False。"""
+    payload: dict[str, Any] = {'model': model, 'messages': messages, 'max_tokens': max_tokens}
+    if json_mode:
+        payload['response_format'] = {'type': 'json_object'}
+    return payload
+
 def _chat_with_key_fallback(*, system: str, user: str, max_tokens: int | None=None) -> tuple[str, str | None]:
     settings = get_settings()
     keys = agnes_api_keys(settings)
@@ -428,6 +435,56 @@ def _chat_with_key_fallback(*, system: str, user: str, max_tokens: int | None=No
     if last_exc:
         raise last_exc
     raise RuntimeError('agnes llm chat failed without exception')
+
+def _chat_messages_with_key_fallback(*, messages: list[dict[str, Any]], max_tokens: int | None=None) -> tuple[str, str | None]:
+    """多轮自由对话版 key 链兜底（非 JSON 模式）。"""
+    settings = get_settings()
+    keys = agnes_api_keys(settings)
+    if not keys:
+        raise RuntimeError(
+            'AGNES_API_KEY / AGNES_CN_API_KEY / AGNES_FREE_API_KEY / '
+            'AGNES_CN_FREE_API_KEY 未配置，无法使用 Agnes LLM'
+        )
+    limit = settings.agnes_llm_max_tokens if max_tokens is None else max_tokens
+    payload = _build_chat_messages_payload(
+        model=settings.agnes_llm_model,
+        messages=messages,
+        max_tokens=limit,
+        json_mode=False,
+    )
+    last_exc: Exception | None = None
+    for idx, api_key in enumerate(keys):
+        base = agnes_key_base_url(api_key, settings)
+        try:
+            resp = _post_chat(
+                api_key=api_key,
+                base_url=base,
+                payload=payload,
+                max_retries=settings.agnes_http_max_retries,
+                connect_timeout=settings.agnes_http_connect_timeout_sec,
+                read_timeout=settings.agnes_http_submit_read_timeout_sec,
+            )
+            choice = resp.json()['choices'][0]
+            finish = choice.get('finish_reason')
+            content = choice.get('message', {}).get('content') or ''
+            if finish == 'length':
+                logger.warning('Agnes LLM chat truncated (finish_reason=length), max_tokens=%d model=%s', limit, settings.agnes_llm_model)
+            return (content, finish)
+        except AgnesContentPolicyError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            if idx < len(keys) - 1 and agnes_should_switch_key(exc):
+                logger.warning(
+                    'agnes llm %s key failed (%s), switching to backup',
+                    api_key.label,
+                    type(exc).__name__,
+                )
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise RuntimeError('agnes llm chat failed without exception')
 _agnes_client_cls: type | None = None
 
 def _agnes_client_class() -> type:
@@ -442,6 +499,22 @@ def _agnes_client_class() -> type:
 
         def _chat(self, system: str, user: str, *, max_tokens: int | None=None) -> tuple[str, str | None]:
             return _chat_with_key_fallback(system=system, user=user, max_tokens=max_tokens)
+
+        def chat_messages(
+            self,
+            messages: list[dict[str, Any]],
+            *,
+            max_tokens: int | None = None,
+            thinking_enabled: bool | None = None,
+            temperature: float | None = None,
+            model: str | None = None,
+        ) -> tuple[str, str | None]:
+            """多轮自由对话；Agnes 无 thinking/temperature 开关，忽略这些参数。"""
+            _ = thinking_enabled, temperature, model
+            return _chat_messages_with_key_fallback(
+                messages=messages,
+                max_tokens=max_tokens,
+            )
     _agnes_client_cls = AgnesClient
     return AgnesClient
 

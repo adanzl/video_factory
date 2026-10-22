@@ -225,14 +225,35 @@ class MockLLMClient(LLMClient):
             if len(compact) <= cap:
                 continue
             seg["text"] = compact[:cap]
-        ordered = sorted(
+        order = sorted(
             script.get("segments") or [],
             key=lambda s: int(s.get("segment_index") or 0),
         )
-        narration = "".join(str(seg.get("text") or "") for seg in ordered)
+        narration = "".join(str(seg.get("text") or "") for seg in order)
         script["narration"] = narration
         script["word_count"] = len(re.sub(r"\s+", "", narration))
         return script
+
+    def chat_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int | None = None,
+        thinking_enabled: bool | None = None,
+        temperature: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, str | None]:
+        """mock 下限：回显最后一条用户消息长度，保证脚本链路可跑通。"""
+        _ = max_tokens, thinking_enabled, temperature, model
+        last_user = next(
+            (
+                str(item.get("content") or "")
+                for item in reversed(messages)
+                if item.get("role") == "user"
+            ),
+            "",
+        )
+        return f"[mock 专家回复] 收到 {len(last_user)} 字符的问题。", "stop"
 
     def generate_material_script(
         self,
