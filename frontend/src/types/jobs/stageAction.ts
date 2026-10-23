@@ -1,3 +1,5 @@
+import type { IntroCategory } from "@/constants/introCategory";
+
 export type StageParamType = "text" | "boolean" | "select" | "segment-indices" | "number";
 
 export interface StageParamOption {

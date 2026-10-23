@@ -11,7 +11,10 @@ from app.config import Config
 from app.repositories import repo_gold_story
 from app.services.gold_story.gold_chat.export import (
     export_gold_chat_files,
-    load_gold_chat,
+    load_gold_chat_for_row,
+    _backfill_gold_story_after_export,
+    publish_gold_chat_paths,
+    discard_gold_chat_version,
 )
 from app.services.daily_story.prompts import dialogue_total_chars
 from app.services.gold_story.gold_chat.patch import remap_source_kinship
@@ -288,16 +291,16 @@ def polish_gold_chat_export(
     """对已导出 gold_chat 做润色并回写 JSON/MD。"""
     cfg = config or Config()
     sid = str(source_id or "").strip()
-    export = load_gold_chat(sid, config=cfg)
+    row = repo_gold_story.get_by_source_id(source_id=sid)
+    if not row:
+        raise KeyError(f"金故事不存在: {sid}")
+    export = load_gold_chat_for_row(row, config=cfg)
     if not export:
         raise FileNotFoundError(f"尚未导出 gold_chat: {sid}")
     chat = export.get("daily_story")
     if not isinstance(chat, dict):
         raise ValueError("gold_chat export missing daily_story")
 
-    row = repo_gold_story.get_by_source_id(source_id=sid, source="bili")
-    if not row:
-        row = {"source_id": sid, "id": export.get("gold_story_id")}
     payload = cast(dict[str, Any], row.get("payload") or {})
     scene_contract = payload.get("scene_contract") or {}
     banned = sanitize_banned_literals(
@@ -327,12 +330,40 @@ def polish_gold_chat_export(
     polished, _ = patch_sanitize_pad_suffix(polished)
     polished, _ = _ensure_gold_chat_min_chars(polished)
     polished, _ = patch_sanitize_pad_suffix(polished)
+    # 润色也是正式稿写入口：必须重走终审，并通过同一个 DB 版本提交发布。
+    from app.services.gold_story.gold_chat.convert import _attach_gold_chat_structure_score, _gate_gold_chat_structure_score
+    from app.services.gold_story.gold_chat.finalize import run_gold_chat_final_acceptance
+    from app.services.gold_story.gold_chat.import_story import validate_gold_chat_story_for_row
+    from app.services.gold_story.gold_chat.patch import remap_chat_kinship_metadata
+    from app.services.daily_story.quality import story_production_eligibility, gold_story_review_contract
+
+    polished, _, _ = remap_chat_kinship_metadata(polished, theme=str(row.get("title") or sid))
+    validate_gold_chat_story_for_row(polished, row)
+    polished = _attach_gold_chat_structure_score(polished, row)
+    _gate_gold_chat_structure_score(polished)
+    polished = run_gold_chat_final_acceptance(polished, row, sid=sid)
+    validate_gold_chat_story_for_row(polished, row)
+    eligibility = story_production_eligibility(polished, review_contract=gold_story_review_contract(row, polished))
+    if not eligibility["ok"]:
+        raise ValueError("润色终审未通过：" + "；".join(eligibility["reasons"]))
     paths = export_gold_chat_files(
         source_id=sid,
         row=row,
         chat=polished,
         config=cfg,
+        publish=False,
     )
+    try:
+        _backfill_gold_story_after_export(row, chat=polished, paths=paths, config=cfg)
+    except BaseException:
+        fresh = repo_gold_story.get_story(int(row["id"]))
+        if (fresh.get("payload") or {}).get("gold_chat_json") != paths["json"]:
+            discard_gold_chat_version(paths)
+        raise
+    try:
+        publish_gold_chat_paths(sid, paths, config=cfg)
+    except Exception:
+        logger.exception("gold_chat 润色已发布，兼容链接更新失败")
     return {
         "ok": True,
         "source_id": sid,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from typing import Any
 
 from app.config import Config
@@ -35,8 +36,9 @@ def validate_gold_chat_story_for_row(
     mom_lines_max = scene_contract.get("mom_lines_max")
     if mom_lines_max is None:
         mom_lines_max = 1
+    checked = deepcopy(story)
     validate_gold_chat(
-        story,
+        checked,
         banned_literals=banned,
         source_type=str(
             payload.get("source_type")
@@ -45,24 +47,8 @@ def validate_gold_chat_story_for_row(
         ),
         mom_lines_max=int(mom_lines_max),
     )
-
-
-def _exported_quality_is_final(
-    story: dict[str, Any],
-    row: dict[str, Any],
-) -> bool:
-    """只有终验摘要仍绑定当前正文/来源契约时，导入才原样沿用。"""
-    from app.services.daily_story.quality import (
-        gold_story_review_contract,
-        story_production_eligibility,
-    )
-
-    return bool(
-        story_production_eligibility(
-            story,
-            review_contract=gold_story_review_contract(row, story),
-        ).get("ok")
-    )
+    if checked != story:
+        raise ValueError("正文仍需称谓归一，需在导出前修正并重新终验")
 
 
 def _source_facts_not_resolved(row: dict[str, Any]) -> bool:
@@ -83,6 +69,55 @@ def _source_facts_not_resolved(row: dict[str, Any]) -> bool:
     return fact_attribution_review_required(facts)
 
 
+def gold_chat_production_eligibility(
+    story: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    candidates: list[dict[str, Any]],
+    exclude_story_id: int | None = None,
+) -> dict[str, Any]:
+    """发布、导入和建任务共用的只读检查；不改稿、不调用模型或数据库。
+
+    调用方提供同一时刻的来源及库内稿件快照。按导入后的类型核验，避免
+    导出时通过、导入补写 story_type 后摘要失效。重导排除关联的日常故事。
+    """
+    from app.services.daily_story.quality import (
+        find_story_duplicate_matches,
+        gold_story_review_contract,
+        story_production_eligibility,
+    )
+
+    imported = dict(story)
+    story_type = str(row.get("structure_type") or "").strip().upper()[:1]
+    if story_type:
+        imported["story_type"] = story_type
+    hard_error: str | None = None
+    try:
+        validate_gold_chat_story_for_row(imported, row)
+    except Exception as exc:
+        hard_error = str(exc).strip() or exc.__class__.__name__
+    eligibility = story_production_eligibility(
+        imported,
+        hard_error=hard_error,
+        review_contract=gold_story_review_contract(row, imported),
+    )
+    reasons = eligibility["reasons"]
+    if not eligibility.get("reviewed_content_hash"):
+        reasons.append("导出稿缺少当前正文终验摘要，需重新终验")
+    if _source_facts_not_resolved(row):
+        reasons.append("金故事事实归属未定稿（facts 未 resolved），需人工确认")
+    matches = find_story_duplicate_matches(
+        imported, candidates, exclude_story_id=exclude_story_id,
+    )
+    duplicate_block = [item for item in matches if item.get("severity") == "block"]
+    if duplicate_block:
+        ids = ",".join(str(item.get("story_id")) for item in duplicate_block[:5])
+        reasons.append(f"库内高度重复：story_id={ids}")
+    eligibility["dedupe_matches"] = matches[:10]
+    eligibility["ok"] = not reasons
+    return eligibility
+
+
 def import_gold_chat_daily_story(
     row: dict[str, Any],
     *,
@@ -97,11 +132,6 @@ def import_gold_chat_daily_story(
     """
     del review  # 导入不触发改稿/重评；保留参数兼容既有调用方。
     from app.repositories import repo_daily_story
-    from app.services.daily_story.quality import (
-        find_story_duplicate_matches,
-        gold_story_review_contract,
-        story_production_eligibility,
-    )
 
     gid = int(row.get("id") or 0)
     sid = str(row.get("source_id") or "").strip()
@@ -125,28 +155,12 @@ def import_gold_chat_daily_story(
         or row.get("title")
         or sid
     ).strip()
-    # 落库前统一 remap：源视频关系标签（双胞胎/妹妹/哥哥…）→ 站内姐弟口径，
-    # 只改元数据不碰对白正文；否则脏 theme 会一路漏进发布标题（#117 事故）
-    from app.services.gold_story.gold_chat.patch import remap_chat_kinship_metadata
+    # 已终验字段原样消费；标题展示可归一，但不能在导入时改写 hash 绑定的冲突核。
+    from app.services.gold_story.gold_chat.patch import remap_source_kinship
 
-    story, theme, kinship_notes = remap_chat_kinship_metadata(story, theme=theme)
-    if kinship_notes:
-        logger.info(
-            "[gold_chat] import kinship remap source_id=%s: %s",
-            sid,
-            "；".join(kinship_notes),
-        )
-    story_type = str(row.get("structure_type") or "").strip().upper()[:1] or None
-    if story_type:
-        story["story_type"] = story_type
-    exported_final = _exported_quality_is_final(story, row)
+    theme = remap_source_kinship(theme)
     # 导入只消费导出事实，不在这里改稿、同步正文镜像或重评。已绑定当前正文/契约的
     # 终验稿可直接沿用；旧导出稿（无 hash / hash 失效）原样保存为 review_pending。
-    hard_error: str | None = None
-    try:
-        validate_gold_chat_story_for_row(story, row)
-    except Exception as exc:
-        hard_error = str(exc).strip() or exc.__class__.__name__
     story_key = str(story.get("key") or "").strip() or None
 
     existing_raw = row.get("gold_chat_daily_story_id")
@@ -182,43 +196,28 @@ def import_gold_chat_daily_story(
     from app.repositories.sql_exec import atomic
 
     with atomic():
+        fresh = repo_gold_story.get_story(gid)
+        if int(fresh.get("gold_chat_daily_story_id") or 0) != int(existing_raw or 0):
+            raise ValueError("导入关联已变化，请刷新后重试")
+        if (fresh.get("payload") or {}).get("gold_chat_json") != (row.get("payload") or {}).get("gold_chat_json"):
+            raise ValueError("导出版本已更新，请刷新后导入最新稿件")
+        story_type = str(fresh.get("structure_type") or "").strip().upper()[:1] or None
+        if story_type:
+            story["story_type"] = story_type
         candidates = repo_daily_story.list_all_stories(
             exclude_id=existing_id if existing_id > 0 else None,
         )
-        duplicate_matches = find_story_duplicate_matches(
+        eligibility = gold_chat_production_eligibility(
             story,
-            candidates,
+            fresh,
+            candidates=candidates,
             exclude_story_id=existing_id if existing_id > 0 else None,
         )
-        duplicate_block = [
-            item for item in duplicate_matches if item.get("severity") == "block"
-        ]
         raw_quality = story.get("quality")
         quality: dict[str, Any] = raw_quality if isinstance(raw_quality, dict) else {}
         if raw_quality is not quality:
             story["quality"] = quality
-        if duplicate_matches:
-            quality["dedupe_matches"] = duplicate_matches[:10]
-        eligibility = story_production_eligibility(
-            story,
-            hard_error=hard_error,
-            review_contract=gold_story_review_contract(row, story),
-        )
-        if not exported_final:
-            eligibility["ok"] = False
-            eligibility.setdefault("reasons", []).append("导出稿缺少当前正文终验摘要，需重新终验")
-        if _source_facts_not_resolved(row):
-            # 事实归属（谁做过那件事）未定稿：不得自动发布，须人工确认
-            eligibility["ok"] = False
-            eligibility.setdefault("reasons", []).append(
-                "金故事事实归属未定稿（facts 未 resolved），需人工确认"
-            )
-        if duplicate_block:
-            eligibility["ok"] = False
-            ids = ",".join(str(item.get("story_id")) for item in duplicate_block[:5])
-            eligibility.setdefault("reasons", []).append(
-                f"库内高度重复：story_id={ids}"
-            )
+        quality["dedupe_matches"] = eligibility["dedupe_matches"]
         quality["production_reasons"] = list(eligibility.get("reasons") or [])
         status = "active" if eligibility.get("ok") else "review_pending"
 

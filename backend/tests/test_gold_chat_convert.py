@@ -2277,6 +2277,7 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
         assert inserted.get("action") == "insert"
         row = repo_gold_story.get_story(int(inserted["id"]))
         row["payload"]["scene_contract"] = {"mom_lines_max": 0}
+        repo_gold_story.patch_story_payload(int(row["id"]), {"scene_contract": {"mom_lines_max": 0}})
 
     chat = _sample_chat()
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
@@ -2326,7 +2327,8 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
         assert saved2["story"]["scene_title"] == "新标题"
 
 
-def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch):
+@pytest.mark.parametrize("conflict_core", ["弟弟幻想报复姐姐，开门秒怂", "双胞胎关门练功，开门秒怂"])
+def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch, conflict_core):
     from app.repositories import repo_daily_story, repo_gold_story
     from app.services.llm import llm_mgr as llm_mgr_mod
 
@@ -2354,6 +2356,7 @@ def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch):
         row = repo_gold_story.get_story(int(inserted["id"]))
 
     chat = _sample_chat()
+    chat["conflict_core"] = conflict_core
     dialogue = [dict(item) for item in chat["dialogue"]]
     chat["quality"] = {
         "score": 91,
@@ -2402,6 +2405,7 @@ def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch):
     assert quality["score"] == 91
     assert quality["structure_score"] == 80
     assert quality["humor"]["funny_score"] == 11
+    assert saved["story"]["conflict_core"] == conflict_core
     assert saved["story"]["dialogue"] == dialogue
     assert saved["status"] == "active"
 
@@ -2409,7 +2413,7 @@ def test_import_keeps_exported_final_quality(app_ctx, tmp_path, monkeypatch):
 def test_real_final_acceptance_export_import_stays_active(
     app_ctx, tmp_path, monkeypatch,
 ):
-    """真实终验入口绑定最终正文后，导出再导入必须原样保持 active。"""
+    """真实终验、版本发布、导入和建制作任务共用门槛；全程只模拟外部审读。"""
     from app.repositories import repo_daily_story, repo_gold_story
     from app.services.daily_story.review import ExportSemanticReviewResult
 
@@ -2481,15 +2485,58 @@ def test_real_final_acceptance_export_import_stays_active(
 
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
-    gc.export_gold_chat_files(
+    paths = gc.export_gold_chat_files(
         source_id=str(row["source_id"]),
         row=row,
         chat=accepted,
+        publish=False,
     )
 
     with app_ctx.app_context():
+        from app.config import Config
+        from app.services.daily_story.daily_story_mgr import daily_story_mgr
+
+        monkeypatch.setattr(gce, "export_story_files", lambda **_kw: None)
+        gce._backfill_gold_story_after_export(row, chat=accepted, paths=paths, config=Config())
+        row = repo_gold_story.get_story(int(row["id"]))
         out = gc.import_gold_chat_daily_story(row, review=True)
         saved = repo_daily_story.get_story(int(out["daily_story_id"]))
+        job = daily_story_mgr.create_job(int(saved["id"]))
+        assert job["pipeline"] == "chat"
+        assert job["stage"] == "script"
+        assert job["status"] == "pending"
+
+        from copy import deepcopy
+        from app.services.llm.llm_deepseek import DeepSeekClient
+
+        client = object.__new__(DeepSeekClient)
+        storyboard_response = {"scenes": [
+            {"shot_type": "中景", "dialogue": [
+                {"speaker": item["speaker"], "text": item["line"]}
+                for item in accepted["dialogue"][index:index + 2]
+            ]}
+            for index in range(0, len(accepted["dialogue"]), 2)
+        ]}
+        monkeypatch.setattr(client, "_chat_json", lambda *_a, **_kw: (deepcopy(storyboard_response), "stop"))
+        script_input = deepcopy(saved["story"])
+        storyboard = client.generate_daily_script(script_input, chars_per_sec=4.5)
+        assert [
+            (item["speaker"], item["text"])
+            for scene in storyboard["scenes"] for item in scene["dialogue"]
+        ] == [(item["speaker"], item["line"]) for item in accepted["dialogue"]]
+        assert script_input == saved["story"]
+
+        # 重发布/重导排除自身，并保留终验摘要；不再调用语义模型。
+        monkeypatch.setattr(
+            "app.services.daily_story.review.run_export_semantic_review",
+            lambda *_a, **_kw: pytest.fail("合格稿导入和建任务不应重复审读"),
+        )
+        row = repo_gold_story.get_story(int(row["id"]))
+        gce._backfill_gold_story_after_export(row, chat=accepted, paths=paths, config=Config())
+        again = gc.import_gold_chat_daily_story(repo_gold_story.get_story(int(row["id"])), force=True)
+        assert again["status"] == "active"
+        assert again["daily_story_id"] == saved["id"]
+        assert daily_story_mgr.create_job(int(saved["id"]))["status"] == "pending"
 
     assert out["status"] == "active"
     assert out["production_reasons"] == []
@@ -5221,3 +5268,142 @@ def test_reroll_keeps_source_beat_readonly(monkeypatch):
     assert out["payload"]["beat"] == original_beat
     assert row["payload"]["beat"] == original_beat
     assert pair
+
+
+@pytest.mark.parametrize("suffix", ["json", "md"])
+def test_export_staging_failure_preserves_complete_previous_version(tmp_path, monkeypatch, suffix):
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    row = _sample_row()
+    old = _sample_chat()
+    paths = gce.export_gold_chat_files(source_id=row["source_id"], row=row, chat=old)
+    old_json = Path(paths["json"]).read_bytes()
+    old_md = Path(paths["markdown"]).read_bytes()
+    original = Path.write_text
+    def fail(path, *args, **kwargs):
+        if path.suffix == "." + suffix:
+            raise OSError("injected write failure")
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "write_text", fail)
+    changed = {**old, "scene_title": "new version"}
+    with pytest.raises(OSError):
+        gce.export_gold_chat_files(source_id=row["source_id"], row=row, chat=changed)
+    assert (tmp_path / (row["source_id"] + ".json")).read_bytes() == old_json
+    assert (tmp_path / (row["source_id"] + ".md")).read_bytes() == old_md
+    assert len(list((tmp_path / ".versions" / row["source_id"]).iterdir())) == 1
+
+
+def test_db_version_remains_authoritative_when_cache_is_newer(tmp_path, monkeypatch):
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    row = _sample_row()
+    old = _sample_chat()
+    paths = gce.export_gold_chat_files(source_id=row["source_id"], row=row, chat=old)
+    row["payload"] = {"gold_chat_json": paths["json"], "gold_chat_md": paths["markdown"]}
+    gce.export_gold_chat_files(source_id=row["source_id"], row=row, chat={**old, "scene_title": "uncommitted"})
+    assert gce.load_gold_chat_for_row(row)["daily_story"] == old
+    assert gce.gold_chat_summary(row["source_id"], row=row)["scene_title"] == old["scene_title"]
+
+
+@pytest.mark.parametrize("failure,reason", [
+    ("humor_low", "好笑分不足"),
+    ("humor_missing", "好笑分待最终审核"),
+    ("structure_low", "结构分不足"),
+    ("hash_missing", "缺少最终正文审核摘要"),
+    ("body_changed", "旧终验结果已失效"),
+    ("contract_changed", "旧终验结果已失效"),
+    ("facts_unresolved", "事实归属未定稿"),
+    ("duplicate", "库内高度重复"),
+    ("hard_invalid", "硬校验未通过"),
+    ("kinship_patch", "硬校验未通过"),
+])
+def test_publication_blocks_downstream_review_failures(
+    app_ctx, tmp_path, monkeypatch, failure, reason,
+):
+    from copy import deepcopy
+    from app.config import Config
+    from app.repositories import repo_daily_story, repo_gold_story
+    from app.services.daily_story.daily_story_mgr import daily_story_mgr
+    from app.services.daily_story.quality import gold_story_review_contract, stamp_story_review_binding
+    from app.services.gold_story.gold_chat.import_story import gold_chat_production_eligibility
+
+    sample = _sample_row()
+    sample["payload"]["banned_literals"].append("哥哥")
+    result = repo_gold_story.insert_or_skip(
+        source="bilibili", source_id=sample["source_id"], url=sample["url"],
+        mechanism=sample["mechanism"], structure_type=sample["structure_type"],
+        story_raw="制作门槛回归来源" * 20, payload=sample["payload"],
+        title=sample["title"], conflict_core=sample["conflict_core"],
+        extract_confidence=0.8, structure_confidence=0.8, dialogue_confidence=0.8,
+        auto_score=0.9, status="active",
+    )
+    row = repo_gold_story.get_story(int(result["id"]))
+    chat = _sample_chat()
+    chat["story_type"] = "A"
+    chat["quality"] = {"structure_score": 80, "humor": {"funny_score": 11}}
+    stamp_story_review_binding(chat, semantic_pass=True, review_contract=gold_story_review_contract(row, chat))
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    monkeypatch.setattr(gce, "export_story_files", lambda **_kw: None)
+    old_paths = gce.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat, publish=False)
+    gce._backfill_gold_story_after_export(row, chat=chat, paths=old_paths, config=Config())
+    gce.publish_gold_chat_paths(row["source_id"], old_paths)
+    old_bytes = {key: Path(path).read_bytes() for key, path in old_paths.items()}
+    imported = gc.import_gold_chat_daily_story(repo_gold_story.get_story(row["id"]))
+    own_id = imported["daily_story_id"]
+    assert imported["status"] == "active"
+    before_change = repo_gold_story.get_story(row["id"])
+
+    if failure == "humor_low":
+        chat["quality"]["humor"]["funny_score"] = 9
+    elif failure == "humor_missing":
+        chat["quality"].pop("humor")
+    elif failure == "structure_low":
+        chat["quality"]["structure_score"] = 0
+    elif failure == "hash_missing":
+        chat["quality"].pop("reviewed_content_hash")
+    elif failure == "body_changed":
+        chat["dialogue"][0]["line"] += "这事我记住了。"
+    elif failure == "contract_changed":
+        repo_gold_story.patch_story_payload(row["id"], {"closing_intent": "新的收束契约"})
+    elif failure == "facts_unresolved":
+        repo_gold_story.patch_story_payload(row["id"], {"scene_contract": {
+            "mom_lines_max": 1,
+            "facts": [{"fact_id": "F1", "secret_holder": "妈妈", "attribution_status": "ambiguous"}],
+        }})
+    elif failure == "duplicate":
+        repo_daily_story.insert_story(theme="其他来源的重复稿", story=deepcopy(chat), status="active", story_type="A")
+    elif failure == "hard_invalid":
+        chat["key"] = "太长的关键词不能通过制作阶段的硬校验"
+    elif failure == "kinship_patch":
+        chat["dialogue"][0]["line"] = "哥哥刚才又抢我遥控器，我还不敢说。"
+        stamp_story_review_binding(chat, semantic_pass=True, review_contract=gold_story_review_contract(row, chat))
+
+    fresh = repo_gold_story.get_story(row["id"])
+    snapshot = deepcopy(chat)
+    eligibility = gold_chat_production_eligibility(
+        chat, fresh, candidates=repo_daily_story.list_all_stories(), exclude_story_id=own_id,
+    )
+    assert eligibility["ok"] is False
+    assert reason in "；".join(eligibility["reasons"])
+    assert chat == snapshot
+    paths = gce.export_gold_chat_files(source_id=row["source_id"], row=fresh, chat=chat, publish=False)
+    with pytest.raises(ValueError, match=reason) as caught:
+        gce._backfill_gold_story_after_export(fresh, chat=chat, paths=paths, config=Config())
+    assert caught.value.candidate == snapshot
+    published = repo_gold_story.get_story(row["id"])
+    assert published["payload"]["gold_chat_json"] == old_paths["json"]
+    for key, path in old_paths.items():
+        assert Path(path).read_bytes() == old_bytes[key]
+    assert (tmp_path / (row["source_id"] + ".json")).read_bytes() == old_bytes["json"]
+
+    if failure in {"facts_unresolved", "contract_changed"}:
+        reimported = gc.import_gold_chat_daily_story(before_change, force=True)
+        assert reimported["status"] == "review_pending"
+        assert reason in "；".join(reimported["production_reasons"])
+
+    # 历史稿/编辑稿也按相同原因阻断，不能靠直接创建任务跳过事实与查重检查。
+    repo_daily_story.update_story(own_id, story=chat)
+    with pytest.raises(ValueError, match=reason):
+        daily_story_mgr.create_job(own_id)
+    saved = repo_daily_story.get_story(own_id)
+    assert saved["status"] == "review_pending"
+    assert saved["job_id"] is None
+    assert saved["story"]["dialogue"] == snapshot["dialogue"]

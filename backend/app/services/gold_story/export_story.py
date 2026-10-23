@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any, cast
 
@@ -262,6 +263,7 @@ def cleanup_gold_story_files(source_id: str, *, config: Config | None = None) ->
         base / "stories" / f"{sid}.md",
         base / "gold_chat" / f"{sid}.json",
         base / "gold_chat" / f"{sid}.md",
+        base / "gold_chat" / f".{sid}.current",
         ws / "downloads" / f"{sid}.mp4",
         ws / "metadata" / f"{sid}.json",
         ws / "audio" / f"{sid}.wav",
@@ -269,9 +271,13 @@ def cleanup_gold_story_files(source_id: str, *, config: Config | None = None) ->
     removed: list[str] = []
     for path in candidates:
         try:
-            if path.is_file():
+            if path.is_file() or path.is_symlink():
                 path.unlink()
                 removed.append(str(path))
         except OSError:
             continue
+    versions = base / "gold_chat" / ".versions" / sid
+    if versions.is_dir():
+        shutil.rmtree(versions)
+        removed.append(str(versions))
     return removed

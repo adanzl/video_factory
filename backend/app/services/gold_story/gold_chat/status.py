@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,7 +21,32 @@ _GOLD_CHAT_ERROR_CLEAR_KEYS = (
     "gold_chat_review_status",
     "gold_chat_review_pending_candidate",
     "gold_chat_failed_candidate",
+    "gold_chat_candidate_contract",
 )
+
+
+def gold_chat_candidate_contract(row: dict[str, Any]) -> dict[str, Any]:
+    from app.services.daily_story.quality import gold_story_review_contract
+
+    return {"contract": gold_story_review_contract(row), "source_raw": str(row.get("story_raw") or "")}
+
+
+def gold_chat_recovery(row: dict[str, Any]) -> dict[str, Any] | None:
+    """候选、契约和恢复规则共同形成版本；只允许重审当前来源下的稳定候选。"""
+    payload = row.get("payload") or {}
+    if payload.get("gold_chat_review_status") == "review_pending":
+        candidate = payload.get("gold_chat_review_pending_candidate")
+    else:
+        candidate = (payload.get("gold_chat_failed_candidate") or {}).get("candidate")
+    if not isinstance(candidate, dict) or not candidate.get("dialogue"):
+        return None
+    contract = payload.get("gold_chat_candidate_contract")
+    if not isinstance(contract, dict) or contract != gold_chat_candidate_contract(row):
+        return {"candidate": candidate, "revision": None,
+                "reason": "候选缺少来源快照或来源契约已变化，请重新转换"}
+    encoded = json.dumps({"version": 1, "candidate": candidate, "contract": contract},
+                         ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {"candidate": candidate, "revision": hashlib.sha256(encoded.encode()).hexdigest()}
 
 
 def _now_iso() -> str:
@@ -77,10 +104,10 @@ def gold_chat_converting_from_payload(
     if not isinstance(payload, dict):
         return False
     task = payload.get("gold_chat_task")
-    if isinstance(task, dict) and task.get("status") in {"queued", "running"}:
+    if isinstance(task, dict) and task.get("task_id"):
         current_time = now or datetime.now(timezone.utc)
-        if current_time.timestamp() < float(task.get("expires_at") or 0):
-            return True
+        return (task.get("status") in {"queued", "running"}
+                and current_time.timestamp() < float(task.get("expires_at") or 0))
     if str(payload.get("gold_chat_convert_status") or "").strip() != "converting":
         return False
     started_raw = str(payload.get("gold_chat_convert_started_at") or "").strip()
@@ -102,7 +129,7 @@ def gold_chat_converting_from_payload(
 def list_gold_chat_converting() -> dict[str, Any]:
     """当前仍在转换中的金故事。CLI 与 Web 分进程，只认库里的标记。"""
     rows = repo_gold_story.list_stories_with_payload_marker(
-        marker='"gold_chat_convert_status": "converting"',
+        marker='"gold_chat_convert_status"',
     )
     tasks = repo_gold_story.list_stories_with_payload_marker(marker='"gold_chat_task"')
     rows = list({row["id"]: row for row in [*rows, *tasks]}.values())
@@ -322,6 +349,10 @@ def record_gold_chat_failure(
             candidate = prev_candidate
             candidate_source = "fallback_last_stable"
     if isinstance(candidate, dict):
+        if candidate_source == "current":
+            patch["gold_chat_candidate_contract"] = getattr(
+                exc, "gold_chat_candidate_contract", None,
+            ) or gold_chat_candidate_contract(row)
         kind = str(getattr(exc, "candidate_review_status", "review_pending")).strip()
         stored: dict[str, Any] = dict(candidate)
         raw_quality = stored.get("quality")
@@ -352,6 +383,7 @@ def record_gold_chat_failure(
             stored["quality"] = quality
             patch["gold_chat_review_status"] = "review_pending"
             patch["gold_chat_review_pending_candidate"] = stored
+            patch["gold_chat_failed_candidate"] = None
     repo_gold_story.patch_story_payload(
         gid,
         patch,

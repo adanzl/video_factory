@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
+import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.gold_story.gold_chat.status import clear_gold_chat_failure
-from app.services.gold_story.collect import fetch_video_meta
+from app.services.gold_story.gold_chat.status import _GOLD_CHAT_ERROR_CLEAR_KEYS
 from app.services.gold_story.export_story import export_story_files
 from app.services.daily_story.prompts import dialogue_total_chars
 
@@ -35,40 +38,20 @@ def _chat_md_lines(dialogue: list[Any]) -> list[str]:
     return lines
 
 
-def _bili_meta_patch(source_id: str, *, config: Config) -> dict[str, Any]:
-    sid = str(source_id or "").strip()
-    if not sid.startswith("BV"):
-        return {}
-    try:
-        meta = fetch_video_meta(sid, config=config)
-    except Exception as exc:
-        logger.warning("gold_chat bili meta failed bvid=%s: %s", sid, exc)
-        return {}
-    url = str(meta.get("url") or "").strip() or f"https://www.bilibili.com/video/{sid}"
-    patch: dict[str, Any] = {
-        "bili_title": meta.get("title"),
-        "bili_url": url,
-        "bili_view_count": meta.get("view_count"),
-        "bili_reply_count": meta.get("reply_count"),
-    }
-    return {k: v for k, v in patch.items() if v not in (None, "")}
-
-
 def _backfill_gold_story_after_export(
     row: dict[str, Any],
     *,
     chat: dict[str, Any],
     paths: dict[str, str],
     config: Config,
+    task_id: str | None = None,
 ) -> None:
-    """gold_chat 导出后回写库内摘要与 B 站元数据。"""
+    """单次 DB 提交发布完整版本。采集元数据不再占用成稿发布链路。"""
     gid = int(row.get("id") or 0)
     sid = str(row.get("source_id") or "").strip()
     if gid <= 0 or not sid:
         return
-
     payload_patch = {
-        **_bili_meta_patch(sid, config=config),
         "gold_chat_exported_at": datetime.now(timezone.utc).isoformat(),
         "gold_chat_scene_title": chat.get("scene_title"),
         "gold_chat_lines": len(chat.get("dialogue") or []),
@@ -97,12 +80,25 @@ def _backfill_gold_story_after_export(
             if isinstance(downgraded, list)
             else []
         )
-    repo_gold_story.patch_story_payload(gid, payload_patch)
-    clear_gold_chat_failure(gid, source_id=sid)
+    payload_patch.update({key: None for key in _GOLD_CHAT_ERROR_CLEAR_KEYS})
+    payload_patch["gold_chat_last_error_stage"] = None
+    from app.repositories import repo_daily_story
+    from app.repositories.sql_exec import atomic
+    from app.services.gold_story.gold_chat.import_story import gold_chat_production_eligibility
 
-    bili_url = payload_patch.get("bili_url")
-    if isinstance(bili_url, str) and bili_url.strip():
-        repo_gold_story.update_story_source_fields(gid, url=bili_url.strip())
+    with atomic():
+        fresh = repo_gold_story.get_story(gid, include_payload_snapshot=True)
+        own_id = int(fresh.get("gold_chat_daily_story_id") or 0) or None
+        eligibility = gold_chat_production_eligibility(
+            chat, fresh,
+            candidates=repo_daily_story.list_all_stories(exclude_id=own_id),
+            exclude_story_id=own_id,
+        )
+        if not eligibility["ok"]:
+            error = ValueError("导出前制作检查未通过：" + "；".join(eligibility["reasons"]))
+            setattr(error, "candidate", deepcopy(chat))
+            raise error
+        repo_gold_story.publish_chat_export(gid, payload_patch, task_id=task_id, expected_row=fresh)
 
     try:
         fresh = repo_gold_story.get_story(gid)
@@ -137,6 +133,7 @@ def export_gold_chat_files(
     row: dict[str, Any],
     chat: dict[str, Any],
     config: Config | None = None,
+    publish: bool = True,
 ) -> dict[str, str]:
     """导出 JSON + 可读 MD 到 data/gold_story/gold_chat/。"""
     sid = str(source_id or row.get("source_id") or "").strip()
@@ -174,13 +171,6 @@ def export_gold_chat_files(
         },
     }
 
-    json_path = out_dir / f"{sid}.json"
-    md_path = out_dir / f"{sid}.md"
-    json_path.write_text(
-        json.dumps(export, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
     md_lines = [
         f"# {chat.get('scene_title') or row.get('title') or sid}",
         "",
@@ -215,8 +205,75 @@ def export_gold_chat_files(
         md_lines.append("")
     md_lines.extend(["## 对白", ""])
     md_lines.extend(_chat_md_lines(chat.get("dialogue") or []))
-    md_path.write_text("\n".join(md_lines), encoding="utf-8")
-    return {"json": str(json_path), "markdown": str(md_path)}
+    version_dir = out_dir / ".versions" / sid / uuid.uuid4().hex
+    version_dir.mkdir(parents=True)
+    json_path = version_dir / f"{sid}.json"
+    md_path = version_dir / f"{sid}.md"
+    try:
+        for path, content in ((json_path, json.dumps(export, ensure_ascii=False, indent=2)),
+                              (md_path, "\n".join(md_lines))):
+            path.write_text(content, encoding="utf-8")
+            with path.open("rb") as handle:
+                os.fsync(handle.fileno())
+    except BaseException:
+        shutil.rmtree(version_dir)
+        raise
+    paths = {"json": str(json_path), "markdown": str(md_path)}
+    if publish:
+        publish_gold_chat_paths(sid, paths, config=config)
+    return paths
+
+
+def publish_gold_chat_paths(source_id: str, paths: dict[str, str], *, config: Config | None = None) -> None:
+    """DB 是服务读取的权威；平铺文件只作兼容缓存，整对经一个指针切换。"""
+    out_dir = gold_chat_export_dir(config)
+    version_dir = Path(paths["json"]).parent
+    if not Path(paths["json"]).is_file() or not Path(paths["markdown"]).is_file():
+        raise FileNotFoundError("稿件版本不完整，禁止更新兼容入口")
+    if Path(paths["markdown"]).parent != version_dir:
+        raise ValueError("JSON 和 Markdown 必须来自同一稿件版本")
+    current = out_dir / f".{source_id}.current"
+    token = uuid.uuid4().hex
+    temporary = out_dir / f".{source_id}.{token}.link"
+    try:
+        # 首次迁移旧的平铺文件时，先保留完整旧版，安装链接不改变旧稿内容。
+        if not current.is_symlink() and (out_dir / f"{source_id}.json").is_file():
+            legacy = out_dir / ".versions" / source_id / f"legacy-{token}"
+            legacy.mkdir(parents=True)
+            for suffix in ("json", "md"):
+                path = out_dir / f"{source_id}.{suffix}"
+                if path.is_file():
+                    shutil.copyfile(path, legacy / path.name)
+            temporary.symlink_to(legacy.relative_to(out_dir), target_is_directory=True)
+            os.replace(temporary, current)
+        for suffix in ("json", "md"):
+            path = out_dir / f"{source_id}.{suffix}"
+            temporary.symlink_to(Path(current.name) / path.name)
+            os.replace(temporary, path)
+        temporary.symlink_to(os.path.relpath(version_dir, out_dir), target_is_directory=True)
+        os.replace(temporary, current)
+        # 保留当前版、最近一版和一天内的新版本；不清理其他正在写入的暂存版本。
+        versions = out_dir / ".versions" / source_id
+        from flask import has_app_context
+
+        if versions.is_dir() and has_app_context():
+            row = repo_gold_story.get_by_source_id(source_id=source_id)
+            committed = str(((row or {}).get("payload") or {}).get("gold_chat_json") or "")
+            protected = Path(committed).parent if committed else version_dir
+            directories = sorted((p for p in versions.iterdir() if p.is_dir()),
+                                 key=lambda p: p.stat().st_mtime, reverse=True)
+            cutoff = datetime.now(timezone.utc).timestamp() - 86400
+            for directory in directories[2:]:
+                if directory not in (version_dir, protected) and directory.stat().st_mtime < cutoff:
+                    shutil.rmtree(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def discard_gold_chat_version(paths: dict[str, str]) -> None:
+    directory = Path(paths["json"]).parent
+    if directory.parent.parent.name == ".versions":
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def load_gold_chat(
@@ -247,19 +304,19 @@ def load_gold_chat_for_row(
     sid = str(row.get("source_id") or "").strip()
     if not sid:
         return None
-    export = load_gold_chat(sid, config=config)
-    if export is not None:
-        return export
     payload = cast(dict[str, Any], row.get("payload") or {})
     alt_json = str(payload.get("gold_chat_json") or "").strip()
     if not alt_json:
-        return None
+        return load_gold_chat(sid, config=config)
     alt_path = Path(alt_json)
     if not alt_path.is_file():
-        return None
+        if ".versions" in alt_path.parts:
+            logger.error("DB 指向的正式稿版本缺失，拒绝回退旧缓存：%s", alt_path)
+        return None if ".versions" in alt_path.parts else load_gold_chat(sid, config=config)
     try:
         raw = json.loads(alt_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
+        logger.error("正式稿 JSON 损坏，拒绝回退旧缓存：%s", alt_path)
         return None
     return raw if isinstance(raw, dict) else None
 
@@ -327,7 +384,7 @@ def gold_chat_summary(
     row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """列表页用的导出摘要（优先读导出 JSON，其次读库内 payload）。"""
-    data = load_gold_chat(source_id, config=config)
+    data = load_gold_chat_for_row(row, config=config) if row is not None else load_gold_chat(source_id, config=config)
     if data:
         daily = data.get("daily_story") if isinstance(data.get("daily_story"), dict) else {}
         chat_chars = data.get("chat_chars")

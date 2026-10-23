@@ -6,6 +6,7 @@ import logging
 import time
 from contextvars import ContextVar
 from typing import Any, Literal, cast
+from collections.abc import Callable
 
 TopicLlmOperation = Literal["generate", "save", "optimize"]
 
@@ -22,6 +23,53 @@ llm_deadline: ContextVar[float] = ContextVar("llm_deadline", default=0.0)
 
 class LLMTimeBudgetExceeded(ValueError):
     """调用链预算耗尽；不可作为内容错误重新生成。"""
+
+
+class LLMDeadlineExpired(BaseException):
+    """硬截止信号，仅在任务边界转换；不能被网络重试或审核降级吞掉。"""
+
+
+def start_llm_deadline_timer() -> Callable[[], None]:
+    """生产 gevent 和同步 CLI 均中断整个调用链，而不只限制一次 socket 读取。"""
+    remaining = remaining_llm_time()
+    if remaining is None:
+        return lambda: None
+    from gevent import Timeout
+    from gevent.monkey import is_module_patched
+
+    if is_module_patched("socket"):
+        timer = Timeout(remaining, LLMDeadlineExpired())
+        timer.start()
+        return timer.cancel
+    import signal
+    import threading
+
+    if threading.current_thread() is not threading.main_thread() or not hasattr(signal, "setitimer"):
+        raise RuntimeError("有时间预算的转换须在 gevent 服务或支持定时信号的主线程运行")
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    started = time.monotonic()
+
+    def expire(_signum: int, _frame: Any) -> None:
+        raise LLMDeadlineExpired()
+
+    signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, min(remaining, previous_timer[0]) if previous_timer[0] > 0 else remaining)
+    cancelled = False
+
+    def cancel() -> None:
+        nonlocal cancelled
+        if cancelled:
+            return
+        cancelled = True
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            signal.setitimer(signal.ITIMER_REAL,
+                             max(0.000001, previous_timer[0] - (time.monotonic() - started)),
+                             previous_timer[1])
+
+    return cancel
 
 
 def remaining_llm_time(*, reserve: float = 0.0) -> float | None:

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 from app.config import Config
 from app.repositories import repo_gold_story
 from app.services.gold_story.gold_chat.convert import convert_gold_chat
-from app.services.gold_story.gold_chat.export import gold_chat_export_dir
+from app.services.gold_story.gold_chat.export import gold_chat_export_dir, load_gold_chat_for_row
 from app.services.gold_story.gold_chat.status import record_gold_chat_failure
 
 
@@ -21,14 +21,13 @@ def _already_exported(row: dict[str, Any], config: Config) -> bool:
     sid = str(row.get("source_id") or "").strip()
     if not sid:
         return False
-    json_path = gold_chat_export_dir(config) / f"{sid}.json"
     payload = row.get("payload")
     backfilled = bool(
         isinstance(payload, dict)
         and payload.get("gold_chat_exported_at")
         and payload.get("gold_chat_json")
     )
-    return json_path.is_file() and backfilled
+    return backfilled and load_gold_chat_for_row(row, config=config) is not None
 
 
 def run_gold_chat_batch(

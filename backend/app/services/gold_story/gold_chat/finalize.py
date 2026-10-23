@@ -1296,6 +1296,7 @@ def run_gold_chat_final_acceptance(
     row: dict[str, Any],
     *,
     sid: str,
+    preserve_dialogue: bool = False,
 ) -> dict[str, Any]:
     """补字/改 speaker 完成后统一终验；未过则抛错，不写导出文件。"""
     if row.get("_gold_source_line_plan"):
@@ -1327,7 +1328,11 @@ def run_gold_chat_final_acceptance(
         format_opening_causality_hard_error,
     )
 
-    chat = apply_final_acceptance_local_patches(chat, row)
+    if not preserve_dialogue:
+        chat = apply_final_acceptance_local_patches(chat, row)
+    from app.services.gold_story.gold_chat.patch import remap_chat_kinship_metadata
+
+    chat, theme, _ = remap_chat_kinship_metadata(chat, theme=theme)
 
     # 终检前最后一道确定性契约补丁（幂等）：重掷/LLM 修稿可能把旁观角色、
     # 词槽或追问归属写回去，终检只审补丁后的文本（专家口径：自动管线补丁，
@@ -1345,7 +1350,7 @@ def run_gold_chat_final_acceptance(
         apply_n_contract_local_patches,
     )
 
-    if _st_for_patch == "N" and not _perbeat_mode():
+    if _st_for_patch == "N" and not _perbeat_mode() and not preserve_dialogue:
         if not chat.get("story_type"):
             chat["story_type"] = "N"
         chat, pre_final_notes = apply_n_contract_local_patches(

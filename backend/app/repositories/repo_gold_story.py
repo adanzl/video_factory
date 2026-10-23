@@ -146,7 +146,7 @@ def has_source(*, source: str, source_id: str) -> bool:
     return row is not None
 
 
-def get_story(gold_story_id: int) -> dict:
+def get_story(gold_story_id: int, *, include_payload_snapshot: bool = False) -> dict:
     row = sql.fetchone(
         f"SELECT {_GOLD_STORY_COLUMNS} FROM gold_story WHERE id = ?",
         (gold_story_id,),
@@ -154,7 +154,10 @@ def get_story(gold_story_id: int) -> dict:
     sql.commit()
     if row is None:
         raise KeyError(f"gold_story {gold_story_id} not found")
-    return _row_to_dict(row)
+    result = _row_to_dict(row)
+    if include_payload_snapshot:
+        result["_payload_json_snapshot"] = row.get("payload_json")
+    return result
 
 
 def get_by_source_id(
@@ -513,15 +516,21 @@ def rescore_all_funny() -> list[dict[str, Any]]:
 
 
 def patch_story_payload(gold_story_id: int, patch: dict[str, Any]) -> None:
-    """合并 payload 字段（如 funny_signal）。"""
-    row = get_story(int(gold_story_id))
-    payload = cast(dict[str, Any], row.get("payload") or {})
-    merged = {**payload, **patch}
+    """原子修改指定字段，避免读改写整个 payload 覆盖并发更新的任务版本。"""
+    if not patch:
+        return
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    sql.execute(
-        "UPDATE gold_story SET payload_json = ?, updated_at = ? WHERE id = ?",
-        (json.dumps(merged, ensure_ascii=False), now, int(gold_story_id)),
+    pairs = ", ".join("?, json(?)" for _ in patch)
+    params: list[Any] = []
+    for key, value in patch.items():
+        params.extend(("$." + json.dumps(key, ensure_ascii=False), json.dumps(value, ensure_ascii=False)))
+    result = sql.execute(
+        f"UPDATE gold_story SET payload_json = json_set(COALESCE(payload_json, '{{}}'), {pairs}), updated_at = ? WHERE id = ?",
+        (*params, now, int(gold_story_id)),
     )
+    if result.rowcount != 1:
+        sql.rollback()
+        raise KeyError(f"gold_story not found: {gold_story_id}")
     sql.commit()
 
 
@@ -546,9 +555,44 @@ def update_chat_task(gold_story_id: int, task: dict[str, Any]) -> None:
     sql.execute(
         """UPDATE gold_story SET payload_json = json_set(payload_json,
                '$.gold_chat_task', json(?)) WHERE id = ?
-               AND json_extract(payload_json, '$.gold_chat_task.task_id') = ?""",
+               AND json_extract(payload_json, '$.gold_chat_task.task_id') = ?
+               AND json_extract(payload_json, '$.gold_chat_task.status') IN ('queued', 'running')""",
         (json.dumps(task, ensure_ascii=False), gold_story_id, task["task_id"]),
     )
+    sql.commit()
+
+
+def expire_chat_task(gold_story_id: int, task: dict[str, Any]) -> None:
+    """到期任务和旧标记一起结束；不得覆盖另一执行器已写入的终态。"""
+    sql.execute(
+        """UPDATE gold_story SET payload_json = json_set(payload_json,
+               '$.gold_chat_task', json(?), '$.gold_chat_convert_status', NULL,
+               '$.gold_chat_convert_started_at', NULL) WHERE id = ?
+               AND json_extract(payload_json, '$.gold_chat_task.task_id') = ?
+               AND json_extract(payload_json, '$.gold_chat_task.status') IN ('queued', 'running')
+               AND json_extract(payload_json, '$.gold_chat_task.expires_at') <= ?""",
+        (json.dumps(task, ensure_ascii=False), gold_story_id, task["task_id"], task["finished_at"]),
+    )
+    sql.commit()
+
+
+def publish_chat_export(gold_story_id: int, patch: dict[str, Any], *, task_id: str | None = None,
+                        expected_row: dict[str, Any]) -> None:
+    """单次提交导出版本和成功摘要；过期或被替换的执行器不能发布。"""
+    result = sql.execute(
+        """UPDATE gold_story SET payload_json = json_patch(COALESCE(payload_json, '{}'), json(?)),
+               updated_at = ? WHERE id = ? AND payload_json IS ?
+               AND COALESCE(mechanism, '') = ? AND COALESCE(structure_type, '') = ?
+               AND (? IS NULL OR (
+               json_extract(payload_json, '$.gold_chat_task.task_id') = ? AND
+               json_extract(payload_json, '$.gold_chat_task.status') = 'running'))""",
+        (json.dumps(patch, ensure_ascii=False), datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+         gold_story_id, expected_row["_payload_json_snapshot"],
+         expected_row.get("mechanism") or "", expected_row.get("structure_type") or "", task_id, task_id),
+    )
+    if result.rowcount != 1:
+        sql.rollback()
+        raise RuntimeError("转换任务已结束或被替换，禁止发布旧执行器的稿件")
     sql.commit()
 
 

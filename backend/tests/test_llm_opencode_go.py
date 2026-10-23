@@ -104,3 +104,75 @@ def test_deadline_does_not_leak_between_greenlets():
     gevent.joinall([first, second])
     assert [first.value, second.value] == [10.0, 20.0]
     assert budget.llm_deadline.get() == 0.0
+
+
+def test_hard_deadline_interrupts_dripping_http_in_cli_and_gevent():
+    """慢响应一直有数据时，read timeout 不触发，整次请求仍须被截止时间中断。"""
+    import subprocess
+    import sys
+    script = r"""
+import sys
+mode = sys.argv[1]
+if mode == 'gevent':
+    from gevent import monkey
+    monkey.patch_all(thread=False)
+import time
+import requests
+from app.services.llm.llm_mgr import llm_deadline, llm_request_timeout, start_llm_deadline_timer, LLMDeadlineExpired
+if mode == 'gevent':
+    import gevent
+    from gevent.pywsgi import WSGIServer
+    def application(environ, start_response):
+        start_response('200 OK', [('Content-Length', '20')])
+        for _ in range(20):
+            yield b'x'
+            gevent.sleep(.03)
+    server = WSGIServer(('127.0.0.1', 0), application, log=None)
+    server.start()
+    port = server.server_port
+else:
+    import threading
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(200)
+            self.send_header('Content-Length', '20')
+            self.end_headers()
+            try:
+                for _ in range(20):
+                    self.wfile.write(b'x')
+                    self.wfile.flush()
+                    time.sleep(.03)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+        def log_message(self, *args):
+            pass
+    server = HTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.handle_request, daemon=True).start()
+    port = server.server_port
+started = time.monotonic()
+token = llm_deadline.set(started + .15)
+cancel = start_llm_deadline_timer()
+try:
+    try:
+        requests.post('http://127.0.0.1:' + str(port), timeout=llm_request_timeout())
+    except LLMDeadlineExpired:
+        pass
+    else:
+        raise AssertionError('slow response escaped total deadline')
+finally:
+    cancel()
+    cancel()
+    llm_deadline.reset(token)
+assert time.monotonic() - started < .4
+if mode == 'gevent':
+    server.stop()
+else:
+    server.server_close()
+assert llm_deadline.get() == 0
+print(mode + ': deadline enforced')
+"""
+    for mode in ("sync", "gevent"):
+        result = subprocess.run([sys.executable, "-c", script, mode], capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "deadline enforced" in result.stdout

@@ -166,6 +166,25 @@ def convert_route():
         raise APIError(str(exc), status_code=400) from exc
 
 
+@bp.post("/review")
+def review_candidate_route():
+    data = get_json_body()
+    gid = parse_int(data, "id", 0, minimum=1, maximum=10_000_000)
+    revision = parse_optional_str(data, "revision")
+    if not revision:
+        raise APIError("候选版本 revision 必填", status_code=400)
+    try:
+        return json_ok(gold_story_mgr.submit_conversion(
+            gold_story_id=gid, review_revision=revision,
+        ), status=202)
+    except KeyError:
+        raise APIError("金故事不存在", status_code=404)
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=409, code="candidate_changed") from exc
+    except RuntimeError as exc:
+        raise APIError(str(exc), status_code=409, code="convert_busy") from exc
+
+
 @bp.get("/collect")
 def collect_status_route():
     return json_ok(gold_story_mgr.collect_status())

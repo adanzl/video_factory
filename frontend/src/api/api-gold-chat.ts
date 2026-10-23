@@ -84,6 +84,11 @@ export interface GoldChatReviewPendingInfo {
 
 export interface GoldStoryDetail {
   gold_chat_review_pending?: GoldChatReviewPendingInfo | null;
+  gold_chat_recovery?: {
+    candidate: StoryContent;
+    revision: string | null;
+    reason?: string;
+  } | null;
   id?: number;
   source_id: string;
   url?: string;
@@ -349,6 +354,13 @@ export async function getGoldChatConvertStatus(): Promise<GoldChatConvertStatus>
     "/v_factory/api/gold_chat/convert",
   );
   return response.data;
+}
+
+export async function reviewGoldChatCandidate(id: number, revision: string): Promise<GoldChatConvertResult> {
+  const response = await api.post<GoldChatTask<GoldChatConvertResult>>(
+    "/v_factory/api/gold_chat/review", { id, revision }, { timeout: 30000 },
+  );
+  return waitGoldChatTask(response.data);
 }
 
 export async function convertGoldChat(params: {

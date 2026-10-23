@@ -115,13 +115,31 @@ def test_async_conversion_records_failure_and_expired_task(app_ctx, monkeypatch)
     assert result["status"] == "failed"
     assert result["error"] == "候选第4句前提缺失"
     result.update(status="running", expires_at=1)
-    repo_gold_story.update_chat_task(gid, result)
+    # 模拟进程中断留下的状态；正常更新已不允许把终态改回 running。
+    repo_gold_story.patch_story_payload(gid, {"gold_chat_task": result,
+        "gold_chat_convert_status": "converting",
+        "gold_chat_convert_started_at": "2099-01-01T00:00:00+00:00"})
     expired = mgr.gold_story_mgr.conversion_task(gid, task["task_id"])
     assert expired["status"] == "failed"
     assert expired["code"] == "task_interrupted"
+    assert mgr.gold_story_mgr.convert_status()["ids"] == []
+    result.update(status="succeeded")
+    repo_gold_story.update_chat_task(gid, result)
+    assert mgr.gold_story_mgr.conversion_task(gid, task["task_id"])["status"] == "failed"
 
 
-def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path):
+def _accepted_api_chat(chat, row, *, funny_score=11):
+    from app.services.daily_story.quality import gold_story_review_contract, stamp_gold_chat_acceptance_quality
+
+    stamp_gold_chat_acceptance_quality(
+        chat, review_issues=[], humor={"funny_score": funny_score} if funny_score is not None else None,
+        chatter_signals=[], semantic_pass=True, review_contract=gold_story_review_contract(row, chat),
+    )
+    return chat
+
+
+@pytest.mark.parametrize("funny_score", [11, 9, None])
+def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path, funny_score):
     inserted = _insert_sample(app_ctx)
     assert inserted.get("action") == "insert"
     gid = int(inserted["id"])
@@ -147,7 +165,7 @@ def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path):
     monkeypatch.setattr(
         gcf,
         "run_gold_chat_final_acceptance",
-        lambda chat, row, sid: chat,
+        lambda chat, row, sid: _accepted_api_chat(chat, row, funny_score=funny_score),
     )
 
     client = app_ctx.test_client()
@@ -162,6 +180,19 @@ def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path):
         "/v_factory/api/gold_chat/convert",
         json={"id": gid, "async": False},
     )
+    if funny_score != 11:
+        assert convert_resp.status_code == 400
+        assert "好笑" in str(convert_resp.get_json())
+        detail = client.get(f"/v_factory/api/gold_chat/get?id={gid}").get_json()
+        assert detail["has_gold_chat"] is False
+        fresh = repo_gold_story.get_story(gid)
+        from app.services.gold_story.gold_chat.status import gold_chat_recovery
+
+        recovery = gold_chat_recovery(fresh)
+        assert recovery["candidate"]["dialogue"]
+        assert "好笑" in recovery["candidate"]["quality"]["review_failure_reason"]
+        assert not (tmp_path / (fresh["source_id"] + ".json")).exists()
+        return
     assert convert_resp.status_code == 200
     convert_data = convert_resp.get_json()
     assert convert_data["action"] == "ok"
@@ -491,7 +522,7 @@ def test_api_batch(app_ctx, monkeypatch, tmp_path):
     monkeypatch.setattr(
         gcf,
         "run_gold_chat_final_acceptance",
-        lambda chat, row, sid: chat,
+        lambda chat, row, sid: _accepted_api_chat(chat, row),
     )
 
     client = app_ctx.test_client()
@@ -682,3 +713,182 @@ def test_async_batch_completes_and_query_missing_story_returns_404(app_ctx, monk
     assert done["status"] == "succeeded"
     assert done["result"] == {"ok": 1, "selected": 1}
     assert client.get("/v_factory/api/gold_chat/convert?id=999999&task_id=unknown").status_code == 404
+
+
+@pytest.mark.parametrize("outcome", ["ok", "semantic_failure", "timeout", "publish_failure", "source_changed"])
+def test_review_candidate_reuses_body_and_preserves_old_export(app_ctx, monkeypatch, tmp_path, outcome):
+    import importlib
+    import time
+    from copy import deepcopy
+    from app.services.gold_story.gold_chat.status import record_gold_chat_failure, gold_chat_recovery
+    from app.services.gold_story.gold_chat import import_story
+    from app.services.daily_story.quality import gold_story_review_contract, stamp_story_review_binding
+
+    mgr = importlib.import_module("app.services.gold_story.gold_story_mgr")
+    gid = int(_insert_sample(app_ctx)["id"])
+    row = repo_gold_story.get_story(gid)
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    monkeypatch.setattr(gce, "export_story_files", lambda **kw: None)
+    old = _sample_chat()
+    paths = gce.export_gold_chat_files(source_id=row["source_id"], row=row, chat=old)
+    repo_gold_story.patch_story_payload(gid, {"gold_chat_json": paths["json"], "gold_chat_md": paths["markdown"]})
+    candidate = deepcopy(old)
+    candidate["dialogue"][0]["line"] = "我这次已经把事情说清楚啦。"
+    error = gcf.GoldChatAcceptanceIncomplete("review unavailable", candidate=candidate)
+    record_gold_chat_failure(gid, error, stage="finalize")
+    row = repo_gold_story.get_story(gid)
+    revision = gold_chat_recovery(row)["revision"]
+    validations = []
+    monkeypatch.setattr(import_story, "validate_gold_chat_story_for_row", lambda *a: validations.append(1))
+
+    def score(chat, row):
+        chat["quality"] = {"structure_score": 80, "humor": {"funny_score": 12}}
+        return chat
+
+    def accept(chat, row, **kwargs):
+        assert kwargs["preserve_dialogue"] is True
+        if outcome == "semantic_failure":
+            raise gcf.GoldChatSemanticBlocked("错误不能放行")
+        if outcome == "timeout":
+            time.sleep(1)
+        if outcome == "source_changed":
+            repo_gold_story.patch_story_payload(gid, {"closing_intent": "审核期间修改契约"})
+        stamp_story_review_binding(chat, semantic_pass=True, review_contract=gold_story_review_contract(row, chat))
+        return chat
+
+    monkeypatch.setattr(gc, "_attach_gold_chat_structure_score", score)
+    monkeypatch.setattr(gcf, "run_gold_chat_final_acceptance", accept)
+    monkeypatch.setattr(gc, "gold_story_to_gold_chat", lambda *a, **k: pytest.fail("恢复审核不得重生成"))
+    if outcome == "timeout":
+        monkeypatch.setenv("GOLD_CHAT_TIME_BUDGET_S", "0.05")
+    if outcome == "publish_failure":
+        monkeypatch.setattr(gc, "_backfill_gold_story_after_export", lambda *a, **k: (_ for _ in ()).throw(OSError("DB write failed")))
+    callbacks = []
+    monkeypatch.setattr(mgr, "run_in_background", callbacks.append)
+    client = app_ctx.test_client()
+    response = client.post("/v_factory/api/gold_chat/review", json={"id": gid, "revision": revision})
+    assert response.status_code == 202
+    task = response.get_json()
+    duplicate = client.post("/v_factory/api/gold_chat/review", json={"id": gid, "revision": revision})
+    assert duplicate.get_json()["task_id"] == task["task_id"]
+    assert len(callbacks) == 1
+    callbacks[0]()
+    result = client.get(f"/v_factory/api/gold_chat/convert?id={gid}&task_id={task['task_id']}").get_json()
+    fresh = repo_gold_story.get_story(gid)
+    exported = gce.load_gold_chat_for_row(fresh)
+    if outcome == "ok":
+        assert result["status"] == "succeeded"
+        assert len(validations) >= 2
+        assert exported["daily_story"]["dialogue"] == candidate["dialogue"]
+        assert gold_chat_recovery(fresh) is None
+        assert client.post("/v_factory/api/gold_chat/review", json={"id": gid, "revision": revision}).status_code == 409
+    else:
+        assert result["status"] == "failed"
+        if outcome == "timeout":
+            assert result["code"] == "time_budget_exceeded"
+        assert exported["daily_story"] == old
+        if outcome == "source_changed":
+            assert "契约已变化" in result["error"]
+            assert gold_chat_recovery(fresh)["revision"] is None
+        assert len(list((tmp_path / ".versions" / row["source_id"]).iterdir())) == 1
+        assert gold_chat_recovery(fresh)["candidate"]["dialogue"] == candidate["dialogue"]
+    assert client.get("/v_factory/api/gold_chat/convert").get_json()["ids"] == []
+
+
+def test_review_candidate_rejects_changed_source_and_revision(app_ctx, monkeypatch):
+    import importlib
+    from app.services.gold_story.gold_chat.status import record_gold_chat_failure, gold_chat_recovery
+    mgr = importlib.import_module("app.services.gold_story.gold_story_mgr")
+    gid = int(_insert_sample(app_ctx)["id"])
+    record_gold_chat_failure(gid, gcf.GoldChatAcceptanceIncomplete("pending", candidate=_sample_chat()))
+    revision = gold_chat_recovery(repo_gold_story.get_story(gid))["revision"]
+    monkeypatch.setattr(mgr, "run_in_background", lambda fn: pytest.fail("不得启动过期候选"))
+    client = app_ctx.test_client()
+    assert client.post("/v_factory/api/gold_chat/review", json={"id": gid, "revision": "old"}).status_code == 409
+    repo_gold_story.patch_story_payload(gid, {"closing_intent": "来源已修改"})
+    assert client.post("/v_factory/api/gold_chat/review", json={"id": gid, "revision": revision}).status_code == 409
+    detail = client.get(f"/v_factory/api/gold_chat/get?id={gid}").get_json()
+    assert detail["gold_chat_recovery"]["revision"] is None
+
+
+def test_compact_payload_legacy_conversion_remains_visible(app_ctx):
+    from app.services.gold_story.gold_chat.status import mark_gold_chat_converting, list_gold_chat_converting, clear_gold_chat_converting
+    gid = int(_insert_sample(app_ctx)["id"])
+    mark_gold_chat_converting(gid)
+    assert gid in list_gold_chat_converting()["ids"]
+    clear_gold_chat_converting(gid)
+    assert gid not in list_gold_chat_converting()["ids"]
+
+
+def test_publish_cas_uses_exact_db_snapshot_and_rejects_changed_payload(app_ctx):
+    import json
+    from app.repositories import sql_exec as sql
+    gid = int(_insert_sample(app_ctx)["id"])
+    # 兼容外部写入的 Unicode 转义、空白及键序，不重编码后误判冲突。
+    raw = json.dumps({"z": "中文", "a": {"field": 1}}, ensure_ascii=True, indent=4)
+    sql.execute("UPDATE gold_story SET payload_json=? WHERE id=?", (raw, gid))
+    sql.commit()
+    row = repo_gold_story.get_story(gid, include_payload_snapshot=True)
+    repo_gold_story.publish_chat_export(gid, {"gold_chat_json": "v1.json"}, expected_row=row)
+    assert repo_gold_story.get_story(gid)["payload"]["gold_chat_json"] == "v1.json"
+    stale = repo_gold_story.get_story(gid, include_payload_snapshot=True)
+    repo_gold_story.patch_story_payload(gid, {"closing_intent": "changed"})
+    with pytest.raises(RuntimeError):
+        repo_gold_story.publish_chat_export(gid, {"gold_chat_json": "v2.json"}, expected_row=stale)
+    assert repo_gold_story.get_story(gid)["payload"]["gold_chat_json"] == "v1.json"
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_polish_uses_reviewed_db_version_and_keeps_previous_on_rejection(app_ctx, monkeypatch, tmp_path, accepted):
+    from copy import deepcopy
+    from app.services.gold_story.gold_chat import polish, import_story
+    from app.services.daily_story.quality import stamp_story_review_binding, gold_story_review_contract
+    gid = int(_insert_sample(app_ctx)["id"])
+    row = repo_gold_story.get_story(gid)
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    monkeypatch.setattr(gce, "export_story_files", lambda **kw: None)
+    old = _sample_chat()
+    paths = gce.export_gold_chat_files(source_id=row["source_id"], row=row, chat=old)
+    repo_gold_story.patch_story_payload(gid, {"gold_chat_json": paths["json"], "gold_chat_md": paths["markdown"]})
+    proposed = deepcopy(old)
+    proposed["dialogue"][0]["line"] = "这次我把前因后果都讲清楚了。"
+    monkeypatch.setattr(polish, "collect_gold_chat_polish_issues", lambda *a: [])
+    monkeypatch.setattr(polish, "polish_gold_chat_wording", lambda *a, **k: (deepcopy(proposed), 1))
+    monkeypatch.setattr(polish, "_repair_gold_chat_after_polish", lambda chat: chat)
+    monkeypatch.setattr(gc, "_ensure_gold_chat_min_chars", lambda chat, **kw: (chat, []))
+    monkeypatch.setattr(import_story, "validate_gold_chat_story_for_row", lambda *a: None)
+    def score(chat, row):
+        chat["quality"] = {"structure_score": 80, "humor": {"funny_score": 12}}
+        return chat
+    def review(chat, row, **kw):
+        if not accepted:
+            raise gcf.GoldChatSemanticBlocked("润色未通过")
+        stamp_story_review_binding(chat, semantic_pass=True, review_contract=gold_story_review_contract(row, chat))
+        return chat
+    monkeypatch.setattr(gc, "_attach_gold_chat_structure_score", score)
+    monkeypatch.setattr(gcf, "run_gold_chat_final_acceptance", review)
+    if accepted:
+        result = polish.polish_gold_chat_export(row["source_id"])
+        saved = gce.load_gold_chat_for_row(repo_gold_story.get_story(gid))
+        assert saved["daily_story"]["dialogue"] == result["daily_story"]["dialogue"]
+        assert saved["daily_story"]["dialogue"] != old["dialogue"]
+    else:
+        with pytest.raises(gcf.GoldChatSemanticBlocked):
+            polish.polish_gold_chat_export(row["source_id"])
+        assert gce.load_gold_chat_for_row(repo_gold_story.get_story(gid))["daily_story"] == old
+
+
+def test_missing_committed_file_is_not_skipped_as_already_exported(app_ctx, monkeypatch, tmp_path):
+    import importlib
+    mgr = importlib.import_module("app.services.gold_story.gold_story_mgr")
+    gid = int(_insert_sample(app_ctx)["id"])
+    repo_gold_story.patch_story_payload(gid, {"gold_chat_exported_at": "2026-10-23",
+        "gold_chat_json": str(tmp_path / ".versions" / "missing" / "story.json")})
+    calls = []
+    def convert(row, **kwargs):
+        calls.append(row["id"])
+        return {"ok": True, "chat_lines": 12}
+    monkeypatch.setattr(mgr, "convert_gold_chat", convert)
+    result = mgr.gold_story_mgr.convert_one(gold_story_id=gid)
+    assert result["action"] == "ok"
+    assert calls == [gid]

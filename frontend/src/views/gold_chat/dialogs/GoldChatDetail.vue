@@ -190,8 +190,23 @@
             {{ detail.gold_chat_review_pending.error }}
           </div>
           <div v-if="detail.gold_chat_review_pending.candidate?.dialogue?.length" class="mt-1 text-amber-700">
-            候选 {{ detail.gold_chat_review_pending.candidate.dialogue.length }} 句，需人工确认后再作为正式导出稿。
+            候选 {{ detail.gold_chat_review_pending.candidate.dialogue.length }} 句，完整审核通过后才能导出。
           </div>
+        </div>
+
+        <div v-if="detail.gold_chat_recovery" class="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          <div class="flex items-center justify-between gap-2">
+            <span>{{ detail.gold_chat_recovery.reason || "可继续审核已保存的候选稿，通过后替换正式稿。" }}</span>
+            <el-button size="small" type="primary" :loading="converting"
+              :disabled="!detail.gold_chat_recovery.revision || !!detail.gold_chat_converting || statusBusy"
+              @click="handleReviewCandidate">继续审核</el-button>
+          </div>
+          <details class="mt-2">
+            <summary class="cursor-pointer">查看候选正文</summary>
+            <p v-for="(line, index) in detail.gold_chat_recovery.candidate.dialogue" :key="index" class="mt-1">
+              {{ line.speaker }}：{{ line.line }}
+            </p>
+          </details>
         </div>
 
         <div
@@ -355,6 +370,7 @@ import {
   archiveGoldStories,
   calcChatChars,
   convertGoldChat,
+  reviewGoldChatCandidate,
   formatDailyStoryType,
   getGoldChat,
   importGoldChat,
@@ -572,6 +588,25 @@ async function handleConvert() {
     await loadDetail();
   } finally {
     converting.value = false;
+  }
+}
+
+async function handleReviewCandidate() {
+  const id = detail.value?.id ?? props.goldStoryId;
+  const revision = detail.value?.gold_chat_recovery?.revision;
+  if (!id || !revision) return;
+  const target = { id, sourceId: detail.value?.source_id ?? null };
+  converting.value = true;
+  emit("converting", target);
+  try {
+    const result = await reviewGoldChatCandidate(id, revision);
+    ElMessage.success(`审核通过并导出：${result.chat_lines ?? 0} 句`);
+  } catch (error) {
+    handleError(error, "候选审核未通过，已保留候选和原导出稿");
+  } finally {
+    converting.value = false;
+    emit("converted", target);
+    await loadDetail();
   }
 }
 

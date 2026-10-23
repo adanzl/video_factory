@@ -96,27 +96,28 @@ def _story_production_eligibility(
     story: dict[str, Any],
     *,
     gold_chat_row: dict[str, Any] | None = None,
+    exclude_story_id: int | None = None,
 ) -> dict[str, Any]:
     """统一制作门槛：硬卡 + 结构/好笑 + 当前正文终验绑定。"""
-    from app.services.daily_story.quality import (
-        gold_story_review_contract,
-        story_production_eligibility,
-    )
+    if gold_chat_row is not None:
+        from app.services.gold_story.gold_chat.import_story import gold_chat_production_eligibility
+
+        own_id = exclude_story_id or int(gold_chat_row.get("gold_chat_daily_story_id") or 0) or None
+        return gold_chat_production_eligibility(
+            story, gold_chat_row,
+            candidates=repo_daily_story.list_all_stories(exclude_id=own_id),
+            exclude_story_id=own_id,
+        )
+    from app.services.daily_story.quality import story_production_eligibility
 
     hard_error: str | None = None
     try:
-        _validate_story_hard(story, gold_chat_row=gold_chat_row)
+        _validate_story_hard(story)
     except Exception as exc:  # 硬卡失败也允许保存为 review_pending
         hard_error = str(exc).strip() or exc.__class__.__name__
-    review_contract = (
-        gold_story_review_contract(gold_chat_row, story)
-        if gold_chat_row is not None
-        else None
-    )
     return story_production_eligibility(
         story,
         hard_error=hard_error,
-        review_contract=review_contract,
     )
 
 
@@ -448,6 +449,7 @@ class DailyStoryMgr:
         eligibility = _story_production_eligibility(
             story_content,
             gold_chat_row=source_row,
+            exclude_story_id=story_id,
         )
         if not eligibility.get("ok"):
             repo_daily_story.update_story(story_id, status=_STATUS_REVIEW_PENDING)
@@ -470,6 +472,7 @@ class DailyStoryMgr:
                 eligibility = _story_production_eligibility(
                     story_content,
                     gold_chat_row=_gold_chat_source_row(story_id),
+                    exclude_story_id=story_id,
                 )
                 if not eligibility.get("ok"):
                     repo_daily_story.update_story(story_id, status=_STATUS_REVIEW_PENDING)

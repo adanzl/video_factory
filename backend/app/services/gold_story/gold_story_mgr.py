@@ -25,6 +25,7 @@ from app.services.gold_story.gold_chat.status import (
     gold_chat_review_pending_from_payload,
     list_gold_chat_converting,
     record_gold_chat_failure,
+    gold_chat_recovery,
 )
 from app.services.gold_story.gold_chat.import_story import (
     import_gold_chat_daily_story,
@@ -544,6 +545,7 @@ class GoldStoryMgr:
             "dump": _row_to_dump(row),
             "has_gold_chat": has_gold_chat,
             "gold_chat": gold_chat,
+            "gold_chat_recovery": gold_chat_recovery(row),
         }
         if gold_chat_error is not None:
             out["gold_chat_error"] = gold_chat_error
@@ -592,13 +594,16 @@ class GoldStoryMgr:
             task.update(status="failed", code="task_interrupted",
                         error="转换任务已中断或超时，已保留原导出稿，请重新提交。",
                         finished_at=time.time())
-            repo_gold_story.update_chat_task(gold_story_id, task)
+            repo_gold_story.expire_chat_task(gold_story_id, task)
+            fresh = repo_gold_story.get_story(gold_story_id)
+            task = dict((fresh.get("payload") or {}).get("gold_chat_task") or {})
         return task
 
     def submit_conversion(
         self, *, gold_story_id: int | None = None,
         source_id: str | None = None, force: bool = False,
         batch_ids: list[int] | None = None,
+        review_revision: str | None = None,
     ) -> dict[str, Any]:
         """先持久化任务再启动后台执行；重复提交接回同一运行任务。"""
         from flask.globals import app_ctx
@@ -609,10 +614,14 @@ class GoldStoryMgr:
         if row is None:
             raise KeyError("金故事不存在")
         gid = int(row["id"])
+        if review_revision is not None:
+            recovery = gold_chat_recovery(row)
+            if not recovery or not recovery.get("revision") or recovery["revision"] != review_revision:
+                raise ValueError("候选或来源契约已变化，请刷新后重新审核")
         previous = (row.get("payload") or {}).get("gold_chat_task") or {}
         if (previous.get("status") in {"queued", "running"}
                 and time.time() < float(previous.get("expires_at") or 0)):
-            if previous.get("batch_ids") != batch_ids:
+            if previous.get("batch_ids") != batch_ids or previous.get("review_revision") != review_revision:
                 raise RuntimeError("转换进行中")
             return previous
         budget = float(os.environ.get("GOLD_CHAT_TIME_BUDGET_S") or 180)
@@ -622,6 +631,7 @@ class GoldStoryMgr:
         task: dict[str, Any] = {"task_id": uuid.uuid4().hex, "gold_story_id": gid,
                 "source_id": row.get("source_id"), "status": "queued",
                 "batch_ids": batch_ids,
+                "review_revision": review_revision,
                 "started_at": now,
                 "expires_at": now + (budget if budget > 0 else 21600) * len(batch_ids or [gid]) + 60}
         try:
@@ -635,14 +645,21 @@ class GoldStoryMgr:
                         task["status"] = "running"
                         repo_gold_story.update_chat_task(gid, task)
                         try:
-                            if batch_ids:
+                            if review_revision is not None:
+                                from app.services.gold_story.gold_chat.convert import review_gold_chat_candidate
+
+                                result = review_gold_chat_candidate(
+                                    repo_gold_story.get_story(gid), review_revision,
+                                    task_id=str(task["task_id"]),
+                                )
+                            elif batch_ids:
                                 result = run_gold_chat_batch(
                                     gold_story_ids=batch_ids, max_items=len(batch_ids),
                                     skip_existing=not force,
                                 )
                             else:
                                 result = self._convert_one_unlocked(
-                                    gold_story_id=gid, force=force,
+                                    gold_story_id=gid, force=force, task_id=str(task["task_id"]),
                                 )
                             task.update(status="succeeded", result=result)
                         except Exception as exc:
@@ -709,6 +726,7 @@ class GoldStoryMgr:
         gold_story_id: int | None = None,
         source_id: str | None = None,
         force: bool = False,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         _ensure_schema()
         cfg = Config()
@@ -724,8 +742,8 @@ class GoldStoryMgr:
             raise KeyError("金故事不存在")
 
         sid = str(row.get("source_id") or "").strip()
-        if not force and gold_chat_summary(sid, config=cfg).get("has_gold_chat"):
-            export = load_gold_chat(sid, config=cfg)
+        export = load_gold_chat_for_row(row, config=cfg) if not force else None
+        if export is not None:
             return {
                 "action": "skip",
                 "reason": "already_exported",
@@ -741,6 +759,8 @@ class GoldStoryMgr:
             force,
         )
         try:
+            if task_id:
+                row = {**row, "_gold_chat_task_id": task_id}
             outcome = convert_gold_chat(row, config=cfg)
             logger.info(
                 "[GOLD_CHAT] convert_one ok source_id=%s lines=%s chars=%s score=%s",

@@ -147,6 +147,8 @@ from app.services.gold_story.gold_chat.export import (
     gold_chat_summary,
     load_gold_chat,
     load_gold_chat_for_row,
+    publish_gold_chat_paths,
+    discard_gold_chat_version,
 )
 from app.services.gold_story.gold_chat.import_story import (
     import_gold_chat_daily_story,
@@ -2112,6 +2114,85 @@ def _try_revise_draft(
     return revised, indices
 
 
+def review_gold_chat_candidate(
+    row: dict[str, Any], revision: str, *, task_id: str | None = None,
+    config: Config | None = None,
+) -> dict[str, Any]:
+    """只重审已保存的正文；失败继续保留候选，不重新扩写或绕过终审。"""
+    from app.services.gold_story.gold_chat.status import gold_chat_recovery, record_gold_chat_failure
+    from app.services.gold_story.gold_chat.import_story import validate_gold_chat_story_for_row
+    from app.services.gold_story.gold_chat.finalize import run_gold_chat_final_acceptance
+    from app.services.gold_story.gold_chat.patch import remap_chat_kinship_metadata
+    from app.services.daily_story.quality import story_production_eligibility, gold_story_review_contract
+    from app.services.llm.llm_mgr import (
+        llm_deadline, remaining_llm_time, start_llm_deadline_timer,
+        LLMDeadlineExpired, LLMTimeBudgetExceeded,
+    )
+
+    recovery = gold_chat_recovery(row)
+    if not recovery or not recovery.get("revision") or recovery["revision"] != revision:
+        raise ValueError("候选或来源契约已变化，请刷新后重新审核")
+    candidate = deepcopy(recovery["candidate"])
+    original_dialogue = deepcopy(candidate["dialogue"])
+    sid = str(row["source_id"])
+    gid = int(row["id"])
+    budget = float(os.environ.get("GOLD_CHAT_TIME_BUDGET_S") or 180)
+    token = llm_deadline.set(time.monotonic() + budget if budget > 0 else 0.0)
+    cancel_deadline = lambda: None
+    cfg = config or Config()
+    paths: dict[str, str] | None = None
+    try:
+        cancel_deadline = start_llm_deadline_timer()
+        candidate, _, _ = remap_chat_kinship_metadata(candidate, theme=str(row.get("title") or sid))
+        candidate["story_type"] = str(row.get("structure_type") or candidate.get("story_type") or "")
+        validate_gold_chat_story_for_row(candidate, row)
+        candidate = _attach_gold_chat_structure_score(candidate, row)
+        _gate_gold_chat_structure_score(candidate)
+        candidate = run_gold_chat_final_acceptance(candidate, row, sid=sid, preserve_dialogue=True)
+        if candidate["dialogue"] != original_dialogue:
+            raise ValueError("继续审核不得修改候选正文")
+        validate_gold_chat_story_for_row(candidate, row)
+        eligibility = story_production_eligibility(candidate, review_contract=gold_story_review_contract(row, candidate))
+        if not eligibility["ok"]:
+            raise ValueError("终审未通过：" + "；".join(eligibility["reasons"]))
+        # 审核耗时期间来源也可能被编辑；发布前重读，拒绝已过期的候选和契约。
+        fresh = repo_gold_story.get_story(gid)
+        fresh_recovery = gold_chat_recovery(fresh)
+        if not fresh_recovery or fresh_recovery.get("revision") != revision:
+            raise ValueError("审核期间候选或来源契约已变化，请刷新")
+        remaining_llm_time()
+        paths = export_gold_chat_files(source_id=sid, row=row, chat=candidate, config=cfg, publish=False)
+        remaining_llm_time()
+        cancel_deadline()
+        _backfill_gold_story_after_export(row, chat=candidate, paths=paths, config=cfg, task_id=task_id)
+        try:
+            publish_gold_chat_paths(sid, paths, config=cfg)
+        except Exception:
+            logger.exception("gold_chat 已发布，兼容链接更新失败")
+        return {"action": "ok", "gold_story_id": gid, "source_id": sid,
+                "chat_lines": len(candidate["dialogue"]), "chat_chars": dialogue_total_chars(candidate),
+                "structure_score": eligibility["structure_score"], "export": paths, "daily_story": candidate}
+    except (Exception, LLMDeadlineExpired) as caught:
+        exc = (LLMTimeBudgetExceeded(f"gold_chat 候选审核超出时间预算 {budget:g}s")
+               if isinstance(caught, LLMDeadlineExpired) else caught)
+        if paths:
+            fresh = repo_gold_story.get_story(gid)
+            if (fresh.get("payload") or {}).get("gold_chat_json") != paths["json"]:
+                discard_gold_chat_version(paths)
+        # 保存送审正文，不用中间修改过的半成品替换用户看到的候选。
+        setattr(exc, "candidate", deepcopy(recovery["candidate"]))
+        # 若来源已变化，保留旧候选绑定，绝不把旧正文伪装成按新契约生成的候选。
+        fresh_recovery = gold_chat_recovery(repo_gold_story.get_story(gid))
+        if fresh_recovery and fresh_recovery.get("revision") == revision:
+            record_gold_chat_failure(gid, exc, source_id=sid, stage="review")
+        if exc is not caught:
+            raise exc from caught
+        raise
+    finally:
+        cancel_deadline()
+        llm_deadline.reset(token)
+
+
 def convert_gold_chat(
     row: dict[str, Any],
     *,
@@ -2125,7 +2206,9 @@ def convert_gold_chat(
     from app.services.gold_story.gold_chat.finalize import run_gold_chat_finalize
     from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
     from app.services.gold_story.gold_chat.repair import GoldChatContractError, GoldChatFillError
-    from app.services.llm.llm_mgr import llm_deadline, LLMTimeBudgetExceeded
+    from app.services.llm.llm_mgr import (
+        llm_deadline, LLMTimeBudgetExceeded, LLMDeadlineExpired, start_llm_deadline_timer,
+    )
     from app.services.gold_story.gold_chat.status import (
         clear_gold_chat_converting,
         mark_gold_chat_converting,
@@ -2133,6 +2216,7 @@ def convert_gold_chat(
     )
 
     gid_for_status = int(row.get("id") or 0)
+    publication_task_id = row.get("_gold_chat_task_id")
     started = time.perf_counter()
     stage_started = started
     current_stage = "contract"
@@ -2143,6 +2227,7 @@ def convert_gold_chat(
     _budget_s = float(os.environ.get("GOLD_CHAT_TIME_BUDGET_S") or 180)
     _deadline = time.monotonic() + _budget_s if _budget_s > 0 else 0.0
     deadline_token = llm_deadline.set(_deadline)
+    cancel_deadline = lambda: None
 
     def _check_budget(stage: str, reserve: float = 0.0) -> None:
         remaining = _deadline - time.monotonic() if _deadline else None
@@ -2179,6 +2264,7 @@ def convert_gold_chat(
         }
 
     try:
+        cancel_deadline = start_llm_deadline_timer()
         _check_budget("契约准备")
         if gid_for_status > 0:
             mark_gold_chat_converting(gid_for_status)
@@ -2525,8 +2611,25 @@ def convert_gold_chat(
             row=row,
             chat=chat,
             config=cfg,
+            publish=False,
         )
-        _backfill_gold_story_after_export(row, chat=chat, paths=paths, config=cfg)
+        try:
+            _check_budget("发布完整版本")
+            # 最终本地提交不可被异步取消打断；所有模型/网络操作已经结束。
+            cancel_deadline()
+            _backfill_gold_story_after_export(
+                row, chat=chat, paths=paths, config=cfg,
+                task_id=str(publication_task_id) if publication_task_id else None,
+            )
+        except BaseException:
+            fresh = repo_gold_story.get_story(gid_for_status) if gid_for_status > 0 else {}
+            if (fresh.get("payload") or {}).get("gold_chat_json") != paths["json"]:
+                discard_gold_chat_version(paths)
+            raise
+        try:
+            publish_gold_chat_paths(sid, paths, config=cfg)
+        except Exception:
+            logger.exception("gold_chat 已发布，兼容文件链接更新失败；服务继续读取 DB 版本")
         finish_stage("export_backfill")
         timing = timing_snapshot(status="success", stage="done", include_current=False)
         gid = int(row.get("id") or 0)
@@ -2563,7 +2666,12 @@ def convert_gold_chat(
             "daily_story": chat,
             "timing": timing,
         }
-    except Exception as exc:
+    except (Exception, LLMDeadlineExpired) as caught:
+        exc = (LLMTimeBudgetExceeded(f"gold_chat 生成超出时间预算 {_budget_s:g}s（{current_stage}）")
+               if isinstance(caught, LLMDeadlineExpired) else caught)
+        from app.services.gold_story.gold_chat.status import gold_chat_candidate_contract
+
+        setattr(exc, "gold_chat_candidate_contract", gold_chat_candidate_contract(row))
         if isinstance(exc, LLMTimeBudgetExceeded) and last_exc is not None and last_exc is not exc:
             if "上一轮失败" not in str(exc):
                 exc.args = (f"{exc}；上一轮失败：{last_exc}",)
@@ -2578,8 +2686,11 @@ def convert_gold_chat(
             setattr(exc, "gold_chat_timing", timing)
         except Exception:
             logger.debug("[GOLD_CHAT] cannot attach timing to %s", type(exc).__name__)
+        if exc is not caught:
+            raise exc from caught
         raise
     finally:
+        cancel_deadline()
         llm_deadline.reset(deadline_token)
         if gid_for_status > 0:
             clear_gold_chat_converting(gid_for_status)
