@@ -9,6 +9,8 @@ K 收口原则：走 ``story_types.k.patch`` 的 seal/pin，中段通用补字�
 
 from __future__ import annotations
 
+from app.services.gold_story.gold_chat.status import gold_chat_source_text
+
 import json
 import logging
 import os
@@ -1317,6 +1319,11 @@ def run_gold_chat_final_acceptance(
         run_export_semantic_review,
     )
 
+    adaptation = (row.get("payload") or {}).get("gold_chat_adaptation")
+    if adaptation is not None:
+        chat = {**chat, "source_raw": gold_chat_source_text(row), "source_link_review": True,
+                "source_adaptation": {**deepcopy(adaptation), "original_story_raw": str(
+                    row.get("story_raw") or (row.get("payload") or {}).get("story_raw") or "")}}
     theme = str(
         row.get("title") or chat.get("scene_title") or chat.get("key") or sid
     ).strip()
@@ -1416,7 +1423,7 @@ def run_gold_chat_final_acceptance(
                 issues=source_failures,
             )
     review = _demote_verbatim_source_quirks(
-        review, chat, source_raw=str(row.get("story_raw") or "")
+        review, chat, source_raw=gold_chat_source_text(row)
     )
     review = _demote_nonattributed_citation_issues(review, chat)
     if not review.completed:

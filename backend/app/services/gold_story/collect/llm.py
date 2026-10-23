@@ -572,7 +572,8 @@ story_raw（背景，勿照抄）：
 - setting 须含地点；当前场景确有实体冲突物时再写谁持有。若 object 是回忆/旧事/过去经历，
   只写“在该地点聊起旧事”，禁止凭空端出历史物件或替代道具
 - 严格按 beat_chain 顺序展开；每拍 1–3 条 seed
-- **素材充分性（硬）**：seed 是下游对白的唯一素材来源，总字数须 ≥ `beat_chain 拍数 × 22`（不足会让成稿凑不够 240 字，只能靠编造补白，随即被判「缺前提」）。因此每拍尽量给满 2–3 条，且每条 intent 写足 **18–22 字**、含具体可念的内容；不得只写「表示不信」「催他继续」这类空壳意图，也不得把同一条重复拆成两条。
+- **素材保真（硬）**：seed 是下游对白的素材来源，按原文独立发言完整保留问答、回应与最终收束。每条给具体可念的内容，原文足够时写18–22字；原文短就保留短句，禁止为了字数添加断言、理由、抱怨或重复拆句。听不清的嘟囔不编内容。
+- 妈妈台词不得超过 mom_lines_max；同一连续发言能合成一句就不拆开，但不能合并隔着孩子回应的两次发言，不能删末尾回应或收束来满足预算。
 - **事实角色绑定（硬）**：与 `facts` 相关的每条 seed 必须带 `fact_ref`/`speech_act`/`claim_role`：
   承认、自曝、否认、辩解句（admit/confess/deny）的 speaker 必须等于该 fact 的
   `secret_holder`；指认、揭发句（accuse/expose）的 speaker 必须等于
@@ -832,6 +833,16 @@ def build_scene_contract(
         gold_scene_snippet=GOLD_H3A_SCENE_SNIPPET,
         place_catalog=format_place_catalog_for_prompt(),
     )
+    if isinstance(h3.get("generation_constraints"), dict):
+        base_user += (
+            "\n【本次是失败契约重建，以下要求优先于常规压缩拍数建议】\n"
+            + json.dumps(h3["generation_constraints"], ensure_ascii=False)
+            + "\n旧契约已被原文证据否定，不能原样照抄。按原文顺序逐个独立说话行为拆拍，"
+            "两个相隔的家长问题不能合拍，孩子的每个不同回答不能省略；"
+            "不同角色的对白不能塞进同一拍拍主的intent。每拍能在一行24字内完整表达，"
+            "需要时增加真实拍数并按实际家长拍数给额度，不用旁观占位凑数；最后一拍必须是原文收束者。"
+            "听不清的嘟囔、沉默不是可说的台词，不能立为需要填词的真实拍；其后让对方说清楚的发言归实际说话人。"
+        )
     age_retry_hint = (
         "\n\n【迁龄重试硬约束】源稿含高考/中考等成人考语境时，"
         "object/conflict/beat_chain/mechanism **禁止**残留成人考词，"
@@ -1001,6 +1012,15 @@ def build_dialogue_seed(
         story_raw=story_raw[:4000],
         gold_seed_snippet=GOLD_H3B_SEED_SNIPPET,
     )
+    if isinstance(h3.get("generation_constraints"), dict):
+        user += (
+            "\n【重建素材单元】旧seed已因遗漏/错序不可复用。逐一覆盖新契约所有真实拍，"
+            "按原文顺序保留每个独立问答、回应和最终收束，不把隔着回答的问句合并。"
+            "每行只归属实际说话人，完整保留事实，不补新因果。"
+            "这里优先保真：允许直接取原文对白，不能为18–22字或总字数目标添加原文没有的断言、理由、抱怨。"
+            "原文没有明确说出的嘟囔内容不能替角色编一句抱怨，旁观者仅对当前对话作无新增事实的短反应。\n"
+            + json.dumps(h3["generation_constraints"].get("previous_plan_error"), ensure_ascii=False)
+        )
     data = _chat_json(_H3B_SYSTEM, user)
     seed = _seed_rows(data)
     seed, _silent_seed_notes = trim_terminal_no_reply_rows(seed)
@@ -1043,21 +1063,26 @@ def build_dialogue_seed(
     if len(seed) < SEED_MIN:
         raise ValueError("H3b dialogue_seed too short")
     mom_max = max(0, int(contract.get("mom_lines_max") or 0))
-    preserve_k_fail_tail = (
-        str(contract.get("story_type") or "").strip().upper() == "K"
-        and (
-            str(contract.get("k_close_mode") or "") == "K_A_PARENT_FAIL_STALEMATE"
-            or any(
-                token in str(contract.get("closing_intent") or "")
-                for token in ("劝不动", "劝不了", "管不了", "僵持", "不和好")
-            )
-        )
-    )
-    seed = _trim_mom_dialogue_seed(
-        seed,
-        mom_max,
-        preserve_last=preserve_k_fail_tail,
-    )
+    if sum(isinstance(r, dict) and r.get("speaker") == "妈妈" for r in seed) > mom_max:
+        # 静默裁掉最后几句会丢失收束，且让后续填词永远无法忠实覆盖契约。
+        protected_tail = seed[-1]
+        retry = _chat_json(_H3B_SYSTEM, user + "\n【家长额度返修】上一版妈妈台词超额。"
+                           f"最多{mom_max}句；只压缩同拍连续发言，不能删问答或收束。"
+                           "最后一个素材单元必须原样保留："
+                           + json.dumps(protected_tail, ensure_ascii=False)
+                           + "\n上一版：" + json.dumps(seed, ensure_ascii=False))
+        revised = _seed_rows(retry)
+        preserved = bool(revised and isinstance(revised[-1], dict) and isinstance(protected_tail, dict)
+                         and all(revised[-1].get(k) == protected_tail.get(k) for k in ("speaker", "intent")))
+        parent_count = sum(isinstance(r, dict) and r.get("speaker") == "妈妈" for r in revised)
+        if len(revised) < SEED_MIN or not preserved or parent_count > mom_max:
+            logger.warning("H3b parent budget repair rejected: rows=%s parent=%s/%s closing_preserved=%s",
+                           len(revised), parent_count, mom_max, preserved)
+            raise ValueError("H3b 家长台词超额且无法保留完整收束，须重建契约预算")
+        revised, conflicts = filter_fact_bound_rows(revised, facts)
+        if conflicts:
+            raise ValueError("H3b 家长额度返修改变了素材事实角色")
+        seed = revised
     # 单孩+家长稿：补齐同侧第二孩，免得模型自编第二个孩子的立场。
     # 例外：N 类家长当追问方时契约为两人手（家长×单孩），此时补第二孩会与契约
     # 直接冲突——补了又被删，seed 反复增删（#87 实测）。

@@ -120,6 +120,24 @@ def test_n_question_slot_does_not_overwrite_closing_slot():
     assert out[-1]["must_words"] == list(gex._N_SLOT_WORD_REQS["stun"])
 
 
+def test_n_word_slots_follow_contract_questions_and_reason_instead_of_positions():
+    slots = [{"speaker": sp, "intent": intent, "is_filler": False} for sp, intent in [
+        ("妈妈", "提醒作业还没写完"),
+        ("昭昭", "提出让玩具代写"),
+        ("妈妈", "设问：你说，玩具怎么写作业？"),
+        ("昭昭", "解释：因为它天天坐在书桌旁边"),
+        ("妈妈", "追问：这是什么意思？"),
+        ("灿灿", "嘲笑玩具根本不会写字"),
+        ("妈妈", "服了，还是自己写吧"),
+    ]]
+    out = gex._apply_n_word_slots(slots, structure_type="N")
+    assert out[2]["required_word_groups"] == [["你说"]]
+    assert "must_words" not in out[2]
+    assert out[4]["must_words"] == list(gex._N_SLOT_WORD_REQS["why"])
+    assert out[3]["must_words"] == list(gex._N_SLOT_WORD_REQS["reason"])
+    assert "must_words" not in out[5]
+
+
 def _source_plan_fixture():
     owners = ["妈妈", "昭昭", "灿灿", "昭昭", "灿灿", "昭昭", "妈妈"]
     beats = [{"beat": i, "speaker": sp, "intent": f"剧情单元{i}的具体内容"}
@@ -204,7 +222,7 @@ def test_explicit_source_mapping_supports_multi_role_turns_without_rewriting(mon
             assert "角色顺序快路失败诊断" in user
             return {"assignments": assignments}
         ri = iter(reactions)
-        return {"lines": [{"i": i, "intent": next(ri)} for i, row in enumerate(skeleton, 1) if row["role"] == "reaction"]}
+        return {"lines": [{"i": i, "line": next(ri), "intent": "不得覆盖直接台词"} for i, row in enumerate(skeleton, 1) if row["role"] == "reaction"]}
     monkeypatch.setattr(gex, "_chat_json", chat)
     if corruption:
         with pytest.raises(GoldChatContractError) as caught:
@@ -223,6 +241,7 @@ def test_explicit_source_mapping_supports_multi_role_turns_without_rewriting(mon
         assert [(row["speaker"], row["intent"]) for row in content] == [(s["speaker"], s["intent"]) for s in seed]
         assert {row["speaker"] for row in content if row["beat"] == 4} == {"昭昭", "灿灿"}
         assert len(calls) == 2
+        assert [r["intent"] for r in plan if r["role"] == "reaction"] == reactions[:sum(r["role"] == "reaction" for r in plan)]
     assert seed == original
 
 
@@ -231,6 +250,28 @@ def test_source_plan_content_cannot_be_overwritten_by_reaction_planner():
     original = data["lines"][0]["intent"]
     merged = gex._merge_line_plan_intents(data["lines"], {"lines": [{"i": 1, "intent": "替换成无关素材"}]})
     assert merged[0]["intent"] == original
+
+
+def test_source_plan_keeps_addressee_through_planning_and_filling():
+    contract, seed, data = _source_plan_fixture()
+    seed[0]["addressee"] = "灿灿"
+    plan, errors = gex._validate_source_line_plan(data, scene_contract=contract,
+                                               beat_chain=contract["beat_chain"], seed=seed)
+    assert errors == []
+    merged = gex._merge_line_plan_intents(plan, {"lines": []})
+    slots = gex._line_plan_slots(merged, contract["beat_chain"])
+    assert slots[0]["addressee"] == "灿灿"
+
+
+def test_source_reaction_preserves_witness_role_outside_synthetic_beat():
+    beats = [{"beat": 1, "speaker": "妈妈", "intent": "要求姐姐说清楚"},
+             {"beat": 2, "speaker": "昭昭", "intent": "旁观", "witness_only": True}]
+    plan = [{"beat": 1, "speaker": "妈妈", "role": "content", "source_plan": True,
+             "intent": "你说清楚", "addressee": "灿灿"},
+            {"beat": 1, "speaker": "昭昭", "role": "reaction", "source_plan": True, "intent": "听后感受"}]
+    slots = gex._line_plan_slots(plan, beats)
+    assert slots[1]["witness_only"] and slots[1]["has_content"] is False
+    assert not slots[0]["witness_only"]
 
 
 @pytest.mark.parametrize("corruption", ["speaker", "duplicate", "mapping", "order"])
@@ -266,6 +307,24 @@ def test_source_plan_does_not_force_reason_into_unrelated_last_answer():
     out = gex._apply_n_word_slots(slots, structure_type="N")
     assert not any(s.get("must_words") == list(gex._N_SLOT_WORD_REQS["reason"]) for s in out)
     assert all(s["has_content"] is False for s in out if s["is_filler"])
+
+
+def test_source_plan_preserves_full_material_with_extra_synthetic_witness(monkeypatch):
+    seed = [{"speaker": "妈妈" if i % 2 == 0 else "灿灿", "intent": f"第{i}个完整独立问答"}
+            for i in range(12)]
+    beats = [dict(s) for s in seed]
+    beats.insert(2, {"speaker": "昭昭", "intent": "旁观当场反应", "witness_only": True})
+    for i, beat in enumerate(beats, 1):
+        beat["beat"] = i
+    contract = {"story_type": "F", "characters": ["妈妈", "昭昭", "灿灿"],
+                "mom_lines_max": 6, "beat_chain": beats}
+    monkeypatch.setattr(gex, "_chat_json", lambda *_a, **_kw: {"lines": []})
+    monkeypatch.setattr(gex, "_line_plan_skeleton", lambda *_a, **_kw: pytest.fail("完整素材不能压回意图"))
+    plan = gex._build_line_plan(scene_contract=contract, beat_chain=beats, seed=seed,
+                                story_raw="完整原文", temperature=0.4, target_lines=13)
+    content = [r for r in plan if r["role"] == "content"]
+    assert [(r["speaker"], r["intent"]) for r in content] == [(s["speaker"], s["intent"]) for s in seed]
+    assert not any(r["beat"] == 3 for r in content)
 
 
 def test_source_plan_is_shown_to_semantic_reviewer():
@@ -449,6 +508,203 @@ def test_witness_plan_requests_contextual_reaction_instead_of_fixed_template():
     assert "【需要填写的实际序号】[3]" in prompt
     assert '【输出】{"lines": [{"i": 3,' in prompt
     assert "不从1重新编号" in LINE_PLAN_SYSTEM and "i 从 1 连续编号" not in LINE_PLAN_SYSTEM
+
+
+@pytest.mark.parametrize("line", ["我为什么要去自证这个？", "今天我就想挑选那个。", "吃完饭应该轮到你洗碗。", "我今天上台一点也不紧张。"])
+def test_complete_sentences_do_not_fail_for_ambiguous_last_character(line):
+    assert gex._perbeat_line_shape_ok(line)
+
+
+def _source_f_structure_fixture():
+    from app.services.daily_story.story_types.f.validate import source_f_binding, F_SOURCE_ASPECTS
+    lines = ["你把借来的书放哪儿了？", "借给我的书还要管我怎么放？", "你到底有没有听我说话？",
+             "书是我借的，还轮不到你来管。", "我是来找书的，别扯到别的事上。", "反正这件事情我不会听你的。",
+             "那就留到明天再谈，今天先到这里。"]
+    story = {"story_type": "F", "source_link_review": True, "source_raw": "父亲和孩子争论：" + "".join(lines),
+             "source_role_mapping": "父亲→妈妈", "dialogue": [{"speaker": "妈妈" if i % 2 == 0 else "灿灿", "line": s}
+                                                            for i, s in enumerate(lines)]}
+    items = [{"aspect": aspect, "line": no, "pass": True, "quote": lines[no - 1][:8],
+              "source_quote": lines[no - 1], "reason": "原文和对白均体现该阶段的对峙"}
+             for aspect, no in zip(F_SOURCE_ASPECTS, [2, 4, 6, 7])]
+    story["gold_f_source_structure"] = {"binding": source_f_binding(story), "items": items}
+    return story
+
+
+@pytest.mark.parametrize("mutation", ["line", "speaker", "source", "mapping", "quote", "negative", "order", "missing"])
+def test_source_f_structure_requires_current_complete_evidence(mutation):
+    from app.services.daily_story.story_types.f.validate import source_f_structure_valid
+    story = _source_f_structure_fixture()
+    assert source_f_structure_valid(story)
+    if mutation == "line": story["dialogue"][0]["line"] += "真的。"
+    if mutation == "speaker": story["dialogue"][0]["speaker"] = "昭昭"
+    if mutation == "source": story["source_raw"] += "新事实"
+    if mutation == "mapping": story["source_role_mapping"] = "父亲→昭昭"
+    if mutation == "quote": story["gold_f_source_structure"]["items"][0]["source_quote"] = "完全不在原文里的话"
+    if mutation == "negative": story["gold_f_source_structure"]["items"][0]["pass"] = False
+    if mutation == "order": story["gold_f_source_structure"]["items"][1]["line"] = 1
+    if mutation == "missing": story["gold_f_source_structure"]["items"].pop()
+    assert not source_f_structure_valid(story)
+
+
+def test_source_f_final_review_is_independent_and_mandatory():
+    from copy import deepcopy
+    from app.services.daily_story.review import _validate_source_audit, _source_audit_failures, build_review_prompts
+    story = _source_f_structure_fixture()
+    assert _validate_source_audit({"issues": []}, story)
+    raw = {"f_structure_audit": deepcopy(story["gold_f_source_structure"]["items"])}
+    assert _validate_source_audit(raw, story) == ""
+    raw["f_structure_audit"][1]["pass"] = False
+    assert _source_audit_failures(raw)[0]["lines"] == [4]
+    assert _source_audit_failures(raw)[0]["source_audit_failed"] is True
+    _, user = build_review_prompts("借书争执", story)
+    assert "F来源结构独立终审" in user and "前序程序的结构分不能充当通过证据" in user
+
+
+def test_source_f_quote_hint_never_accepts_a_paraphrased_quote():
+    from app.services.daily_story.story_types.f.validate import source_f_audit_error, source_f_structure_valid
+    story = _source_f_structure_fixture()
+    items = story["gold_f_source_structure"]["items"]
+    items[0]["source_quote"] = "借给我的书还要管我怎么放呀？"
+    error = source_f_audit_error(story, items)
+    assert "相近原文" in error and "借给我的书还要管我怎么放？" in error
+    assert not source_f_structure_valid(story)
+
+
+def test_source_f_evidence_survives_expression_metadata_but_not_changed_line():
+    from app.services.daily_story.story_types.f.validate import source_f_structure_valid
+    story = _source_f_structure_fixture()
+    story["dialogue"][0]["expression"] = "疑惑"
+    assert source_f_structure_valid(story)
+    story["dialogue"][0]["line"] += "新事实"
+    assert not source_f_structure_valid(story)
+
+
+@pytest.mark.parametrize("repair_ok", [True, False])
+def test_source_f_audit_repairs_format_with_numbered_dialogue(monkeypatch, repair_ok):
+    from copy import deepcopy
+    from app.services.daily_story.story_types.f.validate import source_f_structure_valid
+    story = _source_f_structure_fixture()
+    items = story.pop("gold_f_source_structure")["items"]
+    calls = []
+
+    def chat(_system, user, **_kw):
+        calls.append(user)
+        if len(calls) == 1:
+            assert json.loads(user)["dialogue"][-1]["line"] == 7
+        answer = deepcopy(items)
+        if len(calls) == 1 or not repair_ok:
+            answer[-1]["line"] = 6
+        return {"f_structure_audit": answer}
+
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    if repair_ok:
+        gex._audit_source_f_structure(story)
+        assert source_f_structure_valid(story)
+    else:
+        with pytest.raises(ValueError, match="审核格式无法核验"):
+            gex._audit_source_f_structure(story)
+        assert not source_f_structure_valid(story)
+    assert len(calls) == 2
+
+
+def test_source_f_structure_evidence_does_not_trigger_template_patches():
+    from copy import deepcopy
+    from app.services.daily_story.story_types.f.patch import patch_f_append_stale_close, patch_f_ensure_escalation
+    story = _source_f_structure_fixture()
+    before = deepcopy(story)
+    patch_f_append_stale_close(story)
+    patch_f_ensure_escalation(story)
+    assert story == before
+
+
+def test_source_f_negative_final_stage_blocks_even_with_empty_issues(monkeypatch):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from app.services.daily_story import review
+    from app.services.llm import llm_mgr
+    story = _source_f_structure_fixture()
+    raw = {"issues": [], "f_structure_audit": deepcopy(story["gold_f_source_structure"]["items"])}
+    raw["f_structure_audit"][1]["pass"] = False
+    monkeypatch.setattr(llm_mgr, "_get_client", lambda: SimpleNamespace(_chat_json=lambda *_a, **_k: (raw, None)))
+    monkeypatch.setattr(review, "_validate_export_review_raw", lambda *_a, **_k: "")
+    result = review.run_export_semantic_review("借书争执", story)
+    assert result.completed and result.issues[0]["source_audit_failed"]
+    assert result.issues[0]["lines"] == [4]
+
+
+def test_repeated_draft_failure_contract_reuse_requires_source_evidence(monkeypatch):
+    source = "爸爸先问作业，女儿回答写完了；爸爸后来才问书包。"
+    row = {"payload": {"gold_chat_convert_stats": {"last_stage": "draft", "failures": 2},
+                       "scene_contract": {"beat_chain": [{"intent": "先问作业和书包，再让孩子回答"}]}}}
+    reply = {"compatible": False, "issues": [{"contract_quote": "先问作业和书包", "source_quote": "爸爸后来才问书包",
+                                              "reason": "合并了中间隔着答话的两个问题，应按源文拆分"}]}
+    monkeypatch.setattr(gex, "_chat_json", lambda *_a, **_k: reply)
+    assert gc._failed_contract_source_conflicts(row, source) == [reply["issues"][0]["reason"]]
+    reply["issues"][0]["source_quote"] = "原文没有这段话"
+    with pytest.raises(ValueError, match="证据无法核验"):
+        gc._failed_contract_source_conflicts(row, source)
+    row["payload"]["gold_chat_convert_stats"]["failures"] = 1
+    monkeypatch.setattr(gex, "_chat_json", lambda *_a, **_k: pytest.fail("非连续失败不触发新审核"))
+    assert gc._failed_contract_source_conflicts(row, source) == []
+    row["payload"]["gold_chat_convert_stats"]["failures"] = 2
+    row["_gold_chat_rebuild_contract"] = "已重建过一次"
+    assert gc._failed_contract_source_conflicts(row, source) == []
+
+
+def test_old_draft_failures_do_not_rebuild_updated_source_contract(monkeypatch):
+    from app.services.gold_story.gold_chat.status import gold_chat_candidate_contract
+    from copy import deepcopy
+    row = _sample_row()
+    row["payload"]["scene_contract"] = {"beat_chain": [{"speaker": "妈妈", "intent": "问孩子去哪儿"}]}
+    old = deepcopy(gold_chat_candidate_contract(row))
+    row["payload"]["gold_chat_candidate_contract"] = old
+    row["payload"]["gold_chat_convert_stats"] = {"last_stage": "draft", "failures": 3}
+    row["payload"]["scene_contract"]["beat_chain"][0]["intent"] = "已经重建的完整问答"
+    monkeypatch.setattr(gex, "_chat_json", lambda *_a, **_kw: pytest.fail("旧契约失败不能触发新契约重建"))
+    assert gc._failed_contract_source_conflicts(row, "完整原文") == []
+
+
+@pytest.mark.parametrize("step", ["build_scene_contract", "build_dialogue_seed"])
+def test_contract_rebuild_feedback_reaches_both_generation_steps(step, monkeypatch):
+    from app.services.gold_story.collect import llm
+    def capture(_system, user):
+        assert "两个相隔的问题错误合并" in user
+        assert "旧契约已被原文证据否定" in user or "旧seed已因遗漏/错序不可复用" in user
+        raise RuntimeError("captured rebuild instruction")
+    monkeypatch.setattr(llm, "_chat_json", capture)
+    with pytest.raises(RuntimeError, match="captured rebuild instruction"):
+        getattr(llm, step)(story_raw="父亲问了第一个问题，孩子回答，父亲再问另一件事。",
+                           h3={"generation_constraints": {"previous_plan_error": "两个相隔的问题错误合并"}})
+
+
+@pytest.mark.parametrize("line", ["妈妈我已经想好了但是。", "妈妈我已经想好了因为。", "这句话还没有结束", "长" * 24 + "。"])
+def test_shape_check_keeps_length_punctuation_and_conjunction_limits(line):
+    assert not gex._perbeat_line_shape_ok(line)
+
+
+def test_synthetic_witness_beat_cannot_expand_into_another_speakers_turn():
+    owners = ["妈妈", "灿灿", "昭昭", "妈妈", "灿灿", "妈妈", "灿灿", "妈妈", "灿灿", "妈妈"]
+    beats = [{"beat": i, "speaker": sp, "intent": f"说明第{i}项安排"} for i, sp in enumerate(owners, 1)]
+    beats[2].update(witness_only=True, intent="我就在旁边听着，你慢慢说。")
+    contract = {"characters": ["妈妈", "灿灿", "昭昭"], "mom_lines_max": 5, "story_type": "F"}
+    plan = gex._line_plan_skeleton(contract, beats, target_lines=12, no_material_speakers={"昭昭"})
+    assert len(plan) == 12
+    witness = [r for r in plan if r["beat"] == 3]
+    assert len(witness) == 1 and witness[0]["speaker"] == "昭昭"
+    assert all(a["speaker"] != b["speaker"] for a, b in zip(plan, plan[1:]))
+    assert all("我就在旁边听着" not in r.get("intent", "") for r in plan)
+
+
+def test_party_reaction_is_classified_before_first_fill(monkeypatch):
+    slots = [{"speaker": "灿灿", "intent": "旁观安抚", "beat_id": 1, "is_filler": True}]
+    contract = {"beat_chain": [{"beat": 1, "speaker": "灿灿", "intent": "反对安排", "speech_act": "deny"}]}
+    def chat(_system, user, **_kwargs):
+        assert "当事人在场反应" in user and "旁观安抚" not in user
+        return {"lines": [{"i": 1, "line": "你这个安排对我可不公平啊。"}]}
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    monkeypatch.setattr(gex, "_perbeat_validate_fill", lambda _s, filled: ([("灿灿", filled[1])], []))
+    _, failures = gex._perbeat_fill_slots(slots, scene_contract=contract, punchline="", temperature=0.4)
+    assert not failures
 
 
 def test_revision_repairs_preempting_reaction_without_changing_source_line(monkeypatch):
@@ -650,7 +906,7 @@ def test_source_fill_uses_bounded_revision_rounds_for_same_overlong_slot(monkeyp
         if len(calls) == 1:
             return {"lines": [{"i": i, "line": line} for i, line in original.items()]}
         assert '"current_chars": 29' in user
-        assert '"min_chars": ' + ("14" if reaction else "8") in user
+        assert '"min_chars": 8' in user
         assert "压缩冗余措辞" in user
         repaired = valid if repair_succeeds and len(calls) == 3 else overlong
         return {"lines": [{"i": 15, "line": repaired}, {"i": 1, "line": "不应采纳的越权修改。"}]}
@@ -2252,6 +2508,23 @@ def test_convert_retries_on_finalize_missing_beat(monkeypatch):
     assert len(finalize_calls) == 2
     assert feedback_seen
     assert feedback_seen[0][0]["original_intent"] == "爸爸旁观解说"
+
+
+def test_forced_source_rebuild_does_not_fallback_to_unverified_seed(monkeypatch):
+    row = _sample_row()
+    row["_gold_chat_rebuild_contract"] = "旧素材遗漏原文收束"
+    row["payload"]["story_raw"] = "姐弟在客厅争论关灯，妈妈听完要求先关灯，明天再讨论。" * 4
+    monkeypatch.setattr("app.services.gold_story.collect.llm.build_scene_contract",
+                        lambda **_kw: {"story_type": "F", "location": "客厅", "beat_chain": []})
+
+    def fail_seed(**_kw):
+        raise ValueError("H3b 无法保留完整收束")
+
+    monkeypatch.setattr("app.services.gold_story.collect.llm.build_dialogue_seed", fail_seed)
+    monkeypatch.setattr(gc.repo_gold_story, "patch_story_payload",
+                        lambda *_a, **_kw: pytest.fail("失败素材不能写入来源契约"))
+    with pytest.raises(ValueError, match="H3b 无法保留完整收束"):
+        gc._rebuild_h3a_h3b_on_convert(row)
 
 
 def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
@@ -5833,3 +6106,38 @@ def test_publication_blocks_downstream_review_failures(
     assert saved["status"] == "review_pending"
     assert saved["job_id"] is None
     assert saved["story"]["dialogue"] == snapshot["dialogue"]
+
+
+def test_source_reaction_short_speech_is_valid_without_padding():
+    slot = {"speaker": "昭昭", "intent": "姐姐，你先回答妈妈呀。", "source_plan": True, "is_filler": True}
+    assert gex._perbeat_check(slot, "姐姐，你先回答妈妈呀。", []) == []
+    assert gex._perbeat_check(slot, "好。", [])
+    assert gex._perbeat_check(slot, "姐姐，你先回答妈妈呀", [])
+
+
+def test_authorized_adaptation_rebuilds_old_contract_from_effective_source(monkeypatch):
+    import hashlib
+    from app.services.gold_story.collect import llm
+    contract, seed, _ = _source_plan_fixture()
+    original = "这是未重构前的原始素材，保留以供授权核验。" * 3
+    adapted = "用户授权后的新情节，必须据此重新建立契约，不能沿用旧素材。" * 3
+    row = {"id": 0, "source_id": "BVadapt", "title": "原视频标题", "structure_type": "N",
+           "mechanism": "M6", "story_raw": original, "payload": {
+               "bili_title": "原视频角色说明", "story_raw": original,
+               "scene_contract": contract, "dialogue_seed": seed,
+               "gold_chat_adaptation": {"mode": "authorized_reconstruction", "approved": True,
+                   "source_id": "BVadapt", "approved_at": "2026-10-23", "approval_note": "用户允许重构",
+                   "original_sha256": hashlib.sha256(original.encode()).hexdigest(),
+                   "story_raw": adapted, "title": "重构后的新情节"}}}
+    called = []
+    def build(**kwargs):
+        called.append(kwargs)
+        assert kwargs["story_raw"] == adapted
+        assert kwargs["video_title"] == "重构后的新情节"
+        assert kwargs["h3"]["beat"] == []
+        raise ValueError("重构失败必须阻止沿用旧契约")
+    monkeypatch.setattr(llm, "build_scene_contract", build)
+    with pytest.raises(ValueError, match="阻止沿用旧契约"):
+        gc._rebuild_h3a_h3b_on_convert(row)
+    assert len(called) == 1
+    assert row["payload"]["scene_contract"] == contract

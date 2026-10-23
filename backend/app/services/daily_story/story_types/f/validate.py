@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 from typing import Any
 
 from app.services.daily_story.story_types import parse_story_type_code
@@ -51,6 +53,56 @@ RE_F_PAD_STACK = re.compile(
     r"了呢了呀|了呢呀|了呀呢|好不好了呀|着呢了呀|呢呢|你呀呢|啊呢",
 )
 RE_F_PIVOT_TRIGGER = re.compile(r"拍我们|偷拍|有人拍|镜头|录像")
+
+F_SOURCE_ASPECTS = ("conflict", "escalation", "standoff", "closing")
+
+
+def source_f_binding(story: dict) -> str:
+    # 表情等制作字段的归一化不改变争执结构；换词、换角色或换来源才需要重新核验。
+    dialogue = [{"speaker": r.get("speaker"), "line": r.get("line")} for r in story.get("dialogue") or []]
+    payload = [story.get("source_raw"), story.get("source_role_mapping"), dialogue]
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def source_f_audit_error(story: dict, items: Any) -> str:
+    """结构阶段的证据必须来自当前全文和原文；语义由独立审核分别判断。"""
+    rows = story.get("dialogue") or []
+    source = str(story.get("source_raw") or "")
+    if not isinstance(items, list) or len(items) != len(F_SOURCE_ASPECTS):
+        return "F来源结构审核须完整给出互呛、升级、僵持、中止收束四项"
+    previous = 0
+    for aspect, item in zip(F_SOURCE_ASPECTS, items):
+        if not isinstance(item, dict):
+            return "F来源结构审核项须为对象"
+        no = item.get("line")
+        if (item.get("aspect") != aspect or type(no) is not int or not previous < no <= len(rows)
+                or type(item.get("pass")) is not bool):
+            return "F来源结构审核须按四阶段顺序给出不同合法行号和布尔判定"
+        if aspect == "closing" and no < len(rows) - 2:
+            return "F中止收束须发生在末三句"
+        quote, source_quote = str(item.get("quote") or ""), str(item.get("source_quote") or "")
+        if len(quote) < 2 or quote not in str(rows[no - 1].get("line") or ""):
+            return f"F来源结构审核 {aspect} 的 quote 不在第{no}句；须按对白标注行号逐字引用"
+        if len(source_quote) < 4 or source_quote not in source:
+            from difflib import get_close_matches
+
+            fragments = [s for s in re.split(r'[：“”]|(?<=[。！？；])', source) if len(s) >= 4]
+            nearest = get_close_matches(source_quote, fragments, n=1, cutoff=0.35)
+            hint = f"；相近原文为{nearest[0]!r}（仅供重新核验，不能据此认定阶段成立）" if nearest else ""
+            return (f"F来源结构审核 {aspect} 的 source_quote={source_quote!r}不在原始素材；"
+                    "须逐字引用，不得删中间的语气词、省略号或改称谓" + hint)
+        if not item.get("reason"):
+            return f"F来源结构审核 {aspect} 缺少判定依据"
+        previous = no
+    return ""
+
+
+def source_f_structure_valid(story: dict) -> bool:
+    proof = story.get("gold_f_source_structure")
+    return bool(story.get("source_link_review") and story.get("story_type") == "F"
+                and isinstance(proof, dict) and proof.get("binding") == source_f_binding(story)
+                and not source_f_audit_error(story, proof.get("items"))
+                and all(item["pass"] for item in proof["items"]))
 
 
 def _build_seed_haystack(
@@ -131,15 +183,16 @@ def append_f_body_errors(story: dict, errors: list[str]) -> None:
     threat_hits = len(RE_THREAT.findall(mid))
     esc_hits = len(RE_ESCALATION.findall(mid))
 
-    if threat_hits < 2:
+    source_structure = source_f_structure_valid(story)
+    if threat_hits < 2 and not source_structure:
         errors.append("F类：中段须至少两轮互呛/威胁（你再说/试试/还…呢等）")
-    if esc_hits < 1:
+    if esc_hits < 1 and not source_structure:
         errors.append("F类：中段须有加码升级（吼/还…呢/啊啊等）")
     has_close = (
         RE_STALE_OR_YIELD.search(tail4)
         or RE_EXTERNAL_PIVOT.search(tail4)
     )
-    if not has_close:
+    if not has_close and not source_structure:
         errors.append(
             "F类：末段须僵持/露怯或外部打断收束（不跟你玩/偷拍/尴尬等）"
         )
@@ -169,6 +222,7 @@ def append_f_align_issues(
     conflict_text: str = "",
     object_text: str = "",
     mechanism_text: str = "",
+    story: dict | None = None,
 ) -> None:
     """gold_chat 对齐：F 类抽象 invariant（非逐篇剧情）。"""
     lines = [
@@ -184,7 +238,8 @@ def append_f_align_issues(
     tail4 = "".join(lines[-4:])
     mech = str(mechanism or "").strip().upper()
 
-    if len(RE_THREAT.findall(mid)) < 2:
+    source_structure = bool(story and source_f_structure_valid(story))
+    if len(RE_THREAT.findall(mid)) < 2 and not source_structure:
         issues.append(
             {
                 "lines": list(range(1, min(6, n) + 1)),
@@ -193,7 +248,7 @@ def append_f_align_issues(
                 "fix": "补你再说/试试/还…呢等互呛，再加码",
             }
         )
-    if not RE_ESCALATION.search(mid):
+    if not RE_ESCALATION.search(mid) and not source_structure:
         issues.append(
             {
                 "lines": list(range(2, min(8, n) + 1)),
@@ -202,7 +257,7 @@ def append_f_align_issues(
                 "fix": "补吼叫/镜像回怼/啊啊等等势抬升",
             }
         )
-    if not (
+    if not source_structure and not (
         RE_STALE_OR_YIELD.search(tail4) or RE_EXTERNAL_PIVOT.search(tail4)
     ):
         issues.append(

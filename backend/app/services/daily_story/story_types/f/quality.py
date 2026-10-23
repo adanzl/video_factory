@@ -49,6 +49,7 @@ def score_punchline(
     speakers: list[str],
     prev2: str,
     last: str,
+    *, story: dict | None = None,
 ) -> tuple[int, list[str]]:
     del speakers, prev2, last
     close = f_humor.close_tail_text(lines)
@@ -58,6 +59,9 @@ def score_punchline(
         return 0, ["F收束含G暖收"]
     if RE_A_BACKFIRE.search(close):
         return 0, ["F收束含A反噬"]
+    from app.services.daily_story.story_types.f.validate import source_f_structure_valid
+    if story and source_f_structure_valid(story):
+        return 5, ["有来源证据的僵持与中止收束"]
     if f_humor.has_close_markers(lines):
         return 5, ["僵持或外部打断收束"]
     return 0, []

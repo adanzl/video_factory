@@ -180,6 +180,13 @@ def export_gold_chat_files(
         f"- 机制: {row.get('mechanism')} / 结构: {row.get('structure_type')}",
         f"- 对白: {export['chat_lines']} 句 / {export['chat_chars']} 字",
     ]
+    if payload.get("gold_chat_adaptation") is not None:
+        from app.services.gold_story.gold_chat.status import gold_chat_source_text
+
+        gold_chat_source_text(row)
+        export["gold_meta"]["adaptation"] = deepcopy(payload["gold_chat_adaptation"])
+        export["gold_meta"]["original_story_raw"] = str(row.get("story_raw") or payload.get("story_raw") or "")
+        md_lines.append("- 创作方式：用户授权重构情节与笑点，非原视频逐句转写。")
     if export["needs_manual_spotcheck"]:
         md_lines.append(
             "- ⚠️ 需人工抽检：审读有 %s 条阻断问题证据不可核验（已降级）"
@@ -205,6 +212,10 @@ def export_gold_chat_files(
         md_lines.append("")
     md_lines.extend(["## 对白", ""])
     md_lines.extend(_chat_md_lines(chat.get("dialogue") or []))
+    if payload.get("gold_chat_adaptation") is not None:
+        md_lines.extend(["", "## 来源与重构", "", "### 原始素材", "",
+                         export["gold_meta"]["original_story_raw"], "",
+                         "### 用户授权的重构素材", "", gold_chat_source_text(row)])
     version_dir = out_dir / ".versions" / sid / uuid.uuid4().hex
     version_dir.mkdir(parents=True)
     json_path = version_dir / f"{sid}.json"

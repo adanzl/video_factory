@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from app.services.gold_story.gold_chat.status import gold_chat_source_text
+
 import copy
 import json
 import logging
@@ -991,7 +993,7 @@ def _revise_perbeat_length(data: dict[str, Any], *, row: dict[str, Any] | None) 
     if not failures:
         return data
     payload = (row or {}).get("payload") or {}
-    source_text = str(data.get("source_raw") or (row or {}).get("story_raw") or payload.get("story_raw") or "")
+    source_text = str(data.get("source_raw") or gold_chat_source_text(row or {}))
     user = format_source_revision_user(
         scene_contract=payload.get("scene_contract") or {}, slots=slots, filled=filled,
         failures=failures, source_text=source_text,
@@ -1117,7 +1119,7 @@ def _validate_expand_chat(
                 except ValueError as exc2:
                     # 归一化会缩短台词；以此时的正文修长度，不能丢掉整篇重新抽。
                     if ("正文总字数须" in str(exc2) and perbeat_length_revisions < 2
-                            and (data.get("source_raw") or (row or {}).get("story_raw") or payload.get("story_raw"))):
+                            and (data.get("source_raw") or gold_chat_source_text(row or {}))):
                         perbeat_length_revisions += 1
                         data = _revise_perbeat_length(data, row=row)
                         continue
@@ -1515,6 +1517,8 @@ def _line_plan_skeleton(
 
     def cap_of(no: int) -> int:
         beat = beats[no - 1]
+        if beat.get("witness_only"):
+            return 1
         if _line_plan_static_beat(beat):
             return 2
         return (
@@ -1705,7 +1709,7 @@ def _merge_line_plan_intents(
             # 这样 plan 的调用量减半、也不会再把「气笑要求…」写成动作词。
             "intent": (str(row.get("intent") or "") if row.get("from_beat")
                        else intents.get(idx) or str(row.get("intent") or "")),
-            "addressee": "",
+            "addressee": str(row.get("addressee") or "") if row.get("source_plan") else "",
         }
         for idx, row in enumerate(rows, 1)
     ]
@@ -1794,7 +1798,7 @@ def _validate_line_plan(
         rows = rows_by_beat.get(no) or []
         if not rows:
             from app.services.gold_story.scene import is_n_filler_intent
-            if all(r.get("source_plan") for r in plan) and no != len(beats) and is_n_filler_intent(str(beat.get("intent") or "")):
+            if all(r.get("source_plan") for r in plan) and no != len(beats) and (beat.get("witness_only") or is_n_filler_intent(str(beat.get("intent") or ""))):
                 continue
             errors.append(f"第{no}拍没有一句台词")
             continue
@@ -1879,7 +1883,7 @@ def _line_plan_settle_stage_intents(
         beat_no = int(row.get("beat") or 0)
         beat = beats[beat_no - 1] if 0 < beat_no <= len(beats) else {}
         beat_intent = str(beat.get("intent") or "").strip()
-        if beat_intent and _line_plan_static_beat(beat_intent):
+        if beat_intent and not beat.get("witness_only") and _line_plan_static_beat(beat_intent):
             row["intent"] = beat_intent
     return plan
 
@@ -1894,7 +1898,7 @@ def _source_plan_skeleton(
     from app.services.gold_story.gold_chat.repair import GoldChatContractError, GoldChatSourceMappingError
 
     beats = [b for b in beat_chain if isinstance(b, dict)]
-    synthetic = [is_n_filler_intent(str(b.get("intent") or "")) for b in beats]
+    synthetic = [bool(b.get("witness_only") or is_n_filler_intent(str(b.get("intent") or ""))) for b in beats]
 
     @lru_cache(None)
     def align(bi: int, si: int) -> tuple[tuple[int, ...], ...]:
@@ -1951,6 +1955,7 @@ def _source_plan_skeleton(
         rows = []
         for index in range(si, si + count):
             rows.append({"beat": bid, "speaker": seed[index]["speaker"], "intent": seed[index]["intent"],
+                         "addressee": str(seed[index].get("addressee") or ""),
                          "role": "content", "source_seed_ids": [index + 1],
                          "source_plan": True, "from_beat": True})
         if not rows and synthetic[bid - 1] and bid != len(beats):
@@ -2024,6 +2029,7 @@ def _validate_source_line_plan(
             "intent": str(item.get("intent") or "").strip(),
             "role": role, "source_seed_ids": refs,
             "source_plan": True, "from_beat": role == "content",
+            "addressee": str(seed[refs[0] - 1].get("addressee") or "") if role == "content" else "",
             "source_speech_act": str(seed[refs[0] - 1].get("speech_act") or "") if role == "content" else "",
         })
     if sorted(used) != list(range(1, len(seed) + 1)):
@@ -2036,10 +2042,11 @@ def _validate_source_line_plan(
         actual = [ref for r in plan if r["beat"] == bid for ref in r["source_seed_ids"]]
         if not isinstance(expected, list) or expected != actual:
             errors.append(f"第{bid}拍 beat_sources 与内容句引用不一致")
-        if is_n_filler_intent(str(beat.get("intent") or "")) and actual:
+        synthetic = bool(beat.get("witness_only") or is_n_filler_intent(str(beat.get("intent") or "")))
+        if synthetic and actual:
             errors.append(f"第{bid}拍是合成反应拍，不能承载真实素材内容")
         # 旧流水线插入的态度模板不是源素材事件，不要求它凭空拥有一个 seed。
-        if not is_n_filler_intent(str(beat.get("intent") or "")) and not any(
+        if not synthetic and not any(
             r["beat"] == bid and r["role"] == "content"
             and r["speaker"] == beat.get("speaker") for r in plan
         ):
@@ -2110,6 +2117,13 @@ def _build_source_line_plan(
             temperature=temperature, max_tokens=4096, json_mode=False,
             model=_source_plan_model(),
         )
+        # 来源接话规划直接产出台词；内部沿用 intent 保存，不再让模型写抽象意图。
+        raw_lines = data.get("lines") if isinstance(data, dict) else None
+        if isinstance(raw_lines, list):
+            data = {**data, "lines": [
+                {**item, "intent": item.get("line") or item.get("intent")}
+                if isinstance(item, dict) else item for item in raw_lines
+            ]}
         rows = _merge_line_plan_intents(skeleton, data)
         plan, errors = _validate_source_line_plan(
             {"lines": rows, "beat_sources": declared},
@@ -2142,7 +2156,11 @@ def _build_line_plan(
 
     beats = [b for b in beat_chain or [] if isinstance(b, dict)]
     source_units = [s for s in seed or [] if isinstance(s, dict) and s.get("intent") and s.get("speaker")]
-    if len(source_units) > len(beats) and not any(b.get("required_semantic_points") for b in beats):
+    from app.services.gold_story.scene import is_n_filler_intent
+    real_beats = [b for b in beats if not b.get("witness_only") and not is_n_filler_intent(str(b.get("intent") or ""))]
+    # 素材本身已够成稿时，即使一拍恰好一条也保留素材分句；不能再压回意图重写。
+    if (len(source_units) > len(beats) or len(source_units) >= max(LINE_PLAN_TARGET_LINES, len(real_beats))) and not any(
+            b.get("required_semantic_points") for b in beats):
         return _build_source_line_plan(
             scene_contract=scene_contract, beat_chain=beats, seed=source_units,
             story_raw=story_raw, temperature=temperature,
@@ -2248,6 +2266,7 @@ def _line_plan_slots(
     beats = [b for b in beat_chain or [] if isinstance(b, dict)]
     owner_seen: set[int] = set()
     slots: list[dict[str, Any]] = []
+    witness_speakers = {str(b.get("speaker") or "") for b in beats if b.get("witness_only")}
     # 哪些拍被拆成两人说：拍主说前半、另一个孩子说后半。
     split_beats = {
         int(row.get("beat") or 0)
@@ -2286,7 +2305,8 @@ def _line_plan_slots(
                     )
                 ),
                 "is_filler": not main,
-                "witness_only": bool(beat.get("witness_only")),
+                "witness_only": bool((beat.get("witness_only") and is_owner)
+                                     or (row.get("source_plan") and row.get("role") == "reaction" and _speaker in witness_speakers)),
                 "source_seed_ids": list(row.get("source_seed_ids") or []),
                 "planned_content": bool(row.get("source_plan") and main),
                 "planned_speech_act": str(row.get("source_speech_act") or ""),
@@ -2431,7 +2451,7 @@ def _apply_n_word_slots(
     RE_SOLEMN_REASON / stun_close_hit）。整篇扩写靠模型自然覆盖；逐拍填词每个槽
     只看一句上下文，容易整篇漏掉某一个词（#138 实测：成稿写得很顺，却因缺
     「为啥」和收束语被机检整稿退回）。所以这里在**骨架层**把词槽钉死：
-    追问给第二个家长槽、自洽给收束前的最后一个孩子槽、愣住给收束槽。
+    优先沿用契约已有的设问、追问、自洽位置；没有声明时才用旧位置兜底。
     """
     if str(structure_type or "").strip().upper() != "N" or len(slots) < 4:
         return slots
@@ -2454,9 +2474,24 @@ def _apply_n_word_slots(
         return slots
     reqs: dict[int, str] = {}
     reqs[contract_idx[-1]] = "stun"
+    from app.services.daily_story.story_types.n.validate import RE_CHALLENGE, RE_WHY
+
+    def slot_intent(i: int) -> str:
+        return str(slots[i].get("beat_intent") or slots[i].get("intent") or "")
+
+    # 保留契约原有设问，避免填词把「你说」改掉后，全文修稿另造一道考题。
+    for i in contract_idx:
+        intent = slot_intent(i)
+        challenge = RE_CHALLENGE.search(intent)
+        if challenge and re.search(r"[？?]|设问|追问|发问", intent):
+            groups = _perbeat_required_word_groups(slots[i])
+            groups.append([challenge.group()])
+            slots[i] = {**slots[i], "required_word_groups": groups}
+            break
     questioning = [i for i in parent_idx if i != contract_idx[-1]]
     if questioning:
-        reqs[questioning[min(1, len(questioning) - 1)]] = "why"
+        declared_why = [i for i in questioning if RE_WHY.search(slot_intent(i))]
+        reqs[declared_why[0] if declared_why else questioning[min(1, len(questioning) - 1)]] = "why"
     # 自洽槽：收束前**最后一个承担剧情**的孩子槽（跳过插话槽与停顿拍——
     # 愣住拍里塞「因为」会把静场写成解释，插话槽里塞「所以」是空转）
     pause_re = re.compile(r"愣|接不上|没落下|认栽|服了|不响|沉默")
@@ -2466,11 +2501,10 @@ def _apply_n_word_slots(
         if i < contract_idx[-1]
         and not pause_re.search(str(slots[i].get("intent") or ""))
     ]
-    if any(s.get("source_plan") for s in slots):
-        before_close = [i for i in before_close if re.search(
-            r"因为|所以|原因|理由|解释|自洽", str(slots[i].get("intent") or ""))]
     if before_close:
-        reqs[before_close[-1]] = "reason"
+        declared_reason = [i for i in before_close if re.search(
+            r"因为|所以|原因|理由|解释|自洽", slot_intent(i))]
+        reqs[declared_reason[-1] if declared_reason else before_close[-1]] = "reason"
     for i, key in reqs.items():
         words = _N_SLOT_WORD_REQS[key]
         slots[i] = dict(slots[i])
@@ -3443,18 +3477,20 @@ def _perbeat_is_dup(line: str, earlier: list[tuple[str, str]]) -> bool:
     return False
 
 
-# 半句检测：真正「没说完」的收尾是连词/介词/量词。**不收「的/了」**——
+# 半句检测：末尾连接词/介词可作残句疑点，单字量词不能单独作为证据。
+# 「这个/那个」可以是完整宾语，「洗碗/紧张/独自一只」也不是量词悬空。
+# 完整语义仍由全文终审核验。**不收「的/了」**——
 # 「…妈妈眉清目秀倒是真的。」「…我认了。」都是完整口语，
 # 把它们判废会让模型反复重写仍不过（#138 实测：beat 2 三连 draft 全废）。
 _PERBEAT_DANGLING_TAIL = (
     "把", "被", "和", "跟", "就", "还", "也", "都",
     "要是", "如果", "因为", "所以", "但是", "可是", "而且", "然后",
-    "像", "这", "那", "个", "只", "张", "盘", "碗",
+    "像",
 )
 
 
 def _perbeat_sentence_ok(line: str, *, min_core: int = 10) -> bool:
-    """句子必须说完整：以句末标点收尾，且不落在虚词/量词上。
+    """句子以句末标点收尾，且不落在明确悬空的连接词上。
 
     生成器被长度限制逼急了会交半句（「你说妈妈像暴躁的老虎。」11 字、
     「暴躁的老虎要是真来抢这盘黑面饺子。」没有下文），读起来像串词。
@@ -4036,9 +4072,11 @@ def _perbeat_check(
     if slot.get("source_plan"):
         # 来源/角色/顺序由计划锁定。完整句、问答、事实归属、重复与新事实
         # 必须由逐行 source_audit 全文终验，不能用词交集冒充语义判定。
-        minimum = 14 if slot.get("is_filler") else 8
+        minimum = 8
+        from app.services.gold_story.scene import looks_like_narration_line
         checks = [
             (f"须 {minimum}–24 字并以句末标点收尾", minimum <= len(line) <= 24 and bool(re.search(r"[。！？…!?]$", line))),
+            ("须直接说出口的对白，不能自述动作或把舞台旁白当台词", not looks_like_narration_line(line)),
             ("必须落地契约必现语义点", not _perbeat_missing_required_points(line, slot.get("_own_entry"))),
             ("必须出现契约指定词", _perbeat_words_ok(line, _perbeat_required_word_groups(slot))),
         ]
@@ -4058,6 +4096,13 @@ def _perbeat_check(
     shape_ok = _perbeat_line_shape_ok(
         line, is_filler=bool(slot.get("is_filler"))
     )
+    shape_reason = "须 8–24 字且是完整句"
+    if len(line) > 24:
+        shape_reason += f"（当前{len(line)}字，超出{len(line) - 24}字；压到22字左右，保留全部事实）"
+    elif not shape_ok:
+        minimum = 14 if slot.get("is_filler") else 8
+        shape_reason += (f"（当前{len(line)}字，本槽至少{minimum}字）" if len(line) < minimum
+                         else "（句末须有终止标点，不能以悬空连接词收尾）")
     speech_ok = _perbeat_speech_form_ok(line, speaker)
     # 契约拍必须真的说出本拍声明的必现语义点：#144 run25 第 6 句只落了「承认
     # 弄脏 + 想自己弄干净」，丢了契约里的「因为疼妈妈」，连带第 8 句妈妈的
@@ -4378,7 +4423,7 @@ def _perbeat_check(
     return [
         label
         for label, passed in (
-            ("须 8–24 字且是完整句", shape_ok),
+            (shape_reason, shape_ok),
             ("不得自述动作/旁白或转述别人的话", speech_ok),
             ("不得提现场没发生的动作", action_ok),
             ("上一句是问句，回句须咬住问句", question_ok),
@@ -4810,6 +4855,8 @@ def _audit_perbeat_dialogue_links(
     from app.services.gold_story.gold_chat.prompts import DIALOGUE_LINK_AUDIT_SYSTEM
 
     diagnostics = ("上一句是问句", "必须先正面回答", "指认对方说过", "辩驳的事前文")
+    for slot in slots:
+        slot.pop("_dialogue_link_failure", None)
     targets = [i for i, _, why in failures if 1 <= i <= len(slots)
                and not slots[i - 1].get("is_filler")
                and any(label in why for label in diagnostics)]
@@ -4840,14 +4887,59 @@ def _audit_perbeat_dialogue_links(
             return False
         if item["pass"] and item["source_supports_act"]:
             approved.append((no, item))
+        else:
+            slots[no - 1]["_dialogue_link_failure"] = str(item["reason"])
     for no, item in approved:
         slots[no - 1]["_dialogue_link_audit"] = {
             "line": filled[no], "source_text": source_text, "role_mapping": role_mapping,
             "context": [(str(s["speaker"]), str(filled.get(i, ""))) for i, s in enumerate(slots[:no - 1], 1)],
             "evidence": item,
         }
-    logger.info("[GOLD_CHAT] dialogue link audit targets=%s approved=%s", targets, [no for no, _ in approved])
+    logger.info("[GOLD_CHAT] dialogue link audit targets=%s approved=%s rejected=%s", targets,
+                [no for no, _ in approved], [(i, slots[i - 1].get("_dialogue_link_failure")) for i in targets
+                                             if slots[i - 1].get("_dialogue_link_failure")])
     return bool(approved)
+
+
+def _audit_source_f_structure(story: dict[str, Any]) -> None:
+    """有原文的争执可用逐阶段证据识别结构，不能靠塞互呛词拿分。"""
+    from app.services.daily_story.story_types.f.validate import source_f_binding, source_f_audit_error
+
+    if not (story.get("story_type") == "F" and story.get("source_link_review") and story.get("source_raw")):
+        return
+    binding = source_f_binding(story)
+    old = story.get("gold_f_source_structure")
+    if isinstance(old, dict) and old.get("binding") == binding:
+        return
+    system = (
+        "审核争执对白的F结构，只输出JSON，不改稿。顺序必须有双方冲突/互呛、进一步升级、僵持不让步、"
+        "中止收束四阶段；逻辑争论升级为权威对峙可以成立，但普通聊天不能算。"
+        "中止须实际结束争执（退让、退场、外部打断或放下当下争论留待以后），不要求特定口头词。"
+        "每项须同时有原文依据与成稿语义支持，不能凭计划、词语相同或声称已通过放行；不成立pass=false。"
+        "角色映射仅用于理解关系，不改写source_quote的称谓。"
+        "按conflict/escalation/standoff/closing四项输出，line必须严格递增、closing在末三句。"
+        '格式 {"f_structure_audit":[{"aspect":"conflict","line":2,"pass":true,'
+        '"quote":"当前句连续引文","source_quote":"原文连续引文","reason":"该阶段如何成立或不成立"},...]}。'
+    )
+    user = json.dumps({"source_text": story["source_raw"],
+        "role_mapping": story.get("source_role_mapping"),
+        "dialogue": [{"line": i, "speaker": r.get("speaker"), "text": r.get("line")}
+                     for i, r in enumerate(story.get("dialogue") or [], 1)]}, ensure_ascii=False)
+    data = _chat_json(system, user, temperature=0.0, max_tokens=2400)
+    items = data.get("f_structure_audit") if isinstance(data, dict) else None
+    error = source_f_audit_error(story, items)
+    if error:
+        logger.info("[GOLD_CHAT] source F audit format retry: %s", error)
+        data = _chat_json(system, user + "\n审核格式不合格：" + error
+                         + "。请重新核验四阶段并输出；引文必须逐字取自对应文本，不能将原文称谓改写。上一版："
+                         + json.dumps(items, ensure_ascii=False), temperature=0.0, max_tokens=2400)
+        items = data.get("f_structure_audit") if isinstance(data, dict) else None
+        error = source_f_audit_error(story, items)
+        if error:
+            raise ValueError("F来源结构审核格式无法核验：" + error)
+    story["gold_f_source_structure"] = {"binding": binding, "items": items, "error": error}
+    logger.info("[GOLD_CHAT] source F structure audit valid=%s error=%s passed=%s", not error, error,
+                [] if error else [item["aspect"] for item in (items or []) if item["pass"]])
 
 
 def _perbeat_fill_slots(
@@ -4922,6 +5014,8 @@ def _perbeat_fill_slots(
                 _perbeat_future_terms(slots, _i, punchline=punchline)
             )
             if _slot.get("is_filler"):
+                # 先提供契约角色关系，再判断当事人；否则初次填词会把当事人当成旁观者。
+                _slot["_beat_entries"] = list(_entries)
                 _slot["_next_party_terms"] = sorted(
                     _perbeat_next_party_terms(slots, _i)
                 )
@@ -5011,6 +5105,10 @@ def _perbeat_fill_slots(
         if audited_mode and _audit_perbeat_dialogue_links(
                 slots, filled, failures, source_text=source_text, role_mapping=role_mapping):
             lines, failures = _perbeat_validate_fill(slots, filled)
+        if audited_mode:
+            failures = [(i, line, why + ("；来源核验：" + str(slots[i - 1]["_dialogue_link_failure"])
+                         if 1 <= i <= len(slots) and slots[i - 1].get("_dialogue_link_failure") else ""))
+                        for i, line, why in failures]
         if source_mode:
             from app.services.daily_story.story_types.n.validate import append_n_body_errors
             type_errors: list[str] = []
@@ -5421,9 +5519,7 @@ def _generate_perbeat_candidate(
     if not isinstance(payload, dict):
         payload = {}
     # 两种路径都要带上源故事（line_plan 写 intent 要用；成稿落 source_raw 供终检）。
-    story_raw = str(
-        (row or {}).get("story_raw") or payload.get("story_raw") or ""
-    )
+    story_raw = gold_chat_source_text(row or {})
     slots: list[dict[str, Any]] = []
     plan: list[dict[str, Any]] = []
     if not (_perbeat_legacy() or not has_beats):
@@ -5491,6 +5587,8 @@ def _generate_perbeat_candidate(
     source_plan = [
         {"line": i, "role": r["role"], "beat": r["beat"], "speaker": r["speaker"],
          "intent": r["intent"], "source_seed_ids": r["source_seed_ids"],
+         "addressee": slots[i - 1].get("addressee") or "",
+         "witness_only": bool(slots[i - 1].get("witness_only")),
          "speech_act": r.get("source_speech_act") or ""}
         for i, r in enumerate(plan, 1) if r.get("source_plan")
     ]
@@ -5557,11 +5655,13 @@ def _generate_perbeat_candidate(
         or str(scene_contract.get("conflict") or ""),
         "gold_beat_chain": beat_chain,
         "gold_source_line_plan": source_plan,
-        "source_link_review": bool(story_raw and not source_plan),
+        "source_link_review": bool(story_raw and (not source_plan or structure_type == "F")),
         "gold_n_expression_contract": n_expression,
         # 源故事原文带上：终检判「语病」时要用它区分「作者原句」与「模型硬编」。
         "source_raw": story_raw,
+        "source_role_mapping": str(scene_contract.get("remap_note") or ""),
     }
+    _audit_source_f_structure(data)
     logger.info(
         "[GOLD_CHAT] perbeat assembled lines=%s chars=%s",
         len(lines),
@@ -6342,7 +6442,7 @@ def _gate_forced_m14_p_or_raise(row: dict[str, Any]) -> None:
 
     payload = cast(dict[str, Any], row.get("payload") or {})
     blob = p_structure_evidence_blob(
-        story_raw=str(payload.get("story_raw") or ""),
+        story_raw=gold_chat_source_text(row),
         beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
         conflict_core=str(row.get("conflict_core") or ""),
         closing_intent=str(payload.get("closing_intent") or ""),
@@ -6448,7 +6548,7 @@ def gold_story_to_gold_chat(
         beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
     )
     source_type = str(payload.get("source_type") or scene_contract.get("source_type") or "field")
-    story_raw_full = str(row.get("story_raw") or payload.get("story_raw") or "")
+    story_raw_full = gold_chat_source_text(row)
     from app.services.gold_story.scene import remap_story_raw_scores_for_prompt
 
     story_raw_full = remap_story_raw_scores_for_prompt(

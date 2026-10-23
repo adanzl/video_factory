@@ -31,7 +31,9 @@ def _dialogue_lines(story: dict) -> list[str]:
 
 
 def patch_n_promote_existing_question_to_challenge(story: dict) -> list[str]:
-    """已有普通问句但缺设问槽时，仅加「你说」框架，不新增剧情事实。"""
+    """普通创作稿显式化问句；有来源稿保留原问答，由结构硬卡/终审判断。"""
+    if story.get("source_link_review") or story.get("gold_source_line_plan"):
+        return []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return []

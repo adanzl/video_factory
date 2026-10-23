@@ -284,3 +284,16 @@ def test_n_token_premise_exemption_is_narrow():
         {"kind": "缺前提", "lines": [6], "desc": "x"}, other
     )
 
+
+
+def test_source_dialogue_does_not_gain_artificial_challenge_prefix():
+    from copy import deepcopy
+    from app.services.daily_story.story_types.n.patch import patch_n_promote_existing_question_to_challenge
+    from app.services.daily_story.story_types.n.validate import n_structure_hits
+    story = {"story_type": "N", "source_link_review": True, "dialogue": [
+        {"speaker": "灿灿", "line": "你胡扯，这张纸怎么可能换钱？"},
+        {"speaker": "昭昭", "line": "因为纸上写了名字，所以能换钱。"}]}
+    before = deepcopy(story)
+    assert patch_n_promote_existing_question_to_challenge(story) == []
+    assert story == before
+    assert not n_structure_hits([r["line"] for r in story["dialogue"]], story)[0]

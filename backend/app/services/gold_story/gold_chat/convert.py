@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+from app.services.gold_story.gold_chat.status import gold_chat_source_text
+
 import json
 import logging
 import os
@@ -425,7 +427,7 @@ def _reroll_h3_on_retry(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
     from app.services.gold_story.collect.llm import structurize_story
 
     payload = dict(cast(dict[str, Any], row.get("payload") or {}))
-    story_raw = str(row.get("story_raw") or payload.get("story_raw") or "").strip()
+    story_raw = gold_chat_source_text(row).strip()
     title = str(
         payload.get("bili_title")
         or payload.get("source_title")
@@ -1226,7 +1228,7 @@ def _refine_after_normalize(
     source_type = str(
         payload.get("source_type") or scene_contract.get("source_type") or "field"
     )
-    story_raw = str(row.get("story_raw") or payload.get("story_raw") or "")[:800]
+    story_raw = gold_chat_source_text(row)[:800]
     k_close_mode = str(
         payload.get("k_close_mode") or scene_contract.get("k_close_mode") or ""
     ).strip()
@@ -1580,6 +1582,11 @@ def _attach_gold_chat_structure_score(
     )
     out["_gold_chat_mom_lines_max"] = int(mom_contract)
     out["_gold_chat_dad_lines_max"] = int(dad_contract)
+    if out.get("source_link_review") and st == "F":
+        from app.services.gold_story.gold_chat.expand import _audit_source_f_structure
+
+        out["source_role_mapping"] = str(scene_contract.get("remap_note") or "")
+        _audit_source_f_structure(out)
     # 按正文一体计分：勿把前 2 句 sync 成 discovery_opening 再扣开场分
     out.pop("discovery_opening", None)
     attach_daily_story_quality(out, theme=theme, finalize=True, skip_relevancy=True)
@@ -1717,6 +1724,53 @@ def _attach_retry_missing_events(
     return out
 
 
+def _failed_contract_source_conflicts(row: dict[str, Any], source: str) -> list[str]:
+    """连续草稿失败的旧契约先核对原文，避免永远在错误分拍上改台词。"""
+    payload = row.get("payload") or {}
+    stats = payload.get("gold_chat_convert_stats") or {}
+    contract = payload.get("scene_contract")
+    if (row.get("_gold_chat_rebuild_contract") or stats.get("last_stage") != "draft"
+            or int(stats.get("failures") or 0) < 2 or not isinstance(contract, dict)):
+        return []
+    from app.services.gold_story.gold_chat.status import gold_chat_candidate_contract
+
+    failed_contract = payload.get("gold_chat_candidate_contract")
+    if isinstance(failed_contract, dict) and failed_contract != gold_chat_candidate_contract(row):
+        # 历史草稿失败不属于已更新的契约，不能据此不断重抽新素材。
+        return []
+    from app.services.gold_story.gold_chat.expand import _chat_json
+
+    contract_text = json.dumps(contract, ensure_ascii=False)
+    result = _chat_json(
+        "核验旧对白契约是否忠实于原文，仅输出JSON。角色迁龄映射允许，不能合并原文相隔的问答、"
+        "调换顺序、漏掉关键答话、把不同角色的话塞在同一角色一拍，或在一行24字内强塞多项独立事件。"
+        "程序标witness_only的旁观占位不当作源事件。只报告影响语义的明确问题，不因措辞不同报错。"
+        "沉默、听不清的嘟囔、动作描写不是必需对白；不得要求把这些补成可说的真实拍。"
+        '输出 {"compatible":true或false,"issues":[{"contract_quote":"契约连续原文",'
+        '"source_quote":"源故事连续原文","reason":"具体冲突与重建要求"}]}。有问题必须给双方引文，无问题issues为空。',
+        json.dumps({"source_text": source, "contract": contract, "seed": payload.get("dialogue_seed")}, ensure_ascii=False),
+        temperature=0.0, max_tokens=2200)
+    if not isinstance(result, dict) or type(result.get("compatible")) is not bool or not isinstance(result.get("issues"), list):
+        raise ValueError("旧契约来源核验返回格式不完整")
+    issues = result["issues"]
+    if result["compatible"]:
+        if issues:
+            raise ValueError("旧契约来源核验结论自相矛盾")
+        return []
+    reasons = []
+    for item in issues:
+        if not isinstance(item, dict):
+            raise ValueError("旧契约来源核验缺少证据对象")
+        cq, sq = str(item.get("contract_quote") or ""), str(item.get("source_quote") or "")
+        reason = str(item.get("reason") or "").strip()
+        if len(cq) < 4 or cq not in contract_text or len(sq) < 4 or sq not in source or not reason:
+            raise ValueError("旧契约来源核验的冲突证据无法核验")
+        reasons.append(reason)
+    if not reasons:
+        raise ValueError("旧契约来源核验判不兼容但未给证据")
+    return reasons
+
+
 def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
     """重转入口：用库内 story_raw + H3 字段重跑 H3a/H3b，刷新契约后再扩写。
 
@@ -1736,7 +1790,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
     )
 
     payload = dict(cast(dict[str, Any], row.get("payload") or {}))
-    raw0 = str(row.get("story_raw") or payload.get("story_raw") or "").strip()
+    raw0 = gold_chat_source_text(row).strip()
     story_raw = remap_story_raw_sibling_roles(raw0)
     if len(story_raw) < 40:
         logger.warning(
@@ -1744,6 +1798,22 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             row.get("id"),
         )
         return row
+
+    adaptation = payload.get("gold_chat_adaptation")
+    adaptation_digest = ""
+    if isinstance(adaptation, dict):
+        import hashlib
+
+        adaptation_digest = hashlib.sha256(raw0.encode()).hexdigest()
+        if payload.get("gold_chat_adaptation_contract_sha256") != adaptation_digest:
+            row = {**row, "_gold_chat_rebuild_contract": "授权重构素材已更新，必须按新素材重建契约与对白骨架"}
+            payload = {**payload, "beat": [], "scene_contract": None, "dialogue_seed": [],
+                       "funny_why": adaptation.get("funny_why") or "",
+                       "banned_literals": [], "structure_mapping_note": "用户授权重构"}
+    source_conflicts = _failed_contract_source_conflicts(row, story_raw)
+    if source_conflicts:
+        row = {**row, "_gold_chat_rebuild_contract": "；".join(source_conflicts)}
+        logger.info("[GOLD_CHAT] source contract incompatible id=%s reasons=%s", row.get("id"), source_conflicts)
 
     beat_raw = payload.get("beat") if isinstance(payload.get("beat"), list) else []
     beat = scrub_h3_beat_list(beat_raw, story_raw=story_raw)
@@ -1780,6 +1850,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         }
     # 角色分工线索用站外原视频标题（payload 优先），其次库内标题
     source_title = str(
+        (adaptation.get("title") or row.get("title")) if isinstance(adaptation, dict) else
         payload.get("bili_title")
         or payload.get("source_title")
         or row.get("title")
@@ -1932,6 +2003,9 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         )
     except Exception as exc:
         # H3a 已含迁龄/家长预算；H3b 失败时用 beat_chain 兜底 seed，勿整段回退
+        if row.get("_gold_chat_rebuild_contract"):
+            # 来源已否定旧素材时，不能再把抽象拍意图伪装成忠实素材继续导出。
+            raise
         from app.services.gold_story.scene import seed_from_beat_chain
 
         logger.warning(
@@ -1986,6 +2060,9 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         "dialogue_confidence": h3b.get("dialogue_confidence"),
         "banned_literals": banned,
     }
+    if adaptation_digest:
+        patch["gold_chat_adaptation_contract_sha256"] = adaptation_digest
+        patch["beat"] = payload.get("beat") or []
     payload.update(patch)
     out = dict(row)
     out["payload"] = payload
@@ -2377,7 +2454,7 @@ def convert_gold_chat(
         draft_attempt = 0
         revise_used = 0
         # 整个 convert 调用最多强制重建一次，不随 draft 轮次重置。
-        contract_retry_used = False
+        contract_retry_used = bool(row.get("_gold_chat_rebuild_contract"))
         while draft_attempt < draft_attempts:
             draft_attempt += 1
             _check_budget(f"第{draft_attempt}次重掷前", reserve=60.0 if draft_attempt > 1 else 0.0)

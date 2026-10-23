@@ -162,7 +162,7 @@ def test_i_strips_self_action_narration_and_acknowledges_apology():
     assert story["dialogue"][0]["line"] == "你就骂我傻，我错哪儿了？"
     assert patch_i_acknowledge_apology(story)
     assert story["dialogue"][2]["line"] == (
-        "妈妈道歉我听见了，可我没那么快消气。"
+        "我听见你道歉了，可我还得缓缓。"
     )
 
 
@@ -623,7 +623,7 @@ def test_ground_opening_quote_assertion_turns_rhetorical_repeat_into_claim():
     assert patch_i_ground_opening_quote_assertion(story) == []
 
 
-def test_acknowledge_apology_names_parent_and_does_not_repeat_words():
+def test_acknowledge_apology_addresses_previous_speaker_without_repeating_words():
     from app.services.daily_story.story_types.i.patch import (
         patch_i_acknowledge_apology,
     )
@@ -636,7 +636,8 @@ def test_acknowledge_apology_names_parent_and_does_not_repeat_words():
     }
     notes = patch_i_acknowledge_apology(story)
     assert notes
-    assert story["dialogue"][1]["line"] == "妈妈道歉我听见了，可我没那么快消气。"
+    assert story["dialogue"][1]["line"] == "我听见你道歉了，可我还得缓缓。"
+    assert patch_i_acknowledge_apology(story) == []
 
 
 def test_parent_acknowledges_child_feeling_before_fact_question():

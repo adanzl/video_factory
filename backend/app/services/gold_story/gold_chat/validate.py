@@ -2286,6 +2286,7 @@ def collect_align_issues(
         append_f_align_issues(
             rows,
             issues,
+            story=story,
             mechanism=mech,
             dialogue_seed=dialogue_seed,
             beat_chain=beat_chain,

@@ -20,6 +20,9 @@ _RE_BROKEN_AH = re.compile(r"啊什么了啊")
 
 
 def _is_f(story: dict) -> bool:
+    if story.get("source_link_review") and story.get("source_raw"):
+        # 来源对白只能依全文证据返修，不能为词表命中插入通用互呛/收束台词。
+        return False
     punch = str(story.get("punchline_explain") or "")
     code = parse_story_type_code(
         story_type=str(story.get("story_type") or "") or None,

@@ -1769,7 +1769,7 @@ PERBEAT_BATCH_SYSTEM = (
     "6. 每一句都要在语义上承接上一句；可用代词或省略自然衔接，不必重复同一词。素材行按分配表推进既定内容。\n"
     "6a. 若写「你说…」，引语必须是上一句**真说过**的字词；不许替对方补一句再反驳。\n"
     "7. 上一句是问句时，下一句要回应它，不能逃避；分配表明确要求回声/反问的素材行可按原意反问，其余不能把同一问题换个人重问。\n"
-    "8. 同一个比喻/同一个判断全篇只说一次；说过之后换别的具体依据，不要换词复述同一态度。\n"
+    "8. 同一个比喻/同一个判断全篇只说一次；后续回应只从已有说法推导，不编新依据，不换词复述同一态度。\n"
     "9. 分配表里标了「必须出现」的句子，那个词要**原样**出现在该句里。\n"
     "9a. 说明里标了「必现（缺一不可）」的句子：每个必现词的任一写法都必须出现在这句里；字数不够就砍别的内容，不许砍这些词。\n"
     "10. 标了「反应/插话」的句子：只回应刚才的具体内容，可表态或自然追问；不许开启新话题，不许只写「你先别急/慢慢说/我听着/把话交回给他」这类安抚、催促、递话，也不许拿「比喻/道理/这话/意思」这类抽象词充当内容。\n"
@@ -1780,7 +1780,7 @@ PERBEAT_BATCH_SYSTEM = (
     "10b. 反应句表态必须给理由：不能只写「我不同意」「我不信」就收尾；要么说明因为哪一点，要么指出对方话里哪里不成立。\n"
     "10b-2. 不许只附和或收下夸奖；同一个「我同意/我不同意」表态全篇只做一次。\n"
     "10b-3. 上一句同时有批评和夸奖时，先接**批评那一半**，不许绕开批评只夸外貌。\n"
-    "10b-4. 不许只复述「你先说X、又说Y」的表面矛盾；必须拿出一个前文已经发生的具体行为作依据，再表态；同一个理由全篇只说一次。\n"
+    "10b-4. 不许只复述「你先说X、又说Y」；针对前文已有的说法或行为指出逻辑后果，不以常识添加原文没有的开销、习惯或经历；同一个理由全篇只说一次。\n"
     "10c. 不许引用前文没发生的事：前面没演过的情节，不能说「你刚才也瞧见了」「你刚才也听见了吧」。\n"
     "10d. 不许把「谁对谁做了什么」说反：谁提要求谁发话，被要求的人不能把对方的要求说成自己的动作，也不能反过来说「所以你别说」。\n"
     "10e. 上一句不是「为什么」问句时，不要用「因为」或「所以」硬接；直接给判断，或用「可/可这」转。\n"
@@ -1800,9 +1800,8 @@ PERBEAT_BATCH_SYSTEM = (
     "- 「你说的这是什么意思？」→ 反问回去，掐断对话\n"
     "- 「我怎么听着这么玄乎，越琢磨越觉得悬。」→ 空泛评价，没有具体东西\n"
     "- 「你这话我可接不住。」→ 元话语\n"
-    "【正面例子（反应句照这个写法：接住具体词 + 给新信息）】\n"
+    "【正面例子（反应句照这个写法：接住具体内容 + 作逻辑回应，事实须来自已有上下文）】\n"
     "- 「这东西你尝过了吧，闻着就不对，妈你别不服。」\n"
-    "- 「行，那我就在旁边看着你把这事说圆。」\n"
     "- 「难吃我也吃出来了，可你刚夸的那句也没说错。」（先接批评，再接夸奖）\n"
     "- 「她可不像你说的那样，她刚还问你好不好吃。」（用已发生的问话反驳）\n"
     "只输出 JSON：{\"lines\": [{\"i\": 1, \"line\": \"...\"}, {\"i\": 2, \"line\": \"...\"}]}"
@@ -1926,10 +1925,14 @@ def format_perbeat_batch_user(
             f"（本句功能：{slot.get('function') or '推进本拍'}）"
         )
         if slot.get("witness_only"):
-            row += "｜这是程序补的旁观反应位，不能照念旧模板或替当事人回答；须承接实际前文，不打断问答"
+            row += "｜这是程序补的旁观反应位，只写具体短陈述，不另提问、不替当事人回答；只针对已有说法的逻辑，不编原因或经历"
+        if slot.get("addressee"):
+            row += f"｜本句对{slot['addressee']}说，旁观者不得认作对自己说"
         if slot.get("planned_speech_act") in {"echo", "retort"}:
             row += "｜原素材明确为回声/反问，保留该言语行为"
-        if source_mode:
+        if source_mode and slot.get("is_filler"):
+            row += "｜reaction直接台词：保留意思及一二人称，仅校正口语、指代和8–24字长度，不改写成第三人称解说"
+        elif source_mode:
             row += f"｜本句目标{line_target}–{CHAT_MAX_LINE_CHARS}字（含标点，补清角色/对象/回忆指代，不添加新事实）"
         beat_intent = str(slot.get("beat_intent") or "").strip()
         if beat_intent and slot.get("split_role"):
@@ -1949,6 +1952,7 @@ def format_perbeat_batch_user(
         f"【全局卡】\n"
         f"场景：{scene_contract.get('location') or '家里'}；在场角色：{cast}\n"
         f"故事核：{scene_contract.get('conflict') or ''}\n"
+        f"角色映射：{scene_contract.get('remap_note') or ''}\n"
         f"关键包袱（全篇只说一次，只能由指定角色说）：{punchline or '（无）'}\n"
         f"篇幅：共 {len(slots)} 句，每句 8–24 字，全篇按序号顺序发生\n"
         f"类型：{scene_contract.get('story_type') or ''}；表达契约：{json.dumps(scene_contract.get('gold_n_expression_contract'), ensure_ascii=False)}\n"
@@ -1967,11 +1971,11 @@ LINE_PLAN_SYSTEM = (
     "硬性规则：\n"
     "1. 只输出用户列出的待填实际序号，i 沿用完整句序，允许不连续，不从1重新编号；不许增删改行。\n"
     "2. intent 写「这句话回应上一句的哪个具体词、给出什么具体依据或后果」，"
-    "8–24 字，主语就是该行说话人。\n"
+    "8–24 字，主语就是该行说话人；依据只取此前已出现的内容，不添加生活常识当作故事事实。\n"
     "3. 不写动作、神态、心理（愣住、气笑、看妈妈、举着筷子），"
     "也不写空表态（「我不信」「你说得对」「我同意」）。\n"
     "4. 全篇不许两行 intent 互为换词复述；同一个意思只排一次。\n"
-    "5. 反应行不是垫话：必须抓住上一句里最具体的一个词，给出新信息或新后果。"
+    "5. 反应行必须针对上一句已有说法作逻辑回应或指出其中的矛盾，不要求新增事实。"
     "禁止写安抚/催促/递话/评理（「你先别急」「慢慢说」「我听着」「我不插嘴」"
     "「把话交回给他」「让他自己说清楚」「我在旁边看着」），也不许复述上一句；"
     "标了「无素材」的行同样要写当场能说的一句短反应，不许改成旁白或导演指令，"
@@ -2044,7 +2048,8 @@ def format_line_plan_user(
     return (
         f"【源故事（只准用这里已有的信息）】\n{story_raw or '（无）'}\n\n"
         f"【完整只读句序（固定主句与反应位都在内）】\n{json.dumps(full_plan, ensure_ascii=False)}\n"
-        "反应只能回应此前已交代的内容，不能提前提出后面固定主句的问题、答案或事实。"
+        "反应只能回应此前已交代的内容，不能提前提出后面固定主句的问题、答案或事实；"
+        "不能以常识为由添加原文未给出的原因、花费、习惯或经历。"
         "若反应提出新问题，紧随其后的固定内容须能回答，否则用不打断问答的陈述反应。\n"
         f"【需要填写的实际序号】{json.dumps(editable)}；不得从1重新编号。\n"
         f"【待填反应任务（说话人、拍号已定，不许改）】\n"
@@ -2069,6 +2074,7 @@ DIALOGUE_LINK_AUDIT_SYSTEM = """你审核对白中被机检标记的问答、引
 逐条结合完整候选与只读原始素材判断：原素材明示的反问、拒绝回答、回避或转移话题可以忠实保留，
 但新增的答非所问、对象错位、无据引用、编造指控必须拒绝。不能仅因有共同词或问号判通过。
 source_supports_act 必须核验来源引文确实支持本句的言语行为与人物关系；随便摘一句原文不是证据。
+允许不改变事实、对象和先后关系的同义口语改写；不能仅因新增语气词或问法不同就拒绝，也不能把初始intent中的叙述当成高于原文的事实。
 role_mapping是只读角色映射，仅用于理解原角色与当前角色的对应关系，不得借此增加事实；source_quote仍须逐字取自source_text原文，不得改写引文中的称谓。
 pass 只有在来源支持且当前全文里的上下句仍自然成立时为true，仍有疑点为false。
 严格按targets顺序，每行一个对象；quote取当前句引文，previous_quote取紧邻前句引文，source_quote取原文连续引文，reason说明引文如何支撑或否定判断。
@@ -2076,11 +2082,14 @@ pass 只有在来源支持且当前全文里的上下句仍自然成立时为tru
 """
 
 SOURCE_BATCH_SYSTEM = """你是对白编剧，任务是润色扩写简略素材，写成自然家庭对白，只输出JSON。
-序号、说话人、内容单元归属与顺序不可改变；台词措辞需要你改写，不是抄写素材表。所有素材都须完整表达，不能删事实。
+序号、说话人、内容单元归属与顺序不可改变。content行润色素材，完整表达事实；reaction行已是上一阶段生成的直接台词，只校正代词、口语和长度，保留意思及一二人称，不重新生成接话意图。
 content行表达自己被分配的素材；reaction行仅对已出事件表态或追问，不能代说后续答案、补新事实、空转或重复。原文中尚未在前面台词交代的细节，也不能被reaction提前说出。
+昭昭7岁、灿灿10岁，接话要像孩子当面对家人说话，不用成人评论员口吻分析论证、话术或台词作用。旁观者不能替被问的人回答，只能说听完后的当场感受。
+旁观陈述不必推进争执或被下一句回答，但不能只复述加“害怕/紧张”；优先点出两条已说内容之间的具体反差，同篇各次接话作用不能雷同。不能拿后面才说的事来评价前面。
+先核对上句“你”指谁：问另一个人的话不能认作“让我/叫我”，也不能替对方承认、否认或自述动作；原文角色对应按角色映射理解。
 回忆/引用过去的对话要让人称明确；人物是在聊天，不是在念舞台动作。每句完整，前后问答自然，不能为了凑字添前情。
 回忆里的第一/二人称反问须明确引用对象，例如“我问他……”，不能把原对话的受话人换成当前聊天的人。
-每句含标点8–24字，reaction至少14字；按每槽目标写足表达，可补清省略的说话对象与回忆指代，不能用重复或新前情凑字。
+每句含标点8–24字，reaction不单独扩写凑字。不能把“你/我”的当面接话改写为“妈妈说/姐姐问”的第三人称解说。全文仍须达标，content可补清省略的说话对象与回忆指代，不能用重复或新前情凑字。
 N类须自然具备设问、追问、孩子自洽、末段大人服了或接不住。若表达契约为rhetorical，自洽通过来源反问成立，追问保留原有问答形态，不硬塞为什么/因为/所以；没有此契约时使用显式追问与因果表达。
 这些类型功能须服务素材，不可为了塞词改变问题或发明理由；不要强迫某个固定位置携词。
 只输出 {"lines":[{"i":1,"line":"台词"}]}，不输出角色名或解释。
@@ -2098,7 +2107,7 @@ def format_source_revision_user(
     targets = [
         {"i": i, "speaker": slot["speaker"], "source_meaning": slot.get("intent"),
          "current_line": filled.get(i, ""), "current_chars": len(filled.get(i, "")),
-         "min_chars": 14 if slot.get("is_filler") else 8, "max_chars": CHAT_MAX_LINE_CHARS,
+         "min_chars": 8 if slot.get("source_plan") else 14 if slot.get("is_filler") else 8, "max_chars": CHAT_MAX_LINE_CHARS,
          "over_limit_chars": max(0, len(filled.get(i, "")) - CHAT_MAX_LINE_CHARS),
          "compression_target": CHAT_MAX_LINE_CHARS - 2 if len(filled.get(i, "")) > CHAT_MAX_LINE_CHARS else None,
          "required_word_groups": slot.get("required_word_groups") or [],
@@ -2109,6 +2118,7 @@ def format_source_revision_user(
         for i, slot in enumerate(slots, 1) if global_repair or i in reasons
     ]
     context = [{"i": i, "speaker": slot["speaker"], "line": filled.get(i, ""),
+                "addressee": slot.get("addressee"),
                 "role": "reaction" if slot.get("is_filler") else "content",
                 "intent": slot.get("intent"), "beat": slot.get("beat_id"),
                 "editable": global_repair or i in reasons}
@@ -2125,6 +2135,7 @@ def format_source_revision_user(
         f"【需要改写】{json.dumps(targets, ensure_ascii=False)}\n"
         f"【只读全文上下文】{json.dumps(context, ensure_ascii=False)}\n"
         f"【只读原始素材】{source_text}\n"
+        f"【角色映射】{scene_contract.get('remap_note') or ''}\n"
         f"【类型表达契约】{json.dumps(scene_contract.get('gold_n_expression_contract'), ensure_ascii=False)}\n"
         "只输出需要改写的行，其余行由程序原样保留："
         '{"lines":[{"i":原序号,"line":"改写后的完整台词"}]}。'
@@ -2153,10 +2164,11 @@ def format_source_beat_mapping_user(
     )
 
 
-SOURCE_LINE_PLAN_SYSTEM = """你为家庭对话稿补充接话意图，只输出 JSON。
+SOURCE_LINE_PLAN_SYSTEM = """你为家庭对话稿补充接话，只输出 JSON。
 分句计划已按已有素材的说话人和先后顺序锁定，content 行不许改。
-你只填写 reaction 行的 intent。只回应上一句的具体内容，不引入新事实，不抢说后面的答案。
-前一句是问题时，回应必须正面回答，不能转移话题；不得重复前后内容句的意思。
+你只填写 reaction 行的 line：说话人此刻对家人直接说出口的完整台词，不生成意图、梗概或第三人称说话过程说明。
+对一个现场角色说话，不向观众解说“妈妈问姐姐/妈妈说/姐姐怎么了”。只回应已说的具体内容，不引入新事实，不抢说后面的答案。
+前一句是问自己的问题时，回应须正面回答；若问的是其他人，旁观者不得代答，只能说当场感受。不得重复前后内容句的意思。
 若反应句要追问，必须确认后一条已锁定素材能够回答它；否则写陈述式反应，不留下悬空问题。
 结合源文辨清回忆和现场：引用中的你们指原对话对象，不自动指在场的家人。
 先在心里逐行试读，确保接话不重复前面的提问，不把新话题硬塞到原答案前面。
@@ -2164,7 +2176,9 @@ SOURCE_LINE_PLAN_SYSTEM = """你为家庭对话稿补充接话意图，只输出
 接话是现在听完后的评价，不续演过去现场，不猜当时另一个人怎样想/怎样回应。不要为迎合整体故事核，硬把一条本来正确的回答说成无效；每句只评已说出的具体内容。
 原素材孩子的误答已由content承担；reaction要按前文真实含义接话，不能另造错误判断并把它当新的歪理笑点。
 不要写‘我不信/越听越玄乎/你继续说/我就在旁边听着’等通用空话，也不写动作或神态。
-输出 {"lines":[{"i":需要填写的行号,"intent":"这句要表达的具体内容"}]}。
+昭昭7岁、灿灿10岁；说孩子当面对家人说的话，不做成人评论员，不分析论证过程或台词的修辞作用。
+旁观陈述不必推进争执或被下一句回答，但不能只复述加害怕/紧张。优先从heard_content里两条说法的具体反差作儿童口吻的表态，不编新事实，同篇各次接话不能雷同。
+输出 {"lines":[{"i":需要填写的行号,"line":"直接说出口的完整台词"}]}。
 """
 
 
@@ -2172,14 +2186,14 @@ def format_source_line_plan_user(
     *, scene_contract: dict, seed: list[dict], story_raw: str,
     rows: list[dict], feedback: str = "",
 ) -> str:
-    table = [{"i": i, "speaker": r["speaker"], "role": r["role"], "intent": r.get("intent")}
+    table = [{"i": i, "speaker": r["speaker"], "role": r["role"], "intent": r.get("intent"), "addressee": r.get("addressee")}
              for i, r in enumerate(rows, 1)]
     picks = [i for i, r in enumerate(rows, 1) if r["role"] == "reaction"]
     tasks = [{"i": i, "speaker": rows[i - 1]["speaker"],
               "heard_content": [r for r in table[:i - 1] if r["role"] == "content"],
               "next_content": next((r for r in table[i:] if r["role"] == "content"), None)}
              for i in picks]
-    scene = {k: scene_contract.get(k) for k in ("location", "characters", "conflict", "closing_intent", "story_type")}
+    scene = {k: scene_contract.get(k) for k in ("location", "characters", "conflict", "closing_intent", "story_type", "remap_note")}
     return (
         f"【接话任务】{json.dumps(tasks, ensure_ascii=False)}\n"
         "每句接话只可使用该任务heard_content里已经说出的事实；next_content只用来检查衔接，不能提前代说。"
@@ -2187,7 +2201,7 @@ def format_source_line_plan_user(
         f"【场景】{json.dumps(scene, ensure_ascii=False)}\n"
         f"【只读完整分句计划】{json.dumps(table, ensure_ascii=False)}\n"
         f"【原故事，仅供辨明指代】{story_raw}\n"
-        f"只补行号{picks}的接话意图，其他行保持不变。"
+        f"只输出行号{picks}的line台词，其他行保持不变；不要输出intent或对台词的解释。"
         "每个接话位最终需要8–24字，须接住前一句具体内容且不抢后一句的事实。"
         "同一拍里原说话人的两段回答已各占一行，不要让另一个孩子代说后半段。"
         f"\n上一版错误：{feedback or '无'}\n"

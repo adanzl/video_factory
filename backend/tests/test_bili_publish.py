@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from importlib import import_module
 from unittest.mock import MagicMock
 
 from app.config import config
@@ -124,7 +125,8 @@ def test_build_publish_tags_uses_job_title_for_chat(app_ctx, monkeypatch, tmp_pa
 
     monkeypatch.setattr(BiliUploader, "publish", lambda self, **kwargs: fake_publish(**kwargs))
     monkeypatch.setattr(
-        "app.services.publish.bilibili.tags.resolve_activity_topic",
+        import_module("app.services.publish.publish_mgr"),
+        "resolve_activity_topic",
         fake_topic,
     )
     mgr = PublishMgr()

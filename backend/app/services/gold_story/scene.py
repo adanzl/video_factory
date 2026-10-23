@@ -106,6 +106,11 @@ _TERMINAL_NO_REPLY_DIALOGUE_INTENT = re.compile(
     r"^(?:回答|作答|解释|反驳|嘴硬|接话|回嘴)[:：]"
 )
 
+_SPOKEN_SILENCE_DENIAL = re.compile(
+    r"(?:^|[，,。！？])[“「『\"]?(?:我们|我)(?:刚才|刚刚|本来|确实|根本|真的|压根|明明|只是|就是|是|可|又|还|真|也|都|就|并)*"
+    r"(?:没有|没|不)(?:说话|接话|回话|顶嘴|回嘴)"
+)
+
 
 def is_terminal_no_reply_intent(intent: str) -> bool:
     """是否是只能作为表演结果、不能再生成一条对白的末拍。"""
@@ -113,6 +118,9 @@ def is_terminal_no_reply_intent(intent: str) -> bool:
     if not text:
         return False
     if _TERMINAL_NO_REPLY_DIALOGUE_INTENT.match(text):
+        return False
+    # 第一人称的口头否认是对白，不是「角色沉默」的舞台结果。
+    if _SPOKEN_SILENCE_DENIAL.search(text):
         return False
     if re.search(r"[？?]", text):
         return False
@@ -241,8 +249,8 @@ def normalize_parent_beat_ownership(
     - 每拍 intent 只写该拍 speaker 自己的动作。孩子拍里混入「妈妈追问…」
       这类越权动作时剥离，并归并到相邻的家长拍（无相邻家长拍则丢弃该短语，
       由提示词保证下次不写）。
-    - 家长功能拍数不得超过 ``mom_lines_max``：超额的追问拍按功能合并成
-      一拍（追问意思 + 追问出处并入同一问句），不把追问外派给旁观孩子。
+    - 只合并同一位家长相邻的连续追问，不跨过孩子回答移动问题；
+      真实问答仍超额度时按家长拍数抬升额度，不把追问外派给旁观孩子。
     """
     if not isinstance(contract, dict):
         return contract, []
@@ -308,13 +316,17 @@ def normalize_parent_beat_ownership(
         ]
         need_drop = len(parent_rows) - mom_max
         while need_drop > 0 and len(merge_rows) > 1:
-            # 合并到**最后一拍追问**（而非第一拍）：家长的合并追问落在孩子的
-            # 怪词/自洽之后，开场因果（孩子拍先落地）不被推到家长问句后面。
-            host_idx, host = merge_rows[-1]
-            donor_idx, donor = merge_rows[0]
+            # 只有相邻、同一说话人的连续问题可以压成一拍。
+            # 跨过孩子回答合并，会删除设问并把它挪到答案后面。
+            pair = next(((left, right) for left, right in zip(merge_rows, merge_rows[1:])
+                         if right[0] == left[0] + 1
+                         and left[1].get("speaker") == right[1].get("speaker")), None)
+            if pair is None:
+                break
+            (donor_idx, donor), (_host_idx, host) = pair
             host_intent = str(host.get("intent") or "").strip()
             donor_intent = str(donor.get("intent") or "").strip()
-            host["intent"] = f"{host_intent}、{donor_intent}"[:120]
+            host["intent"] = f"{donor_intent}、{host_intent}"[:120]
             rows.pop(donor_idx)
             notes.append(f"合并家长追问拍:{donor_intent[:16]}→{host_intent[:16]}")
             changed = True
@@ -4254,7 +4266,7 @@ _NARRATION_LINE_RE = re.compile(
     r"按在地上|"
     r"又?补[一二两三四五两1-5]?下|"
     r"缩到角落|嘟囔着|一边[^，。]{0,10}一边|"
-    r"(?:哼，)?(?:缩到|嘟囔|趴下|扭头走开)|"
+    r"(?:哼，)?(?:缩到|趴下|扭头走开)|(?:^|[，,])(?:哼，)?嘟囔|"
     # 咀嚼/塞食动作说明（非口语；须带宾语/结果，避免误伤「看我一口吞」）
     r"一口(?:吞下|塞进|吞了)[^。！？?]{0,20}|"
     r"(?:^|[，,])奶油都?(?:挤|溢)(?:出来|出)?|"
@@ -4357,6 +4369,9 @@ _RE_ACTION_CHUNK = re.compile(
 def looks_like_narration_line(text: str) -> bool:
     """对白/seed 是否像分镜动作说明而非可说出口的话。"""
     line = str(text or "").strip()
+    line = _SPOKEN_SILENCE_DENIAL.sub("", line)
+    # 制止对方嘟囔是现场指令，不是说话人自述动作。
+    line = re.sub(r"(?:^|[，,。！？])(?:你)?(?:别|不要|不许)(?:再|在那儿|在那里|小声|一直|老是)*嘟囔(?:了|着)?", "", line)
     return bool(line and _NARRATION_LINE_RE.search(line))
 
 
@@ -4585,6 +4600,9 @@ def sanitize_dialogue_seed_speech(seed: list[Any] | None) -> list[Any]:
 
 def patch_dialogue_narration_to_speech(story: dict[str, Any]) -> list[str]:
     """正文对白里的分镜说明压成口语。"""
+    if story.get("gold_source_line_plan"):
+        # 锁定来源的对白不能被无来源的「哼/你别过来」模板替换；疑似旁白交硬校验与终审返修。
+        return []
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):

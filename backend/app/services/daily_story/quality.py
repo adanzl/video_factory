@@ -159,6 +159,11 @@ def gold_story_review_contract(
         ).strip(),
         "mom_lines_max": mom_lines_max,
     }
+    if payload.get("gold_chat_adaptation") is not None:
+        from app.services.gold_story.gold_chat.status import gold_chat_source_text
+
+        gold_chat_source_text(row)  # 无效授权不得沿用已审核摘要。
+        out["gold_chat_adaptation"] = payload["gold_chat_adaptation"]
     beat_chain = scene_contract.get("beat_chain")
     if isinstance(beat_chain, list) and beat_chain:
         out["beat_chain"] = beat_chain
@@ -226,6 +231,11 @@ def story_review_content_hash(
     if story.get("source_link_review"):
         payload["source_link_review"] = True
         payload["source_raw"] = str(story.get("source_raw") or "")
+        payload["source_role_mapping"] = str(story.get("source_role_mapping") or "")
+        if story.get("gold_f_source_structure"):
+            payload["f_source_structure"] = _stable_review_value(story["gold_f_source_structure"])
+    if story.get("source_adaptation"):
+        payload["source_adaptation"] = _stable_review_value(story["source_adaptation"])
     raw = json.dumps(
         payload,
         ensure_ascii=False,
@@ -1312,6 +1322,11 @@ def score_daily_story(
         from app.services.daily_story.story_types.n.quality import declared_escalation_hits
 
         declared_hits = declared_escalation_hits(lines, story)
+    elif profile.code == "F":
+        from app.services.daily_story.story_types.f.validate import source_f_structure_valid
+
+        if source_f_structure_valid(story):
+            declared_hits = ("互呛", "升级", "僵持", "中止收束")
     esc_bonus, esc_details = _score_escalation(
         lines, layer_patterns=layer_patterns, declared_hits=declared_hits,
     )

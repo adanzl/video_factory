@@ -269,6 +269,39 @@ def _fact_contract() -> dict:
     return contract
 
 
+@pytest.mark.parametrize("bad_retry", [None, "over_budget", "lost_close"])
+def test_seed_parent_budget_repairs_without_silently_dropping_closing(monkeypatch, bad_retry):
+    contract = _seed_contract()
+    contract["mom_lines_max"] = 2
+    opening = {"speaker": "妈妈", "intent": "现在该关灯了"}
+    extra = {"speaker": "妈妈", "intent": "已经到睡觉时间了"}
+    child = {"speaker": "昭昭", "intent": "那你明天补给我烤串"}
+    response = {"speaker": "灿灿", "intent": "这句话我可是听清楚了"}
+    closing = {"speaker": "妈妈", "intent": "那就说好，关灯睡觉吧"}
+    original = [opening, extra, child, response, closing]
+    revised = [opening, child, response, closing]
+    if bad_retry == "over_budget":
+        revised = original
+    if bad_retry == "lost_close":
+        revised = [opening, child, response, {"speaker": "妈妈", "intent": "别再闹了"}]
+    calls = []
+
+    def chat(_system, user):
+        calls.append(user)
+        return {"dialogue_seed": original if len(calls) == 1 else revised, "dialogue_confidence": 0.9}
+
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    if bad_retry:
+        with pytest.raises(ValueError, match="无法保留完整收束"):
+            llm_steps.build_dialogue_seed(story_raw="关灯前商量明天补偿", h3={}, scene_contract=contract)
+    else:
+        out = llm_steps.build_dialogue_seed(story_raw="关灯前商量明天补偿", h3={}, scene_contract=contract)
+        assert out["dialogue_seed"][-1] == closing
+        assert len(out["dialogue_seed"]) == 4
+    assert len(calls) == 2
+    assert "最后一个素材单元必须原样保留" in calls[1]
+
+
 def test_build_dialogue_seed_retries_on_fact_role_conflict(monkeypatch):
     """#132：孩子顶了妈妈的辩解句 → 带约束重抽一次并采纳合规稿。"""
     calls: list[str] = []

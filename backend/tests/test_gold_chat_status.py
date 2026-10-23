@@ -301,3 +301,56 @@ def test_converting_stale_or_empty_not_shown():
     assert gold_chat_converting_from_payload(
         {"gold_chat_convert_status": "converting"}
     ) is False
+
+
+def _adaptation_row():
+    import hashlib
+    original = "原始素材保留原样，作为用户授权的具体对象。" * 3
+    return {"source_id": "BVadaptation", "story_raw": original, "payload": {"story_raw": original,
+        "gold_chat_adaptation": {"mode": "authorized_reconstruction", "approved": True,
+            "source_id": "BVadaptation", "original_sha256": hashlib.sha256(original.encode()).hexdigest(),
+            "approved_at": "2026-10-23T12:00:00Z", "approval_note": "用户明确允许重构",
+            "story_raw": "这是经过用户授权后重新创作的素材，新增情节独立保存，不覆盖原始故事。" * 3}}}
+
+
+def test_authorized_adaptation_binds_original_and_source_identity():
+    from copy import deepcopy
+    import pytest
+    from app.services.gold_story.gold_chat.status import gold_chat_source_text
+    row = _adaptation_row()
+    before = deepcopy(row)
+    assert gold_chat_source_text(row) == row["payload"]["gold_chat_adaptation"]["story_raw"]
+    assert row == before
+    for field, value in [("approved", False), ("source_id", "another-source"),
+                         ("original_sha256", "changed"), ("approved_at", ""),
+                         ("approval_note", ""), ("mode", "automatic"), ("story_raw", "短")]:
+        invalid = deepcopy(row)
+        invalid["payload"]["gold_chat_adaptation"][field] = value
+        with pytest.raises(ValueError):
+            gold_chat_source_text(invalid)
+    row["story_raw"] += "原文已更新"
+    with pytest.raises(ValueError, match="原始素材已变化"):
+        gold_chat_source_text(row)
+    assert gold_chat_source_text({"payload": {"story_raw": "普通素材"}}) == "普通素材"
+
+
+def test_adaptation_changes_invalidate_review_contract_and_export_retains_original(tmp_path):
+    import json
+    from app.config import Config
+    from app.services.daily_story.quality import gold_story_review_contract
+    from app.services.gold_story.gold_chat.export import export_gold_chat_files
+    row = _adaptation_row()
+    before = gold_story_review_contract(row)
+    row["payload"]["gold_chat_adaptation"]["story_raw"] += "新增一处情节"
+    assert gold_story_review_contract(row) != before
+    cfg = Config()
+    cfg.gold_story_transcript_dir = tmp_path / "transcripts"
+    paths = export_gold_chat_files(source_id=row["source_id"], row=row,
+                                  chat={"dialogue": [{"speaker": "妈妈", "line": "测试导出。"}]},
+                                  config=cfg, publish=False)
+    from pathlib import Path
+    result = json.loads(Path(paths["json"]).read_text())
+    assert result["gold_meta"]["original_story_raw"] == row["story_raw"]
+    assert result["gold_meta"]["adaptation"] == row["payload"]["gold_chat_adaptation"]
+    markdown = Path(paths["markdown"]).read_text()
+    assert "用户授权重构" in markdown and row["story_raw"] in markdown

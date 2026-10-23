@@ -1494,6 +1494,12 @@ def _resolve_unverifiable_evidence(
 
 def _validate_source_audit(raw: dict[str, Any], story: dict[str, Any]) -> str:
     """来源计划逐行审读不可缺项；引文必须来自实际送审行。"""
+    if story.get("source_link_review") and story.get("story_type") == "F":
+        from app.services.daily_story.story_types.f.validate import source_f_audit_error
+
+        error = source_f_audit_error(story, raw.get("f_structure_audit"))
+        if error:
+            return error
     plan = story.get("gold_source_line_plan")
     if not isinstance(plan, list) or not plan:
         return ""
@@ -1545,7 +1551,7 @@ def _source_audit_failures(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"kind": "接不上", "lines": [item["line"]], "desc": item["reason"],
              "evidence": [{"line": item["line"], "quote": item["quote"]}],
              "source_audit_failed": True}
-            for item in [*raw.get("source_audit", []), *raw.get("n_structure_audit", [])]
+            for item in [*raw.get("source_audit", []), *raw.get("n_structure_audit", []), *raw.get("f_structure_audit", [])]
             if item.get("pass") is False]
 
 
@@ -1637,7 +1643,8 @@ def run_export_semantic_review(
                 shape_err = _validate_export_review_raw(raw, line_count=n_lines)
                 if not shape_err:
                     shape_err = _validate_source_audit(raw, story)
-                    if not shape_err and story.get("gold_source_line_plan"):
+                    if not shape_err and (story.get("gold_source_line_plan") or (
+                            story.get("source_link_review") and story.get("story_type") == "F")):
                         source_failures = _source_audit_failures(raw)
                         if source_failures:
                             return ExportSemanticReviewResult(completed=True, issues=source_failures, humor=parse_humor(raw))
@@ -2120,11 +2127,14 @@ def build_review_prompts(
             "接话句须承接真实前文，不得抢替后续回答、捏造事实或空转凑句；"
             "逐条核对 role=reaction 的行：与两侧素材衔接、无新事实、非重复、非空转，"
             "任一不满足就报硬伤；收束前的接话只能回应已发生事件，不能添细节或因果。"
+            "标witness_only的行是旁观表态，按addressee辨明被问者，不得替其回答。"
+            "旁观陈述不要求下一句接住，也不强制新增信息或推动争执；须有明确所指与具体反应，"
+            "可指出两条已出说法的反差。但纯复述加万能感受、多个同类空感受、角色认错、无据动作或新事实仍判false。"
             "不要把接话当成天然正确的评论：先还原前文每个代称实际指谁，核对列举/数量，"
             "再检验接话所否定或断言的事实是否为真；若前文已包含某人/某物，后句不能说遗漏了它。"
             "只有content来源单元明示的误答/歪解才可作为原有笑点保留；reaction中新造的错误断言"
             "必须判false，不得用‘故意曲解式幽默’‘孩子开玩笑’替它编动机放行。"
-            "接话提出的问题必须被紧随其后的实际台词回答，不能因同属一个话题就算承接。"
+            "接话提出的问题必须被紧随其后的实际台词回答，不能因同属一个话题就算承接；此要求不套用于旁观陈述。"
             "问答即使有共同词也可能答非所问，没有共同词也可能通过代词自然承接。"
             "仍按现有硬伤类别报告问题，不能因有素材编号就认定内容合格。\n"
             "此外必须输出顶层 source_audit 数组，严格按计划每行一个对象："
@@ -2145,6 +2155,31 @@ def build_review_prompts(
                 '每项为{"aspect":"reason等","line":契约行号,"pass":true或false,'
                 '"quote":"实际原句引文","reason":"结构语义依据"}。缺项或虚假自洽不能通过。\n'
             )
+    if story.get("source_link_review") and story.get("story_type") == "F":
+        source_fragments = re.findall(r"[^，。！？；\n]+[，。！？；]?", str(story.get("source_raw") or ""))
+        source_block += (
+            "\n【原文逐字片段，仅供定位引文】"
+            + json.dumps([{"id": i, "text": text} for i, text in enumerate(source_fragments, 1)], ensure_ascii=False)
+            + "\nsource_quote须从上表或完整原文逐字复制；不能复制改写后的当前对白，不得补字、换称谓。"
+            "片段编号不是证据，不替代原文匹配和结构语义判断。"
+            "\n【F来源结构独立终审】前序程序的结构分不能充当通过证据。"
+            "核验双方冲突/互呛→升级（包括逻辑争论升级为权威对峙）→僵持→中止收束。"
+            "中止须实际结束争执（退让、退场、外部打断或放下当下争论留待以后），不能仅因在末句就算。"
+            "四阶段必须同时有原文和当前对白支持，普通聊天、车轱辘争辩不能算升级。"
+            "仍独立检查所有行的新事实、串角色、重复、缺拍、完整句和笑点，不按词表放行。"
+            f"角色映射：{story.get('source_role_mapping') or ''}。"
+            "另输出f_structure_audit，依conflict/escalation/standoff/closing顺序四项，line严格递增且closing在末三句。"
+            '每项{"aspect":"conflict等","line":行号,"pass":true或false,"quote":"当前句连续引文",'
+            '"source_quote":"原始素材连续引文（不改称谓）","reason":"结构依据或不成立原因"}。缺项不能通过。\n'
+        )
+    if story.get("source_adaptation"):
+        source_block += (
+            "\n【用户授权重构说明】本篇允许重构情节和笑点；上面的source_raw是授权后的创作素材。"
+            "source_audit及f_structure_audit的source_quote只匹配授权重构素材，不匹配下面的原始视频素材。"
+            "原始视频素材仅标识改编来源，不要求逐句复刻；重构后的成稿仍须满足完整结构、无矛盾、"
+            "衔接自然、无重复和好笑度标准，授权本身不构成审核通过。\n"
+            + json.dumps(story["source_adaptation"], ensure_ascii=False) + "\n"
+        )
     user = (
         f"主题：{theme}\n"
         f"场景：{story.get('setting') or ''}\n"

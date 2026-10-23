@@ -25,10 +25,34 @@ _GOLD_CHAT_ERROR_CLEAR_KEYS = (
 )
 
 
+def gold_chat_source_text(row: dict[str, Any]) -> str:
+    """仅为显式授权、且仍绑定当前原文的重构提供生成依据；不改原始素材。"""
+    payload = row.get("payload") or {}
+    original = str(row.get("story_raw") or payload.get("story_raw") or "")
+    adaptation = payload.get("gold_chat_adaptation")
+    if adaptation is None:
+        return original
+    if not isinstance(adaptation, dict):
+        raise ValueError("授权重构记录格式无效")
+    source_id = str(row.get("source_id") or "")
+    if (adaptation.get("mode") != "authorized_reconstruction"
+            or adaptation.get("approved") is not True
+            or not source_id or adaptation.get("source_id") != source_id
+            or not adaptation.get("approved_at") or not adaptation.get("approval_note")):
+        raise ValueError("重构素材缺少当前来源的明确授权记录")
+    digest = hashlib.sha256(original.encode()).hexdigest()
+    if adaptation.get("original_sha256") != digest:
+        raise ValueError("原始素材已变化，旧重构授权失效")
+    text = adaptation.get("story_raw")
+    if not isinstance(text, str) or len(text.strip()) < 40:
+        raise ValueError("授权重构素材为空或过短")
+    return text.strip()
+
+
 def gold_chat_candidate_contract(row: dict[str, Any]) -> dict[str, Any]:
     from app.services.daily_story.quality import gold_story_review_contract
 
-    return {"contract": gold_story_review_contract(row), "source_raw": str(row.get("story_raw") or "")}
+    return {"contract": gold_story_review_contract(row), "source_raw": gold_chat_source_text(row)}
 
 
 def gold_chat_recovery(row: dict[str, Any]) -> dict[str, Any] | None:

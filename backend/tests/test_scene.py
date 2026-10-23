@@ -393,6 +393,33 @@ def test_terminal_no_reply_does_not_match_dialogue_answer_intent():
     assert not is_terminal_no_reply_intent("作答：你怎么还不接话？")
 
 
+@pytest.mark.parametrize("line", ["我是没说话。", "我承认，我确实是没有说话。", "妈妈，我刚才没有回嘴。", "我们可没顶嘴。", "我不说话也有错。"])
+def test_terminal_silence_preserves_first_person_spoken_denial(line):
+    from app.services.gold_story.scene import sanitize_dialogue_seed_speech, looks_like_narration_line
+    rows = [{"speaker": "灿灿", "intent": line}]
+    assert trim_terminal_no_reply_rows(rows) == (rows, [])
+    assert sanitize_dialogue_seed_speech(rows) == rows
+    assert not looks_like_narration_line(line)
+
+
+def test_spoken_directive_is_not_rewritten_as_narration():
+    from app.services.gold_story.scene import sanitize_dialogue_seed_speech, looks_like_narration_line
+    rows = [{"speaker": "妈妈", "intent": "你大胆说出来，别在那儿小声嘟囔。"}]
+    assert sanitize_dialogue_seed_speech(rows) == rows
+    assert looks_like_narration_line("低着头小声嘟囔着")
+    assert not looks_like_narration_line("你嘟囔什么，我都听不清。")
+    assert not looks_like_narration_line("那小声嘟囔我没听清。")
+
+
+def test_source_planned_narration_is_rejected_without_template_replacement():
+    from app.services.gold_story.scene import patch_dialogue_narration_to_speech, collect_narration_dialogue_errors
+    story = {"gold_source_line_plan": [{"line": 1, "role": "reaction"}],
+             "dialogue": [{"speaker": "昭昭", "line": "低着头小声嘟囔着"}]}
+    assert patch_dialogue_narration_to_speech(story) == []
+    assert story["dialogue"][0]["line"] == "低着头小声嘟囔着"
+    assert collect_narration_dialogue_errors(story["dialogue"])
+
+
 def test_trim_terminal_no_reply_keeps_seed_with_spoken_line():
     seed = [
         {"speaker": "灿灿", "intent": "灵魂拷问", "line": "你怎么还不说话？"},
@@ -2293,3 +2320,24 @@ def test_normalize_beat_min_turns_keeps_k_over_24_within_26():
     assert sum(turns) == 25
     assert notes == []
     assert not any("beat_chain_turns_exceed" in e for e in validate_scene(out))
+
+
+def test_parent_questions_cannot_merge_across_child_answer():
+    contract = {"story_type": "N", "mom_lines_max": 2, "beat_chain": [
+        {"beat": 1, "speaker": "妈妈", "intent": "设问：这张卡片有什么用？"},
+        {"beat": 2, "speaker": "昭昭", "intent": "回答卡片能换奖品"},
+        {"beat": 3, "speaker": "妈妈", "intent": "追问：为什么能换奖品？"},
+        {"beat": 4, "speaker": "灿灿", "intent": "解释卡片上的兑换条件"},
+        {"beat": 5, "speaker": "妈妈", "intent": "收束：听懂了，先把卡片放好"}]}
+    out, notes = normalize_parent_beat_ownership(contract)
+    assert out["beat_chain"] == contract["beat_chain"]
+    assert out["mom_lines_max"] == 3
+    assert not any("合并家长追问拍" in n for n in notes)
+
+
+def test_adjacent_parent_questions_merge_in_source_order():
+    contract = {"mom_lines_max": 1, "beat_chain": [
+        {"beat": 1, "speaker": "妈妈", "intent": "追问谁拿走了杯子"},
+        {"beat": 2, "speaker": "妈妈", "intent": "追问杯子现在在哪里"}]}
+    out, _ = normalize_parent_beat_ownership(contract)
+    assert [r["intent"] for r in out["beat_chain"]] == ["追问谁拿走了杯子、追问杯子现在在哪里"]
