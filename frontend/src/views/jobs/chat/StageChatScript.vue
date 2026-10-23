@@ -164,7 +164,7 @@
         </div>
 
         <!-- 右侧：对话 -->
-        <div class="flex flex-1 flex-col p-2" style="border: 1px solid #e5e7eb;">
+        <div class="flex flex-1 flex-col border border-gray-200 p-2">
           <div class="mb-2 shrink-0 text-xs text-gray-400">
             对话
             <span class="ml-3">{{ dailyStory.story.dialogue.length }} 轮</span>

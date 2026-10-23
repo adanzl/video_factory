@@ -1072,4 +1072,25 @@ const handleRun = async (toEnd: boolean) => {
 .segment-locator.is-ready {
   color: #2563eb;
 }
+
+/* 暗色下这几处写死的浅色要换成深色，否则选中态/定位标签会发白 */
+.dark .keyframe-select--active :deep(.el-select__wrapper) {
+  background-color: #2b2418;
+}
+
+.dark .keyframe-select--active :deep(.el-select__selected-item) {
+  color: #e8a94f;
+}
+
+.dark .segment-locator.is-empty {
+  color: #909399;
+}
+
+.dark .segment-locator.is-image {
+  color: #e5eaf3;
+}
+
+.dark .segment-locator.is-ready {
+  color: #79bbff;
+}
 </style>

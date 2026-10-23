@@ -1,5 +1,92 @@
 @import "tailwindcss";
 
+/*
+ * 暗色模式：由 <html class="dark"> 控制（亮色/暗色/自动三态见 stores/app.ts 与侧边栏按钮）。
+ * 这里让 Tailwind 的 dark: 变体跟随 class，而不是只跟随系统 prefers-color-scheme。
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --vf-page-bg: #ffffff;
+  --vf-text: #303133;
+  --vf-border: #e5e7eb;
+}
+
+/*
+ * 全站模板大量使用固定色阶（bg-white / bg-gray-50 / text-gray-600 / border-gray-200 ...），
+ * Tailwind v4 的色板类最终都读取 --color-* 变量，暗色下把色板映射成深色值即可整体翻暗，
+ * 不必逐个文件补 dark: 前缀；亮色下色板保持默认，视觉零变化。
+ */
+.dark {
+  --vf-page-bg: #141414;
+  --vf-text: #e5eaf3;
+  --vf-border: #414245;
+
+  /* 白底容器 -> 深色面板（Element Plus 暗色 overlay 色） */
+  --color-white: #1d1e1f;
+
+  /* 灰阶整体反转：50/100 作为内嵌底色，200 作为描边，400 以上作为文字 */
+  --color-gray-50: #262727;
+  --color-gray-100: #2f3031;
+  --color-gray-200: #414245;
+  --color-gray-300: #55565a;
+  --color-gray-400: #909399;
+  --color-gray-500: #a6a9ad;
+  --color-gray-600: #c0c4cc;
+  --color-gray-700: #d4d7de;
+  --color-gray-800: #e5eaf3;
+  --color-gray-900: #f0f2f5;
+
+  --color-slate-100: #2b2d31;
+  --color-slate-700: #ccd1d9;
+  --color-slate-800: #e3e7ee;
+
+  /* 粉色：对话里「灿灿」等默认说话人 */
+  --color-pink-50: #2e1a24;
+  --color-pink-100: #3d2230;
+  --color-pink-600: #f78ec0;
+  --color-pink-700: #f9a8d4;
+  --color-pink-800: #fbc4e0;
+
+  /* 蓝色：浅底压暗、深字提亮 */
+  --color-blue-50: #1b2a3f;
+  --color-blue-100: #22354d;
+  --color-blue-600: #79bbff;
+  --color-blue-700: #9dcbff;
+  --color-blue-800: #c4ddff;
+
+  /* 琥珀：告警/待处理 */
+  --color-amber-50: #2b2418;
+  --color-amber-100: #3a3122;
+  --color-amber-200: #5b4a29;
+  --color-amber-600: #e8a94f;
+  --color-amber-700: #f0bd6b;
+  --color-amber-800: #f6d49a;
+
+  --color-orange-600: #ffa552;
+  --color-yellow-500: #f6c445;
+
+  /* 绿色：通过/成功 */
+  --color-emerald-50: #15291f;
+  --color-emerald-600: #6bd79c;
+  --color-emerald-800: #a6e7c3;
+  --color-green-600: #6bd79c;
+
+  /* 红色：失败/危险 */
+  --color-red-50: #2d1a1c;
+  --color-red-100: #3f2427;
+  --color-red-500: #ff8580;
+  --color-red-600: #ff9a95;
+  --color-red-700: #ffb0ab;
+  --color-red-800: #ffcdc9;
+  --color-rose-50: #2c1a22;
+}
+
+body {
+  background-color: var(--vf-page-bg);
+  color: var(--vf-text);
+}
+
 .scrollbar-overlay {
   scrollbar-gutter: auto;
   scrollbar-width: thin;

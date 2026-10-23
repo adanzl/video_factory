@@ -198,7 +198,7 @@
       </div>
 
       <!-- 右侧：对话 -->
-      <div class="flex min-h-0 flex-1 flex-col pl-2" style="border-left: 1px solid #e5e7eb;">
+      <div class="flex min-h-0 flex-1 flex-col border-l border-gray-200 pl-2">
         <div class="mb-2 flex shrink-0 items-center justify-between">
           <span class="text-xs text-gray-400">
             对话 <el-tag size="small" type="info" class="ml-3">{{ editStory.dialogue?.length ?? 0 }} 轮</el-tag>

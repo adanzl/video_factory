@@ -5,6 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.ico" />
     <title>Video Factory</title>
+    <script>
+      // 首屏渲染前先把主题挂到 <html>，避免暗色模式下闪白：
+      // 有本地记录就按记录，没有就跟随系统
+      (function () {
+        try {
+          var stored = window.localStorage.getItem("vf-theme-mode");
+          var theme =
+            stored === "light" || stored === "dark"
+              ? stored
+              : window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+          var root = document.documentElement;
+          if (theme === "dark") {
+            root.classList.add("dark");
+          }
+          root.setAttribute("data-theme", theme);
+          root.style.colorScheme = theme;
+        } catch (error) {
+          // localStorage 不可用时交给应用启动逻辑兜底
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
