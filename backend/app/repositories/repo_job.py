@@ -30,7 +30,10 @@ def _row_to_dict(row: dict) -> dict:
 
 
 def _published_at_from_info(raw_info: Any) -> str | None:
-    """从 info.publish_result 取发布时间：优先 scheduled_at，否则 at。"""
+    """从 info.publish_result 取发布时间：只认投稿成功，未投稿/失败/跳过一律返回 None。
+
+    优先 scheduled_at（B 站定时发布时刻），否则 at（投稿动作时刻）。
+    """
     if not raw_info:
         return None
     try:
@@ -41,6 +44,8 @@ def _published_at_from_info(raw_info: Any) -> str | None:
         return None
     result = info.get("publish_result")
     if not isinstance(result, dict):
+        return None
+    if result.get("status") != "success":
         return None
     for key in ("scheduled_at", "at"):
         value = result.get(key)

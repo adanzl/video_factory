@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from app.config import config
 from app.repositories import repo_daily_story, repo_job
 from app.services.publish.bilibili.schedule import (
+    DEFAULT_PUBLISH_TIME,
     PUBLISH_TZ,
     parse_publish_schedule,
     preview_publish_plan,
@@ -390,11 +391,30 @@ def test_preview_publish_plan_returns_next_weekday(monkeypatch) -> None:
         "enabled": True,
         "time": "09:00",
         "next_at": "2026-08-24T09:00:00+08:00",
+        "defaulted": False,
     }
 
 
-def test_preview_publish_plan_disabled_or_missing() -> None:
-    assert preview_publish_plan({}) is None
+def test_preview_publish_plan_never_saved_uses_default(monkeypatch) -> None:
+    fixed_now = datetime(2026, 8, 21, 20, 0, tzinfo=PUBLISH_TZ)
+    monkeypatch.setattr(
+        "app.services.publish.bilibili.schedule.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {"now": staticmethod(lambda tz=None: fixed_now)},
+        ),
+    )
+    # 从未投稿过：info 里没有 publish_schedule，仍要给出一份可显示的默认计划
+    assert preview_publish_plan({}) == {
+        "enabled": True,
+        "time": DEFAULT_PUBLISH_TIME,
+        "next_at": "2026-08-24T07:00:00+08:00",
+        "defaulted": True,
+    }
+
+
+def test_preview_publish_plan_disabled() -> None:
     disabled = {
         "info": merge_job_info(None, publish_schedule={"enabled": False, "time": "09:00"}),
     }
@@ -402,12 +422,41 @@ def test_preview_publish_plan_disabled_or_missing() -> None:
         "enabled": False,
         "time": "09:00",
         "next_at": None,
+        "defaulted": False,
     }
 
 
 def test_preview_publish_plan_invalid_time_does_not_raise() -> None:
     bad = {"info": {"publish_schedule": {"enabled": True, "time": "9:0"}}}
     assert preview_publish_plan(bad) is None
+
+
+def test_published_at_only_for_successful_publish(app_ctx) -> None:
+    plain = repo_job.create_job("未投稿")
+    failed = repo_job.create_job(
+        "投稿失败",
+        info={"publish_result": {"status": "failed", "at": "2026-10-24T00:00:00+00:00"}},
+    )
+    skipped = repo_job.create_job(
+        "跳过投稿",
+        info={"publish_result": {"status": "skipped", "at": "2026-10-24T00:30:00+00:00"}},
+    )
+    ok = repo_job.create_job(
+        "已投稿",
+        info={
+            "publish_result": {
+                "status": "success",
+                "at": "2026-10-24T01:00:00+00:00",
+                "scheduled_at": "2026-10-26T07:00:00+08:00",
+            }
+        },
+    )
+    rows = {row["id"]: row for row in repo_job.list_jobs(limit=20)}
+    assert rows[plain["id"]]["published_at"] is None
+    assert rows[failed["id"]]["published_at"] is None
+    assert rows[skipped["id"]]["published_at"] is None
+    # 投稿成功的取定时发布时刻，没有再退到投稿动作时刻
+    assert rows[ok["id"]]["published_at"] == "2026-10-26T07:00:00+08:00"
 
 
 def test_job_detail_route_includes_publish_plan(app_ctx, monkeypatch) -> None:
@@ -431,6 +480,29 @@ def test_job_detail_route_includes_publish_plan(app_ctx, monkeypatch) -> None:
         "enabled": True,
         "time": "09:00",
         "next_at": "2026-08-24T09:00:00+08:00",
+        "defaulted": False,
+    }
+
+
+def test_job_detail_route_defaults_plan_when_never_saved(app_ctx, monkeypatch) -> None:
+    fixed_now = datetime(2026, 8, 19, 20, 0, tzinfo=PUBLISH_TZ)
+    monkeypatch.setattr(
+        "app.services.publish.bilibili.schedule.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {"now": staticmethod(lambda tz=None: fixed_now)},
+        ),
+    )
+    job = repo_job.create_job("未投稿任务")
+    client = app_ctx.test_client()
+    resp = client.get("/v_factory/api/jobs/get", query_string={"id": job["id"]})
+    assert resp.status_code == 200
+    assert resp.get_json()["publish_plan"] == {
+        "enabled": True,
+        "time": DEFAULT_PUBLISH_TIME,
+        "next_at": "2026-08-20T07:00:00+08:00",
+        "defaulted": True,
     }
 
 

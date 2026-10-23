@@ -103,6 +103,8 @@ export interface JobDetail extends JobListItem {
     enabled?: boolean;
     time?: string | null;
     next_at?: string | null;
+    /** true 表示任务还没保存过时分，用的是后端默认值 */
+    defaulted?: boolean;
   } | null;
 }
 

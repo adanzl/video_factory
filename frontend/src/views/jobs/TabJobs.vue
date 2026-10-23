@@ -62,7 +62,7 @@
       </el-table-column>
       <el-table-column label="发布时间" width="180">
         <template #default="{ row }">
-          {{ formatDateTime(row.published_at) }}
+          {{ row.published_at ? formatDateTime(row.published_at) : "" }}
         </template>
       </el-table-column>
       <el-table-column prop="error_message" label="信息" width="200" show-overflow-tooltip />

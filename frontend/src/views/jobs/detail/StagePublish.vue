@@ -31,6 +31,7 @@
               >
                 {{ publishResult.bvid || "打开稿件" }}
               </a>
+              <span v-if="publishFactsText" class="text-gray-500">{{ publishFactsText }}</span>
             </div>
           </div>
           <div class="flex shrink-0 items-center gap-2">
@@ -79,7 +80,7 @@
               size="small"
               class="w-40!"
             />
-            <span v-if="scheduleEnabled" class="text-sm text-gray-500">
+            <span v-if="scheduleEnabled && !publishResult" class="text-sm text-gray-500">
               {{ schedulePreview ? `将于 ${schedulePreview} 发布` : "提交时按所选时分排期" }}
             </span>
             <el-button
@@ -412,6 +413,7 @@ import { createBiliLoginQr, getBiliPublishConfig, getBiliSession, pollBiliLoginQ
 import type { BiliPublishConfig } from "@/api/api-publish";
 import { getDailyStory } from "@/api/api-daily-story";
 import { downloadMediaFile, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
+import { formatDateTime } from "@/utils/date";
 import { JOB_STATUS_RUNNING } from "@/constants/job";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
@@ -554,10 +556,17 @@ onMounted(() => {
   void refreshDailyStoryKey();
   void refreshPublishConfig();
   const saved = props.job.info?.publish_schedule;
+  const plan = props.job.publish_plan;
   if (saved) {
     scheduleEnabled.value = Boolean(saved.enabled);
     if (saved.time) {
       scheduleTime.value = saved.time;
+    }
+  } else if (plan) {
+    // 从未投稿过的任务没有已存时分，用后端给的默认计划（含 defaulted 标记）
+    scheduleEnabled.value = Boolean(plan.enabled);
+    if (plan.time) {
+      scheduleTime.value = plan.time;
     }
   }
 });
@@ -683,6 +692,20 @@ const publishResultLabel = computed(() => {
     return result.message ? `已跳过：${result.message}` : "已跳过上传";
   }
   return result.message || "投稿未完成";
+});
+
+/** 已投稿任务直接展示事实时间，不再预测：at=实际投稿时刻，scheduled_at=B站定时发布时刻 */
+const publishFactsText = computed(() => {
+  const result = publishResult.value;
+  if (!result) return "";
+  const bits: string[] = [];
+  if (result.at) {
+    bits.push(`投稿于 ${formatDateTime(result.at)}`);
+  }
+  if (result.scheduled_at) {
+    bits.push(`B站定时 ${formatDateTime(result.scheduled_at)} 发布`);
+  }
+  return bits.join(" · ");
 });
 
 const publishMetaRows = computed(() => [

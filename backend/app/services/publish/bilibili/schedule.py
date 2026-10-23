@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 
 PUBLISH_TZ = ZoneInfo("Asia/Shanghai")
+# 任务还没保存过 publish_schedule（从未投稿）时用的默认时分
+DEFAULT_PUBLISH_TIME = "07:00"
 
 
 def parse_publish_schedule(raw: Any) -> dict[str, Any] | None:
@@ -79,6 +81,7 @@ def preview_publish_plan(job: dict[str, Any]) -> dict[str, Any] | None:
     """给前端展示用的排期预览（挂在 /jobs/get 的响应里）。
 
     只按 job 已保存的时分算一次，供页面显示「将于 X 发布」；
+    从未投稿的任务还没存时分，按 DEFAULT_PUBLISH_TIME 给一份（defaulted=True）。
     真正投稿时 publish_mgr 会按提交瞬间重新算 dtime，前端不再重算。
     """
     from app.utils.job_info import parse_job_info
@@ -89,10 +92,21 @@ def preview_publish_plan(job: dict[str, Any]) -> dict[str, Any] | None:
         )
     except ValueError:
         return None
-    if not schedule:
-        return None
+    defaulted = schedule is None
+    if defaulted:
+        schedule = {"enabled": True, "time": DEFAULT_PUBLISH_TIME}
     time_hm = str(schedule.get("time") or "").strip()
     if not schedule.get("enabled") or not time_hm:
-        return {"enabled": False, "time": time_hm or None, "next_at": None}
+        return {
+            "enabled": False,
+            "time": time_hm or None,
+            "next_at": None,
+            "defaulted": False,
+        }
     _, planned_at = resolve_next_publish_dtime(time_hm)
-    return {"enabled": True, "time": time_hm, "next_at": planned_at.isoformat()}
+    return {
+        "enabled": True,
+        "time": time_hm,
+        "next_at": planned_at.isoformat(),
+        "defaulted": defaulted,
+    }
