@@ -223,6 +223,9 @@ def story_review_content_hash(
         payload["source_plan"] = _stable_review_value(story["gold_source_line_plan"])
         payload["n_expression_contract"] = _stable_review_value(story.get("gold_n_expression_contract"))
         payload["source_raw"] = str(story.get("source_raw") or "")
+    if story.get("source_link_review"):
+        payload["source_link_review"] = True
+        payload["source_raw"] = str(story.get("source_raw") or "")
     raw = json.dumps(
         payload,
         ensure_ascii=False,

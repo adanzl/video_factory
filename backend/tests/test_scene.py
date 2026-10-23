@@ -1218,6 +1218,7 @@ def test_non_n_single_kid_gets_one_witness_not_filler_stack():
     ]
     assert len(partner_rows) == 1
     assert "慢慢说" in partner_rows[0]["intent"]
+    assert partner_rows[0]["witness_only"] is True
     assert [r["beat"] for r in out["beat_chain"]] == list(
         range(1, len(out["beat_chain"]) + 1)
     )
@@ -1261,6 +1262,23 @@ def test_non_n_repeated_witness_beats_collapse_to_one():
     ]
     assert len(partner_rows) == 1
     assert partner_rows[0]["intent"] == "我就在旁边听着，你慢慢说。"
+    assert partner_rows[0]["witness_only"] is True
+
+
+def test_existing_single_witness_is_marked_once_without_changing_real_beats():
+    from app.services.gold_story.scene import enforce_two_kid_cast
+    contract = {"story_type": "F", "characters": ["妈妈", "昭昭", "灿灿"], "beat_chain": [
+        {"beat": 1, "speaker": "妈妈", "intent": "问为什么不练琴"},
+        {"beat": 2, "speaker": "灿灿", "intent": "反问看书为什么不行"},
+        {"beat": 3, "speaker": "昭昭", "intent": "我就在旁边听着，你慢慢说。"},
+        {"beat": 4, "speaker": "妈妈", "intent": "拒绝讨论并要求练琴"},
+    ]}
+    out, notes = enforce_two_kid_cast(contract)
+    assert notes and out["beat_chain"][2]["witness_only"] is True
+    assert "witness_only" not in contract["beat_chain"][2]
+    assert out["beat_chain"][:2] == contract["beat_chain"][:2]
+    assert out["beat_chain"][3] == contract["beat_chain"][3]
+    assert enforce_two_kid_cast(out) == (out, [])
 
 
 def test_non_n_seed_removes_supplemental_witness_lines():

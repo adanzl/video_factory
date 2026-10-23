@@ -966,6 +966,46 @@ def _prepare_chat_for_validate_after_local_length_close(
         mom_lines_max=mom_lines_max,
     )
 
+def _revise_perbeat_length(data: dict[str, Any], *, row: dict[str, Any] | None) -> dict[str, Any]:
+    """只改现有台词的措辞，保留行数、说话人及元数据；返回后重新走统一校验。"""
+    from app.services.gold_story.gold_chat.prompts import SOURCE_BATCH_SYSTEM, format_source_revision_user
+
+    dialogue = data.get("dialogue") or []
+    total = dialogue_total_chars(data)
+    target = DAILY_STORY_BODY_CHARS_MIN + 12
+    shrinking = total > DAILY_STORY_BODY_CHARS_MAX
+    need = total - DAILY_STORY_BODY_CHARS_MAX + 12 if shrinking else target - total
+    slots = [{"speaker": item["speaker"], "intent": item["line"]} for item in dialogue]
+    filled = {i: str(item["line"]) for i, item in enumerate(dialogue, 1)}
+    failures = []
+    for i in sorted(filled, key=lambda idx: len(filled[idx]), reverse=shrinking):
+        if need <= 0:
+            break
+        room = len(filled[i]) - 14 if shrinking else 24 - len(filled[i])
+        if room <= 0:
+            continue
+        change = min(room, need)
+        length = len(filled[i]) - change if shrinking else len(filled[i]) + change
+        failures.append((i, filled[i], f"全文当前{total}字；本句目标{length}字，保留原意、指代和完整句，不添加新事实"))
+        need -= change
+    if not failures:
+        return data
+    payload = (row or {}).get("payload") or {}
+    source_text = str(data.get("source_raw") or (row or {}).get("story_raw") or payload.get("story_raw") or "")
+    user = format_source_revision_user(
+        scene_contract=payload.get("scene_contract") or {}, slots=slots, filled=filled,
+        failures=failures, source_text=source_text,
+    )
+    response = _chat_json(SOURCE_BATCH_SYSTEM, user, temperature=0.3, max_tokens=2400)
+    edits = _perbeat_parse_batch(response)
+    editable = {i for i, _, _ in failures}
+    out = copy.deepcopy(data)
+    for i, line in edits.items():
+        if i in editable:
+            out["dialogue"][i - 1]["line"] = line
+    return out
+
+
 def _validate_expand_chat(
     story: dict[str, Any],
     *,
@@ -1001,6 +1041,7 @@ def _validate_expand_chat(
     last_err = ""
     shorten_llm_used = False
     short_expand_rounds = 0
+    perbeat_length_revisions = 0
     for attempt in range(5):
         data = _apply_expand_setting_normalize(data, row=row)
         from app.services.gold_story.scene import (
@@ -1074,6 +1115,12 @@ def _validate_expand_chat(
                     )
                     return data
                 except ValueError as exc2:
+                    # 归一化会缩短台词；以此时的正文修长度，不能丢掉整篇重新抽。
+                    if ("正文总字数须" in str(exc2) and perbeat_length_revisions < 2
+                            and (data.get("source_raw") or (row or {}).get("story_raw") or payload.get("story_raw"))):
+                        perbeat_length_revisions += 1
+                        data = _revise_perbeat_length(data, row=row)
+                        continue
                     raise ValueError(f"perbeat validate: {exc2}") from exc2
             # 缺字段/妈句：本地补丁 + 通用 FIX，勿只走短篇幅扩写
             if _has_non_short_hard_errors(last_err):
@@ -1454,11 +1501,13 @@ def _line_plan_skeleton(
             {
                 "beat": no,
                 "speaker": owners[no - 1],
-                "role": "main",
+                "role": "reaction" if beats[no - 1].get("witness_only") else "main",
                 # 拍主那句要交代什么，拍意图已经写清楚了：直接取用，
                 # 既省一次规划误差，也让 plan 只补「拍主之外」的行。
-                "intent": str(beats[no - 1].get("intent") or "").strip(),
-                "from_beat": True,
+                "intent": ("回应刚发生的对话，不代答、不添事实、不空泛递话"
+                           if beats[no - 1].get("witness_only") else str(beats[no - 1].get("intent") or "").strip()),
+                "from_beat": not beats[no - 1].get("witness_only"),
+                "witness_only": bool(beats[no - 1].get("witness_only")),
             }
         ]
         for no in range(1, len(beats) + 1)
@@ -2218,6 +2267,8 @@ def _line_plan_slots(
         main = is_owner and beat_no not in owner_seen
         if row.get("source_plan"):
             main = row.get("role") == "content"
+        if beat.get("witness_only"):
+            main = False
         if is_owner:
             owner_seen.add(beat_no)
         slots.append(
@@ -2235,6 +2286,7 @@ def _line_plan_slots(
                     )
                 ),
                 "is_filler": not main,
+                "witness_only": bool(beat.get("witness_only")),
                 "source_seed_ids": list(row.get("source_seed_ids") or []),
                 "planned_content": bool(row.get("source_plan") and main),
                 "planned_speech_act": str(row.get("source_speech_act") or ""),
@@ -4286,6 +4338,12 @@ def _perbeat_check(
             and not _PERBEAT_ASK_WORD_RE.search(answer_prefix)
             and question_terms(answer_prefix) & question_terms(prev)):
         answers_prev = True
+    # 启发式疑点须经带来源引文的语义核验；只对同一份来源、全文前缀和句子生效。
+    audit = slot.get("_dialogue_link_audit")
+    if (isinstance(audit, dict) and audit.get("line") == line
+            and audit.get("context") == prev_lines
+            and audit.get("source_text") == slot.get("_audit_source_text")):
+        question_ok = answers_prev = attribution_ok = rebuttal_ok = True
     # 收束拍标了「赢了但没消气」：末句不能写成完全满意/收下道歉，
     # 那是把反差收平，笑点余味全丢。
     closing_ok = not (
@@ -4715,6 +4773,52 @@ def _fill_fail_sig(failures: list[tuple[int, str, str]]) -> tuple[int, ...]:
     return tuple(sorted(i for i, _ln, _why in failures))
 
 
+def _audit_perbeat_dialogue_links(
+    slots: list[dict[str, Any]], filled: dict[int, str],
+    failures: list[tuple[int, str, str]], *, source_text: str,
+) -> bool:
+    """用原始素材核验内容行的问答歧义；不凭反问词或 speech_act 放行。"""
+    from app.services.gold_story.gold_chat.prompts import DIALOGUE_LINK_AUDIT_SYSTEM
+
+    diagnostics = ("上一句是问句", "必须先正面回答", "指认对方说过", "辩驳的事前文")
+    targets = [i for i, _, why in failures if 1 <= i <= len(slots)
+               and not slots[i - 1].get("is_filler")
+               and any(label in why for label in diagnostics)]
+    if not targets or not source_text.strip():
+        return False
+    context = [{"i": i, "speaker": s["speaker"], "line": filled.get(i, ""),
+                "intent": s.get("intent"), "speech_act": (s.get("_own_entry") or {}).get("speech_act")}
+               for i, s in enumerate(slots, 1)]
+    data = _chat_json(DIALOGUE_LINK_AUDIT_SYSTEM, json.dumps(
+        {"source_text": source_text, "dialogue": context, "targets": targets}, ensure_ascii=False),
+        temperature=0.0, max_tokens=2400)
+    items = data.get("dialogue_link_audit") if isinstance(data, dict) else None
+    if not isinstance(items, list) or len(items) != len(targets):
+        return False
+    approved = []
+    for no, item in zip(targets, items):
+        if (not isinstance(item, dict) or type(item.get("i")) is not int or item["i"] != no
+                or type(item.get("pass")) is not bool or type(item.get("source_supports_act")) is not bool
+                or not str(item.get("reason") or "").strip()):
+            return False
+        quote = str(item.get("quote") or "")
+        previous = str(item.get("previous_quote") or "")
+        source_quote = str(item.get("source_quote") or "")
+        if (len(quote) < 2 or quote not in filled.get(no, "") or len(previous) < 2
+                or previous not in filled.get(no - 1, "") or len(source_quote) < 4
+                or source_quote not in source_text):
+            return False
+        if item["pass"] and item["source_supports_act"]:
+            approved.append((no, item))
+    for no, item in approved:
+        slots[no - 1]["_dialogue_link_audit"] = {
+            "line": filled[no], "source_text": source_text,
+            "context": [(str(s["speaker"]), str(filled.get(i, ""))) for i, s in enumerate(slots[:no - 1], 1)],
+            "evidence": item,
+        }
+    return bool(approved)
+
+
 def _perbeat_fill_slots(
     slots: list[dict[str, Any]],
     *,
@@ -4739,9 +4843,14 @@ def _perbeat_fill_slots(
     )
 
     source_mode = any(s.get("source_plan") for s in slots)
+    # 有原文的旧计划也保留完整候选，不能靠删句、模板替换消掉语义疑点。
+    audited_mode = bool(source_text.strip()) and not source_mode
     allowed_actions = _perbeat_allowed_actions(scene_contract, source_text)
     last_beat = max((int(s.get("beat_id") or 0) for s in slots), default=0)
     for slot in slots:
+        slot.pop("_dialogue_link_audit", None)
+        slot["_audit_source_text"] = source_text
+        slot["_preserve_candidate"] = audited_mode
         slot["_allowed_actions"] = allowed_actions
         # 收束拍的台词是收尾，不受「回句必须咬住上一句问句」约束
         slot["_is_closing"] = int(slot.get("beat_id") or 0) == last_beat
@@ -4807,7 +4916,7 @@ def _perbeat_fill_slots(
             slots=slots,
             feedback=feedback,
         )
-        if source_mode:
+        if source_mode or audited_mode:
             user += ("\n【只读原始素材】人称指源文内部所指，不自动指本次在场者；"
                      "引用过去对话须让听者辨明当时的指称，不能添加新情节。\n"
                      + json.dumps(source_text, ensure_ascii=False))
@@ -4820,7 +4929,10 @@ def _perbeat_fill_slots(
         for _net in range(4):
             try:
                 data = _chat_json(
-                    SOURCE_BATCH_SYSTEM if source_mode else PERBEAT_BATCH_SYSTEM,
+                    SOURCE_BATCH_SYSTEM if source_mode else PERBEAT_BATCH_SYSTEM + (
+                        "\n只读原文明确的反问、拒绝回答或转移话题须保留其言语行为与人物关系，"
+                        "不能为正面回答而改写剧情；这不允许新增无关问答或无据引述。"
+                        if audited_mode else ""),
                     user,
                     temperature=temperature + 0.1 * round_i,
                     max_tokens=4096 if source_mode else 1600,
@@ -4862,6 +4974,8 @@ def _perbeat_fill_slots(
                 if 1 <= idx <= len(slots) and idx not in keep_idx:
                     filled[idx] = line
         lines, failures = _perbeat_validate_fill(slots, filled)
+        if audited_mode and _audit_perbeat_dialogue_links(slots, filled, failures, source_text=source_text):
+            lines, failures = _perbeat_validate_fill(slots, filled)
         if source_mode:
             from app.services.daily_story.story_types.n.validate import append_n_body_errors
             type_errors: list[str] = []
@@ -4902,7 +5016,7 @@ def _perbeat_fill_slots(
         # 它们按「够 12 句就保留」兜住，交给终检定点修。每轮整表重填要多烧一次
         # 12 行调用（约 3s），而这类软失败几乎每次都剩 1–2 条，三轮必然跑满。
         # 来源计划不能删槽或交给软插话兜底，必须在本轮预算内修完再终验。
-        soft_only = not source_mode and all(
+        soft_only = not (source_mode or audited_mode) and all(
             1 <= i <= len(slots) and slots[i - 1].get("is_filler")
             for i, _ln, _why in failures
         )
@@ -4916,7 +5030,7 @@ def _perbeat_fill_slots(
         # 触发的还是同一条规则）：#138 实测三轮 idx=[3,7,10] 原样重复，纯烧
         # 两次 12 行调用。同一批失败出现第二次就收手，交下游兜。
         if (
-            not source_mode
+            not (source_mode or audited_mode)
             and failures
             and len(slots) >= 12
             and _fill_fail_sig(failures) == prev_fail_sig
@@ -4931,7 +5045,7 @@ def _perbeat_fill_slots(
         if round_i == 2:
             break
         filled = dict(filled)
-        if not all(s.get("source_plan") for s in slots):
+        if not (source_mode or audited_mode):
             for i, _ln, _why in failures:
                 filled.pop(i, None)
     if not filled:
@@ -4939,7 +5053,7 @@ def _perbeat_fill_slots(
         # 返回 ([], [])，日志只剩「assembled lines=0 chars=0」，下游 validate
         # 报的是「句数/字数不足」，真因（模型没给 JSON）被完全掩盖。
         raise ValueError("perbeat: batch fill returned no parsable lines")
-    if all(s.get("source_plan") for s in slots):
+    if source_mode or audited_mode:
         # 来源分句计划不可删槽、移动或用通用模板改写；保留原候选与具体错误。
         return [(str(s.get("speaker") or ""), str(filled.get(i) or ""))
                 for i, s in enumerate(slots, 1)], failures
@@ -5065,12 +5179,12 @@ def _perbeat_validate_fill(
             continue
         if not slot.get("source_plan"):
             line = _perbeat_strip_stage_direction(line)
-        if slot.get("is_filler") and not slot.get("source_plan"):
+        if slot.get("is_filler") and not slot.get("source_plan") and not slot.get("_preserve_candidate"):
             line = _perbeat_repair_repeated_filler(slot, line, context_lines)
         # 先截到 24 字再检：模型多写两三个字（「…所以你还是当老虎吧。」25 字）
         # 不该判废——截断在逗号处就是一句合法台词，重写反而更远离原意。
         # （#138 实测：run 里只差 2 条「须 14–24 字」，整条 draft 就此重掷。）
-        if len(line) > 24 and not slot.get("source_plan"):
+        if len(line) > 24 and not slot.get("source_plan") and not slot.get("_preserve_candidate"):
             clipped = _perbeat_clip(line, limit=24)
             required_words = slot.get("must_words") or []
             keeps_words = (not any(w in line for w in required_words)
@@ -5406,6 +5520,7 @@ def _generate_perbeat_candidate(
         or str(scene_contract.get("conflict") or ""),
         "gold_beat_chain": beat_chain,
         "gold_source_line_plan": source_plan,
+        "source_link_review": bool(story_raw and not source_plan),
         "gold_n_expression_contract": n_expression,
         # 源故事原文带上：终检判「语病」时要用它区分「作者原句」与「模型硬编」。
         "source_raw": story_raw,

@@ -68,6 +68,24 @@ def test_export_review_prompt_keeps_context_out_of_issue_lines():
     assert "不要扩大成[11,12,13,14]" in system
 
 
+def test_legacy_link_review_reaches_final_review_and_binds_source():
+    from app.services.daily_story.review import build_review_prompts
+    from app.services.daily_story.quality import story_review_content_hash
+
+    story = _story([{"speaker": "妈妈", "line": "为什么不练琴？"},
+                    {"speaker": "灿灿", "line": "你今天练过了吗？"}])
+    story.update(source_link_review=True, source_raw="孩子用反问回应妈妈的责问。")
+    story["quality"]["humor"] = {"funny_score": 12}
+    _, user = build_review_prompts("测试", story)
+    assert story["source_raw"] in user and "必须独立全文审查" in user
+    stamp_story_review_binding(story, semantic_pass=True)
+    assert story_production_eligibility(story)["ok"]
+    original = story_review_content_hash(story)
+    story["source_raw"] = "孩子直接承认没有练琴。"
+    assert story_review_content_hash(story) != original
+    assert not story_production_eligibility(story)["ok"]
+
+
 def test_review_prompt_scores_multi_line_situational_humor_without_requiring_one_liner():
     from app.services.daily_story.review import build_review_prompts
 

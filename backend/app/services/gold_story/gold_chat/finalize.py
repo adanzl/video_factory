@@ -1299,6 +1299,8 @@ def run_gold_chat_final_acceptance(
     preserve_dialogue: bool = False,
 ) -> dict[str, Any]:
     """补字/改 speaker 完成后统一终验；未过则抛错，不写导出文件。"""
+    if "_gold_link_review_raw" in row:
+        chat = {**chat, "source_link_review": True, "source_raw": row["_gold_link_review_raw"]}
     if row.get("_gold_source_line_plan"):
         chat = {**chat, "gold_source_line_plan": deepcopy(row["_gold_source_line_plan"]),
                 "gold_n_expression_contract": deepcopy(row.get("_gold_n_expression_contract")),

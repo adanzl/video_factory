@@ -2099,6 +2099,15 @@ def build_review_prompts(
     beat_text = _format_beat_chain_for_review(beat_chain)
     source_plan = story.get("gold_source_line_plan")
     source_block = ""
+    if story.get("source_link_review"):
+        source_block = (
+            "\n【只读原始素材，须独立核验成稿接话】\n"
+            + str(story.get("source_raw") or "") + "\n"
+            "原素材明确的反问、拒绝回答、回避或转移话题须按其真实言语行为与人物关系核验，"
+            "不能一律要求正面回答。也不能只凭原文出现某个词就放过新增的答非所问、无据引用、"
+            "人物错位或编造指控。程序生成的旁观反应须自然承接、不代答、不打断问答、不空转。"
+            "此处没有已通过的语义结论，必须独立全文审查，发现问题写入issues并引用实际台词。\n"
+        )
     if isinstance(source_plan, list) and source_plan:
         source_block = (
             "\n【只读素材分句依据，不是成稿】\n"

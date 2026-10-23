@@ -2298,6 +2298,8 @@ def convert_gold_chat(
             _check_budget(current_stage)
             last_candidate = deepcopy(chat_in)
             source_plan = chat_in.get("gold_source_line_plan")
+            if chat_in.get("source_link_review"):
+                row_in = {**row_in, "_gold_link_review_raw": str(chat_in.get("source_raw") or "")}
             if isinstance(source_plan, list) and source_plan:
                 row_in = {**row_in, "_gold_source_line_plan": deepcopy(source_plan),
                           "_gold_source_raw": str(chat_in.get("source_raw") or ""),
@@ -2336,6 +2338,9 @@ def convert_gold_chat(
             last_candidate = deepcopy(chat_out)
             current_stage = "finalize"
             _check_budget(current_stage)
+            if "_gold_link_review_raw" in row_in:
+                chat_out["source_link_review"] = True
+                chat_out["source_raw"] = row_in["_gold_link_review_raw"]
             if row_in.get("_gold_source_line_plan"):
                 chat_out["gold_source_line_plan"] = deepcopy(row_in["_gold_source_line_plan"])
                 chat_out["source_raw"] = row_in["_gold_source_raw"]

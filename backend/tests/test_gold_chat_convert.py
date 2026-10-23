@@ -406,6 +406,118 @@ def test_source_plan_cannot_receive_template_lines_from_length_stabilizer(monkey
     assert not changed and result == before
 
 
+def test_witness_plan_requests_contextual_reaction_instead_of_fixed_template():
+    from app.services.gold_story.gold_chat.prompts import format_line_plan_user
+    beats = [
+        {"beat": 1, "speaker": "妈妈", "intent": "问为什么不练琴"},
+        {"beat": 2, "speaker": "灿灿", "intent": "反问看书为什么不行"},
+        {"beat": 3, "speaker": "昭昭", "intent": "我就在旁边听着，你慢慢说。", "witness_only": True},
+        {"beat": 4, "speaker": "妈妈", "intent": "拒绝讨论并要求练琴"},
+    ]
+    contract = {"story_type": "F", "characters": ["妈妈", "昭昭", "灿灿"], "mom_lines_max": 3}
+    rows = gex._line_plan_skeleton(contract, beats, target_lines=4)
+    assert rows[2]["from_beat"] is False and rows[2]["role"] == "reaction"
+    planned = gex._merge_line_plan_intents(rows, {"lines": [{"i": 3, "intent": "指出两种爱好都需要认真学习"}]})
+    assert planned[2]["intent"] == "指出两种爱好都需要认真学习"
+    assert planned[1]["intent"] == beats[1]["intent"]
+    slot = gex._line_plan_slots(planned, beats, no_material_speakers={"昭昭"})[2]
+    assert slot["is_filler"] and slot["witness_only"] and not slot["has_content"]
+    prompt = format_line_plan_user(scene_contract=contract, story_raw="原素材", rows=rows)
+    assert "旁观反应位" in prompt and "我就在旁边听着" not in prompt
+
+
+@pytest.mark.parametrize("invalid", [None, "source", "quote", "previous", "missing", "negative", "unsupported", "line_number"])
+def test_dialogue_link_audit_requires_complete_source_evidence(monkeypatch, invalid):
+    source = "妈妈问他为什么不练琴，孩子反问：你自己今天练过了吗？"
+    slots = [{"speaker": "妈妈", "intent": "问为什么不练琴"},
+             {"speaker": "灿灿", "intent": "反问妈妈是否练琴", "_audit_source_text": source}]
+    filled = {1: "今天为什么不练琴，你到底怎么想的？", 2: "你自己今天练过了吗，凭什么光问我？"}
+    failures = [(2, filled[2], "必须先正面回答上一句的问题")]
+    item = {"i": 2, "pass": True, "source_supports_act": True, "quote": "你自己今天练过了吗",
+            "previous_quote": "今天为什么不练琴", "source_quote": "孩子反问：你自己今天练过了吗？", "reason": "原文明确反问母亲，当前人物关系一致"}
+    if invalid == "source": item["source_quote"] = "不属于素材的证据"
+    if invalid == "quote": item["quote"] = "没有说过的话"
+    if invalid == "previous": item["previous_quote"] = "不属于前句"
+    if invalid == "negative": item["pass"] = False
+    if invalid == "unsupported": item["source_supports_act"] = False
+    if invalid == "line_number": item["i"] = True
+    monkeypatch.setattr(gex, "_chat_json", lambda *_a, **_kw: {"dialogue_link_audit": [] if invalid == "missing" else [item]})
+    assert gex._audit_perbeat_dialogue_links(slots, filled, failures, source_text=source) is (invalid is None)
+    assert ("_dialogue_link_audit" in slots[1]) is (invalid is None)
+
+
+def test_link_audit_approval_expires_when_context_line_or_source_changes(monkeypatch):
+    source = "母亲要求他交代是谁打碎杯子，孩子反问今天轮到谁洗碗。"
+    slot = {"speaker": "灿灿", "intent": "反问今天轮到谁洗碗", "_audit_source_text": source}
+    before = [("妈妈", "这只杯子到底是谁打碎的，你说明白？")]
+    line = "今天轮到谁洗碗，你自己还记不记得？"
+    assert "必须先正面回答上一句的问题" in gex._perbeat_check(slot, line, before)
+    item = {"i": 2, "pass": True, "source_supports_act": True, "quote": "今天轮到谁洗碗",
+            "previous_quote": "这只杯子到底是谁打碎的", "source_quote": "孩子反问今天轮到谁洗碗", "reason": "来源明示了转移话题"}
+    monkeypatch.setattr(gex, "_chat_json", lambda *_a, **_kw: {"dialogue_link_audit": [item]})
+    assert gex._audit_perbeat_dialogue_links([{"speaker": "妈妈"}, slot], {1: before[0][1], 2: line},
+                                           [(2, line, "必须先正面回答上一句的问题")], source_text=source)
+    assert "必须先正面回答上一句的问题" not in gex._perbeat_check(slot, line, before)
+    assert "必须先正面回答上一句的问题" in gex._perbeat_check(slot, line + "？", before)
+    assert "必须先正面回答上一句的问题" in gex._perbeat_check(slot, line, [("妈妈", "那只杯子到底是谁打碎的，你说明白？")])
+    slot["_audit_source_text"] = "另一个故事"
+    assert "必须先正面回答上一句的问题" in gex._perbeat_check(slot, line, before)
+
+
+def test_perbeat_length_revision_preserves_locked_rows_and_metadata(monkeypatch):
+    from copy import deepcopy
+    data = {"scene_title": "测试", "quality": {"semantic_pending": True},
+            "dialogue": [{"speaker": "昭昭" if i % 2 else "灿灿", "line": "字" * 17 + "。"} for i in range(12)]}
+    before = deepcopy(data)
+    def chat(_system, user, **_kwargs):
+        targets = json.loads(user.split("【需要改写】", 1)[1].split("\n", 1)[0])
+        assert len(targets) == 6
+        return {"lines": [{"i": t["i"], "line": "词" * 23 + "。"} for t in targets]
+                + [{"i": 12, "line": "越权修改不能采纳。"}, {"i": 13, "line": "也不许新增句子。"}]}
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    out = gex._revise_perbeat_length(data, row={"story_raw": "原文"})
+    assert data == before and len(out["dialogue"]) == 12
+    assert out["quality"] == before["quality"]
+    assert [r["speaker"] for r in out["dialogue"]] == [r["speaker"] for r in before["dialogue"]]
+    assert out["dialogue"][6:] == before["dialogue"][6:]
+    assert gex.dialogue_total_chars(out) == 252
+
+
+@pytest.mark.parametrize("succeeds", [True, False])
+def test_perbeat_short_after_normalization_revises_current_candidate_with_bound(monkeypatch, succeeds):
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "1")
+    data = {"scene_title": "测试", "source_raw": "只读原文",
+            "dialogue": [{"speaker": "昭昭" if i % 2 else "灿灿", "line": "字" * 17 + "。"} for i in range(12)]}
+    # 模拟确定性归一化使已有候选缩短；修稿必须看到缩短后的版本。
+    def normalize(story, **_kwargs):
+        if story["dialogue"][0]["line"] == "字" * 17 + "。":
+            story["dialogue"][0]["line"] = "字" * 8 + "。"
+        return story
+    monkeypatch.setattr(gex, "_apply_gold_chat_local_hard_repairs", normalize)
+    monkeypatch.setattr(gex, "_apply_expand_setting_normalize", lambda story, **_kw: story)
+    checked = []
+    def validate(story, **_kwargs):
+        checked.append(gex.dialogue_total_chars(story))
+        if checked[-1] < 216:
+            raise ValueError(f"正文总字数须≥216，当前{checked[-1]}")
+    monkeypatch.setattr(gc, "validate_gold_chat", validate)
+    calls = []
+    def chat(_system, user, **_kwargs):
+        calls.append(user)
+        assert "当前207字" in user
+        targets = json.loads(user.split("【需要改写】", 1)[1].split("\n", 1)[0])
+        return {"lines": [{"i": t["i"], "line": "词" * 23 + "。" if succeeds else t["current_line"]} for t in targets]}
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    kwargs = dict(banned_literals=[], source_type="mixed", mom_lines_max=3)
+    if succeeds:
+        out = gex._validate_expand_chat(data, **kwargs)
+        assert checked[-1] >= 216 and len(calls) == 1 and len(out["dialogue"]) == 12
+    else:
+        with pytest.raises(ValueError, match="正文总字数"):
+            gex._validate_expand_chat(data, **kwargs)
+        assert len(calls) == 2
+
+
 @pytest.mark.parametrize("reaction", [True, False])
 @pytest.mark.parametrize("repair_succeeds", [True, False])
 def test_source_fill_uses_bounded_revision_rounds_for_same_overlong_slot(monkeypatch, reaction, repair_succeeds):

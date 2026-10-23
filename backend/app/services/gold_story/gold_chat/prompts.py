@@ -1925,6 +1925,8 @@ def format_perbeat_batch_user(
             f"{str(slot.get('intent') or '') if slot.get('planned_content') else _perbeat_clean_intent(str(slot.get('intent') or ''))}"
             f"（本句功能：{slot.get('function') or '推进本拍'}）"
         )
+        if slot.get("witness_only"):
+            row += "｜这是程序补的旁观反应位，不能照念旧模板或替当事人回答；须承接实际前文，不打断问答"
         if slot.get("planned_speech_act") in {"echo", "retort"}:
             row += "｜原素材明确为回声/反问，保留该言语行为"
         if source_mode:
@@ -2029,7 +2031,8 @@ def format_line_plan_user(
             )
         table.append(
             f"{idx}. 第{beat_no}拍｜{row.get('speaker')}｜{role}"
-            + (f"｜本拍内容：{beat_intent}" if beat_intent and not row.get("split") else "")
+            + ("｜旁观反应位：围绕前文写具体接话意图，不能照念旧模板、不代答、不打断问答"
+               if row.get("witness_only") else f"｜本拍内容：{beat_intent}" if beat_intent and not row.get("split") else "")
         )
     fb = f"\n{feedback}\n" if feedback else ""
     return (
@@ -2052,6 +2055,15 @@ def format_line_plan_user(
 # source 路径覆盖关系：角色/顺序/字数/标点留在机检；问答、人物归属、
 # 事实前提、句子完整、重复、旁白、接话与无新事实交逐行 source_audit。
 # 原全文硬卡、类型结构分与导出门槛共用，不以本提示替代终验。
+DIALOGUE_LINK_AUDIT_SYSTEM = """你审核对白中被机检标记的问答、引述和辩驳疑点，不改写台词，只输出JSON。
+逐条结合完整候选与只读原始素材判断：原素材明示的反问、拒绝回答、回避或转移话题可以忠实保留，
+但新增的答非所问、对象错位、无据引用、编造指控必须拒绝。不能仅因有共同词或问号判通过。
+source_supports_act 必须核验来源引文确实支持本句的言语行为与人物关系；随便摘一句原文不是证据。
+pass 只有在来源支持且当前全文里的上下句仍自然成立时为true，仍有疑点为false。
+严格按targets顺序，每行一个对象；quote取当前句引文，previous_quote取紧邻前句引文，source_quote取原文连续引文，reason说明引文如何支撑或否定判断。
+输出 {"dialogue_link_audit":[{"i":序号,"pass":false,"source_supports_act":false,"quote":"当前句引文","previous_quote":"前句引文","source_quote":"原文引文","reason":"核验理由"}]}。
+"""
+
 SOURCE_BATCH_SYSTEM = """你是对白编剧，任务是润色扩写简略素材，写成自然家庭对白，只输出JSON。
 序号、说话人、内容单元归属与顺序不可改变；台词措辞需要你改写，不是抄写素材表。所有素材都须完整表达，不能删事实。
 content行表达自己被分配的素材；reaction行仅对已出事件表态或追问，不能代说后续答案、补新事实、空转或重复。原文中尚未在前面台词交代的细节，也不能被reaction提前说出。

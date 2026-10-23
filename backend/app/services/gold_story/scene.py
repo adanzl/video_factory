@@ -652,7 +652,8 @@ def supplemental_witness_kid(contract: dict[str, Any] | None) -> str:
         if not own:
             continue
         if not all(
-            _is_second_kid_filler_intent(str(r.get("intent") or r.get("beat") or ""))
+            r.get("witness_only") is True
+            or _is_second_kid_filler_intent(str(r.get("intent") or r.get("beat") or ""))
             for r in own
         ):
             continue
@@ -747,20 +748,23 @@ def _trim_supplemental_witness_beats(
     kept = False
     out_rows: list[Any] = []
     removed = 0
+    marked = False
     for row in rows:
         speaker = str(row.get("speaker") or "").strip()
         intent = str(row.get("intent") or row.get("beat") or "")
         if (
             speaker == partner
-            and _is_second_kid_filler_intent(intent)
+            and (row.get("witness_only") is True or _is_second_kid_filler_intent(intent))
         ):
             if kept:
                 removed += 1
                 continue
             kept = True
             row["intent"] = _WITNESS_KID_LINES[0]
+            marked = marked or row.get("witness_only") is not True
+            row["witness_only"] = True
         out_rows.append(row)
-    if not removed:
+    if not removed and not marked:
         return contract, []
     for idx, row in enumerate(out_rows, 1):
         if isinstance(row, dict):
@@ -2148,12 +2152,6 @@ def build_n_two_kid_dialogue(
     if len(rows) < 4:
         return [], []
 
-    # 家长句数上限：留立规、追问、收束三类；多余的家长句按顺序砍掉末尾
-    out: list[dict[str, Any]] = []
-
-    def _is_parent(row: dict[str, Any]) -> bool:
-        return str(row.get("speaker") or "").strip() in parents
-
     # 机制孩子 = 词槽持有者；另一个孩子才是「搭档」
     mech_kid = ""
     for row in chain:
@@ -2298,12 +2296,7 @@ def build_n_two_kid_dialogue(
     #    ① 把偏短的句子补到 18–22 字（只加「真的/就这样」这类收尾强调）；
     #    ② 仍未达标时插搭档反应（只表达态度，不含剧情）。
     #    #87 实测：seed 只有 10 行/151 字，靠这两步可以到 240+ 且不引入新情节。
-    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
-
-    def _total() -> int:
-        return sum(len(str(r["line"])) for r in out)
-
-    pad_used: set[str] = set()
+    pad_used = set()
     for _round in range(4):
         if _total() >= DAILY_STORY_BODY_CHARS_MIN:
             break
@@ -2679,7 +2672,7 @@ def enforce_two_kid_cast(contract: dict[str, Any]) -> tuple[dict[str, Any], list
             return contract, []
         rows.insert(
             target + 1,
-            {"speaker": partner, "intent": _WITNESS_KID_LINES[0]},
+            {"speaker": partner, "intent": _WITNESS_KID_LINES[0], "witness_only": True},
         )
         for idx, row in enumerate(rows, 1):
             if isinstance(row, dict):
