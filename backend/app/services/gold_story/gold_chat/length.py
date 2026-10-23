@@ -1521,6 +1521,8 @@ def _pad_gold_chat_to_min_chars(
     max_rounds: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """精修改短/删尾后垫字至 hard min（不限 near_miss 3 字）。"""
+    if story.get("gold_source_line_plan"):
+        return story, False
     import copy
 
     if _gold_chat_length_floor_met(story):
@@ -1628,6 +1630,8 @@ def _boost_short_with_mid_lines(
     O 只插死磕/资源溜走实义对，且必须在点题句之前。
     大缺口（>near_miss）时允许句数 <12 先插对补句数/字数。
     """
+    if story.get("gold_source_line_plan"):
+        return story, False
     import copy
 
     from app.services.gold_story.scene import (
@@ -1924,6 +1928,8 @@ def _expand_short_gold_chat_lines(
 
     每句最多一条、优先不重复；大缺口仍交 扩写/FIX，勿靠本地硬灌过关。
     """
+    if story.get("gold_source_line_plan"):
+        return story, False
     import copy
 
     from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
@@ -2125,6 +2131,8 @@ def _ensure_gold_chat_min_chars(
 
     剥旧灌尾 → 可读句内扩写 → 中段加句 → 粒子 near-miss（差 ≤60）。
     """
+    if story.get("gold_source_line_plan"):
+        return story, False
     # 逐拍填词模式只跳过**垫字/加句**手段（决策见下方 perbeat 早退）；
     # 剥垫痕（叠语气词、句尾粒子、扩写絮语）两条路都要跑，否则残留的垫字
     # 痕迹只能靠终检判语病。
@@ -2132,11 +2140,9 @@ def _ensure_gold_chat_min_chars(
     # 只有显式 0/off/false/no/legacy 才回退。原先这里只认显式 1，默认配置下
     # 逐拍稿仍会被垫字链路插「你别想让我认输」这类池子句（#149 实测：
     # 12 句 232 字被垫成 15 句，还带出「别挠我了行！」这种截断语病）。
-    import os as _os
+    from app.config import gold_chat_perbeat_enabled
 
-    _perbeat_default = str(
-        _os.environ.get("GOLD_CHAT_PERBEAT") or ""
-    ).strip().lower() not in {"0", "off", "false", "no", "legacy"}
+    _perbeat_default = gold_chat_perbeat_enabled()
     data, clutter_changed = patch_sanitize_expand_clutter(story)
     changed = clutter_changed
     if not _perbeat_default:
@@ -2315,6 +2321,10 @@ def _stabilize_local_length_candidate(
     target_chars: int = GOLD_CHAT_LOCAL_LENGTH_TARGET,
 ) -> tuple[dict[str, Any], bool]:
     """统一机械收口：句长压缩 + near-miss 补字；最终不得靠垫字痕迹过线。"""
+    if candidate.get("gold_source_line_plan"):
+        # 已锁定素材槽的稿子只能定点改写；模板补行会破坏来源索引。
+        # 保留原稿交原有长度/结构闸门，不能靠插入通用对白过线。
+        return dict(candidate), False
     data, shortened = _apply_deterministic_shorten(candidate)
     changed = shortened
 
@@ -2431,6 +2441,8 @@ def _gold_chat_insert_body_lines_for_min(
 
 def _gold_chat_force_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     """终稿仍差 min 时：句内扩写 → 粒子/可读垫满 → 中段插反应句（禁插求否对）。"""
+    if story.get("gold_source_line_plan"):
+        return story, False
     import copy
 
     from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN

@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-from app.config import Config
+from app.config import Config, get_settings
 from app.repositories import repo_gold_story
 from app.services.gold_story.gold_chat.patch import (
     apply_m5_h_local_patches,
@@ -450,6 +450,11 @@ CLOSING_PROMPT_MAX_CHARS = 28
 def _client():
     return llm_mgr._get_client()
 
+
+def _source_plan_model() -> str | None:
+    settings = get_settings()
+    return settings.deepseek_pro_model if settings.llm_provider in {"deepseek", "opencode_go"} else None
+
 def _is_truncation_error(msg: str) -> bool:
     err = str(msg or "")
     return "finish_reason=length" in err or "truncated" in err
@@ -457,17 +462,16 @@ def _is_truncation_error(msg: str) -> bool:
 # 整篇生成的墙钟截止点（monotonic）。convert 起草前设置：任何一次填词/重写
 # 调用前都先看还剩多少时间，不然 180s 预算只会在两次重掷之间检查，
 # 单稿能一路跑到 4 分钟（#138 实测）。
-_GOLD_CHAT_DEADLINE: float = 0.0
-
-
 def set_gold_chat_deadline(deadline: float) -> None:
-    global _GOLD_CHAT_DEADLINE
-    _GOLD_CHAT_DEADLINE = float(deadline or 0.0)
+    from app.services.llm.llm_mgr import llm_deadline
+
+    llm_deadline.set(float(deadline or 0.0))
 
 
 def _check_gold_chat_deadline(reserve: float = 0.0) -> None:
-    if _GOLD_CHAT_DEADLINE and time.monotonic() > _GOLD_CHAT_DEADLINE - reserve:
-        raise ValueError("gold_chat 时间预算已用尽")
+    from app.services.llm.llm_mgr import remaining_llm_time
+
+    remaining_llm_time(reserve=reserve)
 
 
 def _chat_json(
@@ -476,6 +480,9 @@ def _chat_json(
     *,
     temperature: float = 0.4,
     max_tokens: int | None = None,
+    thinking_enabled: bool = False,
+    model: str | None = None,
+    json_mode: bool = True,
 ) -> dict[str, Any]:
     _check_gold_chat_deadline(reserve=8.0)
     """gold_chat 专用：紧预算；length 立刻失败，勿走全局 JSON 重试再烧一轮。"""
@@ -491,22 +498,24 @@ def _chat_json(
     content, finish = _client()._chat(  # type: ignore[attr-defined]
         system,
         user,
-        thinking_enabled=False,
+        thinking_enabled=thinking_enabled,
         temperature=float(temperature),
         max_tokens=budget,
+        model=model,
+        json_mode=json_mode,
     )
     logger.debug(
         "[GOLD_CHAT] llm_chat done finish=%s out_chars=%s",
         finish,
         len(str(content or "")),
     )
-    if not str(content or "").strip():
-        raise ValueError("LLM returned empty response")
     if finish == "length":
         raise ValueError(
             "LLM output truncated (finish_reason=length)；"
             "对白 JSON 须短小，禁止超长/循环输出"
         )
+    if not str(content or "").strip():
+        raise ValueError("LLM returned empty response")
     raw = _loads_llm_json(content)
     if not isinstance(raw, dict):
         raise ValueError("LLM JSON must be object")
@@ -574,6 +583,16 @@ def _fix_chat_with_llm(
         mom_lines_max=max(0, int(mom_lines_max)),
         **_prompt_budget_kwargs(),
     )
+    if story.get("gold_source_line_plan"):
+        draft = _chat_json(_FIX_SYSTEM, user, temperature=0.55, model=_source_plan_model(),
+                           json_mode=False, max_tokens=4096)
+        rows = draft.get("dialogue")
+        original = story.get("dialogue") or []
+        if (not isinstance(rows, list) or len(rows) != len(original)
+                or any(not isinstance(r, dict) or r.get("speaker") != old.get("speaker")
+                       for r, old in zip(rows, original))):
+            raise ValueError("来源分句修稿不得改变行数或说话人")
+        return {**story, "dialogue": rows}
     return _chat_json(_FIX_SYSTEM, user, temperature=0.55)
 
 
@@ -1222,13 +1241,9 @@ def _perbeat_enabled() -> bool:
     仅保留 `GOLD_CHAT_PERBEAT=0/off/legacy` 作为故障时回退整篇扩写的应急开关，
     常规流程不需要设置。
     """
-    return str(os.getenv("GOLD_CHAT_PERBEAT") or "").strip().lower() not in {
-        "0",
-        "off",
-        "false",
-        "no",
-        "legacy",
-    }
+    from app.config import gold_chat_perbeat_enabled
+
+    return gold_chat_perbeat_enabled()
 
 
 def _perbeat_legacy() -> bool:
@@ -1477,9 +1492,6 @@ def _line_plan_skeleton(
             return ""
         return min(pool, key=lambda c: (c in parents, counts.get(c, 0)))
 
-    def next_owner(no: int) -> str:
-        return owners[no] if no < len(beats) else ""
-
     order = sorted(
         range(1, len(beats) + 1),
         key=lambda no: (
@@ -1640,7 +1652,8 @@ def _merge_line_plan_intents(
             **row,
             # 拍主行（from_beat）的 intent 由骨架直接取拍意图，模型不必再填；
             # 这样 plan 的调用量减半、也不会再把「气笑要求…」写成动作词。
-            "intent": intents.get(idx) or str(row.get("intent") or ""),
+            "intent": (str(row.get("intent") or "") if row.get("from_beat")
+                       else intents.get(idx) or str(row.get("intent") or "")),
             "addressee": "",
         }
         for idx, row in enumerate(rows, 1)
@@ -1726,6 +1739,9 @@ def _validate_line_plan(
     for no, beat in enumerate(beats, 1):
         rows = rows_by_beat.get(no) or []
         if not rows:
+            from app.services.gold_story.scene import is_n_filler_intent
+            if all(r.get("source_plan") for r in plan) and no != len(beats) and is_n_filler_intent(str(beat.get("intent") or "")):
+                continue
             errors.append(f"第{no}拍没有一句台词")
             continue
         beat_speaker = str(beat.get("speaker") or "").strip()
@@ -1814,6 +1830,188 @@ def _line_plan_settle_stage_intents(
     return plan
 
 
+def _source_plan_skeleton(
+    scene_contract: dict[str, Any], beat_chain: list[Any], seed: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """按角色与先后顺序对齐显式素材单元；真实事件映射不唯一时不猜。"""
+    from functools import lru_cache
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN, chat_line_cap, is_n_filler_intent
+    from app.services.gold_story.gold_chat.repair import GoldChatContractError
+
+    beats = [b for b in beat_chain if isinstance(b, dict)]
+    synthetic = [is_n_filler_intent(str(b.get("intent") or "")) for b in beats]
+
+    @lru_cache(None)
+    def align(bi: int, si: int) -> tuple[tuple[int, ...], ...]:
+        if bi == len(beats):
+            return ((),) if si == len(seed) else ()
+        owner = str(beats[bi].get("speaker") or "")
+        available = 0
+        while si + available < len(seed) and seed[si + available].get("speaker") == owner:
+            available += 1
+        found: dict[tuple[tuple[int, int], ...], tuple[int, ...]] = {}
+        for n in range(available, -1 if synthetic[bi] else 0, -1):
+            for suffix in align(bi + 1, si + n):
+                counts = (n, *suffix)
+                index = si
+                key: list[tuple[int, int]] = []
+                for offset, count in enumerate(counts):
+                    if not synthetic[bi + offset]:
+                        key.extend((unit, bi + offset) for unit in range(index, index + count))
+                    index += count
+                found.setdefault(tuple(key), counts)
+                if len(found) > 1:
+                    return tuple(found.values())
+        return tuple(found.values())
+
+    choices = align(0, 0)
+    if len(choices) != 1:
+        raise GoldChatContractError("perbeat: 素材到真实契约拍的角色/顺序映射缺失或不唯一，须重建契约")
+    kids = [k for k in _KID_NAMES if k in scene_contract.get("characters", [])]
+    plan: list[dict[str, Any]] = []
+    si = 0
+
+    def reaction(bid: int, speaker: str, intent: str = "接住上一句的具体内容作出当场反应") -> dict[str, Any]:
+        return {"beat": bid, "speaker": speaker, "intent": intent,
+                "role": "reaction", "source_seed_ids": [], "source_plan": True}
+
+    for bid, count in enumerate(choices[0], 1):
+        owner = str(beats[bid - 1].get("speaker") or "")
+        rows = []
+        for index in range(si, si + count):
+            rows.append({"beat": bid, "speaker": owner, "intent": seed[index]["intent"],
+                         "role": "content", "source_seed_ids": [index + 1],
+                         "source_plan": True, "from_beat": True})
+        if not rows and synthetic[bid - 1] and bid != len(beats):
+            continue
+        if not rows:
+            rows = [reaction(bid, owner, str(beats[bid - 1].get("intent") or ""))]
+        for row in rows:
+            if plan and plan[-1]["speaker"] == row["speaker"]:
+                other = next((k for k in kids if k != owner), "")
+                if not other:
+                    raise GoldChatContractError("perbeat: 素材单元之间没有合法的接话角色")
+                plan.append(reaction(int(plan[-1]["beat"]), other))
+            plan.append(row)
+        si += count
+    # 不增加任何事实单元；仅在不同说话人之间有第三位在场孩子时补一个接话位。
+    while len(plan) < CHAT_LINE_COUNT_MIN:
+        insertion = next(((i, kid) for i in range(len(plan) - 1, 0, -1) for kid in kids
+                          if kid not in {plan[i - 1]["speaker"], plan[i]["speaker"]}), None)
+        if insertion is None:
+            raise GoldChatContractError("perbeat: 完整素材与交替约束下仍无法排满12句")
+        i, kid = insertion
+        plan.insert(i, reaction(int(plan[i - 1]["beat"]), kid))
+    if len(plan) > chat_line_cap(str(scene_contract.get("story_type") or "")):
+        raise GoldChatContractError("perbeat: 素材分句后超过类型句数上限")
+    return plan
+
+
+def _validate_source_line_plan(
+    data: Any,
+    *,
+    scene_contract: dict[str, Any],
+    beat_chain: list[Any],
+    seed: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """校验模型声明的素材单元和句槽映射；内容是否忠实仍交全文终验。"""
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN, chat_line_cap, is_n_filler_intent
+
+    raw = data.get("lines") if isinstance(data, dict) else None
+    if not isinstance(raw, list) or not raw:
+        return [], ["缺少 lines"]
+    beats = [b for b in beat_chain if isinstance(b, dict)]
+    plan: list[dict[str, Any]] = []
+    errors: list[str] = []
+    used: list[int] = []
+    declared = data.get("beat_sources")
+    if not isinstance(declared, dict):
+        return [], ["缺少 beat_sources 素材分配表"]
+    for i, item in enumerate(raw, 1):
+        if not isinstance(item, dict):
+            return [], [f"第{i}行不是对象"]
+        bid = item.get("beat")
+        refs = item.get("source_seed_ids")
+        role = item.get("role")
+        speaker = str(item.get("speaker") or "")
+        if not isinstance(bid, int) or isinstance(bid, bool) or not 1 <= bid <= len(beats):
+            return [], [f"第{i}行拍号非法"]
+        if not isinstance(refs, list) or role not in {"content", "reaction"}:
+            return [], [f"第{i}行须声明 role 与 source_seed_ids"]
+        if role == "content":
+            if len(refs) != 1 or type(refs[0]) is not int or not 1 <= refs[0] <= len(seed):
+                return [], [f"第{i}行内容必须独占一个有效 seed 单元，不能合并多段回答"]
+            ref = refs[0]
+            if speaker != str(seed[ref - 1].get("speaker") or ""):
+                errors.append(f"第{i}行不得改变 seed{ref} 的事实说话人")
+            used.append(ref)
+        elif refs:
+            errors.append(f"第{i}行接话不得冒充素材单元")
+        plan.append({
+            "beat": bid, "speaker": speaker,
+            "intent": str(item.get("intent") or "").strip(),
+            "role": role, "source_seed_ids": refs,
+            "source_plan": True, "from_beat": role == "content",
+            "source_speech_act": str(seed[refs[0] - 1].get("speech_act") or "") if role == "content" else "",
+        })
+    if sorted(used) != list(range(1, len(seed) + 1)):
+        errors.append("每个 seed 必须且只能分配给一个内容句，不能丢失或复述素材")
+    content_order = [r["source_seed_ids"][0] for r in plan if r["role"] == "content"]
+    if content_order != sorted(content_order):
+        errors.append("素材先后顺序须与 seed 一致")
+    for bid, beat in enumerate(beats, 1):
+        expected = declared.get(str(bid))
+        actual = [ref for r in plan if r["beat"] == bid for ref in r["source_seed_ids"]]
+        if not isinstance(expected, list) or expected != actual:
+            errors.append(f"第{bid}拍 beat_sources 与内容句引用不一致")
+        # 旧流水线插入的态度模板不是源素材事件，不要求它凭空拥有一个 seed。
+        if not is_n_filler_intent(str(beat.get("intent") or "")) and not any(
+            r["beat"] == bid and r["role"] == "content"
+            and r["speaker"] == beat.get("speaker") for r in plan
+        ):
+            errors.append(f"第{bid}拍缺少拍主的内容句")
+    cap = chat_line_cap(str(scene_contract.get("story_type") or ""))
+    if not CHAT_LINE_COUNT_MIN <= len(plan) <= cap:
+        errors.append(f"句数须{CHAT_LINE_COUNT_MIN}–{cap}，当前{len(plan)}")
+    errors.extend(_validate_line_plan(plan, scene_contract=scene_contract,
+                                      beat_chain=beats, target_lines=len(plan)))
+    return plan, errors
+
+
+def _build_source_line_plan(
+    *, scene_contract: dict[str, Any], beat_chain: list[Any],
+    seed: list[dict[str, Any]], story_raw: str, temperature: float,
+) -> list[dict[str, Any]]:
+    """多素材单元不能被压成每拍一句；先声明完整映射，再按固定计划填词。"""
+    from app.services.gold_story.gold_chat.prompts import SOURCE_LINE_PLAN_SYSTEM, format_source_line_plan_user
+    from app.services.gold_story.gold_chat.repair import GoldChatContractError
+
+    skeleton = _source_plan_skeleton(scene_contract, beat_chain, seed)
+    declared = {str(b): [s for row in skeleton if row["beat"] == b for s in row["source_seed_ids"]]
+                for b in range(1, len(beat_chain) + 1)}
+    feedback = ""
+    for attempt in range(LINE_PLAN_ATTEMPTS):
+        data = _chat_json(
+            SOURCE_LINE_PLAN_SYSTEM,
+            format_source_line_plan_user(scene_contract=scene_contract, seed=seed,
+                                         story_raw=story_raw, rows=skeleton, feedback=feedback),
+            temperature=temperature, max_tokens=4096, json_mode=False,
+            model=_source_plan_model(),
+        )
+        rows = _merge_line_plan_intents(skeleton, data)
+        plan, errors = _validate_source_line_plan(
+            {"lines": rows, "beat_sources": declared},
+            scene_contract=scene_contract, beat_chain=beat_chain, seed=seed,
+        )
+        if not errors:
+            logger.info("[GOLD_CHAT] source line_plan ok attempt=%s lines=%s units=%s",
+                        attempt + 1, len(plan), len(seed))
+            return plan
+        feedback = "；".join(errors[:8])
+        logger.info("[GOLD_CHAT] source line_plan rejected: %s", feedback)
+    raise GoldChatContractError("perbeat: 素材分句计划不合格：" + feedback)
+
+
 def _build_line_plan(
     *,
     scene_contract: dict[str, Any],
@@ -1822,6 +2020,7 @@ def _build_line_plan(
     target_lines: int,
     temperature: float,
     no_material_speakers: set[str] | None = None,
+    seed: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     """确定性骨架 + 一次 intent 规划：结构不过关只重写 intent，不动骨架。"""
     from app.services.gold_story.gold_chat.prompts import (
@@ -1830,11 +2029,19 @@ def _build_line_plan(
     )
 
     beats = [b for b in beat_chain or [] if isinstance(b, dict)]
+    source_units = [s for s in seed or [] if isinstance(s, dict) and s.get("intent") and s.get("speaker")]
+    if len(source_units) > len(beats) and not any(b.get("required_semantic_points") for b in beats):
+        return _build_source_line_plan(
+            scene_contract=scene_contract, beat_chain=beats, seed=source_units,
+            story_raw=story_raw, temperature=temperature,
+        )
     capacity_errors = _line_plan_capacity(
         scene_contract, beats, target_lines=target_lines
     )
     if capacity_errors:
-        raise ValueError(
+        from app.services.gold_story.gold_chat.repair import GoldChatContractError
+
+        raise GoldChatContractError(
             "perbeat: line_plan 契约容量不足：" + "；".join(capacity_errors)
         )
     rows = _line_plan_skeleton(
@@ -1846,7 +2053,9 @@ def _build_line_plan(
     from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN as _LP_MIN
 
     if len(rows) < _LP_MIN:
-        raise ValueError(
+        from app.services.gold_story.gold_chat.repair import GoldChatContractError
+
+        raise GoldChatContractError(
             f"perbeat: line_plan 骨架只排出 {len(rows)} 句"
             f"（至少 {_LP_MIN} 句），契约拍不够用"
         )
@@ -1944,6 +2153,8 @@ def _line_plan_slots(
         # 可丢的插话槽（#138 第 4 拍实测）。
         is_owner = row.get("speaker") == owner
         main = is_owner and beat_no not in owner_seen
+        if row.get("source_plan"):
+            main = row.get("role") == "content"
         if is_owner:
             owner_seen.add(beat_no)
         slots.append(
@@ -1961,12 +2172,16 @@ def _line_plan_slots(
                     )
                 ),
                 "is_filler": not main,
+                "source_seed_ids": list(row.get("source_seed_ids") or []),
+                "planned_content": bool(row.get("source_plan") and main),
+                "planned_speech_act": str(row.get("source_speech_act") or ""),
                 "is_split": bool(row.get("split")),
                 # 有素材的槽照旧按内容槽判；源故事里没出声的角色（#144 的旁观
                 # 角色灿灿）标 False，机检走「零素材插话」的放宽口径。
-                "has_content": bool(
+                "has_content": main if row.get("source_plan") else bool(
                     _speaker and _speaker not in (no_material_speakers or set())
                 ),
+                "source_plan": bool(row.get("source_plan")),
                 "beat_intent": str(beat.get("intent") or "").strip(),
                 # 拆句拍的主句只说前半，拆句行只说后半；后文引用这半句时
                 # 必须按实际说话人称呼（妈妈问的是「谁夸的」，不是固定问昭昭）。
@@ -2105,6 +2320,9 @@ def _apply_n_word_slots(
     """
     if str(structure_type or "").strip().upper() != "N" or len(slots) < 4:
         return slots
+    if any(s.get("source_plan") for s in slots):
+        # N 的原有全文硬卡仍执行；来源单元不能因固定词位而改成另一件事。
+        return slots
     # 只管契约拍（非插话槽）：插话槽在填词阶段允许整句丢弃，词钉在它上面
     # 等于「丢一句 → 词没落地 → 整稿判废」。#138 实测：第 11 句（插话槽）
     # 被判「必须出现指定词」，一句不合直接废掉整稿。
@@ -2121,10 +2339,9 @@ def _apply_n_word_slots(
         return slots
     reqs: dict[int, str] = {}
     reqs[contract_idx[-1]] = "stun"
-    if len(parent_idx) >= 2:
-        reqs[parent_idx[1]] = "why"
-    elif parent_idx:
-        reqs[parent_idx[0]] = "why"
+    questioning = [i for i in parent_idx if i != contract_idx[-1]]
+    if questioning:
+        reqs[questioning[min(1, len(questioning) - 1)]] = "why"
     # 自洽槽：收束前**最后一个承担剧情**的孩子槽（跳过插话槽与停顿拍——
     # 愣住拍里塞「因为」会把静场写成解释，插话槽里塞「所以」是空转）
     pause_re = re.compile(r"愣|接不上|没落下|认栽|服了|不响|沉默")
@@ -2134,6 +2351,9 @@ def _apply_n_word_slots(
         if i < contract_idx[-1]
         and not pause_re.search(str(slots[i].get("intent") or ""))
     ]
+    if any(s.get("source_plan") for s in slots):
+        before_close = [i for i in before_close if re.search(
+            r"因为|所以|原因|理由|解释|自洽", str(slots[i].get("intent") or ""))]
     if before_close:
         reqs[before_close[-1]] = "reason"
     for i, key in reqs.items():
@@ -3698,6 +3918,16 @@ def _perbeat_check(
     prev_lines: list[tuple[str, str]],
 ) -> list[str]:
     """单句机检，返回未通过的条目（空列表=通过）。"""
+    if slot.get("source_plan"):
+        # 来源/角色/顺序由计划锁定。完整句、问答、事实归属、重复与新事实
+        # 必须由逐行 source_audit 全文终验，不能用词交集冒充语义判定。
+        minimum = 14 if slot.get("is_filler") else 8
+        checks = [
+            (f"须 {minimum}–24 字并以句末标点收尾", minimum <= len(line) <= 24 and bool(re.search(r"[。！？…!?]$", line))),
+            ("必须落地契约必现语义点", not _perbeat_missing_required_points(line, slot.get("_own_entry"))),
+            ("必须出现契约指定词", _perbeat_words_ok(line, _perbeat_required_word_groups(slot))),
+        ]
+        return [label for label, passed in checks if not passed]
     speaker = str(slot.get("speaker") or "")
     # 零素材插话槽（has_content=False）：旁观角色手上没有素材，却必须凑句数。
     # 这类槽不要求「给理由/独立新内容」，咬合也从「共享实词」放宽成「做旁观/
@@ -3730,16 +3960,21 @@ def _perbeat_check(
     # 上一句是问句时，回句必须咬住问句里的词（#138 实测：昭昭问「你确定要听？」，
     # 妈妈答「老虎一吼我确实会吼」，审读判问句悬空、答非所问）。
     question_ok = True
+    def question_terms(text: str) -> set[str]:
+        # 号码、英文名也是问答里的具体信息，不能在中文分词时丢掉。
+        return _perbeat_terms(text) | set(re.findall(r"[A-Za-z][A-Za-z0-9_-]*|\d+(?:\.\d+)?", text))
     if (
         prev_lines
         and not slot.get("_is_closing")
         and not zero_material_filler
+        # 来源由排槽阶段锁定；仍检查本句素材落地，问答语义由全文终审核对。
+        and not (slot.get("planned_content") and slot.get("source_seed_ids"))
         and _perbeat_is_question(prev_lines[-1][1])
     ):
         # intent 是「连声道歉」这类不可字面核对的言语行为时，答句本来就不
         # 必复述问句里的词（「对不起，是妈妈不对」就是正解），不拿咬词判它。
         question_ok = bool(
-            _perbeat_terms(line) & _perbeat_terms(prev_lines[-1][1])
+            question_terms(line) & question_terms(prev_lines[-1][1])
         ) or not _perbeat_intent_has_literal_anchor(str(slot.get("intent") or ""))
     allowed = slot.get("_allowed_actions")
     action_ok = True
@@ -3831,7 +4066,7 @@ def _perbeat_check(
     # 零素材插话槽的「松版咬合」：不共享实词也行，但必须当场对上一句表态/顶一句。
     filler_link_ok = not zero_material_filler or bool(
         _PERBEAT_FILLER_SOFT_LINK_RE.search(line)
-        or (prev_line and _perbeat_terms(line) & _perbeat_terms(prev_line))
+        or (prev_line and question_terms(line) & question_terms(prev_line))
     )
     # 「新物件」指全篇从未出现过的物件，而不是「上一句没提」。
     # 只比对上一句会把桌上那盘饺子、手里的筷子都判成新物件，
@@ -3961,10 +4196,12 @@ def _perbeat_check(
         str(slot.get("intent") or slot.get("beat_intent") or ""),
         speech_act=_speech_act,
     )
+    own_entry = _perbeat_slot_own_entry(slot)
+    rebuttal_context = str(own_entry.get("intent") or "") if isinstance(own_entry, dict) else ""
     rebuttal_ok = _perbeat_rebuttal_ok(
         line,
         "".join(text for _spk, text in prev_lines),
-        "".join(str(entry.get("intent") or "") for _no, entry in (slot.get("_beat_entries") or [])),
+        rebuttal_context,
     )
     echo_question = (
         bool(prev_is_q)
@@ -3973,9 +4210,19 @@ def _perbeat_check(
         and bool(re.search(r"为啥|为什么|凭什么|怎么又|怎么还|哪来的|哪儿来的", line))
         and _intent_line_overlap(prev_lines[-1][1], line, need=2)
     )
+    if (_speech_act in {"echo", "retort"} and prev_is_q and prev_lines
+            and _perbeat_is_question(line)
+            and question_terms(line) & question_terms(prev_lines[-1][1])):
+        echo_question = True
     answers_prev = (
         (not prev_is_q) or (not _perbeat_is_question(line)) or echo_question
     )
+    answer_prefix = re.split(r"[，,。；;]", line, maxsplit=1)[0]
+    if (prev_is_q and len(answer_prefix) >= 4 and answer_prefix != line
+            and not _perbeat_is_question(answer_prefix)
+            and not _PERBEAT_ASK_WORD_RE.search(answer_prefix)
+            and question_terms(answer_prefix) & question_terms(prev)):
+        answers_prev = True
     # 收束拍标了「赢了但没消气」：末句不能写成完全满意/收下道歉，
     # 那是把反差收平，笑点余味全丢。
     closing_ok = not (
@@ -4423,15 +4670,17 @@ def _perbeat_fill_slots(
     """
     from app.services.gold_story.gold_chat.prompts import (
         PERBEAT_BATCH_SYSTEM,
+        SOURCE_BATCH_SYSTEM,
         format_perbeat_batch_user,
+        format_source_revision_user,
     )
 
     allowed_actions = _perbeat_allowed_actions(scene_contract, source_text)
-    last_beat = max((int(s.get("beat") or 0) for s in slots), default=0)
+    last_beat = max((int(s.get("beat_id") or 0) for s in slots), default=0)
     for slot in slots:
         slot["_allowed_actions"] = allowed_actions
         # 收束拍的台词是收尾，不受「回句必须咬住上一句问句」约束
-        slot["_is_closing"] = int(slot.get("beat") or 0) == last_beat
+        slot["_is_closing"] = int(slot.get("beat_id") or 0) == last_beat
 
     filled: dict[int, str] = {}
     lines: list[tuple[str, str]] = []
@@ -4480,6 +4729,12 @@ def _perbeat_fill_slots(
                 _slot["_own_entry"] = next(
                     (e for no, e in _entries if no == _bid), None
                 )
+                if _slot.get("planned_content") and isinstance(_slot["_own_entry"], dict):
+                    _slot["_own_entry"] = {
+                        **_slot["_own_entry"],
+                        "speaker": _slot["speaker"], "intent": _slot["intent"],
+                        "speech_act": _slot.get("planned_speech_act") or _slot["_own_entry"].get("speech_act"),
+                    }
     prev_fail_sig: tuple[int, ...] | None = None
     for round_i in range(3):
         user = format_perbeat_batch_user(
@@ -4488,14 +4743,25 @@ def _perbeat_fill_slots(
             slots=slots,
             feedback=feedback,
         )
+        if any(s.get("source_plan") for s in slots):
+            user += ("\n【只读原始素材】人称指源文内部所指，不自动指本次在场者；"
+                     "引用过去对话须让听者辨明当时的指称，不能添加新情节。\n"
+                     + json.dumps(source_text, ensure_ascii=False))
+            if round_i:
+                user = format_source_revision_user(
+                    scene_contract=scene_contract, slots=slots, filled=filled,
+                    failures=failures, source_text=source_text,
+                )
         data: Any = {}
         for _net in range(4):
             try:
                 data = _chat_json(
-                    PERBEAT_BATCH_SYSTEM,
+                    SOURCE_BATCH_SYSTEM if any(s.get("source_plan") for s in slots) else PERBEAT_BATCH_SYSTEM,
                     user,
                     temperature=temperature + 0.1 * round_i,
-                    max_tokens=1600,
+                    max_tokens=4096 if any(s.get("source_plan") for s in slots) else 1600,
+                    json_mode=not any(s.get("source_plan") for s in slots),
+                    model=_source_plan_model() if any(s.get("source_plan") for s in slots) else None,
                 )
                 break
             except ValueError:
@@ -4508,7 +4774,9 @@ def _perbeat_fill_slots(
                     _net + 1,
                     str(exc)[:120],
                 )
-                time.sleep(3 * (_net + 1))
+                delay = 3 * (_net + 1)
+                _check_gold_chat_deadline(reserve=float(delay))
+                time.sleep(delay)
         got = _perbeat_parse_batch(data)
         if not got:
             feedback = "\n".join(
@@ -4530,13 +4798,23 @@ def _perbeat_fill_slots(
                 if 1 <= idx <= len(slots) and idx not in keep_idx:
                     filled[idx] = line
         lines, failures = _perbeat_validate_fill(slots, filled)
+        if any(s.get("source_plan") for s in slots):
+            from app.services.daily_story.story_types.n.validate import append_n_body_errors
+            type_errors: list[str] = []
+            append_n_body_errors({"story_type": scene_contract.get("story_type"),
+                                  "gold_n_expression_contract": scene_contract.get("gold_n_expression_contract"),
+                                  "gold_source_line_plan": scene_contract.get("gold_source_line_plan"),
+                                  "dialogue": [{"speaker": s["speaker"], "line": filled.get(i, "")}
+                                               for i, s in enumerate(slots, 1)]}, type_errors)
+            if type_errors:
+                failures.append((0, "全文", "；".join(type_errors) + "；在合适位置自然补全，保留原素材，不固定某一行携词"))
         if not failures:
             return lines, []
-        keep_idx = {i for i in range(1, len(slots) + 1)} - {
+        keep_idx = set() if any(i == 0 for i, _ln, _why in failures) else {i for i in range(1, len(slots) + 1)} - {
             i for i, _ln, _why in failures
         }
         local_feedback = "\n".join(
-            f"- 第{i}句「{ln}」未通过：{why}" for i, ln, why in failures[:8]
+            f"- {'全文' if i == 0 else f'第{i}句'}「{ln}」未通过：{why}" for i, ln, why in failures[:8]
         )
         feedback = "\n".join(x for x in (base_feedback, local_feedback) if x)
         logger.info(
@@ -4581,13 +4859,18 @@ def _perbeat_fill_slots(
         if round_i == 2:
             break
         filled = dict(filled)
-        for i, _ln, _why in failures:
-            filled.pop(i, None)
+        if not all(s.get("source_plan") for s in slots):
+            for i, _ln, _why in failures:
+                filled.pop(i, None)
     if not filled:
         # 三轮都没拿到可解析的 {"lines": [...]}：这里必须显式失败。早先直接
         # 返回 ([], [])，日志只剩「assembled lines=0 chars=0」，下游 validate
         # 报的是「句数/字数不足」，真因（模型没给 JSON）被完全掩盖。
         raise ValueError("perbeat: batch fill returned no parsable lines")
+    if all(s.get("source_plan") for s in slots):
+        # 来源分句计划不可删槽、移动或用通用模板改写；保留原候选与具体错误。
+        return [(str(s.get("speaker") or ""), str(filled.get(i) or ""))
+                for i, s in enumerate(slots, 1)], failures
     # 非言语收束拍（契约标 beat_type=nonverbal 的静场/嘟囔拍）不交给模型自由
     # 命题：它写出来的是「你道歉我听见了，可我心里这口气还没顺过来」这种带
     # 前提的清晰表态，终检会判缺前提/接不上（#144 run25 第 12 句实测）。这类拍
@@ -4700,26 +4983,36 @@ def _perbeat_validate_fill(
     lines: list[tuple[str, str]] = []
     line_idx: list[int] = []
     failures: list[tuple[int, str, str]] = []
+    context_lines: list[tuple[str, str]] = []
     trigger_speaker = ""
     for idx, slot in enumerate(slots, 1):
         line = str(filled.get(idx) or "").strip()
         if not line:
             failures.append((idx, "（空）", "没有给出这一句"))
+            context_lines.append((str(slot.get("speaker") or ""), ""))
             continue
-        line = _perbeat_strip_stage_direction(line)
-        if slot.get("is_filler"):
-            line = _perbeat_repair_repeated_filler(slot, line, lines)
+        if not slot.get("source_plan"):
+            line = _perbeat_strip_stage_direction(line)
+        if slot.get("is_filler") and not slot.get("source_plan"):
+            line = _perbeat_repair_repeated_filler(slot, line, context_lines)
         # 先截到 24 字再检：模型多写两三个字（「…所以你还是当老虎吧。」25 字）
         # 不该判废——截断在逗号处就是一句合法台词，重写反而更远离原意。
         # （#138 实测：run 里只差 2 条「须 14–24 字」，整条 draft 就此重掷。）
-        if len(line) > 24:
+        if len(line) > 24 and not slot.get("source_plan"):
             clipped = _perbeat_clip(line, limit=24)
-            if len(clipped) >= 14:
+            required_words = slot.get("must_words") or []
+            keeps_words = (not any(w in line for w in required_words)
+                           or any(w in clipped for w in required_words))
+            before_missing = _perbeat_missing_required_points(line, slot.get("_own_entry"))
+            after_missing = _perbeat_missing_required_points(clipped, slot.get("_own_entry"))
+            if len(clipped) >= 14 and keeps_words and set(after_missing) <= set(before_missing):
                 line = clipped
         # 装稿阶段直接取 filled；清理/截短后的结果必须写回，否则验收过了、
         # 最终台词仍然带着原始舞台提示或超长尾巴（#138 实测）。
         filled[idx] = line
-        why = _perbeat_check(slot, line, lines)
+        why = _perbeat_check(slot, line, context_lines)
+        # 质检不能先删坏句再把后一句接到更早的问题上；整篇候选按原槽序验。
+        context_lines.append((str(slot.get("speaker") or ""), line))
         if why:
             failures.append((idx, line, "、".join(why)))
             continue
@@ -4779,7 +5072,7 @@ def _perbeat_validate_fill(
         total = sum(len(ln) for _sp, ln in lines)
         # 留 12 字余量：finalize 的类型补丁（如 I 的 strip_mid_pad）会再删
         # 语气词，卡在下限整好 216 的稿子会被删到 208（#144 run14 实测）。
-        target = floor + 12
+        target = floor if all(s.get("source_plan") for s in slots) else floor + 12
         if total < target:
             need = target - total
             for i in sorted(range(len(lines)), key=lambda i: len(lines[i][1])):
@@ -4909,6 +5202,7 @@ def _generate_perbeat_candidate(
         (row or {}).get("story_raw") or payload.get("story_raw") or ""
     )
     slots: list[dict[str, Any]] = []
+    plan: list[dict[str, Any]] = []
     if not (_perbeat_legacy() or not has_beats):
         # 哪些角色「源素材里根本没出声」（#144 的旁观角色灿灿）：这些角色的补位
         # 行没有内容可依，规划与机检都走「零素材插话」的口径（当场短反应、扣住
@@ -4934,9 +5228,15 @@ def _generate_perbeat_candidate(
                 target_lines=target,
                 temperature=temperature,
                 no_material_speakers=no_material_speakers,
+                seed=seed,
             )
         except ValueError as exc:
             # 骨架排不出 / intent 两轮不合格：退回旧槽，但要让日志能看见。
+            from app.services.gold_story.gold_chat.repair import GoldChatContractError
+            from app.services.llm.llm_mgr import LLMTimeBudgetExceeded
+
+            if isinstance(exc, (GoldChatContractError, LLMTimeBudgetExceeded)):
+                raise
             logger.warning("[GOLD_CHAT] line_plan 未采用，回退旧槽: %s", exc)
         else:
             slots = _perbeat_apply_intent_cover(
@@ -4953,14 +5253,31 @@ def _generate_perbeat_candidate(
         slots = _legacy_slots()
     if not slots:
         raise ValueError("perbeat: empty skeleton")
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.gold_story.gold_chat.repair import GoldChatContractError, GoldChatFillError
+
+    if has_beats and len(slots) < CHAT_LINE_COUNT_MIN:
+        raise GoldChatContractError(
+            f"perbeat: 契约只能排出 {len(slots)} 句，至少需要 {CHAT_LINE_COUNT_MIN} 句"
+        )
     # 契约拍声明的必现语义点挂到槽上：批提示词里要写出来，否则模型不知道
     # 哪些词不能砍（#144 run26 实测：beat5 每轮都砍掉句尾的「疼妈妈」）。
     slots = _apply_required_semantic_points(slots, beat_chain)
     punchline = str(scene_contract.get("punchline") or "").strip()
     retry_feedback = format_retry_missing_events_block(row or {})
+    source_plan = [
+        {"line": i, "role": r["role"], "beat": r["beat"], "speaker": r["speaker"],
+         "intent": r["intent"], "source_seed_ids": r["source_seed_ids"],
+         "speech_act": r.get("source_speech_act") or ""}
+        for i, r in enumerate(plan, 1) if r.get("source_plan")
+    ]
+    from app.services.daily_story.story_types.n.validate import source_rhetorical_contract
+    n_expression = source_rhetorical_contract(source_plan) if structure_type == "N" else None
+    fill_contract = {**scene_contract, "gold_source_line_plan": source_plan,
+                     "gold_n_expression_contract": n_expression}
     lines, failures = _perbeat_fill_slots(
         slots,
-        scene_contract=scene_contract,
+        scene_contract=fill_contract,
         punchline=punchline,
         temperature=temperature,
         retry_feedback=retry_feedback,
@@ -4969,8 +5286,13 @@ def _generate_perbeat_candidate(
     if failures:
         # 契约拍没填出合格句：整条 draft 重掷（外层 draft retry），
         # 交上去只会让后文变成「引用无据」。
-        detail = "；".join(f"第{i}句「{ln}」{why}" for i, ln, why in failures[:3])
-        raise ValueError(f"perbeat: {len(failures)} line(s) invalid; {detail}")
+        detail = "；".join(f"{'全文' if i == 0 else f'第{i}句'}「{ln}」{why}" for i, ln, why in failures[:3])
+        raise GoldChatFillError(
+            f"perbeat: {len(failures)} line(s) invalid; {detail}",
+            {"story_type": structure_type,
+             "dialogue": [{"speaker": sp, "line": ln} for sp, ln in lines],
+             "fill_failures": failures},
+        )
     # 单句上限是硬卡（24 字）：生成端已按 14–24 判过，但返修轮拼进来的句子
     # 仍可能超（#138 实测：`单句过长(max=26>24)` 让整轮修稿预算白烧）。
     lines = [
@@ -4983,12 +5305,17 @@ def _generate_perbeat_candidate(
     from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN as _CHAT_MIN
 
     if len(slots) >= _CHAT_MIN and len(lines) < _CHAT_MIN:
-        # 逐拍填词按槽质检，不合格的槽会被丢掉；某次抽到丢句多就只剩 8–9 句。
-        # 以前这种半成品仍被当候选交下去，终检再判「对白句数须≥12，当前8」，
-        # 白烧最后那轮修稿预算（#138 实测 12:21 那条 failure）。缺口大到本地
-        # 补位（软插话保留到 12 句）也救不回来时，按「短稿」抛错，让候选循环
-        # 直接换一稿重抽。
-        raise ValueError(f"对白句数须≥{_CHAT_MIN}，当前{len(lines)}")
+        # 槽级检查已结束，仍排不满正文时必须把结构缺口交给契约恢复。
+        # 继续对同一骨架重抽，会反复在重排时丢句，耗完预算也无法终验。
+        error = GoldChatContractError(
+            f"perbeat: 所有句槽填词已通过，但按拍序和说话人重排后仅{len(lines)}句"
+            f"（至少{_CHAT_MIN}句）；须重建可满足交替约束的契约"
+        )
+        error.candidate = {
+            "story_type": structure_type,
+            "dialogue": [{"speaker": sp, "line": ln} for sp, ln in lines],
+        }
+        raise error
 
     data = {
         "scene_title": str((row or {}).get("title") or ""),
@@ -5006,6 +5333,8 @@ def _generate_perbeat_candidate(
         or str(scene_contract.get("closing_intent") or "").strip()
         or str(scene_contract.get("conflict") or ""),
         "gold_beat_chain": beat_chain,
+        "gold_source_line_plan": source_plan,
+        "gold_n_expression_contract": n_expression,
         # 源故事原文带上：终检判「语病」时要用它区分「作者原句」与「模型硬编」。
         "source_raw": story_raw,
     }
@@ -5992,7 +6321,9 @@ def gold_story_to_gold_chat(
     expand_temperature = 0.4
     chat: dict[str, Any] = {}
     short_regen_count = 0
-    for _regen in range(EXPAND_REGENERATE_MAX):
+    # 逐拍已有槽级返修；整稿重试只归 convert 管，避免 3×5×3 的嵌套重抽。
+    regen_limit = 1 if _perbeat_enabled() else EXPAND_REGENERATE_MAX
+    for _regen in range(regen_limit):
         logger.debug(
             "[GOLD_CHAT] expand regen=%s/%s temp=%.2f short_regen=%s feedback=%s",
             _regen + 1,
@@ -6105,6 +6436,10 @@ def gold_story_to_gold_chat(
                         )
                     )
             except ValueError as exc:
+                from app.services.llm.llm_mgr import LLMTimeBudgetExceeded
+
+                if _perbeat_enabled() or isinstance(exc, LLMTimeBudgetExceeded):
+                    raise
                 last_err = str(exc)
                 logger.debug(
                     "[GOLD_CHAT] expand candidate fail: %s",

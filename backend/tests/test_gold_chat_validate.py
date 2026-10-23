@@ -2128,8 +2128,11 @@ def test_parent_budget_parity_between_validator_and_trimmer():
     assert dad_after >= 2, "裁句层把爸爸砍到 1 句，与校验层口径不一致"
 
 
-def test_n_viewer_trim_and_ask_patch_restore_contract_roles():
+def test_n_viewer_trim_and_ask_patch_restore_contract_roles(monkeypatch):
     """N 本地补丁：旁观手足的代问被删，家长关键追问拍用 seed 补回。"""
+    # 此用例验证整篇扩写的补丁；逐拍模式会有意跳过这些机械改稿。
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "0")
+
     from app.services.gold_story.gold_chat.patch import (
         apply_n_ask_beat_local_patch,
         apply_n_viewer_trim_patch,
@@ -2266,8 +2269,11 @@ def test_parent_preachy_gate_allows_origin_question():
     assert not [e for e in errors if "像说教" in e], errors
 
 
-def test_n_viewer_trim_drops_out_of_cast_kid():
+def test_n_viewer_trim_drops_out_of_cast_kid(monkeypatch):
     """两人手契约里没有的孩子被模型写回时整段删除。"""
+    # 此用例验证整篇扩写的补丁；逐拍模式会有意跳过这些机械改稿。
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "0")
+
     from app.services.gold_story.gold_chat.patch import apply_n_viewer_trim_patch
     from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
 
@@ -2316,8 +2322,11 @@ def test_n_viewer_trim_drops_out_of_cast_kid():
     assert not [r for r in out2["dialogue"] if r["speaker"] == "灿灿"]
 
 
-def test_n_ask_patch_never_overflows_parent_budget():
+def test_n_ask_patch_never_overflows_parent_budget(monkeypatch):
     """N 补追问拍不得让家长句数超契约；超了要收掉中间填充句。"""
+    # 此用例验证整篇扩写的补丁；逐拍模式会有意跳过这些机械改稿。
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "0")
+
     from app.services.gold_story.gold_chat.patch import (
         apply_n_contract_local_patches,
     )
@@ -2350,8 +2359,11 @@ def test_n_ask_patch_never_overflows_parent_budget():
     ), "追问拍须由家长落地"
 
 
-def test_n_terminal_adjacency_repair_splits_reordered_siblings():
+def test_n_terminal_adjacency_repair_splits_reordered_siblings(monkeypatch):
     """seed 重建/补拍之后又排到一起的同人连说，必须由终态兜底拆开（#138）。"""
+    # 此用例验证整篇扩写的补丁；逐拍模式会有意跳过这些机械改稿。
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "0")
+
     from app.services.gold_story.gold_chat.patch import (
         repair_sibling_adjacency_terminal,
     )

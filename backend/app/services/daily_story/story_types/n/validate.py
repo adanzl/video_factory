@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from app.services.daily_story.story_types import parse_story_type_code
 
@@ -21,6 +22,55 @@ RE_WHY = re.compile(
     r"为什么|为啥|怎么想|怎么会|哪有|什么意思|啥意思|谁教|哪来|哪儿来|凭什么"
 )
 RE_SOLEMN_REASON = re.compile(r"因为|所以|这样就能|等到|长成|就能|有籽")
+
+
+def source_rhetorical_contract(plan: Any) -> dict[str, Any] | None:
+    """H3b 已声明 echo/retort 的来源单元可声明反问形态；不从成稿猜。"""
+    if not isinstance(plan, list) or not plan:
+        return None
+    content = [r for r in plan if isinstance(r, dict) and r.get("role") == "content"]
+    if len(content) < 4:
+        return None
+    opening, closing = content[0], content[-1]
+    if not re.search(r"[？?]", str(opening.get("intent") or "")):
+        return None
+    for previous, reason in zip(content, content[1:]):
+        intent = str(reason.get("intent") or "")
+        if (reason.get("speech_act") not in {"echo", "retort"}
+                or reason.get("speaker") == opening.get("speaker")
+                or previous.get("speaker") == reason.get("speaker")
+                or not re.search(r"[？?]", intent)
+                or not re.search(r"[？?]", str(previous.get("intent") or ""))
+                or previous is opening):
+            continue
+        # 形式只认来源的言语行为与问句，具体反问措辞不进词表。
+        # 语义是否自洽仍须逐项终审，不能由问号证明。
+        return {"form": "rhetorical", "challenge_line": opening["line"],
+                "followup_line": previous["line"], "reason_line": reason["line"],
+                "closing_line": closing["line"]}
+    return None
+
+
+def n_structure_hits(lines: list[str], story: dict | None = None) -> tuple[bool, bool, bool]:
+    """正文硬卡与评分共用：默认显式因果，来源反问须有对应声明与标记。"""
+    body = "".join(lines)
+    hits = (bool(RE_CHALLENGE.search(body)), bool(RE_WHY.search(body)), bool(RE_SOLEMN_REASON.search(body)))
+    if not isinstance(story, dict):
+        return hits
+    declared = story.get("gold_n_expression_contract")
+    if not declared:
+        return hits
+    expected = source_rhetorical_contract(story.get("gold_source_line_plan"))
+    if not expected or declared != expected:
+        return False, False, False
+    indexes = [expected[k] for k in ("challenge_line", "followup_line", "reason_line", "closing_line")]
+    if any(type(i) is not int or not 1 <= i <= len(lines) for i in indexes):
+        return False, False, False
+    if indexes != sorted(set(indexes)):
+        return False, False, False
+    challenge, followup, reason = [lines[i - 1] for i in indexes[:3]]
+    return (bool(re.search(r"[？?]", challenge)), bool(re.search(r"[？?]", followup)),
+            bool(re.search(r"[？?]", reason)))
 RE_STUN_CLOSE = re.compile(
     r"那……|那\.\.\.|行吧|服了|说不出|无语|愣住|哭笑|"
     r"接不住|被噎|算了|放弃|"
@@ -96,11 +146,12 @@ def append_n_body_errors(story: dict, errors: list[str]) -> None:
 
     body = "".join(lines)
     tail5 = "".join(lines[-5:])
-    if not RE_CHALLENGE.search(body):
+    challenge, followup, reason = n_structure_hits(lines, story)
+    if not challenge:
         errors.append("N类：正文须有设问/考验（如果/还是/喜欢谁等）")
-    if not RE_WHY.search(body):
+    if not followup:
         errors.append("N类：正文须有追问（为什么/为啥等）")
-    if not RE_SOLEMN_REASON.search(body):
+    if not reason:
         errors.append("N类：须有一本正经自洽（因为/所以/就能等）")
     if not stun_close_hit(lines):
         errors.append("N类：收束须愣住/接不住（行吧/服了/那……等，落在末四句）")

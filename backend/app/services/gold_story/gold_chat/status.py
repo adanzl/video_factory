@@ -76,6 +76,11 @@ def gold_chat_converting_from_payload(
     """payload 是否表示这条金故事正在转对话。过期标记视为已结束。"""
     if not isinstance(payload, dict):
         return False
+    task = payload.get("gold_chat_task")
+    if isinstance(task, dict) and task.get("status") in {"queued", "running"}:
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.timestamp() < float(task.get("expires_at") or 0):
+            return True
     if str(payload.get("gold_chat_convert_status") or "").strip() != "converting":
         return False
     started_raw = str(payload.get("gold_chat_convert_started_at") or "").strip()
@@ -99,6 +104,8 @@ def list_gold_chat_converting() -> dict[str, Any]:
     rows = repo_gold_story.list_stories_with_payload_marker(
         marker='"gold_chat_convert_status": "converting"',
     )
+    tasks = repo_gold_story.list_stories_with_payload_marker(marker='"gold_chat_task"')
+    rows = list({row["id"]: row for row in [*rows, *tasks]}.values())
     ids: list[int] = []
     source_ids: list[str] = []
     for row in rows:

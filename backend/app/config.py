@@ -23,6 +23,13 @@ def _opt(key: str) -> str | None:
     return os.getenv(key) or None
 
 
+def gold_chat_perbeat_enabled() -> bool:
+    """生成、补丁和篇幅处理共用同一模式，默认启用逐拍。"""
+    return str(os.getenv("GOLD_CHAT_PERBEAT") or "").strip().lower() not in {
+        "0", "off", "false", "no", "legacy",
+    }
+
+
 def _first(*keys: str, default: str = "") -> str:
     for key in keys:
         val = os.getenv(key)

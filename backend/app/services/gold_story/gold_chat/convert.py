@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import time
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -266,6 +267,10 @@ def _is_missing_beat_exhausted(exc: Exception) -> bool:
     )
     from app.services.gold_story.gold_chat.repair import GoldChatRepairExhausted
 
+    issues = getattr(exc, "issues", None)
+    if (isinstance(issues, list) and issues
+            and all(isinstance(it, dict) and it.get("source_audit_failed") for it in issues)):
+        return False
     if _missing_beat_intents_from(exc):
         return True
     if isinstance(exc, GoldChatRepairExhausted) and _missing_beat_intents_from(
@@ -1172,6 +1177,9 @@ def _refine_after_normalize(
     repair_budget: Any | None = None,
 ) -> dict[str, Any]:
     """normalize 垫字后若仍有非结构性对齐 issue，走一轮精修。"""
+    if chat.get("gold_source_line_plan"):
+        # 全文语义终审负责报出可改行；自由 align 不得重写只读素材计划。
+        return chat
     payload = cast(dict[str, Any], row.get("payload") or {})
     scene_contract = payload.get("scene_contract") or {}
     if not isinstance(scene_contract, dict):
@@ -1357,6 +1365,10 @@ def apply_gold_chat_normalizations(
     if retrospective_changed:
         chat["setting"] = retrospective_setting
         notes.append("setting 回忆话题去物化")
+    if chat.get("gold_source_line_plan"):
+        # 来源计划的内容/顺序已锁定，只归一化场景元数据。
+        # 全部正文硬卡、评分和逐行语义终审仍在 finalize 执行。
+        return chat, notes
     if st:
         # M2+C 已有专用 patch 链；勿再走 daily_story 的连说改 speaker / 整件肉 filler
         if not (st == "C" and mech.upper() == "M2"):
@@ -1750,6 +1762,19 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         "structure_confidence": float(payload.get("structure_confidence") or 0.8),
     }
     source_type = str(payload.get("source_type") or "field")
+    rebuild_reason = str(row.get("_gold_chat_rebuild_contract") or "").strip()
+    if rebuild_reason:
+        h3["generation_constraints"] = {
+            "previous_plan_error": rebuild_reason[:1200],
+            "previous_contract": deepcopy(payload.get("scene_contract")),
+            "requirements": (
+                "旧契约无法排出合法的12句对白。请根据原稿重新拆分问答节点，"
+                "每句8–24字，避免把多个独立问题与回答挤入同一拍。"
+                "保留原稿事实、事实归属、关键包袱、顺序与收束；遵守家长额度。"
+                "两孩交替须有原稿内容支撑，不得用空泛附和凑句数，"
+                "不得把当事人的经历交给旁观者用第一人称认领。"
+            ),
+        }
     # 角色分工线索用站外原视频标题（payload 优先），其次库内标题
     source_title = str(
         payload.get("bili_title")
@@ -1764,7 +1789,8 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
     # 时好时坏（#87 实测：连续 30+ 轮里契约每次都不一样）。
     # 只有契约缺失/校验不过时才重建。
     existing_contract = payload.get("scene_contract")
-    if isinstance(existing_contract, dict) and existing_contract.get("beat_chain"):
+    if (isinstance(existing_contract, dict) and existing_contract.get("beat_chain")
+            and not row.get("_gold_chat_rebuild_contract")):
         from app.services.gold_story.scene import (
             enforce_two_kid_cast,
             ensure_n_two_kid_alternation,
@@ -1863,7 +1889,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
                 from app.services.gold_story.scene import seed_from_beat_chain
 
                 out["payload"]["dialogue_seed"] = seed_from_beat_chain(
-                    existing_contract.get("beat_chain") or []
+                    (existing_contract or {}).get("beat_chain") or []
                 )
             return out
     try:
@@ -1874,6 +1900,8 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             video_title=source_title,
         )
     except Exception as exc:
+        if row.get("_gold_chat_rebuild_contract"):
+            raise
         logger.warning(
             "[GOLD_CHAT] H3a rebuild failed id=%s: %s; keep old contract",
             row.get("id"),
@@ -1933,6 +1961,8 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             row.get("id"),
             "；".join(premise_notes[:3]),
         )
+    if not isinstance(h3a, dict):
+        raise ValueError("H3a 未返回有效场景契约")
     remapped_core = str(h3a.get("conflict") or "").strip()
     h3a, remapped_core, _score_synced = sync_contract_exam_scores(
         h3a,
@@ -1996,7 +2026,7 @@ def _revise_line_indices(exc: BaseException, line_count: int) -> list[int]:
             num = int(part)
             if 1 <= num <= line_count and num not in nums:
                 nums.append(num)
-    return nums[:_REVISE_MAX_LINES]
+    return nums if len(nums) <= _REVISE_MAX_LINES else []
 
 
 def _try_revise_draft(
@@ -2029,16 +2059,28 @@ def _try_revise_draft(
     indices = _revise_line_indices(exc, len(dialogue))
     if not indices:
         return None
-    data = _chat_json(
-        REVISE_SYSTEM,
-        format_revise_user(
+    user = format_revise_user(
             dialogue=dialogue,
             issue_text=str(exc)[:1200],
             indices=indices,
             feedback=feedback,
-        ),
+        )
+    source_plan = chat.get("gold_source_line_plan")
+    options: dict[str, Any] = {}
+    if source_plan:
+        from app.services.gold_story.gold_chat.expand import _source_plan_model
+
+        user += ("\n【只读来源分句计划】每行保留自己的素材含义，接话可以重新措辞，不能补新事实。\n"
+                 + json.dumps(source_plan, ensure_ascii=False)
+                 + "\n【只读原始素材】\n" + str(chat.get("source_raw") or "")
+                 + "\n【类型表达契约】" + json.dumps(chat.get("gold_n_expression_contract"), ensure_ascii=False))
+        options = {"model": _source_plan_model(), "json_mode": False}
+    data = _chat_json(
+        REVISE_SYSTEM,
+        user,
         temperature=temperature,
         max_tokens=900,
+        **options,
     )
     raw = data.get("lines") if isinstance(data, dict) else None
     if not isinstance(raw, list):
@@ -2062,9 +2104,6 @@ def _try_revise_draft(
         if not text or text == dialogue[idx - 1]["line"]:
             continue
         dialogue[idx - 1]["line"] = text
-        speaker = str(item.get("speaker") or "").strip()
-        if speaker:
-            dialogue[idx - 1]["speaker"] = speaker
         changed = True
     if not changed:
         return None
@@ -2080,11 +2119,13 @@ def convert_gold_chat(
 ) -> dict[str, Any]:
     """转换 + 落盘，返回摘要，并记录实际执行阶段耗时。
 
-    会先重跑 H3a/H3b 刷新 scene_contract（重转的切入点），再扩写对白。
+    先校验并复用合格契约，缺失或不合格时重建 H3a/H3b，再扩写对白。
     未执行的阶段不写 0；失败时把失败阶段和已发生耗时挂到异常，交由上层落库。
     """
     from app.services.gold_story.gold_chat.finalize import run_gold_chat_finalize
     from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
+    from app.services.gold_story.gold_chat.repair import GoldChatContractError, GoldChatFillError
+    from app.services.llm.llm_mgr import llm_deadline, LLMTimeBudgetExceeded
     from app.services.gold_story.gold_chat.status import (
         clear_gold_chat_converting,
         mark_gold_chat_converting,
@@ -2096,27 +2137,49 @@ def convert_gold_chat(
     stage_started = started
     current_stage = "contract"
     stages_ms: dict[str, float] = {}
+    attempts: list[dict[str, Any]] = []
+    last_candidate: dict[str, Any] | None = None
+    last_exc: Exception | None = None
+    _budget_s = float(os.environ.get("GOLD_CHAT_TIME_BUDGET_S") or 180)
+    _deadline = time.monotonic() + _budget_s if _budget_s > 0 else 0.0
+    deadline_token = llm_deadline.set(_deadline)
+
+    def _check_budget(stage: str, reserve: float = 0.0) -> None:
+        remaining = _deadline - time.monotonic() if _deadline else None
+        if remaining is not None and remaining <= reserve:
+            message = (f"gold_chat 剩余时间不足以继续（剩余{max(0, remaining):.1f}s，后续需预留{reserve:.0f}s；{stage}）"
+                       if remaining > 0 else f"gold_chat 生成超出时间预算 {int(_budget_s)}s（{stage}）")
+            if last_exc is not None:
+                message += f"；上一轮失败：{last_exc}"
+            error = LLMTimeBudgetExceeded(message)
+            if isinstance(last_exc, GoldChatFillError):
+                setattr(error, "candidate_review_status", "failed")
+            if last_candidate is not None:
+                setattr(error, "candidate", deepcopy(last_candidate))
+            raise error from last_exc
 
     def finish_stage(name: str) -> None:
         nonlocal stage_started
         now = time.perf_counter()
-        stages_ms[name] = round((now - stage_started) * 1000.0, 3)
+        stages_ms[name] = round(stages_ms.get(name, 0) + (now - stage_started) * 1000.0, 3)
         stage_started = now
 
     def timing_snapshot(*, status: str, stage: str, include_current: bool) -> dict[str, Any]:
         now = time.perf_counter()
         measured = dict(stages_ms)
-        if include_current and stage and stage not in measured:
-            measured[stage] = round((now - stage_started) * 1000.0, 3)
+        if include_current and stage:
+            measured[stage] = round(measured.get(stage, 0) + (now - stage_started) * 1000.0, 3)
         return {
             "version": 1,
             "status": status,
             "stage": stage,
             "total_ms": round((now - started) * 1000.0, 3),
             "stages_ms": measured,
+            "attempts": deepcopy(attempts),
         }
 
     try:
+        _check_budget("契约准备")
         if gid_for_status > 0:
             mark_gold_chat_converting(gid_for_status)
         row = _persist_m5_h_contract_if_needed(row)
@@ -2143,8 +2206,15 @@ def convert_gold_chat(
             放进重掷循环里，好让「终检缺拍」也能带反馈重掷——终检失败原先发生在
             循环之外，甲重掷机器永远看不到它（实测 id49 因此一次都没重掷）。
             """
-            nonlocal current_stage
+            nonlocal current_stage, last_candidate
             current_stage = "normalize_refine"
+            _check_budget(current_stage)
+            last_candidate = deepcopy(chat_in)
+            source_plan = chat_in.get("gold_source_line_plan")
+            if isinstance(source_plan, list) and source_plan:
+                row_in = {**row_in, "_gold_source_line_plan": deepcopy(source_plan),
+                          "_gold_source_raw": str(chat_in.get("source_raw") or ""),
+                          "_gold_n_expression_contract": deepcopy(chat_in.get("gold_n_expression_contract"))}
             chat_out, norm_notes = apply_gold_chat_normalizations(chat_in, row=row_in)
             payload_raw = row_in.get("payload")
             payload0_in: dict[str, Any] = (
@@ -2176,7 +2246,13 @@ def convert_gold_chat(
                 structure_type=str(row_in.get("structure_type") or ""),
             )
             finish_stage("normalize_refine")
+            last_candidate = deepcopy(chat_out)
             current_stage = "finalize"
+            _check_budget(current_stage)
+            if row_in.get("_gold_source_line_plan"):
+                chat_out["gold_source_line_plan"] = deepcopy(row_in["_gold_source_line_plan"])
+                chat_out["source_raw"] = row_in["_gold_source_raw"]
+                chat_out["gold_n_expression_contract"] = deepcopy(row_in["_gold_n_expression_contract"])
             chat_out, struct_out = run_gold_chat_finalize(
                 chat_out,
                 row_in,
@@ -2194,7 +2270,6 @@ def convert_gold_chat(
         chat = None
         chat_accepted = False
         struct = 0
-        last_exc: Exception | None = None
         # 「缺拍耗尽」只给 1 次带反馈的重掷；其它失败类型仍用全局 3 次（专家裁决）。
         draft_attempts = GOLD_CHAT_DRAFT_ATTEMPTS
         retry_feedback: list[dict[str, str]] = []
@@ -2205,74 +2280,41 @@ def convert_gold_chat(
         # 首次重掷前的判型（原判型）与触发原因，成功落盘时留痕
         pair_before: tuple[str, str] | None = None
         pair_remap_reason = ""
-        # 墙钟预算：一次 draft ≈ plan+填词+常化+精修+终检 10–20s，而失败重掷
-        # 会带着反馈再跑一遍同样的链路。#138 实测连跑 3 次重掷到 3 分钟还没完，
-        # 而编导那边只看「成功/失败」，等待没有收益。``GOLD_CHAT_TIME_BUDGET_S``
-        # 默认 180s（2026-10 定：一版正常 60–120s，重掷三次也够）；设 0 关闭。
-        _budget_s = float(os.environ.get("GOLD_CHAT_TIME_BUDGET_S") or 180)
-        _deadline = time.monotonic() + _budget_s if _budget_s > 0 else 0.0
-        if _deadline:
-            from app.services.gold_story.gold_chat.expand import (
-                set_gold_chat_deadline,
-            )
-
-            set_gold_chat_deadline(_deadline)
-
-        def _check_budget(stage: str, reserve: float = 0.0) -> None:
-            # reserve：一次 draft 的后半段（常化+精修+终检）约 40–60s，剩余时间
-            # 不够跑完就不该再开一次重掷，否则「预算 180s」实际跑到 200s+。
-            if _deadline and time.monotonic() > _deadline - reserve:
-                raise ValueError(
-                    f"gold_chat 生成超出时间预算 {int(_budget_s)}s（{stage}）"
-                )
-
         # 上限用``draft_attempts``而不是常量：语义重试会把它从 3 抬到 4，
         # 写死 range 时那一轮永远跑不到，「追加一稿」成了死代码。
         draft_attempt = 0
         revise_used = 0
+        # 整个 convert 调用最多强制重建一次，不随 draft 轮次重置。
+        contract_retry_used = False
         while draft_attempt < draft_attempts:
             draft_attempt += 1
             _check_budget(f"第{draft_attempt}次重掷前", reserve=60.0 if draft_attempt > 1 else 0.0)
             if draft_attempt > 1:
-                # 重掷：换一次 H3 判型（机制/结构），再重跑 H3a/H3b 换契约，
-                # 避免同一条 prompt 反复撞同一硬卡
-                if pair_before is None:
-                    pair_before = (
-                        str(row.get("mechanism") or ""),
-                        str(row.get("structure_type") or ""),
-                    )
-                    pair_remap_reason = str(last_exc or "")
-                try:
-                    row, rerolled = _retry_structure_pair(
-                        row, attempt=draft_attempt
-                    )
-                    logger.info(
-                        "[GOLD_CHAT] draft retry pair source_id=%s -> %s",
-                        sid,
-                        rerolled,
-                    )
-                except Exception as reroll_exc:
-                    logger.info(
-                        "[GOLD_CHAT] draft retry reroll skipped source_id=%s: %s",
-                        sid,
-                        str(reroll_exc)[:120],
-                    )
                 if retry_feedback:
-                    # 甲：把上一轮缺的叙事事件回灌契约重建，避免盲重掷
                     row = _attach_retry_missing_events(row, retry_feedback)
                 if retry_constraints:
-                    # 语义问题编译成抽象约束回灌：只修问题，不动已通过的拍
                     row = _attach_retry_semantic_issues(row, retry_constraints)
-                try:
+                # 只有确定性契约容量/排槽错误才重建，不为措辞问题随机改判型。
+                incompatible_type = "K_B_DISQUALIFIED" in str(last_exc or "")
+                if incompatible_type:
+                    if pair_before is None:
+                        pair_before = (str(row.get("mechanism") or ""), str(row.get("structure_type") or ""))
+                        pair_remap_reason = str(last_exc)
+                    row, _ = _retry_structure_pair(row, attempt=draft_attempt)
+                if isinstance(last_exc, GoldChatContractError) or incompatible_type:
+                    current_stage = "contract"
+                    row = deepcopy(row)
+                    row["_gold_chat_rebuild_contract"] = str(last_exc)
+                    contract_retry_used = True
                     row = _rebuild_h3a_h3b_on_convert(row)
-                except Exception as rebuild_exc:
-                    logger.info(
-                        "[GOLD_CHAT] draft retry contract rebuild skipped: %s",
-                        str(rebuild_exc)[:120],
-                    )
+                    row.pop("_gold_chat_rebuild_contract", None)
+                    finish_stage("contract")
+            current_stage = "draft"
+            chat = None
+            attempt_started = time.perf_counter()
             repair_budget = GoldChatRepairBudget(max_repairs=2, reserve_final=1)
             try:
-                chat = gold_story_to_gold_chat(row, repair_budget=repair_budget)
+                chat = gold_story_to_gold_chat(deepcopy(row), repair_budget=repair_budget)
                 # 类型以**表列/契约为准**，不许草稿自己改判：LLM 每次重掷都会
                 # 顺手把 story_type 写成它自己以为的类型（#135 实测：契约已固定
                 # N，116 次闸门里 63 次拿到 I，于是按 I 的四条硬卡判一篇 N 稿，
@@ -2292,6 +2334,8 @@ def convert_gold_chat(
                 finish_stage("draft")
                 chat, struct = _normalize_and_finalize(chat, row, repair_budget)
                 chat_accepted = True
+                attempts.append({"attempt": draft_attempt, "stage": "finalize", "status": "success",
+                                 "duration_ms": round((time.perf_counter() - attempt_started) * 1000, 3)})
                 if draft_attempt > 1:
                     logger.info(
                         "[GOLD_CHAT] draft retry ok source_id=%s attempt=%s",
@@ -2301,6 +2345,24 @@ def convert_gold_chat(
                 break
             except Exception as exc:
                 last_exc = exc
+                candidate = getattr(exc, "candidate", None)
+                if isinstance(candidate, dict):
+                    last_candidate = deepcopy(candidate)
+                    if not isinstance(exc, GoldChatFillError):
+                        chat = deepcopy(candidate)
+                elif isinstance(chat, dict) and last_candidate is None:
+                    last_candidate = deepcopy(chat)
+                attempts.append({"attempt": draft_attempt, "stage": current_stage,
+                                 "status": "failed", "error": str(exc),
+                                 "duration_ms": round((time.perf_counter() - attempt_started) * 1000, 3),
+                                 "candidate": deepcopy(last_candidate)})
+                finish_stage(current_stage)
+                from app.services.gold_story.gold_chat.finalize import GoldChatAcceptanceIncomplete
+
+                if isinstance(exc, (LLMTimeBudgetExceeded, GoldChatAcceptanceIncomplete)):
+                    raise
+                if isinstance(exc, GoldChatContractError) and contract_retry_used:
+                    raise
                 # 先尝试「定点改稿」再考虑重掷：审读点名了 ≤3 句时，
                 # 只改那几句重跑终检，比重掷整整一稿便宜得多。
                 # 缺拍/缺前提是结构缺口，改词救不回来，直接走重掷补拍。
@@ -2309,10 +2371,18 @@ def convert_gold_chat(
                     or "缺拍" in str(exc)
                     or "缺前提" in str(exc)
                 )
+                source_issues = getattr(exc, "issues", None)
+                if (isinstance(source_issues, list) and source_issues
+                        and all(isinstance(it, dict) and it.get("source_audit_failed") for it in source_issues)):
+                    # 接话添了未经铺垫的事实应删改该句，不能因评语含“缺前提”
+                    # 就重建整稿或补新情节。来源计划的素材槽已经齐全。
+                    _structural_gap = False
                 # 改稿最多 3 次：每次都在**上一版改完的稿子**上继续改，
                 # 并把上一版还剩什么问题一并告诉它（回合越往后越接近能过线）。
-                if not _structural_gap and isinstance(chat, dict):
+                if (not _structural_gap and isinstance(chat, dict)
+                        and not isinstance(exc, (GoldChatContractError, GoldChatFillError))):
                     while revise_used < _REVISE_MAX_TRIES:
+                        _check_budget("定点修稿前", reserve=15.0)
                         revised = None
                         try:
                             revised = _try_revise_draft(
@@ -2331,6 +2401,9 @@ def convert_gold_chat(
                             break
                         revise_used += 1
                         revised_chat, revised_idx = revised
+                        attempts.append({"attempt": draft_attempt, "stage": "revise",
+                                         "status": "candidate", "changed_lines": revised_idx,
+                                         "error": str(exc), "candidate": deepcopy(revised_chat)})
                         logger.info(
                             "[GOLD_CHAT] draft revise %s/%s source_id=%s lines=%s",
                             revise_used,
@@ -2368,6 +2441,8 @@ def convert_gold_chat(
                     if found:
                         retry_feedback = found
                 found_constraints = _semantic_retry_constraints_from(exc)
+                if isinstance(exc, GoldChatFillError):
+                    found_constraints = [str(exc)[:1200]]
                 if found_constraints and found_constraints != retry_constraints:
                     # 语义问题（矛盾/接不上…）编译成抽象约束回灌，最多追加一稿
                     retry_constraints = found_constraints
@@ -2443,6 +2518,7 @@ def convert_gold_chat(
                         )
 
         current_stage = "export_backfill"
+        _check_budget(current_stage)
         cfg = config or Config()
         paths = export_gold_chat_files(
             source_id=sid,
@@ -2488,6 +2564,11 @@ def convert_gold_chat(
             "timing": timing,
         }
     except Exception as exc:
+        if isinstance(exc, LLMTimeBudgetExceeded) and last_exc is not None and last_exc is not exc:
+            if "上一轮失败" not in str(exc):
+                exc.args = (f"{exc}；上一轮失败：{last_exc}",)
+        if not isinstance(getattr(exc, "candidate", None), dict) and last_candidate is not None:
+            setattr(exc, "candidate", deepcopy(last_candidate))
         timing = timing_snapshot(
             status="failed",
             stage=current_stage,
@@ -2499,5 +2580,6 @@ def convert_gold_chat(
             logger.debug("[GOLD_CHAT] cannot attach timing to %s", type(exc).__name__)
         raise
     finally:
+        llm_deadline.reset(deadline_token)
         if gid_for_status > 0:
             clear_gold_chat_converting(gid_for_status)

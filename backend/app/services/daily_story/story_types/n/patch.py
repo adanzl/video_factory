@@ -36,7 +36,8 @@ def patch_n_promote_existing_question_to_challenge(story: dict) -> list[str]:
     if not isinstance(dialogue, list):
         return []
     body = "".join(_dialogue_lines(story))
-    if RE_CHALLENGE.search(body):
+    from app.services.daily_story.story_types.n.validate import n_structure_hits
+    if n_structure_hits(_dialogue_lines(story), story)[0]:
         return []
 
     # 优先用追问前问句；若 LLM 把原 challenge 漂到后段，仍只显式化现成问句，
@@ -78,7 +79,8 @@ def patch_n_ensure_solemn_reason(story: dict) -> list[str]:
     if not isinstance(dialogue, list):
         return []
     body = "".join(_dialogue_lines(story))
-    if RE_SOLEMN_REASON.search(body):
+    from app.services.daily_story.story_types.n.validate import n_structure_hits
+    if n_structure_hits(_dialogue_lines(story), story)[2]:
         return []
 
     for why_idx, item in enumerate(dialogue):

@@ -525,6 +525,33 @@ def patch_story_payload(gold_story_id: int, patch: dict[str, Any]) -> None:
     sql.commit()
 
 
+def claim_chat_task(gold_story_id: int, task: dict[str, Any]) -> bool:
+    """跨请求/进程原子领取同一故事，过期任务才允许替换。"""
+    result = sql.execute(
+        """UPDATE gold_story SET payload_json = json_set(COALESCE(payload_json, '{}'),
+               '$.gold_chat_task', json(?)) WHERE id = ? AND (
+               COALESCE(json_extract(payload_json, '$.gold_chat_task.status'), '')
+                   NOT IN ('queued', 'running') OR
+               COALESCE(json_extract(payload_json, '$.gold_chat_task.expires_at'), 0) <= ?)
+        """,
+        (json.dumps(task, ensure_ascii=False), gold_story_id, task["started_at"]),
+    )
+    claimed = result.rowcount == 1
+    sql.commit()
+    return claimed
+
+
+def update_chat_task(gold_story_id: int, task: dict[str, Any]) -> None:
+    """旧执行器不能覆盖同一故事后来创建的任务。"""
+    sql.execute(
+        """UPDATE gold_story SET payload_json = json_set(payload_json,
+               '$.gold_chat_task', json(?)) WHERE id = ?
+               AND json_extract(payload_json, '$.gold_chat_task.task_id') = ?""",
+        (json.dumps(task, ensure_ascii=False), gold_story_id, task["task_id"]),
+    )
+    sql.commit()
+
+
 def update_conflict_core(gold_story_id: int, conflict_core: str) -> None:
     """更新 conflict_core 列（M5+H 契约修复回写）。"""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

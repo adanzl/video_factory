@@ -6,6 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _legacy_repairs_by_default(monkeypatch):
+    """既有修稿用例验证整篇补丁；逐拍用例显式启用或删除变量。"""
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "0")
+
 from app.services.daily_story.quality import (
     acceptance_tags_for_quality,
     enrich_quality_acceptance_defaults,
@@ -755,6 +761,8 @@ def test_final_acceptance_incomplete(mock_review):
     with pytest.raises(GoldChatAcceptanceIncomplete) as exc:
         run_gold_chat_final_acceptance(chat, row, sid="BV_TEST")
     assert "timeout" in str(exc.value)
+    assert mock_review.call_count == 2
+    assert mock_review.call_args_list[0] == mock_review.call_args_list[1]
 
 
 def test_body_pipeline_keeps_cancan_on_q弹_consecutive():

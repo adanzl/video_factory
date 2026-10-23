@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextvars import ContextVar
 from typing import Any, Literal, cast
 
 TopicLlmOperation = Literal["generate", "save", "optimize"]
@@ -14,6 +15,35 @@ from app.services.topic.parsers import is_topic_parse_retryable
 __all__ = ["LLMClient", "LLMMgr", "TopicLlmOperation", "llm_mgr"]
 
 logger = logging.getLogger(__name__)
+
+# 请求/greenlet/线程隔离，避免上一条失败任务的截止时间污染下一条。
+llm_deadline: ContextVar[float] = ContextVar("llm_deadline", default=0.0)
+
+
+class LLMTimeBudgetExceeded(ValueError):
+    """调用链预算耗尽；不可作为内容错误重新生成。"""
+
+
+def remaining_llm_time(*, reserve: float = 0.0) -> float | None:
+    deadline = llm_deadline.get()
+    if not deadline:
+        return None
+    remaining = deadline - time.monotonic()
+    if remaining <= reserve:
+        message = (f"gold_chat 剩余{remaining:.1f}s，不足以预留{reserve:.0f}s继续调用"
+                   if remaining > 0 else "gold_chat 时间预算已用尽")
+        raise LLMTimeBudgetExceeded(message)
+    return remaining
+
+
+def llm_request_timeout(default: float = 300.0) -> float | tuple[float, float]:
+    """连接与读取等待合计不超过调用链剩余预算；无预算时维持原超时。"""
+    remaining = remaining_llm_time()
+    if remaining is None:
+        return default
+    seconds = min(default, remaining)
+    connect = min(10.0, seconds / 2)
+    return connect, seconds - connect
 
 
 class LLMClient:

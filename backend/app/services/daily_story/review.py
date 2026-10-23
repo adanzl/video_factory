@@ -1492,6 +1492,63 @@ def _resolve_unverifiable_evidence(
     )
 
 
+def _validate_source_audit(raw: dict[str, Any], story: dict[str, Any]) -> str:
+    """来源计划逐行审读不可缺项；引文必须来自实际送审行。"""
+    plan = story.get("gold_source_line_plan")
+    if not isinstance(plan, list) or not plan:
+        return ""
+    rows = story.get("dialogue") or []
+    audit = raw.get("source_audit")
+    if not isinstance(audit, list) or len(audit) != len(plan):
+        return "source_audit 须按来源计划逐行给出判定，不能缺项"
+    if len(rows) != len(plan):
+        return "成稿行数与锁定来源计划不一致"
+    for expected, item in zip(plan, audit):
+        no = expected.get("line")
+        if (not isinstance(item, dict) or type(item.get("line")) is not int
+                or item.get("line") != no or item.get("role") != expected.get("role")
+                or item.get("source_seed_ids") != expected.get("source_seed_ids")):
+            return "source_audit 行号、角色类型、素材编号须与来源计划逐项一致"
+        if not isinstance(no, int) or not 1 <= no <= len(rows):
+            return "来源计划行号越界"
+        line = str(rows[no - 1].get("line") or "")
+        quote = str(item.get("quote") or "")
+        if len(quote) < 2 or quote not in line or not str(item.get("reason") or "").strip():
+            return f"source_audit 第{no}行缺少可核验原句引文或判定依据"
+        if type(item.get("pass")) is not bool:
+            return f"source_audit 第{no}行缺少布尔判定 pass"
+        if str(rows[no - 1].get("speaker") or "") != expected.get("speaker"):
+            return f"第{no}行说话人偏离锁定素材计划"
+    declared = story.get("gold_n_expression_contract")
+    if declared:
+        from app.services.daily_story.story_types.n.validate import source_rhetorical_contract
+        if declared != source_rhetorical_contract(plan):
+            return "N表达契约与只读来源单元不一致"
+        n_audit = raw.get("n_structure_audit")
+        aspects = ("challenge", "followup", "reason", "closing")
+        if not isinstance(n_audit, list) or len(n_audit) != len(aspects):
+            return "n_structure_audit 须完整核验设问、追问、自洽、愣住四项"
+        for aspect, item in zip(aspects, n_audit):
+            no = declared[f"{aspect}_line"]
+            if (not isinstance(item, dict) or item.get("aspect") != aspect
+                    or type(item.get("line")) is not int or item.get("line") != no
+                    or type(item.get("pass")) is not bool):
+                return "n_structure_audit 须按声明的四项顺序和行号给出布尔判定"
+            quote = str(item.get("quote") or "")
+            if len(quote) < 2 or quote not in str(rows[no - 1].get("line") or "") or not item.get("reason"):
+                return "n_structure_audit 缺少可核验引文或结构语义依据"
+    return ""
+
+
+def _source_audit_failures(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """明确不合格是内容修稿，不是审核接口失败；此类问题禁止豁免。"""
+    return [{"kind": "接不上", "lines": [item["line"]], "desc": item["reason"],
+             "evidence": [{"line": item["line"], "quote": item["quote"]}],
+             "source_audit_failed": True}
+            for item in [*raw.get("source_audit", []), *raw.get("n_structure_audit", [])]
+            if item.get("pass") is False]
+
+
 def run_export_semantic_review(
     theme: str,
     story: dict[str, Any],
@@ -1578,6 +1635,12 @@ def run_export_semantic_review(
                 )
             else:
                 shape_err = _validate_export_review_raw(raw, line_count=n_lines)
+                if not shape_err:
+                    shape_err = _validate_source_audit(raw, story)
+                    if not shape_err and story.get("gold_source_line_plan"):
+                        source_failures = _source_audit_failures(raw)
+                        if source_failures:
+                            return ExportSemanticReviewResult(completed=True, issues=source_failures, humor=parse_humor(raw))
         evidence_err = ""
         if not shape_err:
             evidence_err = _evidence_repair_reason(
@@ -1616,6 +1679,7 @@ def run_export_semantic_review(
                 + '{"beat":1,"intent":"对应 beat_chain 的 intent 原文"}，'
                 + "beat 必须是 beat_chain 的 1-based JSON 整数，不能是字符串、小数或 null；"
                 + "其他 kind 不要输出 missing_beat；missing_relation 必须是简短字符串。"
+                + "若有来源分句计划，须同时给完整 source_audit，不能以 issues=[] 代替逐行素材审核。"
                 + "输出完整审核 JSON，不要改写稿件。\n上一份审核：\n"
                 + json.dumps(
                     {k: v for k, v in raw.items() if not str(k).startswith("_")},
@@ -1904,7 +1968,10 @@ def build_review_prompts(
         "或事后解说动作结果「我滑了一跤」「相框又掉地上了」；"
         "或「我一弯腰，头撞到茶几角了」这种「我+动作过程+结果」自述；"
         "或一句念完多步因果「你绊倒了，相框又飞出去，砸到茶几腿」）。"
-        "注意：只因句子稍完整、稍书面，不得报旁白。\n"
+        "注意：只因句子稍完整、稍书面，不得报旁白。"
+        "若前文明确在问过去经历或回忆旧事，角色回应这个提问、讲自己当时做了什么属于对话，"
+        "不能仅凭「我+动作过程+结果」判旁白；仍须核对时间、人称、问答与事实来源，"
+        "不豁免把当前动作、镜头或舞台指令念出来的句子。\n"
         "8 语病/看不懂：句子读一遍读不懂，结构断裂、指代不清、语义混乱"
         "（例：「你说轻点，我就轻轻推，没使劲，门合不上吗？」——"
         "不知道他在问什么；"
@@ -2030,11 +2097,51 @@ def build_review_prompts(
         "none 无明显好笑点。"
     )
     beat_text = _format_beat_chain_for_review(beat_chain)
+    source_plan = story.get("gold_source_line_plan")
+    source_block = ""
+    if isinstance(source_plan, list) and source_plan:
+        source_block = (
+            "\n【只读素材分句依据，不是成稿】\n"
+            f"源故事：{str(story.get('source_raw') or '')[:6000]}\n"
+            f"独立素材单元：{json.dumps(source_plan, ensure_ascii=False)}\n"
+            "逐个核对这些单元在成稿里是否完整落地、说话人是否正确；"
+            "同一拍的两个不同回答不能只保留一个，也不能互相复述。"
+            "区分原素材明示的误答/歪解笑点与改编新增的接话断裂；原有笑点可保留，须在判定依据中指明来源，不能据此豁免新增硬伤。"
+            "只在计划里出现不算正文已交代，须从正文引用证据。"
+            "接话句须承接真实前文，不得抢替后续回答、捏造事实或空转凑句；"
+            "逐条核对 role=reaction 的行：与两侧素材衔接、无新事实、非重复、非空转，"
+            "任一不满足就报硬伤；收束前的接话只能回应已发生事件，不能添细节或因果。"
+            "不要把接话当成天然正确的评论：先还原前文每个代称实际指谁，核对列举/数量，"
+            "再检验接话所否定或断言的事实是否为真；若前文已包含某人/某物，后句不能说遗漏了它。"
+            "只有content来源单元明示的误答/歪解才可作为原有笑点保留；reaction中新造的错误断言"
+            "必须判false，不得用‘故意曲解式幽默’‘孩子开玩笑’替它编动机放行。"
+            "接话提出的问题必须被紧随其后的实际台词回答，不能因同属一个话题就算承接。"
+            "问答即使有共同词也可能答非所问，没有共同词也可能通过代词自然承接。"
+            "仍按现有硬伤类别报告问题，不能因有素材编号就认定内容合格。\n"
+            "此外必须输出顶层 source_audit 数组，严格按计划每行一个对象："
+            '{"line":行号,"role":"content或reaction","source_seed_ids":[素材编号],'
+            '"pass":true或false,"quote":"该行实际原文引文","reason":"判定依据"}。'
+            "content逐项核对完整素材与人物归属，reaction核对衔接、无新事实、非重复、非空转；"
+            "reaction的reason须写明所依据的前文事实，以及评价为何成立，不能只写‘衔接自然、无新事实’等通用结论。"
+            "每行均检查问答自然、句子完整、不是舞台旁白。缺项不能通过，问题仍须写入issues。\n"
+        )
+        if story.get("gold_n_expression_contract"):
+            source_block += (
+                "\n【N类表达契约】" + json.dumps(story["gold_n_expression_contract"], ensure_ascii=False)
+                + "\n本篇来源已声明反问形态：不能仅因缺为什么/因为/所以判结构缺失，"
+                "也不能仅因有反问标记就认定成立。须结合前后文与来源，判断是否真的形成"
+                "设问→离谱应答→追问→孩子以自己的理解自洽→对方愣住的链条。"
+                "尤其reason要解释反问表达了孩子怎样的理解、为何能形成笑点；空问句不能过。"
+                '顶层另输出 n_structure_audit，按challenge/followup/reason/closing顺序四项，'
+                '每项为{"aspect":"reason等","line":契约行号,"pass":true或false,'
+                '"quote":"实际原句引文","reason":"结构语义依据"}。缺项或虚假自洽不能通过。\n'
+            )
     user = (
         f"主题：{theme}\n"
         f"场景：{story.get('setting') or ''}\n"
         f"矛盾内核：{story.get('conflict_core') or ''}\n\n"
         f"{beat_text + chr(10) + chr(10) if beat_text else ''}"
+        f"{source_block}"
         f"对白：\n{numbered_dialogue(story)}\n\n"
         "逐句读一遍，按上面类别输出 JSON。"
     )

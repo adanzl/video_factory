@@ -12,6 +12,24 @@ logger = logging.getLogger(__name__)
 _FINAL_REPAIR_STAGES = frozenset({"final_acceptance", "final_semantic"})
 
 
+class GoldChatContractError(ValueError):
+    """契约无法排成合法句槽，须修契约，不能重复调用填词。"""
+
+    candidate: dict[str, Any] | None = None
+    candidate_review_status = "failed"
+
+
+class GoldChatFillError(ValueError):
+    """逐拍填词失败，保留候选和具体失败槽，交唯一外层重试。"""
+
+    stage = "perbeat_fill"
+    candidate_review_status = "failed"
+
+    def __init__(self, message: str, candidate: dict[str, Any]) -> None:
+        self.candidate = candidate
+        super().__init__(message)
+
+
 @dataclass
 class GoldChatRepairBudget:
     """扩写 / 精修 / 终检共用修稿次数，不在各层重新计数。

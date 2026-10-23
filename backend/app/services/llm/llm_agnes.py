@@ -329,11 +329,15 @@ def _build_chat_payload(*, model: str, system: str, user: str, max_tokens: int) 
 def _post_chat(*, api_key: AgnesApiKey, base_url: str, payload: dict[str, Any], max_retries: int, connect_timeout: float, read_timeout: float) -> requests.Response:
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = agnes_auth_header(api_key.value)
-    timeout = (connect_timeout, read_timeout)
+    timeout: Any = (connect_timeout, read_timeout)
     last_exc: Exception | None = None
     host_failover_tried: set[str] = {url}
     for attempt in range(max_retries):
         try:
+            from app.services.llm.llm_mgr import remaining_llm_time, llm_request_timeout
+
+            if remaining_llm_time() is not None:
+                timeout = llm_request_timeout(read_timeout)
             resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
             if resp.status_code == 503:
                 alt = agnes_apply_host_failover(
@@ -348,6 +352,7 @@ def _post_chat(*, api_key: AgnesApiKey, base_url: str, payload: dict[str, Any], 
             if resp.status_code in _RETRYABLE:
                 wait = min(2 ** attempt * 2, 60)
                 logger.warning('agnes llm %s %s, retry %s/%s in %ss', resp.status_code, url, attempt + 1, max_retries, wait)
+                remaining_llm_time(reserve=float(wait))
                 time.sleep(wait)
                 continue
             if not resp.ok:
@@ -380,6 +385,7 @@ def _post_chat(*, api_key: AgnesApiKey, base_url: str, payload: dict[str, Any], 
                     continue
             wait = min(2 ** attempt * 2, 60)
             logger.warning('agnes llm request error: %s, retry in %ss', exc, wait)
+            remaining_llm_time(reserve=float(wait))
             time.sleep(wait)
     if last_exc:
         raise last_exc
@@ -497,7 +503,10 @@ def _agnes_client_class() -> type:
     class AgnesClient(DeepSeekClient):
         """复用 DeepSeekClient 业务逻辑，HTTP 走 Agnes chat/completions。"""
 
-        def _chat(self, system: str, user: str, *, max_tokens: int | None=None) -> tuple[str, str | None]:
+        def _chat(self, system: str, user: str, *, max_tokens: int | None=None,
+                  json_mode: bool = True, thinking_enabled: bool | None = None,
+                  temperature: float | None = None, model: str | None = None) -> tuple[str, str | None]:
+            _ = json_mode, thinking_enabled, temperature, model
             return _chat_with_key_fallback(system=system, user=user, max_tokens=max_tokens)
 
         def chat_messages(

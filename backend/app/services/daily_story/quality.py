@@ -219,6 +219,10 @@ def story_review_content_hash(
         "dialogue": dialogue,
         "contract": story_review_contract_snapshot(story, review_contract),
     }
+    if story.get("gold_source_line_plan"):
+        payload["source_plan"] = _stable_review_value(story["gold_source_line_plan"])
+        payload["n_expression_contract"] = _stable_review_value(story.get("gold_n_expression_contract"))
+        payload["source_raw"] = str(story.get("source_raw") or "")
     raw = json.dumps(
         payload,
         ensure_ascii=False,
@@ -594,6 +598,7 @@ def _score_escalation(
     lines: list[str],
     *,
     layer_patterns: tuple[tuple[str, re.Pattern[str]], ...],
+    declared_hits: tuple[str, ...] | None = None,
 ) -> tuple[int, list[str]]:
     n = len(lines)
     if n < 6:
@@ -622,7 +627,8 @@ def _score_escalation(
             if label not in layer_first_seg:
                 layer_first_seg[label] = i
 
-    layer_count = len(layer_first_seg)
+    # 声明形态只替换正文的槽位命中来源，沿用既有层数分表与发布阈值。
+    layer_count = len(set(declared_hits)) if declared_hits is not None else len(layer_first_seg)
 
     # 层数→推进分（2026-08-10 专家校准：3 层从 8 提为 10，使 3 层只扣 4 分，
     # 发布线 75 下 80-4=76 仍可通过；4 层满分 14 扣 0、2 层扣 12、≤1 层扣 14）
@@ -1298,7 +1304,14 @@ def score_daily_story(
         layer_patterns = k_escalation_layers(story)
 
     # ── 推进维度（满分 14）：4 层达标；3层-6 / 2层-12 / ≤1层-14 ──
-    esc_bonus, esc_details = _score_escalation(lines, layer_patterns=layer_patterns)
+    declared_hits = None
+    if profile.code == "N":
+        from app.services.daily_story.story_types.n.quality import declared_escalation_hits
+
+        declared_hits = declared_escalation_hits(lines, story)
+    esc_bonus, esc_details = _score_escalation(
+        lines, layer_patterns=layer_patterns, declared_hits=declared_hits,
+    )
     esc_achieved = max(0, min(ESCALATION_SCORE_FULL, esc_bonus))
     esc_deduction = ESCALATION_SCORE_FULL - esc_achieved
     score -= esc_deduction

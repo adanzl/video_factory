@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from app.config import get_settings
+from app.services.llm.llm_mgr import llm_request_timeout
 from app.services.llm.llm_deepseek import (
     DeepSeekClient,
     _build_deepseek_chat_payload,
@@ -80,7 +81,7 @@ def _opencode_client_class() -> type:
                     json_mode=json_mode,
                     temperature=temperature,
                 ),
-                timeout=300,
+                timeout=llm_request_timeout(),
             )
             resp.raise_for_status()
             choice = resp.json()["choices"][0]
@@ -133,7 +134,7 @@ def _opencode_client_class() -> type:
                     json_mode=False,
                     temperature=temperature,
                 ),
-                timeout=300,
+                timeout=llm_request_timeout(),
             )
             resp.raise_for_status()
             choice = resp.json()["choices"][0]

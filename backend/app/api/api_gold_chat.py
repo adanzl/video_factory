@@ -107,6 +107,12 @@ def transcript_route():
 
 @bp.get("/convert")
 def convert_status_route():
+    task_id = get_query("task_id")
+    if task_id:
+        try:
+            return json_ok(gold_story_mgr.conversion_task(parse_id(), task_id))
+        except KeyError as exc:
+            raise APIError(str(exc), status_code=404) from exc
     return json_ok(gold_story_mgr.convert_status())
 
 
@@ -127,6 +133,10 @@ def convert_route():
         force,
     )
     try:
+        if parse_bool(data, "async", default=True):
+            return json_ok(gold_story_mgr.submit_conversion(
+                gold_story_id=gold_story_id, source_id=source_id, force=force,
+            ), status=202)
         return json_ok(
             gold_story_mgr.convert_one(
                 gold_story_id=gold_story_id,
@@ -225,6 +235,12 @@ def batch_route():
         source_ids,
     )
     try:
+        if parse_bool(data, "async", default=True):
+            result = gold_story_mgr.submit_batch_conversion(
+                max_items=max_items, status=status, gold_story_ids=gold_story_ids,
+                source_ids=source_ids, force=force,
+            )
+            return json_ok(result, status=202 if result.get("task_id") else 200)
         result = gold_story_mgr.batch_convert(
             max_items=max_items,
             status=status,

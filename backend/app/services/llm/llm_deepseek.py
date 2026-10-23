@@ -11,7 +11,7 @@ import gevent.pool
 
 from app.config import get_settings
 from app.exceptions import JobStageFailureError
-from app.services.llm.llm_mgr import LLMClient
+from app.services.llm.llm_mgr import LLMClient, llm_request_timeout
 from app.services.script.description import (
     build_video_description_prompts,
     parse_video_description_payload,
@@ -714,7 +714,7 @@ class DeepSeekClient(LLMClient):
                 temperature=temperature,
             ),
             # 剧本/分镜生成长输出实测 103~181s，180s 超时贴线（超时重试成本更高），放宽到 300s
-            timeout=300,
+            timeout=llm_request_timeout(),
         )
         resp.raise_for_status()
         choice = resp.json()["choices"][0]
@@ -764,7 +764,7 @@ class DeepSeekClient(LLMClient):
                 json_mode=False,
                 temperature=temperature,
             ),
-            timeout=300,
+            timeout=llm_request_timeout(),
         )
         resp.raise_for_status()
         choice = resp.json()["choices"][0]

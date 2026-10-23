@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from app.services.daily_story.story_types.n.validate import (
-    RE_CHALLENGE,
-    RE_SOLEMN_REASON,
-    RE_WHY,
+    n_structure_hits,
     stun_close_hit,
 )
 
@@ -13,17 +11,18 @@ from app.services.daily_story.story_types.n.validate import (
 def collect_n_humor_issues(
     lines: list[str],
     speakers: list[str] | None = None,
+    *, story: dict | None = None,
 ) -> list[str]:
     del speakers
     issues: list[str] = []
     if len(lines) < 6:
         return issues
-    body = "".join(lines)
-    if not RE_CHALLENGE.search(body):
+    challenge, followup, reason = n_structure_hits(lines, story)
+    if not challenge:
         issues.append("N缺设问/考验")
-    if not RE_WHY.search(body):
+    if not followup:
         issues.append("N缺追问")
-    if not RE_SOLEMN_REASON.search(body):
+    if not reason:
         issues.append("N缺一本正经自洽")
     if not stun_close_hit(lines):
         issues.append("N缺愣住收束")
@@ -33,6 +32,7 @@ def collect_n_humor_issues(
 def score_funniness_tail(
     lines: list[str],
     speakers: list[str] | None = None,
+    *, story: dict | None = None,
 ) -> tuple[int, list[str]]:
     """N 好笑维：离谱答被追问后一本正经自洽噎住。"""
     del speakers
@@ -40,16 +40,16 @@ def score_funniness_tail(
         return 0, []
     pts = 0
     pros: list[str] = []
-    body = "".join(lines)
+    challenge, followup, reason = n_structure_hits(lines, story)
 
-    if RE_CHALLENGE.search(body) and RE_WHY.search(body):
+    if challenge and followup:
         pts += 3
         pros.append("设问追问链")
-    elif RE_WHY.search(body):
+    elif followup:
         pts += 1
         pros.append("有追问")
 
-    if RE_SOLEMN_REASON.search(body):
+    if reason:
         pts += 4
         pros.append("一本正经自洽")
 

@@ -311,6 +311,39 @@ export interface GoldChatConvertStatus {
   source_ids: string[];
 }
 
+interface GoldChatTask<T> {
+  task_id: string;
+  gold_story_id: number;
+  status: "queued" | "running" | "succeeded" | "failed";
+  result?: T;
+  error?: string;
+  expires_at: number;
+}
+
+async function waitGoldChatTask<T>(initial: GoldChatTask<T>): Promise<T> {
+  let task = initial;
+  let queryFailures = 0;
+  while (task.status === "queued" || task.status === "running") {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(2000 * (queryFailures + 1), 10000)));
+    try {
+      const response = await api.get<GoldChatTask<T>>("/v_factory/api/gold_chat/convert", {
+        params: { id: task.gold_story_id, task_id: task.task_id },
+        timeout: 15000,
+      });
+      task = response.data;
+      queryFailures = 0;
+    } catch {
+      queryFailures += 1;
+      if (queryFailures >= 5 || Date.now() > task.expires_at * 1000 + 60000) {
+        throw new Error("暂时无法查询转换结果，后台任务可能仍在运行。请刷新查看，勿重复重转。");
+      }
+    }
+  }
+  if (task.status === "failed") throw new Error(task.error || "转换失败");
+  if (!task.result) throw new Error("转换任务没有返回结果，请刷新查看。");
+  return task.result;
+}
+
 export async function getGoldChatConvertStatus(): Promise<GoldChatConvertStatus> {
   const response = await api.get<GoldChatConvertStatus>(
     "/v_factory/api/gold_chat/convert",
@@ -323,16 +356,17 @@ export async function convertGoldChat(params: {
   sourceId?: string;
   force?: boolean;
 }): Promise<GoldChatConvertResult> {
-  const response = await api.post<GoldChatConvertResult>(
+  const response = await api.post<GoldChatTask<GoldChatConvertResult>>(
     "/v_factory/api/gold_chat/convert",
     {
       id: params.id,
       source_id: params.sourceId,
       force: params.force ?? false,
+      async: true,
     },
-    { timeout: 120_000 },
+    { timeout: 30000 },
   );
-  return response.data;
+  return waitGoldChatTask(response.data);
 }
 
 export interface GoldStoryDeleteResult {
@@ -404,7 +438,7 @@ export async function batchConvertGoldChat(params: {
   sourceIds?: string[];
   force?: boolean;
 } = {}): Promise<GoldChatBatchResult> {
-  const response = await api.post<GoldChatBatchResult>(
+  const response = await api.post<GoldChatTask<GoldChatBatchResult> | GoldChatBatchResult>(
     "/v_factory/api/gold_chat/batch",
     {
       max: params.max ?? 10,
@@ -412,10 +446,11 @@ export async function batchConvertGoldChat(params: {
       ids: params.ids,
       source_ids: params.sourceIds,
       force: params.force ?? false,
+      async: true,
     },
-    { timeout: 600_000 },
+    { timeout: 30000 },
   );
-  return response.data;
+  return "task_id" in response.data ? waitGoldChatTask(response.data) : response.data;
 }
 
 export async function importGoldChat(params: {

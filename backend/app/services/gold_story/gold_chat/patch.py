@@ -4631,14 +4631,9 @@ def _perbeat_mode() -> bool:
     句数超契约（#138 实测 妈妈 4→5 被导入硬卡判死）。所以这些补丁在逐拍
     模式下必须跳过，只保留纯机械收口（角色表/连说/额度/去重/旁白转口语）。
     """
-    import os
+    from app.config import gold_chat_perbeat_enabled
 
-    return str(os.environ.get("GOLD_CHAT_PERBEAT") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    return gold_chat_perbeat_enabled()
 
 
 def apply_n_contract_local_patches(
@@ -4649,6 +4644,9 @@ def apply_n_contract_local_patches(
     mom_lines_max: int | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """N 类确定性契约补丁：收旁观占场 → 补机制词槽 → 补家长关键追问拍。"""
+    if story.get("gold_source_line_plan"):
+        # 有只读分句来源时由定点修稿修复，旧词槽/重排补丁会破坏素材索引。
+        return story, []
     notes: list[str] = []
     # 先做全局收口：契约外说话人一律删除（收束句之后也不例外）
     data, _cast_notes = apply_cast_membership_patch(

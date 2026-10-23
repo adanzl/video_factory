@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
@@ -1297,6 +1298,10 @@ def run_gold_chat_final_acceptance(
     sid: str,
 ) -> dict[str, Any]:
     """补字/改 speaker 完成后统一终验；未过则抛错，不写导出文件。"""
+    if row.get("_gold_source_line_plan"):
+        chat = {**chat, "gold_source_line_plan": deepcopy(row["_gold_source_line_plan"]),
+                "gold_n_expression_contract": deepcopy(row.get("_gold_n_expression_contract")),
+                "source_raw": str(row.get("_gold_source_raw") or "")}
     from app.services.daily_story.quality import (
         gold_story_review_contract,
         stamp_gold_chat_acceptance_quality,
@@ -1384,13 +1389,32 @@ def run_gold_chat_final_acceptance(
         raise error_type(message)
 
     review = run_export_semantic_review(theme, chat, beat_chain=beat_chain)
+    source_failures = [item for item in review.issues if item.get("source_audit_failed")]
+    if review.completed and source_failures:
+        raise GoldChatSemanticBlocked(
+            "终检素材/接话不合格：" + "；".join(f"第{it['lines']}句：{it['desc']}" for it in source_failures),
+            issues=source_failures,
+        )
+    first_review_error = review.error
+    if not review.completed:
+        # 审核执行失败只重审同一候选一次；不重新归一化、不耗用内容修稿额度。
+        from app.services.llm.llm_mgr import remaining_llm_time
+
+        remaining_llm_time(reserve=8.0)
+        review = run_export_semantic_review(theme, chat, beat_chain=beat_chain)
+        source_failures = [item for item in review.issues if item.get("source_audit_failed")]
+        if review.completed and source_failures:
+            raise GoldChatSemanticBlocked(
+                "终检素材/接话不合格：" + "；".join(f"第{it['lines']}句：{it['desc']}" for it in source_failures),
+                issues=source_failures,
+            )
     review = _demote_verbatim_source_quirks(
         review, chat, source_raw=str(row.get("story_raw") or "")
     )
     review = _demote_nonattributed_citation_issues(review, chat)
     if not review.completed:
         raise GoldChatAcceptanceIncomplete(
-            review.error
+            "；".join(dict.fromkeys(x for x in (first_review_error, review.error) if x))
             or "语义审核未完成（LLM 超时或解析失败），已保留上次导出稿",
             candidate=chat,
         )

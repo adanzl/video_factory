@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import os
+import uuid
 from typing import Any, cast
 
 from app.config import Config
@@ -37,6 +39,7 @@ from app.services.gold_story.collect.pipeline import (
     run_collect_pipeline,
 )
 from app.utils.async_util import run_in_os_thread
+from app.utils.async_util import run_in_background
 
 logger = logging.getLogger(__name__)
 
@@ -578,7 +581,129 @@ class GoldStoryMgr:
         _ensure_schema()
         return list_gold_chat_converting()
 
+    def conversion_task(self, gold_story_id: int, task_id: str) -> dict[str, Any]:
+        row = repo_gold_story.get_story(gold_story_id)
+        if row is None:
+            raise KeyError("金故事不存在")
+        task = dict((row.get("payload") or {}).get("gold_chat_task") or {})
+        if task.get("task_id") != task_id:
+            raise KeyError("转换任务不存在或已被后续任务替换")
+        if task.get("status") in {"queued", "running"} and time.time() > task["expires_at"]:
+            task.update(status="failed", code="task_interrupted",
+                        error="转换任务已中断或超时，已保留原导出稿，请重新提交。",
+                        finished_at=time.time())
+            repo_gold_story.update_chat_task(gold_story_id, task)
+        return task
+
+    def submit_conversion(
+        self, *, gold_story_id: int | None = None,
+        source_id: str | None = None, force: bool = False,
+        batch_ids: list[int] | None = None,
+    ) -> dict[str, Any]:
+        """先持久化任务再启动后台执行；重复提交接回同一运行任务。"""
+        from flask.globals import app_ctx
+
+        _ensure_schema()
+        row = (repo_gold_story.get_story(gold_story_id) if gold_story_id is not None
+               else repo_gold_story.get_by_source_id(source_id=str(source_id or "")))
+        if row is None:
+            raise KeyError("金故事不存在")
+        gid = int(row["id"])
+        previous = (row.get("payload") or {}).get("gold_chat_task") or {}
+        if (previous.get("status") in {"queued", "running"}
+                and time.time() < float(previous.get("expires_at") or 0)):
+            if previous.get("batch_ids") != batch_ids:
+                raise RuntimeError("转换进行中")
+            return previous
+        budget = float(os.environ.get("GOLD_CHAT_TIME_BUDGET_S") or 180)
+        if not _CONVERT_LOCK.acquire(blocking=False):
+            raise RuntimeError("转换进行中")
+        now = time.time()
+        task: dict[str, Any] = {"task_id": uuid.uuid4().hex, "gold_story_id": gid,
+                "source_id": row.get("source_id"), "status": "queued",
+                "batch_ids": batch_ids,
+                "started_at": now,
+                "expires_at": now + (budget if budget > 0 else 21600) * len(batch_ids or [gid]) + 60}
+        try:
+            if not repo_gold_story.claim_chat_task(gid, task):
+                raise RuntimeError("转换进行中")
+            app = app_ctx.app
+
+            def run() -> None:
+                try:
+                    with app.app_context():
+                        task["status"] = "running"
+                        repo_gold_story.update_chat_task(gid, task)
+                        try:
+                            if batch_ids:
+                                result = run_gold_chat_batch(
+                                    gold_story_ids=batch_ids, max_items=len(batch_ids),
+                                    skip_existing=not force,
+                                )
+                            else:
+                                result = self._convert_one_unlocked(
+                                    gold_story_id=gid, force=force,
+                                )
+                            task.update(status="succeeded", result=result)
+                        except Exception as exc:
+                            from app.services.gold_story.gold_chat.repair import GoldChatContractError
+                            from app.services.gold_story.gold_chat.finalize import GoldChatAcceptanceIncomplete
+                            from app.services.llm.llm_mgr import LLMTimeBudgetExceeded
+
+                            code = ("contract_invalid" if isinstance(exc, GoldChatContractError)
+                                    else "acceptance_incomplete" if isinstance(exc, GoldChatAcceptanceIncomplete)
+                                    else "time_budget_exceeded" if isinstance(exc, LLMTimeBudgetExceeded)
+                                    else "conversion_failed")
+                            task.update(status="failed", error=str(exc), code=code)
+                        task["finished_at"] = time.time()
+                        repo_gold_story.update_chat_task(gid, task)
+                except Exception:
+                    logger.exception("[GOLD_CHAT] task persistence failed id=%s", gid)
+                finally:
+                    _CONVERT_LOCK.release()
+
+            run_in_background(run)
+        except Exception as exc:
+            try:
+                task.update(status="failed", code="task_start_failed", error=str(exc), finished_at=time.time())
+                repo_gold_story.update_chat_task(gid, task)
+            finally:
+                _CONVERT_LOCK.release()
+            raise
+        return dict(task)
+
+    def submit_batch_conversion(
+        self, *, max_items: int = 10, status: str = "active",
+        gold_story_ids: list[int] | None = None,
+        source_ids: list[str] | None = None, force: bool = False,
+    ) -> dict[str, Any]:
+        _ensure_schema()
+        if gold_story_ids:
+            ids = gold_story_ids[:max_items]
+        elif source_ids:
+            rows = [repo_gold_story.get_by_source_id(source_id=sid) for sid in source_ids[:max_items]]
+            ids = [int(row["id"]) for row in rows if row]
+        else:
+            ids = [int(row["id"]) for row in repo_gold_story.list_stories(status=status or None, limit=max_items)]
+        if not ids:
+            return {"workflow": "gold_chat", "requested": max_items, "selected": 0,
+                    "ok": 0, "failed": 0, "skipped": 0, "results": []}
+        return self.submit_conversion(gold_story_id=ids[0], force=force, batch_ids=ids)
+
     def convert_one(
+        self, *, gold_story_id: int | None = None,
+        source_id: str | None = None, force: bool = False,
+    ) -> dict[str, Any]:
+        if not _CONVERT_LOCK.acquire(blocking=False):
+            raise RuntimeError("转换进行中")
+        try:
+            return self._convert_one_unlocked(
+                gold_story_id=gold_story_id, source_id=source_id, force=force,
+            )
+        finally:
+            _CONVERT_LOCK.release()
+
+    def _convert_one_unlocked(
         self,
         *,
         gold_story_id: int | None = None,
@@ -615,9 +740,6 @@ class GoldStoryMgr:
             source_id,
             force,
         )
-        # 非阻塞：busy 立刻 409，避免第二路 convert 在 hub 上死等
-        if not _CONVERT_LOCK.acquire(blocking=False):
-            raise RuntimeError("转换进行中")
         try:
             outcome = convert_gold_chat(row, config=cfg)
             logger.info(
@@ -649,9 +771,6 @@ class GoldStoryMgr:
                 )
             logger.exception("[GOLD_CHAT] convert_one failed source_id=%s: %s", sid, exc)
             raise
-        finally:
-            _CONVERT_LOCK.release()
-
     def resolve_story_block(
         self,
         *,
