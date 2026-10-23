@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from requests.exceptions import HTTPError
+
 from app.config import Config, get_settings
 from app.repositories import repo_gold_story
 from app.services.gold_story.gold_chat.patch import (
@@ -6515,10 +6517,15 @@ def gold_story_to_gold_chat(
                     break
             except Exception as exc:  # noqa: BLE001 逐拍调用次数多，网络抖动不该炸整条
                 last_err = f"network:{exc}"
+                upstream_unavailable = (
+                    isinstance(exc, HTTPError)
+                    and exc.response is not None
+                    and exc.response.status_code == 503
+                )
                 logger.warning(
                     "[GOLD_CHAT] expand candidate network fail: %s",
                     str(exc)[:160],
-                    exc_info=not isinstance(exc, (TimeoutError, ConnectionError)),
+                    exc_info=not upstream_unavailable and not isinstance(exc, (TimeoutError, ConnectionError)),
                 )
                 break
         if not candidates:

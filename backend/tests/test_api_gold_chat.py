@@ -74,6 +74,34 @@ def _sample_chat() -> dict:
     }
 
 
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+def test_legacy_client_without_async_receives_result_or_error_not_task(app_ctx, monkeypatch, batch, failed):
+    import importlib
+    mgr = importlib.import_module("app.services.gold_story.gold_story_mgr")
+    expected = {"ok": 1, "selected": 1} if batch else {"action": "ok", "chat_lines": 12}
+
+    def convert(**_kwargs):
+        if failed:
+            raise ValueError("network:503 Service Unavailable")
+        return expected
+
+    monkeypatch.setattr(mgr.gold_story_mgr, "batch_convert" if batch else "convert_one", convert)
+    monkeypatch.setattr(mgr.gold_story_mgr, "submit_batch_conversion" if batch else "submit_conversion",
+                        lambda **_kw: pytest.fail("旧客户端不能收到异步任务回执"))
+    response = app_ctx.test_client().post(
+        "/v_factory/api/gold_chat/batch" if batch else "/v_factory/api/gold_chat/convert",
+        json={"ids": [160]} if batch else {"id": 160},
+    )
+    assert response.status_code == (400 if failed else 200)
+    body = response.get_json()
+    assert "task_id" not in body
+    if failed:
+        assert "503" in body["error"]
+    else:
+        assert body == expected
+
+
 def test_async_conversion_persists_task_and_duplicate_submission_reattaches(app_ctx, monkeypatch):
     import importlib
     mgr = importlib.import_module("app.services.gold_story.gold_story_mgr")
@@ -83,11 +111,11 @@ def test_async_conversion_persists_task_and_duplicate_submission_reattaches(app_
     monkeypatch.setattr(mgr.gold_story_mgr, "_convert_one_unlocked",
                         lambda **_kw: {"action": "ok", "chat_lines": 12})
     client = app_ctx.test_client()
-    submitted = client.post("/v_factory/api/gold_chat/convert", json={"id": gid})
+    submitted = client.post("/v_factory/api/gold_chat/convert", json={"id": gid, "async": True})
     assert submitted.status_code == 202
     task = submitted.get_json()
     assert task["status"] == "queued"
-    duplicate = client.post("/v_factory/api/gold_chat/convert", json={"id": gid}).get_json()
+    duplicate = client.post("/v_factory/api/gold_chat/convert", json={"id": gid, "async": True}).get_json()
     assert duplicate["task_id"] == task["task_id"]
     assert len(callbacks) == 1
     callbacks[0]()
@@ -109,7 +137,7 @@ def test_async_conversion_records_failure_and_expired_task(app_ctx, monkeypatch)
 
     monkeypatch.setattr(mgr.gold_story_mgr, "_convert_one_unlocked", fail)
     client = app_ctx.test_client()
-    task = client.post("/v_factory/api/gold_chat/convert", json={"id": gid}).get_json()
+    task = client.post("/v_factory/api/gold_chat/convert", json={"id": gid, "async": True}).get_json()
     callbacks[0]()
     result = mgr.gold_story_mgr.conversion_task(gid, task["task_id"])
     assert result["status"] == "failed"
@@ -705,7 +733,7 @@ def test_async_batch_completes_and_query_missing_story_returns_404(app_ctx, monk
     monkeypatch.setattr(mgr, "run_in_background", callbacks.append)
     monkeypatch.setattr(mgr, "run_gold_chat_batch", lambda **kw: {"ok": 1, "selected": len(kw["gold_story_ids"])})
     client = app_ctx.test_client()
-    response = client.post("/v_factory/api/gold_chat/batch", json={"ids": [gid]})
+    response = client.post("/v_factory/api/gold_chat/batch", json={"ids": [gid], "async": True})
     assert response.status_code == 202
     task = response.get_json()
     callbacks[0]()

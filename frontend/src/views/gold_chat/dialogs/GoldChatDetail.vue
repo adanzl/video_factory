@@ -578,7 +578,7 @@ async function handleConvert() {
     if (res.action === "skip") {
       ElMessage.info("已有导出，未重跑");
     } else {
-      ElMessage.success(`已转换：${res.chat_lines ?? 0} 句`);
+      ElMessage.success(`已转换：${res.chat_lines} 句`);
     }
     emit("converted", convertTarget);
     await loadDetail();
@@ -600,7 +600,11 @@ async function handleReviewCandidate() {
   emit("converting", target);
   try {
     const result = await reviewGoldChatCandidate(id, revision);
-    ElMessage.success(`审核通过并导出：${result.chat_lines ?? 0} 句`);
+    if (result.action === "skip") {
+      ElMessage.info("已有导出，未重新审核");
+    } else {
+      ElMessage.success(`审核通过并导出：${result.chat_lines} 句`);
+    }
   } catch (error) {
     handleError(error, "候选审核未通过，已保留候选和原导出稿");
   } finally {

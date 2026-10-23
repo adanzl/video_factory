@@ -133,7 +133,9 @@ def convert_route():
         force,
     )
     try:
-        if parse_bool(data, "async", default=True):
+        # 旧版页面没有 async 字段，会把任务回执误当成稿件并显示「0句」。
+        # 只有显式声明支持轮询的客户端才返回 202 任务回执。
+        if parse_bool(data, "async", default=False):
             return json_ok(gold_story_mgr.submit_conversion(
                 gold_story_id=gold_story_id, source_id=source_id, force=force,
             ), status=202)
@@ -254,7 +256,7 @@ def batch_route():
         source_ids,
     )
     try:
-        if parse_bool(data, "async", default=True):
+        if parse_bool(data, "async", default=False):
             result = gold_story_mgr.submit_batch_conversion(
                 max_items=max_items, status=status, gold_story_ids=gold_story_ids,
                 source_ids=source_ids, force=force,

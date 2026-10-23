@@ -1751,6 +1751,41 @@ def test_validate_expand_shortens_before_full_fix(monkeypatch):
     assert len(out["dialogue"][0]["line"]) <= gc.CHAT_MAX_LINE_CHARS
 
 
+@pytest.mark.parametrize("failure", ["503", "500", "unexpected"])
+def test_upstream_503_logs_warning_without_chained_traceback(monkeypatch, caplog, failure):
+    import logging
+    from requests import Response
+    from requests.exceptions import HTTPError
+    from app.services.gold_story.gold_chat.repair import GoldChatSourceMappingError
+
+    monkeypatch.setenv("GOLD_CHAT_PERBEAT", "1")
+    monkeypatch.setattr(gex.logger, "handlers", [caplog.handler])
+    if failure == "unexpected":
+        error = RuntimeError("unexpected internal failure")
+    else:
+        response = Response()
+        response.status_code = int(failure)
+        response.url = "https://opencode.ai/zen/go/v1/chat/completions"
+        error = HTTPError(f"{failure} Server Error for url: {response.url}", response=response)
+
+    def generate(**_kwargs):
+        try:
+            raise GoldChatSourceMappingError("进入显式素材映射")
+        except GoldChatSourceMappingError:
+            raise error
+
+    monkeypatch.setattr(gex, "_generate_perbeat_candidate", generate)
+    with caplog.at_level(logging.WARNING), pytest.raises(ValueError, match="network:"):
+        gex.gold_story_to_gold_chat(_sample_row())
+    records = [r for r in caplog.records if "expand candidate network fail" in r.getMessage()]
+    assert records
+    assert all((not r.exc_info) == (failure == "503") for r in records)
+    if failure == "503":
+        assert "503" in caplog.text and response.url in caplog.text
+        assert "Traceback" not in caplog.text
+        assert "GoldChatSourceMappingError" not in caplog.text
+
+
 def test_gold_story_to_gold_chat(monkeypatch):
     _bypass_structure_gate(monkeypatch)
 

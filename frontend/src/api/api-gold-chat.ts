@@ -345,8 +345,20 @@ async function waitGoldChatTask<T>(initial: GoldChatTask<T>): Promise<T> {
     }
   }
   if (task.status === "failed") throw new Error(task.error || "转换失败");
+  if (task.status !== "succeeded") throw new Error("转换任务状态异常，请刷新查看。");
   if (!task.result) throw new Error("转换任务没有返回结果，请刷新查看。");
   return task.result;
+}
+
+function requireGoldChatResult(result: GoldChatConvertResult): GoldChatConvertResult {
+  if (!result || (result.action !== "ok" && result.action !== "skip")) {
+    throw new Error("转换没有返回有效的成稿结果，请刷新查看。");
+  }
+  if (result.action === "ok" &&
+      (!Number.isInteger(result.chat_lines) || (result.chat_lines ?? 0) <= 0)) {
+    throw new Error("转换结果缺少有效对白，尚未确认生成成功，请刷新查看。");
+  }
+  return result;
 }
 
 export async function getGoldChatConvertStatus(): Promise<GoldChatConvertStatus> {
@@ -360,7 +372,7 @@ export async function reviewGoldChatCandidate(id: number, revision: string): Pro
   const response = await api.post<GoldChatTask<GoldChatConvertResult>>(
     "/v_factory/api/gold_chat/review", { id, revision }, { timeout: 30000 },
   );
-  return waitGoldChatTask(response.data);
+  return requireGoldChatResult(await waitGoldChatTask(response.data));
 }
 
 export async function convertGoldChat(params: {
@@ -378,7 +390,7 @@ export async function convertGoldChat(params: {
     },
     { timeout: 30000 },
   );
-  return waitGoldChatTask(response.data);
+  return requireGoldChatResult(await waitGoldChatTask(response.data));
 }
 
 export interface GoldStoryDeleteResult {
