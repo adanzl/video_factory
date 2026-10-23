@@ -10,6 +10,7 @@ from app.services.daily_story.prompts import (
     DAILY_STORY_BODY_CHARS_MIN,
     DAILY_STORY_KEY_CHARS_MAX,
     DAILY_STORY_KEY_CHARS_MIN,
+    dialogue_total_chars,
 )
 from app.services.gold_story.gold_chat.validate import (
     _BANNED_INVENTED_CLOSES,
@@ -1949,7 +1950,7 @@ def format_perbeat_batch_user(
         f"关键包袱（全篇只说一次，只能由指定角色说）：{punchline or '（无）'}\n"
         f"篇幅：共 {len(slots)} 句，每句 8–24 字，全篇按序号顺序发生\n"
         f"类型：{scene_contract.get('story_type') or ''}；表达契约：{json.dumps(scene_contract.get('gold_n_expression_contract'), ensure_ascii=False)}\n"
-        f"全篇总字数目标{target_chars}字（含标点，至少{min_chars}字）：按各槽目标写足表达，不能因为照抄短素材而篇幅不足。\n\n"
+        f"全篇总字数目标{target_chars}字（含标点，至少{min_chars}字，最多{DAILY_STORY_BODY_CHARS_MAX}字）：按各槽目标写足表达，不能因为照抄短素材而篇幅不足。\n\n"
         f"【分配表】（照此填词，序号/说话人/顺序都不许改）\n"
         + "\n".join(rows)
         + f"\n{fb}\n"
@@ -2068,18 +2069,26 @@ def format_source_revision_user(
 ) -> str:
     """只交付失败行的编辑任务；完整候选只提供上下文，不重复整表填词。"""
     global_repair = any(i == 0 for i, _, _ in failures)
-    reasons = {i: why for i, _, why in failures}
+    reasons: dict[int, str] = {}
+    for i, _, why in failures:
+        reasons[i] = "；".join(x for x in (reasons.get(i), why) if x)
     targets = [
         {"i": i, "speaker": slot["speaker"], "source_meaning": slot.get("intent"),
-         "current_line": filled.get(i, ""), "must_fix": reasons.get(i, reasons.get(0)),
+         "current_line": filled.get(i, ""), "current_chars": len(filled.get(i, "")),
+         "min_chars": 14 if slot.get("is_filler") else 8, "max_chars": CHAT_MAX_LINE_CHARS,
+         "must_fix": "；".join(x for x in (reasons.get(i), reasons.get(0)) if x),
          "speech_act": slot.get("planned_speech_act")}
         for i, slot in enumerate(slots, 1) if global_repair or i in reasons
     ]
     context = [{"i": i, "speaker": slot["speaker"], "line": filled.get(i, "")}
                for i, slot in enumerate(slots, 1)]
+    total_chars = dialogue_total_chars({"dialogue": context})
     return (
         "改写下列失败句，保留全部素材含义。字数不足时补清原本省略的角色、对象、回忆指代；"
+        "字数超限时压缩冗余措辞，保留事实、因果和指代，不硬截句、不增删槽位或改说话人/顺序。"
         "不要照抄原句，不添加事实，不重复填词。每句最多24字，按must_fix给出的目标完成。\n"
+        f"【全文字数】当前{total_chars}字，上限{DAILY_STORY_BODY_CHARS_MAX}字（含标点）；"
+        "修后合并原样保留的句子仍须满足上限。\n"
         f"【需要改写】{json.dumps(targets, ensure_ascii=False)}\n"
         f"【只读全文上下文】{json.dumps(context, ensure_ascii=False)}\n"
         f"【只读原始素材】{source_text}\n"

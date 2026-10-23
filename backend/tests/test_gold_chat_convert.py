@@ -406,6 +406,104 @@ def test_source_plan_cannot_receive_template_lines_from_length_stabilizer(monkey
     assert not changed and result == before
 
 
+@pytest.mark.parametrize("reaction", [True, False])
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_source_fill_uses_bounded_revision_rounds_for_same_overlong_slot(monkeypatch, reaction, repair_succeeds):
+    slots = [{"speaker": "昭昭" if i % 2 else "灿灿", "intent": f"内容{i}",
+              "source_plan": True, "is_filler": reaction and i == 14}
+             for i in range(18)]
+    valid = "这是一条用于检验槽位字数的完整台词。"
+    overlong = "这条台词原来实在太长了，需要压缩以后才能通过单句字数检查。"
+    original = {i: overlong if i == 15 else valid for i in range(1, 19)}
+    calls = []
+
+    def chat(_system, user, **_kwargs):
+        calls.append(user)
+        if len(calls) == 1:
+            return {"lines": [{"i": i, "line": line} for i, line in original.items()]}
+        assert '"current_chars": 29' in user
+        assert '"min_chars": ' + ("14" if reaction else "8") in user
+        assert "压缩冗余措辞" in user
+        repaired = valid if repair_succeeds and len(calls) == 3 else overlong
+        return {"lines": [{"i": 15, "line": repaired}, {"i": 1, "line": "不应采纳的越权修改。"}]}
+
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    lines, errors = gex._perbeat_fill_slots(slots, scene_contract={}, punchline="", temperature=0.4)
+    assert len(calls) == 3  # 同槽失败也不能跳过最后一次定点修复。
+    assert len(lines) == len(slots)
+    assert [sp for sp, _ in lines] == [slot["speaker"] for slot in slots]
+    assert lines[0][1] == original[1]
+    if repair_succeeds:
+        assert errors == [] and lines[14][1] == valid
+    else:
+        assert [i for i, _, _ in errors] == [15]
+        assert lines[14][1] == overlong  # 不截断、丢句或伪报成功。
+
+
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_source_fill_repairs_total_length_before_returning_candidate(monkeypatch, repair_succeeds):
+    slots = [{"speaker": "昭昭" if i % 2 else "灿灿", "intent": f"内容{i}", "source_plan": True}
+             for i in range(18)]
+    original = {i: "这句话用于检查补写以后是否保留原来的顺序。" for i in range(1, 19)}
+    original[18] = "字" * 15 + "。"
+    assert sum(map(len, original.values())) == 373
+    calls = []
+
+    def chat(_system, user, **_kwargs):
+        calls.append(user)
+        if len(calls) == 1:
+            assert "最多370字" in user
+            return {"lines": [{"i": i, "line": line} for i, line in original.items()]}
+        assert "当前373字，上限370字" in user
+        assert "至少压缩3字" in user
+        # 全文返修允许只返回需要压缩的句子，其他槽原样保留。
+        return {"lines": [{"i": 1, "line": "这是一条用于检验槽位字数的完整台词。" if repair_succeeds else original[1]}]}
+
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    lines, errors = gex._perbeat_fill_slots(slots, scene_contract={}, punchline="", temperature=0.4)
+    assert len(calls) == (2 if repair_succeeds else 3)
+    assert len(lines) == 18
+    assert [line for _, line in lines[1:]] == list(original.values())[1:]
+    if repair_succeeds:
+        assert errors == []
+        assert sum(len(line) for _, line in lines) == 370
+    else:
+        assert len(errors) == 1 and errors[0][0] == 0
+        assert "当前373" in errors[0][2]
+
+
+def test_source_revision_keeps_global_and_local_constraints_together():
+    from app.services.gold_story.gold_chat.prompts import format_source_revision_user
+
+    prompt = format_source_revision_user(
+        scene_contract={}, slots=[{"speaker": "灿灿", "intent": "原素材", "is_filler": True}],
+        filled={1: "待改写句子。"}, source_text="原始素材",
+        failures=[(1, "待改写句子。", "单句指代不明"), (0, "全文", "类型表达缺失"), (0, "全文", "全文超过上限")],
+    )
+    targets = json.loads(prompt.split("【需要改写】", 1)[1].split("\n", 1)[0])
+    assert all(reason in targets[0]["must_fix"] for reason in ("单句指代不明", "类型表达缺失", "全文超过上限"))
+
+
+@pytest.mark.parametrize("reaction,expected_calls", [(True, 1), (False, 2)])
+def test_legacy_fill_retains_early_stop_for_unchanged_failures(monkeypatch, reaction, expected_calls):
+    slots = [{"speaker": "昭昭" if i % 2 else "灿灿", "intent": f"内容{i}",
+              "is_filler": reaction and i == 14} for i in range(18)]
+    calls = []
+    line = "这是一条用于检验槽位字数的完整台词。"
+
+    def chat(*_args, **_kwargs):
+        return {"lines": [{"i": i, "line": line} for i in range(1, 19)]}
+
+    def validate(_slots, _filled):
+        calls.append(True)
+        return [(slot["speaker"], line) for slot in _slots], [(15, line, "测试未修复的局部问题")]
+
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    monkeypatch.setattr(gex, "_perbeat_validate_fill", validate)
+    gex._perbeat_fill_slots(slots, scene_contract={}, punchline="", temperature=0.4)
+    assert len(calls) == expected_calls
+
+
 def test_declared_n_escalation_uses_shared_slots_and_existing_layer_scores():
     from app.services.daily_story.quality import _score_escalation
     from app.services.daily_story.story_types.n.quality import declared_escalation_hits

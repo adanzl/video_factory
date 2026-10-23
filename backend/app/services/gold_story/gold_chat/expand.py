@@ -4724,11 +4724,11 @@ def _perbeat_fill_slots(
     retry_feedback: str = "",
     source_text: str = "",
 ) -> tuple[list[tuple[str, str]], list[tuple[int, str, str]]]:
-    """整篇填词：一次调用填完所有槽，最多再一次返修。
+    """整篇填词：一次调用填完所有槽，最多再两次返修。
 
     一句一调实测要 40+ 分钟（14 槽 × 4–6 次重写 × draft 重掷），因为每槽都要
     凑齐「14–24 字/不复述/接住上一句/必含词」四五个条件，模型几乎每槽都要重写。
-    整篇一次性填词把调用降到 1–2 次，而说话人与拍序由骨架锁死（模型只填词），
+    整篇一次性填词把调用降到 1–3 次，而说话人与拍序由骨架锁死（模型只填词），
     所以不会回到「张冠李戴」的老问题。
     """
     from app.services.gold_story.gold_chat.prompts import (
@@ -4738,6 +4738,7 @@ def _perbeat_fill_slots(
         format_source_revision_user,
     )
 
+    source_mode = any(s.get("source_plan") for s in slots)
     allowed_actions = _perbeat_allowed_actions(scene_contract, source_text)
     last_beat = max((int(s.get("beat_id") or 0) for s in slots), default=0)
     for slot in slots:
@@ -4806,7 +4807,7 @@ def _perbeat_fill_slots(
             slots=slots,
             feedback=feedback,
         )
-        if any(s.get("source_plan") for s in slots):
+        if source_mode:
             user += ("\n【只读原始素材】人称指源文内部所指，不自动指本次在场者；"
                      "引用过去对话须让听者辨明当时的指称，不能添加新情节。\n"
                      + json.dumps(source_text, ensure_ascii=False))
@@ -4819,12 +4820,12 @@ def _perbeat_fill_slots(
         for _net in range(4):
             try:
                 data = _chat_json(
-                    SOURCE_BATCH_SYSTEM if any(s.get("source_plan") for s in slots) else PERBEAT_BATCH_SYSTEM,
+                    SOURCE_BATCH_SYSTEM if source_mode else PERBEAT_BATCH_SYSTEM,
                     user,
                     temperature=temperature + 0.1 * round_i,
-                    max_tokens=4096 if any(s.get("source_plan") for s in slots) else 1600,
-                    json_mode=not any(s.get("source_plan") for s in slots),
-                    model=_source_plan_model() if any(s.get("source_plan") for s in slots) else None,
+                    max_tokens=4096 if source_mode else 1600,
+                    json_mode=not source_mode,
+                    model=_source_plan_model() if source_mode else None,
                 )
                 break
             except ValueError:
@@ -4861,16 +4862,22 @@ def _perbeat_fill_slots(
                 if 1 <= idx <= len(slots) and idx not in keep_idx:
                     filled[idx] = line
         lines, failures = _perbeat_validate_fill(slots, filled)
-        if any(s.get("source_plan") for s in slots):
+        if source_mode:
             from app.services.daily_story.story_types.n.validate import append_n_body_errors
             type_errors: list[str] = []
-            append_n_body_errors({"story_type": scene_contract.get("story_type"),
+            candidate = {"story_type": scene_contract.get("story_type"),
                                   "gold_n_expression_contract": scene_contract.get("gold_n_expression_contract"),
                                   "gold_source_line_plan": scene_contract.get("gold_source_line_plan"),
                                   "dialogue": [{"speaker": s["speaker"], "line": filled.get(i, "")}
-                                               for i, s in enumerate(slots, 1)]}, type_errors)
+                                               for i, s in enumerate(slots, 1)]}
+            append_n_body_errors(candidate, type_errors)
             if type_errors:
                 failures.append((0, "全文", "；".join(type_errors) + "；在合适位置自然补全，保留原素材，不固定某一行携词"))
+            total_chars = dialogue_total_chars(candidate)
+            if total_chars > DAILY_STORY_BODY_CHARS_MAX:
+                failures.append((0, "全文", f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total_chars}；"
+                                 f"至少压缩{total_chars - DAILY_STORY_BODY_CHARS_MAX}字冗余措辞，"
+                                 "保留全部素材事实、槽位、说话人和顺序，不截断句子"))
         if not failures:
             return lines, []
         keep_idx = set() if any(i == 0 for i, _ln, _why in failures) else {i for i in range(1, len(slots) + 1)} - {
@@ -4894,8 +4901,9 @@ def _perbeat_fill_slots(
         # 只剩插话槽不合格时不再重填：下面 `_perbeat_soft_fillers` 那条路会把
         # 它们按「够 12 句就保留」兜住，交给终检定点修。每轮整表重填要多烧一次
         # 12 行调用（约 3s），而这类软失败几乎每次都剩 1–2 条，三轮必然跑满。
-        soft_only = all(
-            i <= len(slots) and slots[i - 1].get("is_filler")
+        # 来源计划不能删槽或交给软插话兜底，必须在本轮预算内修完再终验。
+        soft_only = not source_mode and all(
+            1 <= i <= len(slots) and slots[i - 1].get("is_filler")
             for i, _ln, _why in failures
         )
         if soft_only and len(slots) - len(failures) >= 12:
@@ -4908,7 +4916,8 @@ def _perbeat_fill_slots(
         # 触发的还是同一条规则）：#138 实测三轮 idx=[3,7,10] 原样重复，纯烧
         # 两次 12 行调用。同一批失败出现第二次就收手，交下游兜。
         if (
-            failures
+            not source_mode
+            and failures
             and len(slots) >= 12
             and _fill_fail_sig(failures) == prev_fail_sig
         ):
