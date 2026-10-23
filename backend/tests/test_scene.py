@@ -1465,6 +1465,29 @@ def test_n_seed_viewer_questions_realign_to_asker():
     assert ambiguous[1] == []
 
 
+def test_n_seed_keeps_content_questions_with_their_contract_speakers():
+    from app.services.gold_story.scene import realign_seed_viewer_questions_to_asker
+
+    seed = [
+        {"speaker": "爸爸", "intent": "为什么你要用油手拍我脸"},
+        {"speaker": "昭昭", "intent": "我是先让爸爸体验，再问他要不要续杯啊"},
+        {"speaker": "灿灿", "intent": "你手上油蹭得爸爸脸发亮，这算哪门子分享"},
+    ]
+    contract = {"story_type": "N", "beat_chain": [
+        {"speaker": "爸爸", "intent": "追问为什么要用油手拍脸"},
+        {"speaker": "昭昭", "intent": "昭昭说先让爸爸体验，再问他要不要续杯"},
+        {"speaker": "灿灿", "intent": "灿灿指出手上油蹭得爸爸脸发亮，这算哪门子分享"},
+    ]}
+    out, notes = realign_seed_viewer_questions_to_asker(seed, contract=contract)
+    assert out == seed and not notes
+    assert realign_seed_viewer_questions_to_asker(out, contract=contract) == (out, [])
+    # 同话题但不是该孩子的实质内容拍，不能凭“油手/爸爸”零散重合占据追问。
+    unrelated = {**contract, "beat_chain": [contract["beat_chain"][0],
+                 {"speaker": "昭昭", "intent": "在爸爸旁边擦油手"}]}
+    shifted, _ = realign_seed_viewer_questions_to_asker(seed, contract=unrelated)
+    assert shifted[1]["speaker"] == "爸爸"
+
+
 def test_narration_catches_self_reported_blurt():
     """叙述式起句（角色自述「突然蹦出个 X」）须判旁白，并只留可说内容。"""
     from app.services.gold_story.scene import (
@@ -1674,6 +1697,27 @@ def test_n_formula_slots_added_when_contract_missing_them():
     # 非 N 不动
     other, _ = normalize_n_formula_slots({**contract, "story_type": "C"})
     assert other["beat_chain"] == contract["beat_chain"]
+
+
+@pytest.mark.parametrize("close", ["认输说这钻石只认小孩不认妈", "服软说这种分享永远不要"])
+def test_n_formula_keeps_existing_parent_concession_without_duplicate_close(close):
+    contract = {"story_type": "N", "mom_lines_max": 2, "beat_chain": [
+        {"speaker": "妈妈", "intent": "问为什么"},
+        {"speaker": "昭昭", "intent": "因为钻石怕被抓所以躲起来"},
+        {"speaker": "妈妈", "intent": close},
+    ]}
+    out, notes = normalize_n_formula_slots(contract)
+    assert len(out["beat_chain"]) == 3
+    assert "补N收束拍" not in notes
+    assert close in out["beat_chain"][-1]["intent"]
+    assert normalize_n_formula_slots(out)[1] == []
+    # 孩子的认输或家长中途的认输都不能替代家长末尾收束。
+    child_tail = {**contract, "beat_chain": [*contract["beat_chain"],
+                  {"speaker": "昭昭", "intent": "我也服了"}]}
+    repaired, notes = normalize_n_formula_slots(child_tail)
+    assert "补N收束拍" in notes
+    assert repaired["beat_chain"][-1]["speaker"] == "妈妈"
+    assert "打草稿" not in repaired["beat_chain"][-1]["intent"]
 
 
 def test_needs_second_kid_always_true():

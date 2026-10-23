@@ -2807,6 +2807,14 @@ _RE_OPENING_DIRECTIVE_ADDRESS = re.compile(r"^(?:昭昭|灿灿)[，,]")
 def _opening_directive_matches(intent: str, line: str) -> bool:
     """家长 directive beat：只认可说出口的指令，禁 intent 原句冒充对白。"""
     text = str(line or "").strip()
+    # 解释后附带的感知指令（如“不是钻石，你仔细看看”）也是可见对白。
+    # 必须有直接称呼、感知动作和原拍实义交集，不能只凭“你看”补齐一拍。
+    if (
+        re.search(r"(?:看|听|闻|摸)", intent)
+        and re.search(r"你(?:再|仔细|认真|好好)*(?:看看|听听|闻闻|摸摸)", text)
+        and _intent_line_overlap(intent, text, need=3)
+    ):
+        return True
     if not text or not _RE_OPENING_DIRECTIVE_ACTION.search(text):
         return False
     if not (

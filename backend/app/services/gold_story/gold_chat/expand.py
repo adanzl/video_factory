@@ -1888,6 +1888,22 @@ def _line_plan_settle_stage_intents(
     return plan
 
 
+def _source_beat_is_synthetic(beat: dict[str, Any], seed: list[dict[str, Any]]) -> bool:
+    from app.services.gold_story.scene import _is_second_kid_filler_intent
+
+    intent = str(beat.get("intent") or "")
+    if not _is_second_kid_filler_intent(intent):
+        return bool(beat.get("witness_only"))
+    # 原文确有同词句时不能仅因匹配旧模板就拒绝其内容归属。
+    for row in seed:
+        if row.get("speaker") != beat.get("speaker") or row.get("source_origin") != "source":
+            continue
+        text = re.sub(r"[\W_]+", "", str(row.get("intent") or ""))
+        if text and text[:8] in re.sub(r"[\W_]+", "", intent):
+            return False
+    return True
+
+
 def _source_plan_skeleton(
     scene_contract: dict[str, Any], beat_chain: list[Any], seed: list[dict[str, Any]],
     *, source_beats: list[int] | None = None,
@@ -1898,7 +1914,7 @@ def _source_plan_skeleton(
     from app.services.gold_story.gold_chat.repair import GoldChatContractError, GoldChatSourceMappingError
 
     beats = [b for b in beat_chain if isinstance(b, dict)]
-    synthetic = [bool(b.get("witness_only") or is_n_filler_intent(str(b.get("intent") or ""))) for b in beats]
+    synthetic = [_source_beat_is_synthetic(b, seed) for b in beats]
 
     @lru_cache(None)
     def align(bi: int, si: int) -> tuple[tuple[int, ...], ...]:
@@ -1954,6 +1970,9 @@ def _source_plan_skeleton(
         owner = str(beats[bid - 1].get("speaker") or "")
         rows = []
         for index in range(si, si + count):
+            if seed[index].get("source_origin") == "synthetic":
+                rows.append(reaction(bid, str(seed[index]["speaker"])))
+                continue
             rows.append({"beat": bid, "speaker": seed[index]["speaker"], "intent": seed[index]["intent"],
                          "addressee": str(seed[index].get("addressee") or ""),
                          "role": "content", "source_seed_ids": [index + 1],
@@ -2019,6 +2038,8 @@ def _validate_source_line_plan(
             if len(refs) != 1 or type(refs[0]) is not int or not 1 <= refs[0] <= len(seed):
                 return [], [f"第{i}行内容必须独占一个有效 seed 单元，不能合并多段回答"]
             ref = refs[0]
+            if seed[ref - 1].get("source_origin") == "synthetic":
+                errors.append(f"第{i}行程序补充反应不得冒充来源素材")
             if speaker != str(seed[ref - 1].get("speaker") or ""):
                 errors.append(f"第{i}行不得改变 seed{ref} 的事实说话人")
             used.append(ref)
@@ -2032,7 +2053,7 @@ def _validate_source_line_plan(
             "addressee": str(seed[refs[0] - 1].get("addressee") or "") if role == "content" else "",
             "source_speech_act": str(seed[refs[0] - 1].get("speech_act") or "") if role == "content" else "",
         })
-    if sorted(used) != list(range(1, len(seed) + 1)):
+    if sorted(used) != [i for i, row in enumerate(seed, 1) if row.get("source_origin") != "synthetic"]:
         errors.append("每个 seed 必须且只能分配给一个内容句，不能丢失或复述素材")
     content_order = [r["source_seed_ids"][0] for r in plan if r["role"] == "content"]
     if content_order != sorted(content_order):
@@ -2042,7 +2063,7 @@ def _validate_source_line_plan(
         actual = [ref for r in plan if r["beat"] == bid for ref in r["source_seed_ids"]]
         if not isinstance(expected, list) or expected != actual:
             errors.append(f"第{bid}拍 beat_sources 与内容句引用不一致")
-        synthetic = bool(beat.get("witness_only") or is_n_filler_intent(str(beat.get("intent") or "")))
+        synthetic = _source_beat_is_synthetic(beat, seed)
         if synthetic and actual:
             errors.append(f"第{bid}拍是合成反应拍，不能承载真实素材内容")
         # 旧流水线插入的态度模板不是源素材事件，不要求它凭空拥有一个 seed。
@@ -2155,7 +2176,10 @@ def _build_line_plan(
     )
 
     beats = [b for b in beat_chain or [] if isinstance(b, dict)]
-    source_units = [s for s in seed or [] if isinstance(s, dict) and s.get("intent") and s.get("speaker")]
+    from app.services.gold_story.scene import mark_seed_source_origins
+
+    source_units = mark_seed_source_origins(
+        [s for s in seed or [] if isinstance(s, dict) and s.get("intent") and s.get("speaker")], story_raw)
     from app.services.gold_story.scene import is_n_filler_intent
     real_beats = [b for b in beats if not b.get("witness_only") and not is_n_filler_intent(str(b.get("intent") or ""))]
     # 素材本身已够成稿时，即使一拍恰好一条也保留素材分句；不能再压回意图重写。

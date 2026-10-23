@@ -458,24 +458,21 @@ def normalize_n_formula_slots(
         r for r in rows if str(r.get("speaker") or "").strip() in _PARENT_SPEAKER_SET
     ]
     has_close = False
-    for r in parent_rows_all:
+    for r in rows[-1:]:
+        if str(r.get("speaker") or "").strip() not in _PARENT_SPEAKER_SET:
+            continue
         c_text = str(r.get("intent") or r.get("beat") or "")
         # 追问句里也常带「愣住」（愣住追问），那是问不是收束，必须排除，
         # 否则缺口会被误判成「已经有收束」（#87 实测）。
         if re.search(r"追问|质问|反问|设问|问：|谁教|什么意思", c_text):
             continue
-        if re.search(r"收束|决定|以后|打草稿|认栽|服了|接不住", c_text):
+        if re.search(r"收束|决定|以后|打草稿|认栽|认输|服软|服了|接不住|算了|放弃", c_text):
             has_close = True
             break
     if parent_rows_all and not has_close:
-        tail_kid = rows[-1]
-        tail_sp = str(tail_kid.get("speaker") or "").strip()
         closer = {"speaker": parent_rows_all[-1].get("speaker") or "妈妈",
-                  "intent": "收束：认栽，说以后说话得先打草稿，最后只能服了/接不住"}
-        if tail_sp in _PARENT_SPEAKER_SET:
-            rows.append(closer)
-        else:
-            rows.append(closer)
+                  "intent": "收束：回应孩子前面的歪理，最后只能服了/接不住，不新增话题"}
+        rows.append(closer)
         notes.append("补N收束拍")
         changed = True
 
@@ -629,6 +626,26 @@ def _is_second_kid_filler_intent(text: str) -> bool:
     if any(line[:8] in t for line in _N_SECOND_KID_LINES):
         return True
     return any(line[:8] in t for line in _WITNESS_KID_LINES)
+
+
+def mark_seed_source_origins(seed: list[Any], story_raw: str) -> list[Any]:
+    """标记程序态度模板的来源；原文确有同词时仍是内容，不把模板伪装成素材。"""
+    source = re.sub(r"[\W_]+", "", str(story_raw or ""))
+    prefixes = [re.sub(r"[\W_]+", "", line[:8])
+                for line in (*_N_SECOND_KID_LINES, *_WITNESS_KID_LINES)]
+    result: list[Any] = []
+    for item in seed:
+        if not isinstance(item, dict):
+            result.append(item)
+            continue
+        row = dict(item)
+        row.pop("source_origin", None)  # 标记由程序重算，不相信模型自报来源。
+        text = re.sub(r"[\W_]+", "", str(row.get("intent") or ""))
+        matched = [prefix for prefix in prefixes if prefix in text]
+        if matched:
+            row["source_origin"] = "source" if any(prefix in source for prefix in matched) else "synthetic"
+        result.append(row)
+    return result
 
 
 def supplemental_witness_kid(contract: dict[str, Any] | None) -> str:
@@ -4991,6 +5008,23 @@ def realign_seed_viewer_questions_to_asker(
         speaker = str(row.get("speaker") or "").strip()
         intent = str(row.get("intent") or "")
         if speaker in viewers and _N_SEED_VIEWER_QUESTION.search(intent):
+            # 原拍主明确承担的反问/调侃不是旁观代问，不能因“哪/要不要”抢给家长。
+            # 同角色且大部分实义字面对应才保留；零散主题词重合不足以绑定。
+            text = re.sub(r"[\W_]+", "", intent)
+            grams = {text[i:i + 2] for i in range(len(text) - 1)}
+            owned = False
+            for beat in chain:
+                if not isinstance(beat, dict) or beat.get("speaker") != speaker:
+                    continue
+                beat_text = re.sub(r"[\W_]+", "", str(beat.get("intent") or ""))
+                beat_grams = {beat_text[i:i + 2] for i in range(len(beat_text) - 1)}
+                shared = len(grams & beat_grams)
+                if shared >= 6 and shared / max(1, min(len(grams), len(beat_grams))) >= 0.7:
+                    owned = True
+                    break
+            if owned:
+                out.append(row)
+                continue
             new_row = dict(row)
             new_row["speaker"] = asker
             out.append(new_row)

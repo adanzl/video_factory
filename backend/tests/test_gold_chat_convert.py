@@ -120,6 +120,39 @@ def test_n_question_slot_does_not_overwrite_closing_slot():
     assert out[-1]["must_words"] == list(gex._N_SLOT_WORD_REQS["stun"])
 
 
+@pytest.mark.parametrize("present_in_source", [False, True])
+def test_source_plan_distinguishes_pipeline_reaction_from_literal_source(present_in_source):
+    from app.services.gold_story.scene import mark_seed_source_origins
+
+    speakers = ["妈妈", "昭昭", "灿灿", "昭昭", "妈妈", "昭昭",
+                "灿灿", "昭昭", "妈妈", "昭昭", "灿灿", "妈妈"]
+    seed = [{"speaker": sp, "intent": f"第{i}个已经发生的具体问答内容"}
+            for i, sp in enumerate(speakers, 1)]
+    seed[2]["intent"] = "这话我可有点不信，你可得说清楚才行。"
+    source = seed[2]["intent"] if present_in_source else "孩子告诉妈妈昨天发生的事情。"
+    marked = mark_seed_source_origins(seed, source)
+    assert "source_origin" not in seed[2]
+    assert marked == mark_seed_source_origins(marked, source)
+    beats = [{"beat": i, "speaker": s["speaker"], "intent": s["intent"]} for i, s in enumerate(seed, 1)]
+    contract = {"story_type": "N", "characters": ["妈妈", "昭昭", "灿灿"], "mom_lines_max": 4}
+    plan = gex._source_plan_skeleton(contract, beats, marked)
+    mapping = {str(i): [ref for row in plan if row["beat"] == i for ref in row["source_seed_ids"]]
+               for i in range(1, 13)}
+    _, errors = gex._validate_source_line_plan(
+        {"lines": plan, "beat_sources": mapping}, scene_contract=contract,
+        beat_chain=beats, seed=marked, validate_intents=False)
+    assert not errors
+    assert plan[2]["role"] == ("content" if present_in_source else "reaction")
+    assert plan[2]["source_seed_ids"] == ([3] if present_in_source else [])
+    if not present_in_source:
+        plan[2].update(role="content", source_seed_ids=[3])
+        mapping["3"] = [3]
+        _, errors = gex._validate_source_line_plan(
+            {"lines": plan, "beat_sources": mapping}, scene_contract=contract,
+            beat_chain=beats, seed=marked, validate_intents=False)
+        assert any("程序补充反应不得冒充来源素材" in error for error in errors)
+
+
 def test_n_word_slots_follow_contract_questions_and_reason_instead_of_positions():
     slots = [{"speaker": sp, "intent": intent, "is_filler": False} for sp, intent in [
         ("妈妈", "提醒作业还没写完"),
@@ -2836,6 +2869,29 @@ def test_gold_chat_summary_from_payload():
     assert summary["bili_title"] == "东北弟弟打架被姐姐骂"
     assert summary["structure_score"] == 82
     assert summary["humor_score"] == 14
+
+
+@pytest.mark.parametrize("concession_speaker,concession,victory,expected", [
+    ("妈妈", "认输：妈妈承认说不过你", "嘴硬总结：看你还说", "I"),
+    ("妈妈", "继续解释为什么大人可以", "嘴硬总结：看你还说", "E"),
+    ("灿灿", "认输：我说不过你", "嘴硬总结：看你还说", "E"),
+    ("妈妈", "认输：妈妈承认说不过你", "继续追问手机在哪", "E"),
+])
+def test_parent_fact_role_does_not_override_explicit_i_victory(
+    concession_speaker, concession, victory, expected,
+):
+    from app.services.gold_story.gold_chat.type_bridge import resolve_gold_chat_structure_row
+    row = {"mechanism": "M11", "structure_type": "I", "payload": {"scene_contract": {
+        "story_type": "I", "facts": [{"secret_holder": "妈妈", "discoverer": "昭昭"}],
+        "beat_chain": [
+            {"speaker": "昭昭", "intent": "反问为什么大人可以小孩不可以"},
+            {"speaker": concession_speaker, "intent": concession},
+            {"speaker": "昭昭", "intent": victory},
+        ],
+    }}}
+    out, _ = resolve_gold_chat_structure_row(row)
+    assert out["structure_type"] == expected
+    assert row["payload"]["scene_contract"]["story_type"] == "I"
 
 
 def test_parent_caught_by_kid_retargets_a_and_i_to_e():

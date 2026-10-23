@@ -1571,6 +1571,20 @@ def run_export_semantic_review(
       核验则走 ``_resolve_unverifiable_evidence`` 单一出口降级留档，不再因引文
       写错判整稿失败。
     """
+    # 正文与锁定计划不一致是输入错误，LLM 无法通过修改审核 JSON 纠正。
+    plan = story.get("gold_source_line_plan")
+    if isinstance(plan, list) and plan:
+        rows = story.get("dialogue") or []
+        if len(rows) != len(plan):
+            return ExportSemanticReviewResult(completed=False, error="审读输入无效：成稿行数与锁定来源计划不一致")
+        for no, (expected, actual) in enumerate(zip(plan, rows), 1):
+            if (not isinstance(expected, dict) or not isinstance(actual, dict)
+                    or expected.get("line") != no
+                    or expected.get("speaker") != actual.get("speaker")):
+                return ExportSemanticReviewResult(
+                    completed=False, error=f"审读输入无效：第{no}行说话人或行号偏离锁定素材计划",
+                )
+
     from app.services.llm import llm_mgr
 
     client = llm_mgr._get_client()

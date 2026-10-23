@@ -1961,6 +1961,47 @@ def test_contract_gap_not_downgraded_by_name_or_prop_substring():
         assert len(valid) == 1, prior_line
 
 
+@pytest.mark.parametrize("mismatch", ["speaker", "count", "number"])
+def test_export_review_rejects_inconsistent_source_input_before_llm(monkeypatch, mismatch):
+    from app.services.llm import llm_mgr
+
+    def unexpected_client():
+        raise AssertionError("输入错误不能重试审核 API")
+
+    monkeypatch.setattr(llm_mgr, "_get_client", unexpected_client)
+    story = _story([{"speaker": "妈妈", "line": "我说不过你。"}])
+    story["gold_source_line_plan"] = [{"line": 1, "speaker": "妈妈"}]
+    if mismatch == "speaker":
+        story["dialogue"][0]["speaker"] = "昭昭"
+    elif mismatch == "count":
+        story["dialogue"] = []
+    else:
+        story["gold_source_line_plan"][0]["line"] = 2
+    result = run_export_semantic_review("测试", story)
+    assert not result.completed
+    assert "审读输入无效" in result.error
+
+
+def test_type_patch_preserves_locked_source_dialogue(monkeypatch):
+    from app.services.daily_story import story_types
+
+    calls = []
+    def rewrite(story):
+        calls.append(True)
+        story["dialogue"][0] = {"speaker": "昭昭", "line": "模板结尾"}
+        return ["changed"]
+
+    monkeypatch.setattr(story_types, "patch_type_body", rewrite)
+    story = {"story_type": "E", "dialogue": [{"speaker": "妈妈", "line": "我说不过你。"}],
+             "gold_source_line_plan": [{"line": 1, "speaker": "妈妈"}]}
+    out, notes = story_types.apply_gold_chat_type_patch(story, structure_type="E")
+    assert out["dialogue"] == [{"speaker": "妈妈", "line": "我说不过你。"}]
+    assert not notes and not calls
+    story.pop("gold_source_line_plan")
+    _, notes = story_types.apply_gold_chat_type_patch(story, structure_type="E")
+    assert notes and calls
+
+
 @pytest.mark.parametrize("recovered", [True, False])
 def test_export_review_corrects_invalid_evidence_bounded(monkeypatch, recovered):
     from app.services.llm import llm_mgr

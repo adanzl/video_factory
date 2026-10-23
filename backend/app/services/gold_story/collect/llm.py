@@ -1122,6 +1122,9 @@ def build_dialogue_seed(
     seed, _silent_seed_notes2 = trim_terminal_no_reply_rows(seed)
     if len(seed) < SEED_MIN:
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])
+    from app.services.gold_story.scene import mark_seed_source_origins
+
+    seed = mark_seed_source_origins(seed, story_raw)
     data["dialogue_seed"] = seed
     confidence = float(data.get("dialogue_confidence") or 0.0)
     if confidence < 0.35:

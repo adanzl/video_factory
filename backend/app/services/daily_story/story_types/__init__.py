@@ -525,6 +525,10 @@ def apply_gold_chat_type_patch(
     st = str(structure_type or "").strip().upper()
     if not st or not isinstance(chat, dict):
         return chat, []
+    if chat.get("gold_source_line_plan"):
+        # 来源分句的角色、顺序与内容由生成器负责；类型模板不能重写已锁定行。
+        # 硬校验和结构评分仍正常执行，失败交回有来源约束的 LLM 修稿。
+        return chat, []
     out = dict(chat)
     out["story_type"] = st
     # gold_chat 已明确给出 structure_type；分发期间用内部锁覆盖旧 punchline/文本推断，

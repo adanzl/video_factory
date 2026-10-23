@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.services.daily_story.story_types import (
     append_type_body_validation_errors,
     parse_story_type_code,
@@ -9,6 +11,25 @@ from app.services.daily_story.story_types import (
     type_body_validation_enabled,
 )
 from app.services.daily_story.story_types.i.validate import append_i_body_errors
+
+
+@pytest.mark.parametrize("question", ["凭啥", "凭什么", "凭哪一条", "为什么该"])
+def test_i_qualification_question_synonyms_keep_defeat_requirement(question):
+    from app.services.daily_story.story_types.quality import TYPE_QUALITY_PROFILES
+    from app.services.daily_story.story_types.i.validate import find_i_close_index
+    score_punchline = TYPE_QUALITY_PROFILES["I"].score_punchline
+
+    lines = ["你又闹情绪了。", "我搭好的塔倒了。", f"大人做不到，{question}要求我？",
+             "我说不过你，是我说错了。", "那以后别拿小题大做批评我。"]
+    speakers = ["妈妈", "昭昭", "昭昭", "妈妈", "昭昭"]
+    assert score_punchline(lines, speakers, "", "")[0] == 8
+    assert find_i_close_index(lines) >= 0
+    without_defeat = [*lines[:3], "我只是提醒你。", lines[-1]]
+    assert score_punchline(without_defeat, speakers, "", "")[0] == 0
+    assert find_i_close_index(without_defeat) == -1
+    game = ["来玩游戏。", "我先走。", "你输了。", "我说不过你。", "我赢了。"]
+    assert score_punchline(game, speakers, "", "")[0] == 0
+    assert find_i_close_index(game) == -1
 
 
 def test_i_validate_passes_soul_question_shape():

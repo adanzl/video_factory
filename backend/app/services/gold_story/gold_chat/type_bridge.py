@@ -586,6 +586,30 @@ def _authority_cognition_caught_wants_e(payload: dict[str, Any]) -> bool:
     return authority_claimed and kid_refuted
 
 
+def _has_i_victory_close(payload: dict[str, Any]) -> bool:
+    """明确的反问→家长语塞→孩子胜出，优先于仅凭事实角色推断 E。"""
+    from app.services.daily_story.story_types.i.validate import RE_SPEECHLESS, RE_I_CONCEDE
+
+    sc = payload.get("scene_contract")
+    chain = sc.get("beat_chain") if isinstance(sc, dict) else None
+    if not isinstance(chain, list) or len(chain) < 3:
+        return False
+    question, concession, victory = chain[-3:]
+    if not all(isinstance(item, dict) for item in (question, concession, victory)):
+        return False
+    q_text = str(question.get("intent") or "")
+    c_text = str(concession.get("intent") or "")
+    v_text = str(victory.get("intent") or "")
+    return bool(
+        question.get("speaker") in _KID_SPEAKERS
+        and concession.get("speaker") in _PARENT_SPEAKERS
+        and victory.get("speaker") == question.get("speaker")
+        and re.search(r"反问|拷问|质问|为什么|凭什么|凭啥", q_text)
+        and (RE_SPEECHLESS.search(c_text) or RE_I_CONCEDE.search(c_text))
+        and re.search(r"制敌|得意|嘴硬|问倒|胜出|你输|我赢", v_text)
+    )
+
+
 def _parent_caught_wants_e(payload: dict[str, Any]) -> bool:
     """家长被孩子当场抓到自己把柄 → 该走 E（妈妈破功）。
 
@@ -629,10 +653,12 @@ def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any]
     base_mech = str(row.get("mechanism") or "").strip().upper()
     base_type = str(row.get("structure_type") or "").strip().upper()
     parent_caught = _parent_caught_wants_e(payload0)
+    explicit_i_close = base_type == "I" and _has_i_victory_close(payload0)
 
     # 家长被孩子抓到把柄 → 统一落 E（先于 align-structure 的 E→M15+Q 重判）
     if (
         parent_caught
+        and not explicit_i_close
         and base_type in _PARENT_CAUGHT_FROM_TYPES
         and base_mech
         and "E" in allowed_structure_types(base_mech)
@@ -658,6 +684,7 @@ def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any]
     # 家长认错人/认错事实、被孩子当场拆穿 → E（同「家长把柄」族，先于 align-structure）
     if (
         _authority_cognition_caught_wants_e(payload0)
+        and not explicit_i_close
         and base_type in _AUTHORITY_COGNITION_FROM_TYPES
         and base_mech
         and "E" in allowed_structure_types(base_mech)

@@ -1070,6 +1070,19 @@ def test_opening_causality_rejects_echo_beat_without_answer_token():
     assert fixed["dialogue"][3]["speaker"] == "妈妈"
 
 
+def test_opening_perception_directive_requires_visible_content_and_correct_target():
+    from app.services.gold_story.gold_chat.validate import _line_fulfills_beat
+
+    entry = {"speaker": "妈妈", "intent": "说那是太阳照在水面上，不是钻石，让灿灿仔细看"}
+    assert _line_fulfills_beat("妈妈", "那是太阳照在水面上，不是钻石，你仔细看看。", entry)
+    assert not _line_fulfills_beat("妈妈", "你看着点。", entry)
+    assert not _line_fulfills_beat("妈妈", "昭昭，那是太阳照在水面上，不是钻石，你仔细看看。", entry)
+    assert not _line_fulfills_beat("妈妈", entry["intent"], entry)
+    other = {"speaker": "爸爸", "intent": "解释门外是风声不是小猫，让昭昭认真听"}
+    assert _line_fulfills_beat("爸爸", "门外是风声不是小猫，你认真听听。", other)
+    assert not _line_fulfills_beat("爸爸", "你认真听听，我要去做饭了。", other)
+
+
 def test_opening_causality_accepts_111_parent_directive_contract_shape():
     """#111：beat1 可把家长指令和孩子动作写在同一 intent；家长台词只需落地自己的指令部分。"""
     from app.services.gold_story.gold_chat.validate import opening_causality_passes
