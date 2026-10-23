@@ -3349,17 +3349,23 @@ def normalize_beat_min_turns(
     *,
     min_total: int = DIALOGUE_TURNS_MIN,
 ) -> tuple[dict[str, Any], list[str]]:
-    """给每拍补 ``min_turns``（可落地最小回合数），并保证 Σ ≥ 正文句数下限。
+    """给每拍补 ``min_turns``（可落地最小回合数），并夹在正文句数上下限内。
 
     契约拍数（4–6）天然少于正文最少句数（12）；若不让每拍声明最小回合数，
     模型只能靠空应答/换词重复凑句数。声明值缺省 1，总和不足 ``min_total`` 时
     按拍轮转抬到上限 ``BEAT_MIN_TURNS_MAX``，让每拍都拿到明确回合额度。
+
+    反过来，拍数被归一化补多（N 类补反应拍/收束拍）而每拍又都声明 3 回合时，
+    总和会超过正文句数上限（12–24，K 允许 +2）。那不是「稿子太长」而是
+    「契约要求太多句」：扩写照做必然超句数被整稿驳回，重抽还是同一结构。
+    所以这里按拍轮转**下压**到 ``chat_line_cap``，开场/收束拍留到最后才压。
     """
     if not isinstance(contract, dict):
         return contract, []
     chain = contract.get("beat_chain")
     if not isinstance(chain, list) or not chain:
         return contract, []
+    cap = chat_line_cap(str(contract.get("story_type") or "").strip().upper())
     rows: list[Any] = []
     declared: list[int] = []
     for row in chain:
@@ -3387,6 +3393,23 @@ def normalize_beat_min_turns(
             if isinstance(row, dict):
                 row["min_turns"] = declared[pos]
         notes.append(f"最小回合数抬额:{sum(declared)}")
+    elif total > cap and any(v > BEAT_MIN_TURNS_MIN for v in declared):
+        # 先压中间拍，开场（第 1 拍）与收束（末拍）尽量不动。
+        order = list(range(1, len(declared))) + [0]
+        slot = 0
+        while total > cap:
+            if all(v <= BEAT_MIN_TURNS_MIN for v in declared):
+                break
+            idx = order[slot % len(order)]
+            slot += 1
+            if declared[idx] <= BEAT_MIN_TURNS_MIN:
+                continue
+            declared[idx] -= 1
+            total -= 1
+        for pos, row in enumerate(rows):
+            if isinstance(row, dict):
+                row["min_turns"] = declared[pos]
+        notes.append(f"最小回合数压额:{sum(declared)}")
     return {**contract, "beat_chain": rows}, notes
 
 
@@ -4185,9 +4208,12 @@ def validate_scene(contract: dict[str, Any] | None) -> list[str]:
                     f"beat_chain_turns_insufficient:"
                     f"{total_turns}<{DIALOGUE_TURNS_MIN}"
                 )
-            elif total_turns > CHAT_LINE_COUNT_MAX:
+            elif total_turns > chat_line_cap(
+                str(contract.get("story_type") or "")
+            ):
                 errors.append(
-                    f"beat_chain_turns_exceed:{total_turns}>{CHAT_LINE_COUNT_MAX}"
+                    f"beat_chain_turns_exceed:{total_turns}>"
+                    f"{chat_line_cap(str(contract.get('story_type') or ''))}"
                 )
         last = chain[-1] if chain else None
         if isinstance(last, dict):

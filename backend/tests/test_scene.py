@@ -2244,3 +2244,34 @@ def test_n_two_kid_dialogue_skips_when_already_good():
     )
     assert again == []
     assert notes == []
+
+
+def test_normalize_beat_min_turns_caps_total_to_line_limit():
+    """拍数被补多、每拍又写 3 回合时，契约阶段就压回句数上限。"""
+    contract = _sample_contract()
+    contract["beat_chain"] = [
+        {"speaker": "灿灿" if i % 2 == 0 else "昭昭", "intent": f"第{i + 1}拍", "min_turns": 3}
+        for i in range(9)
+    ]
+    out, notes = normalize_beat_min_turns(contract)
+    turns = [row["min_turns"] for row in out["beat_chain"]]
+    assert sum(turns) == 24
+    # 开场与收束拍留到最后才压
+    assert turns[0] == 3 and turns[-1] == 3
+    assert notes and "最小回合数压额" in notes[0]
+    assert not any("beat_chain_turns_exceed" in e for e in validate_scene(out))
+
+
+def test_normalize_beat_min_turns_keeps_k_over_24_within_26():
+    """K 类正文允许 24+2：25 回合的契约不该被压到 24。"""
+    contract = _sample_contract()
+    contract["story_type"] = "K"
+    contract["beat_chain"] = [
+        {"speaker": "灿灿" if i % 2 == 0 else "昭昭", "intent": f"第{i + 1}拍", "min_turns": 3}
+        for i in range(8)
+    ] + [{"speaker": "灿灿", "intent": "收束", "min_turns": 1}]
+    out, notes = normalize_beat_min_turns(contract)
+    turns = [row["min_turns"] for row in out["beat_chain"]]
+    assert sum(turns) == 25
+    assert notes == []
+    assert not any("beat_chain_turns_exceed" in e for e in validate_scene(out))
