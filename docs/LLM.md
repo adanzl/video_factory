@@ -8,17 +8,22 @@
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 默认模型 |
-| `DEEPSEEK_PRO_MODEL` | `deepseek-v4-pro` | A1 失败重试；D1.5 骨架（若 ENABLED） |
+| `DEEPSEEK_PRO_MODEL` | 跟随 `DEEPSEEK_MODEL` | 兼容旧变量名；素材分配、A1 失败重试、D1.5 骨架（若 ENABLED） |
 | `DEEPSEEK_MAX_TOKENS` | `32768` | 单次最大 token |
 | `DEEPSEEK_THINKING` | `true` | 全局深度思考开关 |
 
-**Pro 路由（以代码为准）**：
+**统一 Flash（2026-10-23）**：主模型与规划/重试模型均配置为
+`deepseek-v4-flash`。`DEEPSEEK_PRO_MODEL` 是保留的配置名，不代表必定使用 Pro；
+未设置时跟随主模型。已有环境须同步更新这两个配置，避免旧 Pro 值继续生效。
 
-- **A1 口播**：首稿 Flash；校验失败后的重试升 Pro。
+**规划 / 重试模型路由（以代码为准）**：
+
+- **A1 口播**：首稿用主模型；校验失败后使用规划/重试模型，当前仍为 Flash。
 - **日常故事 D2 正文 / 质量修订 / 开场**：全程 Flash + 关
   thinking（高温）；**不再**升 Pro（Pro+thinking 又慢又短）。
-- **D1.5 笑点骨架**：仅当类型 `story_plan.ENABLED=True` 时固定用
-  Pro；失败降级纯 D2。D 类实测 ROI 偏低（常 fallback / 终稿不带
+- **金故事素材分配 / 接话规划**：使用规划/重试模型，当前为 Flash。
+- **D1.5 笑点骨架**：仅当类型 `story_plan.ENABLED=True` 时使用
+  规划/重试模型；失败降级纯 D2。D 类实测 ROI 偏低（常 fallback / 终稿不带
   bp），校准不以 D1.5 为前提。
 
 ## Agnes 配置

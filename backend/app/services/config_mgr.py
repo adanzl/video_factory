@@ -357,8 +357,8 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f(
                 "deepseek_pro_model",
                 "DEEPSEEK_PRO_MODEL",
-                "Pro 模型",
-                description="A1/D2 校验失败重试时使用",
+                "规划 / 重试模型",
+                description="素材分配、骨架规划及部分失败重试使用；默认跟随主模型",
             ),
             _f("deepseek_max_tokens", "DEEPSEEK_MAX_TOKENS", "最大 Token", "number", min_value=1024, max_value=65536),
             _f("deepseek_thinking_enabled", "DEEPSEEK_THINKING", "思考模式", "bool"),
