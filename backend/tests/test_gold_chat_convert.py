@@ -406,8 +406,27 @@ def test_source_plan_cannot_receive_template_lines_from_length_stabilizer(monkey
     assert not changed and result == before
 
 
+@pytest.mark.parametrize("source_plan", [False, True])
+def test_unparsable_first_fill_retries_full_assignment(source_plan, monkeypatch):
+    slots = [{"speaker": "妈妈", "intent": "要求练琴", "beat_id": 1, "source_plan": source_plan}]
+    calls = []
+    def chat(_system, user, **_kwargs):
+        calls.append(user)
+        assert "【分配表】" in user and "【需要改写】" not in user
+        if len(calls) == 1:
+            return {}
+        assert "上一轮没有按要求输出 JSON" in user
+        return {"lines": [{"i": 1, "line": "今天的钢琴还没练，赶紧去吧。"}]}
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    monkeypatch.setattr(gex, "_source_plan_model", lambda: None)
+    monkeypatch.setattr(gex, "_perbeat_validate_fill", lambda _s, filled: ([("妈妈", filled[1])], []))
+    lines, failures = gex._perbeat_fill_slots(slots, scene_contract={}, punchline="", temperature=0.4,
+                                            source_text="妈妈要求孩子练琴。")
+    assert not failures and len(lines) == 1 and len(calls) == 2
+
+
 def test_witness_plan_requests_contextual_reaction_instead_of_fixed_template():
-    from app.services.gold_story.gold_chat.prompts import format_line_plan_user
+    from app.services.gold_story.gold_chat.prompts import LINE_PLAN_SYSTEM, format_line_plan_user
     beats = [
         {"beat": 1, "speaker": "妈妈", "intent": "问为什么不练琴"},
         {"beat": 2, "speaker": "灿灿", "intent": "反问看书为什么不行"},
@@ -424,6 +443,78 @@ def test_witness_plan_requests_contextual_reaction_instead_of_fixed_template():
     assert slot["is_filler"] and slot["witness_only"] and not slot["has_content"]
     prompt = format_line_plan_user(scene_contract=contract, story_raw="原素材", rows=rows)
     assert "旁观反应位" in prompt and "我就在旁边听着" not in prompt
+    plan = json.loads(prompt.split("【完整只读句序（固定主句与反应位都在内）】\n", 1)[1].split("\n", 1)[0])
+    assert len(plan) == 4 and plan[3]["intent"] == beats[3]["intent"]
+    assert plan[3]["fixed"] and not plan[2]["fixed"]
+    assert "【需要填写的实际序号】[3]" in prompt
+    assert '【输出】{"lines": [{"i": 3,' in prompt
+    assert "不从1重新编号" in LINE_PLAN_SYSTEM and "i 从 1 连续编号" not in LINE_PLAN_SYSTEM
+
+
+def test_revision_repairs_preempting_reaction_without_changing_source_line(monkeypatch):
+    slots = [{"speaker": "妈妈", "intent": "要求练琴", "beat_id": 1},
+             {"speaker": "昭昭", "intent": "围绕前文接话", "is_filler": True, "beat_id": 2},
+             {"speaker": "灿灿", "intent": "询问看书是否算爱好", "beat_id": 3}]
+    original = {1: "今天的钢琴还没练，赶紧去吧。", 2: "那看书算不算爱好，妈你给我个说法。",
+                3: "那看书到底算不算爱好，你说清楚。"}
+    replacement = "你俩还在讨论练琴，我都听半天了。"
+    calls = []
+    def chat(_system, user, **_kwargs):
+        calls.append(user)
+        if len(calls) == 1:
+            return {"lines": [{"i": i, "line": line} for i, line in original.items()]}
+        targets = json.loads(user.split("【需要改写】", 1)[1].split("\n", 1)[0])
+        assert [target["i"] for target in targets] == [2]
+        assert "保持第3句不动" in targets[0]["must_fix"]
+        return {"lines": [{"i": 2, "line": replacement},
+                          {"i": 1, "line": "无关内容也一起改了。"},
+                          {"i": 3, "line": "我不要看书了，去练琴。"}]}
+    def validate(_slots, filled):
+        lines = [(s["speaker"], filled.get(i, "")) for i, s in enumerate(_slots, 1)]
+        duplicate = gex._perbeat_restates(filled[3], [(slots[1]["speaker"], filled[2])])
+        return lines, [(3, filled[3], "不得复述前文")] if duplicate else []
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    monkeypatch.setattr(gex, "_perbeat_validate_fill", validate)
+    lines, failures = gex._perbeat_fill_slots(slots, scene_contract={}, punchline="", temperature=0.4,
+                                            source_text="母亲要求练琴，孩子询问看书是否也算爱好。")
+    assert not failures and len(calls) == 2
+    assert lines == [("妈妈", original[1]), ("昭昭", replacement), ("灿灿", original[3])]
+
+
+def test_revision_dependency_keeps_validation_errors_and_unrelated_failures():
+    slots = [{"speaker": "昭昭", "is_filler": True}, {"speaker": "灿灿"}, {"speaker": "妈妈"}]
+    filled = {1: "那看书算不算爱好，妈你给我个说法。", 2: "那看书到底算不算爱好，你说清楚。", 3: "长句"}
+    failures = [(1, filled[1], "插话须有具体内容"), (2, filled[2], "不得复述前文；须补全指代"),
+                (3, filled[3], "须 8–24 字")]
+    before = list(failures)
+    repair = gex._perbeat_revision_failures(slots, filled, failures)
+    assert failures == before
+    assert [i for i, _, _ in repair] == [1, 3]
+    assert "插话须有具体内容" in repair[0][2] and "保持第2句不动" in repair[0][2]
+    assert repair[1] == failures[2]
+    # 先修插话后，内容行的其余缺陷仍交给原校验和下一轮返修。
+    filled[1] = "你俩还在讨论练琴，我都听半天了。"
+    remaining = [(2, filled[2], "须补全指代")]
+    assert gex._perbeat_revision_failures(slots, filled, remaining) == remaining
+    # 全文返修与内容行之间重复不套用插话依赖改写。
+    assert gex._perbeat_revision_failures(slots, filled, failures + [(0, "全文", "超长")]) == failures + [(0, "全文", "超长")]
+    slots[0]["is_filler"] = False
+    filled[1] = before[0][1]
+    assert gex._perbeat_revision_failures(slots, filled, failures) == failures
+
+
+def test_revision_prompt_carries_compression_target_and_semantic_requirements():
+    from app.services.gold_story.gold_chat.prompts import format_source_revision_user
+    slot = {"speaker": "妈妈", "intent": "回顾外出并建议记录", "beat_id": 4,
+            "required_word_groups": [["外地", "跨省"]], "must_words": ["记录"],
+            "required_semantic_terms": [["未告知", "没说"]]}
+    line = "你出门之前也没跟家里人说一声，以后把这些事都记录下来。"
+    prompt = format_source_revision_user(scene_contract={}, slots=[slot], filled={1: line},
+                                         failures=[(1, line, "须 8–24 字")], source_text="原文")
+    target = json.loads(prompt.split("【需要改写】", 1)[1].split("\n", 1)[0])[0]
+    assert target["over_limit_chars"] == len(line) - 24 and target["compression_target"] == 22
+    for field in ("required_word_groups", "must_words", "required_semantic_terms"):
+        assert target[field] == slot[field]
 
 
 @pytest.mark.parametrize("invalid", [None, "source", "quote", "previous", "missing", "negative", "unsupported", "line_number"])
@@ -460,8 +551,33 @@ def test_link_audit_approval_expires_when_context_line_or_source_changes(monkeyp
     assert "必须先正面回答上一句的问题" not in gex._perbeat_check(slot, line, before)
     assert "必须先正面回答上一句的问题" in gex._perbeat_check(slot, line + "？", before)
     assert "必须先正面回答上一句的问题" in gex._perbeat_check(slot, line, [("妈妈", "那只杯子到底是谁打碎的，你说明白？")])
+    slot["_audit_role_mapping"] = "孩子改为另一人"
+    assert "必须先正面回答上一句的问题" in gex._perbeat_check(slot, line, before)
+    slot["_audit_role_mapping"] = ""
     slot["_audit_source_text"] = "另一个故事"
     assert "必须先正面回答上一句的问题" in gex._perbeat_check(slot, line, before)
+
+
+@pytest.mark.parametrize("rewrite_quote", [False, True])
+def test_link_audit_role_mapping_preserves_original_source_quotes(monkeypatch, rewrite_quote):
+    source = "爸爸问女儿为什么不练琴，女儿反问爸爸今天练过了吗。"
+    mapping = "爸爸→妈妈，女儿→灿灿"
+    slots = [{"speaker": "妈妈"}, {"speaker": "灿灿", "_audit_role_mapping": mapping}]
+    filled = {1: "今天为什么不练琴？", 2: "妈妈自己今天练过了吗？"}
+    def chat(system, user, **_kwargs):
+        request = json.loads(user)
+        assert request["role_mapping"] == mapping and request["source_text"] == source
+        assert "不得改写引文中的称谓" in system
+        return {"dialogue_link_audit": [{"i": 2, "pass": True, "source_supports_act": True,
+                "quote": "自己今天练过了吗", "previous_quote": "今天为什么不练琴",
+                "source_quote": "女儿反问爸爸今天练过了吗" if not rewrite_quote else "灿灿反问妈妈今天练过了吗",
+                "reason": "原文反问符合角色映射"}]}
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    approved = gex._audit_perbeat_dialogue_links(slots, filled, [(2, filled[2], "必须先正面回答")],
+                                                source_text=source, role_mapping=mapping)
+    assert approved is (not rewrite_quote)
+    if approved:
+        assert slots[1]["_dialogue_link_audit"]["role_mapping"] == mapping
 
 
 def test_perbeat_length_revision_preserves_locked_rows_and_metadata(monkeypatch):

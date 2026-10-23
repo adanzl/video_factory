@@ -1963,9 +1963,9 @@ def format_perbeat_batch_user(
 
 LINE_PLAN_SYSTEM = (
     "你是家庭日常短视频的「对白编排」。说话人、拍号和句序已经排好，你只负责"
-    "给每一行写 intent——这一句要干什么。你不写台词。\n"
+    "给指定待填行写 intent——这一句要干什么；其余固定行只读。你不写台词。\n"
     "硬性规则：\n"
-    "1. 行数恰好等于要求句数，i 从 1 连续编号，不许增删改行。\n"
+    "1. 只输出用户列出的待填实际序号，i 沿用完整句序，允许不连续，不从1重新编号；不许增删改行。\n"
     "2. intent 写「这句话回应上一句的哪个具体词、给出什么具体依据或后果」，"
     "8–24 字，主语就是该行说话人。\n"
     "3. 不写动作、神态、心理（愣住、气笑、看妈妈、举着筷子），"
@@ -1976,9 +1976,9 @@ LINE_PLAN_SYSTEM = (
     "「把话交回给他」「让他自己说清楚」「我在旁边看着」），也不许复述上一句；"
     "标了「无素材」的行同样要写当场能说的一句短反应，不许改成旁白或导演指令，"
     "不许凭空添加人物、物件或前情。\n"
-    "6. 第 1 行开新话题；最后一行由收束拍说话人收口，不许写成问句。\n"
+    "6. 完整句序的第1行开新话题、末尾行由收束拍说话人收口且不写问句；固定行不归你改写。\n"
     "7. 不许新增源故事里没有的人物、物件、地点、前情。\n"
-    "只输出 JSON：{\"lines\": [{\"i\": 1, \"intent\": \"这一句要干什么\"}, ...]}"
+    "只输出 JSON，lines每项为{\"i\":实际序号,\"intent\":\"这一句要干什么\"}。"
 )
 
 
@@ -1998,6 +1998,12 @@ def format_line_plan_user(
         if isinstance(b, dict)
     }
     table: list[str] = []
+    full_plan = [
+        {"i": i, "beat": row.get("beat"), "speaker": row.get("speaker"),
+         "role": row.get("role"), "fixed": bool(row.get("from_beat")), "intent": row.get("intent")}
+        for i, row in enumerate(rows, 1)
+    ]
+    editable = [i for i, row in enumerate(rows, 1) if not row.get("from_beat")]
     for idx, row in enumerate(rows, 1):
         if row.get("from_beat"):
             # 拍主行已按拍意图写定，不必占用模型输出
@@ -2037,7 +2043,11 @@ def format_line_plan_user(
     fb = f"\n{feedback}\n" if feedback else ""
     return (
         f"【源故事（只准用这里已有的信息）】\n{story_raw or '（无）'}\n\n"
-        f"【这一篇要排的对白（说话人、拍号已定，不许改）】\n"
+        f"【完整只读句序（固定主句与反应位都在内）】\n{json.dumps(full_plan, ensure_ascii=False)}\n"
+        "反应只能回应此前已交代的内容，不能提前提出后面固定主句的问题、答案或事实。"
+        "若反应提出新问题，紧随其后的固定内容须能回答，否则用不打断问答的陈述反应。\n"
+        f"【需要填写的实际序号】{json.dumps(editable)}；不得从1重新编号。\n"
+        f"【待填反应任务（说话人、拍号已定，不许改）】\n"
         + "\n".join(table)
         + f"\n\n【场景】\n"
         f"地点：{scene_contract.get('location') or ''}；"
@@ -2046,7 +2056,7 @@ def format_line_plan_user(
         f"收束：{scene_contract.get('closing_intent') or ''}\n"
         f"在场角色：{cast or '（未给出）'}\n"
         f"{fb}\n"
-        f"【输出】{{\"lines\": [{{\"i\": 1, \"intent\": \"…\"}}, …]}}，"
+        f"【输出】{{\"lines\": [{{\"i\": {editable[0] if editable else 1}, \"intent\": \"…\"}}, …]}}，"
         f"只填上面列出的 {sum(1 for r in rows if not r.get('from_beat'))} 行，"
         f"其余行的 intent 已按拍意图写定，不要输出，不要解释。"
     )
@@ -2059,6 +2069,7 @@ DIALOGUE_LINK_AUDIT_SYSTEM = """你审核对白中被机检标记的问答、引
 逐条结合完整候选与只读原始素材判断：原素材明示的反问、拒绝回答、回避或转移话题可以忠实保留，
 但新增的答非所问、对象错位、无据引用、编造指控必须拒绝。不能仅因有共同词或问号判通过。
 source_supports_act 必须核验来源引文确实支持本句的言语行为与人物关系；随便摘一句原文不是证据。
+role_mapping是只读角色映射，仅用于理解原角色与当前角色的对应关系，不得借此增加事实；source_quote仍须逐字取自source_text原文，不得改写引文中的称谓。
 pass 只有在来源支持且当前全文里的上下句仍自然成立时为true，仍有疑点为false。
 严格按targets顺序，每行一个对象；quote取当前句引文，previous_quote取紧邻前句引文，source_quote取原文连续引文，reason说明引文如何支撑或否定判断。
 输出 {"dialogue_link_audit":[{"i":序号,"pass":false,"source_supports_act":false,"quote":"当前句引文","previous_quote":"前句引文","source_quote":"原文引文","reason":"核验理由"}]}。
@@ -2088,16 +2099,26 @@ def format_source_revision_user(
         {"i": i, "speaker": slot["speaker"], "source_meaning": slot.get("intent"),
          "current_line": filled.get(i, ""), "current_chars": len(filled.get(i, "")),
          "min_chars": 14 if slot.get("is_filler") else 8, "max_chars": CHAT_MAX_LINE_CHARS,
+         "over_limit_chars": max(0, len(filled.get(i, "")) - CHAT_MAX_LINE_CHARS),
+         "compression_target": CHAT_MAX_LINE_CHARS - 2 if len(filled.get(i, "")) > CHAT_MAX_LINE_CHARS else None,
+         "required_word_groups": slot.get("required_word_groups") or [],
+         "must_words": slot.get("must_words") or [],
+         "required_semantic_terms": slot.get("required_semantic_terms") or [],
          "must_fix": "；".join(x for x in (reasons.get(i), reasons.get(0)) if x),
          "speech_act": slot.get("planned_speech_act")}
         for i, slot in enumerate(slots, 1) if global_repair or i in reasons
     ]
-    context = [{"i": i, "speaker": slot["speaker"], "line": filled.get(i, "")}
+    context = [{"i": i, "speaker": slot["speaker"], "line": filled.get(i, ""),
+                "role": "reaction" if slot.get("is_filler") else "content",
+                "intent": slot.get("intent"), "beat": slot.get("beat_id"),
+                "editable": global_repair or i in reasons}
                for i, slot in enumerate(slots, 1)]
     total_chars = dialogue_total_chars({"dialogue": context})
     return (
         "改写下列失败句，保留全部素材含义。字数不足时补清原本省略的角色、对象、回忆指代；"
         "字数超限时压缩冗余措辞，保留事实、因果和指代，不硬截句、不增删槽位或改说话人/顺序。"
+        "超长句按compression_target留出余量，所有必现语义与词组仍须保留。"
+        "只编辑editable=true的句子；反应不得抢先说后面content的事件或问题，重复时优先改抢话的反应。"
         "不要照抄原句，不添加事实，不重复填词。每句最多24字，按must_fix给出的目标完成。\n"
         f"【全文字数】当前{total_chars}字，上限{DAILY_STORY_BODY_CHARS_MAX}字（含标点）；"
         "修后合并原样保留的句子仍须满足上限。\n"
