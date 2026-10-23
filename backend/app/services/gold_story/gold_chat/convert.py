@@ -1769,6 +1769,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         h3["generation_constraints"] = {
             "previous_plan_error": rebuild_reason[:1200],
             "previous_contract": deepcopy(payload.get("scene_contract")),
+            "previous_dialogue_seed": deepcopy(payload.get("dialogue_seed")),
             "requirements": (
                 "旧契约无法排出合法的12句对白。请根据原稿重新拆分问答节点，"
                 "每句8–24字，避免把多个独立问题与回答挤入同一拍。"

@@ -19,6 +19,10 @@ class GoldChatContractError(ValueError):
     candidate_review_status = "failed"
 
 
+class GoldChatSourceMappingError(GoldChatContractError):
+    """仅凭角色顺序无法唯一对齐素材，需要显式语义分配。"""
+
+
 class GoldChatFillError(ValueError):
     """逐拍填词失败，保留候选和具体失败槽，交唯一外层重试。"""
 

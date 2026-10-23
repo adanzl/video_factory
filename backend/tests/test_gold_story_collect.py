@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.services.gold_story.collect import (
     engagement_norm,
     passes_h1_filter,
@@ -11,6 +13,103 @@ from app.services.gold_story.collect import (
 def test_engagement_norm():
     assert engagement_norm(500_000, 500) == 1.0
     assert engagement_norm(0, 0) == 0.0
+
+
+@pytest.mark.parametrize("failure", ["cross_check", "repair", "recovered", "cross_missing", "cross_unavailable"])
+@pytest.mark.parametrize("independent", ["none", "replies", "description"])
+@pytest.mark.parametrize("cached", [False, True])
+def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
+    tmp_path, monkeypatch, failure, independent, cached,
+):
+    import json
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+
+    cfg = Config()
+    cfg.gold_story_transcript_dir = tmp_path / "transcripts"
+    cfg.gold_story_transcript_dir.mkdir()
+    cfg.gold_story_media_workspace = tmp_path / "media"
+    cfg.gold_story_transcript_repair = True
+    sid = "BV1pA4m1378V"
+    transcript_path = cfg.gold_story_transcript_dir / f"{sid}.txt"
+    transcript_path.write_text("时间地区点赞数与听不清碎片", encoding="utf-8")
+    cross = {"available": True, "passed": failure != "cross_check", "agreement": 0.043 if failure == "cross_check" else 0.9}
+    if failure == "cross_missing":
+        cross = None
+    elif failure == "cross_unavailable":
+        cross = {"available": False}
+    is_failure = failure in {"cross_check", "repair"}
+    metadata_dir = cfg.gold_story_media_workspace / "metadata"
+    metadata_dir.mkdir(parents=True)
+    (metadata_dir / f"{sid}.json").write_text(json.dumps({"transcript_path": str(transcript_path), "cross_check": cross}))
+    existing = {"id": 10, "payload": {"transcript_repair_confidence": 0.8,
+                "transcript_repair_notes": "上一次的修复说明", "transcript_repaired_path": "old.repaired.txt",
+                "transcript_cross_check": {"available": True, "passed": True}}}
+    if not is_failure:
+        existing["payload"].update({"transcript_status": "unusable", "transcript_failure_reason": "上一轮失败"})
+    candidate = VideoCandidate(
+        source="bili", source_id=sid, url=f"https://www.bilibili.com/video/{sid}",
+        title="姐弟日常", description="简介中有完整的独立故事" if independent == "description" else "",
+        view_count=200000, reply_count=100, keyword="姐弟",
+        top_replies=("热评中有完整的独立故事",) if independent == "replies" else (),
+    )
+    monkeypatch.setattr(p, "transcribe_bilibili", lambda *_a, **_kw: {
+        "action": "ok", "transcript_path": str(transcript_path), "cross_check": cross, "transcript_backend": "ocr",
+    })
+    def repair(**_kw):
+        assert failure != "cross_check", "明确不可靠的转写不应再消耗修复调用"
+        if failure == "repair":
+            raise ValueError("H0c low repair_confidence=0.20")
+        return {"lines": [{"speaker": "昭昭", "text": "本轮有效修复稿"}],
+                "repair_confidence": 0.9, "repair_notes": "本轮修复成功"}
+    monkeypatch.setattr(p.llm_steps, "repair_transcript", repair)
+    extracted = []
+    def extract(**kwargs):
+        extracted.append(kwargs)
+        assert kwargs["transcript"] == ("" if is_failure else "昭昭：本轮有效修复稿")
+        return {"story_raw": "来自独立来源的完整故事" * 12, "source_type": "mixed"}
+    monkeypatch.setattr(p.llm_steps, "extract_story_raw", extract)
+    monkeypatch.setattr(p.repo_gold_story, "find_near_duplicate", lambda *_a: None)
+    monkeypatch.setattr(p.llm_steps, "structurize_story", lambda **_kw: {"mechanism": "M6", "structure_type": "N"})
+    monkeypatch.setattr(p.llm_steps, "build_scene_contract", lambda **_kw: {})
+    monkeypatch.setattr(p, "sync_h3_from_scene_contract", lambda h3, *_a, **_kw: (h3, []))
+    monkeypatch.setattr(p.llm_steps, "build_dialogue_seed", lambda **_kw: {})
+    monkeypatch.setattr(p.gs_review, "audit_story", lambda **_kw: {"pass": True})
+    monkeypatch.setattr(p, "passes_funny_gate_from_payload", lambda *_a, **_kw: (True, "ok"))
+    saved = []
+    def update(_gid, **kwargs):
+        saved.append(kwargs)
+        return {"auto_score": 0.8}
+    monkeypatch.setattr(p.repo_gold_story, "update_story_from_pipeline", update)
+    monkeypatch.setattr(p.repo_gold_story, "get_story", lambda _gid: existing)
+    monkeypatch.setattr(p, "export_story_files", lambda **_kw: {})
+
+    result = p.process_candidate(candidate, config=cfg, overwrite_existing=True,
+                                 force_transcript=not cached, existing_row=existing)
+    if independent == "none" and is_failure:
+        assert result["action"] == "error"
+        assert result["stage"] == ("H0b" if failure == "cross_check" else "H0c")
+        assert extracted == saved == []
+        assert existing["payload"]["transcript_repair_confidence"] == 0.8
+    else:
+        assert result["action"] == "ok"
+        assert len(extracted) == len(saved) == 1
+        payload = saved[0]["payload"]
+        assert payload["transcript_cross_check"] == cross
+        if is_failure:
+            assert payload["transcript_status"] == "unusable"
+            assert payload["source_inputs"] == [independent]
+            assert payload["transcript_repair_confidence"] is None
+            assert payload["transcript_repaired_path"] is None
+            assert payload["transcript_repair_notes"] == ""
+            assert payload["transcript_failure_reason"]
+        else:
+            assert payload["transcript_status"] == "usable"
+            assert payload["source_inputs"] == ["transcript"] + ([] if independent == "none" else [independent])
+            assert payload["transcript_repair_confidence"] == 0.9
+            assert payload["transcript_repair_notes"] == "本轮修复成功"
+            assert payload["transcript_failure_reason"] is None
 
 
 def test_h1_passes_with_high_view():

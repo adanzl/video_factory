@@ -161,6 +161,71 @@ def test_source_plan_refuses_ambiguous_source_partition():
         gex._source_plan_skeleton(contract, beats, ambiguous)
 
 
+@pytest.mark.parametrize("corruption", [None, "empty", "missing", "rewrite", "duplicate", "reverse", "wrong_owner", "invalid_json", "budget", "synthetic", "out_of_range"])
+def test_explicit_source_mapping_supports_multi_role_turns_without_rewriting(monkeypatch, corruption):
+    from copy import deepcopy
+    from app.services.gold_story.gold_chat.repair import GoldChatContractError, GoldChatSourceMappingError
+
+    contract, seed, _ = _source_plan_fixture()
+    seed.insert(4, {"speaker": "妈妈" if corruption == "budget" else "灿灿", "intent": "同一事件中的独立追问内容"})
+    original = deepcopy(seed)
+    beats = contract["beat_chain"]
+    with pytest.raises(GoldChatSourceMappingError):
+        gex._source_plan_skeleton(contract, beats, seed)
+    ids = [1, 2, 3, 4, 4, 4, 5, 6, 6, 7]
+    assignments = [{"seed_id": i, "beat": bid} for i, bid in enumerate(ids, 1)]
+    skeleton = gex._source_plan_skeleton(contract, beats, seed, source_beats=ids)
+    if corruption == "empty":
+        assignments = []
+    elif corruption == "out_of_range":
+        assignments[-1]["beat"] = len(beats) + 1
+    elif corruption == "synthetic":
+        beats[3]["intent"] = "这话我可有点不信，你可得说清楚才行。"
+    elif corruption == "missing":
+        assignments.pop()
+    elif corruption == "rewrite":
+        assignments[0]["intent"] = "不允许模型改写原素材"
+    elif corruption == "duplicate":
+        assignments[1]["seed_id"] = 1
+    elif corruption == "reverse":
+        assignments[2]["beat"] = 1
+    elif corruption == "wrong_owner":
+        assignments[2]["beat"] = 4  # 第3拍灿灿的素材覆盖丢失
+    elif corruption == "budget":
+        contract["mom_lines_max"] = 1
+        contract["parent_lines_max"] = 1
+    calls = []
+    reactions = ["听完刚才的话再确认那个问题", "对已经说出的理由提出具体疑问", "用前一句提到的东西来作比较", "接着刚说到的结果问个明白"]
+    def chat(system, user, **_kwargs):
+        calls.append((system, user))
+        if len(calls) == 1:
+            if corruption == "invalid_json":
+                raise ValueError("invalid JSON")
+            assert "角色顺序快路失败诊断" in user
+            return {"assignments": assignments}
+        ri = iter(reactions)
+        return {"lines": [{"i": i, "intent": next(ri)} for i, row in enumerate(skeleton, 1) if row["role"] == "reaction"]}
+    monkeypatch.setattr(gex, "_chat_json", chat)
+    if corruption:
+        with pytest.raises(GoldChatContractError) as caught:
+            gex._build_source_line_plan(scene_contract=contract, beat_chain=beats, seed=seed,
+                                        story_raw="完整源故事", temperature=0.4)
+        assert len(calls) == 1, "结构错误不应继续请求接话填词"
+        if corruption == "empty":
+            assert "模型判断" in str(caught.value)
+        elif corruption == "synthetic":
+            assert "合成反应拍" in str(caught.value)
+    else:
+        plan = gex._build_source_line_plan(scene_contract=contract, beat_chain=beats, seed=seed,
+                                          story_raw="完整源故事", temperature=0.4)
+        content = [row for row in plan if row["role"] == "content"]
+        assert [row["source_seed_ids"] for row in content] == [[i] for i in range(1, len(seed) + 1)]
+        assert [(row["speaker"], row["intent"]) for row in content] == [(s["speaker"], s["intent"]) for s in seed]
+        assert {row["speaker"] for row in content if row["beat"] == 4} == {"昭昭", "灿灿"}
+        assert len(calls) == 2
+    assert seed == original
+
+
 def test_source_plan_content_cannot_be_overwritten_by_reaction_planner():
     contract, _seed, data = _source_plan_fixture()
     original = data["lines"][0]["intent"]

@@ -161,8 +161,28 @@ def process_candidate(
         return {**base, "action": "error", "stage": "H0b", "error": "empty transcript"}
 
     transcript_for_h2 = transcript_text
-    h0c_meta: dict[str, Any] = {}
-    if transcript_text and cfg.gold_story_transcript_repair:
+    # 本轮未修复时不能继承上一轮成功的 confidence/path/notes。
+    h0c_meta: dict[str, Any] = {
+        "transcript_repaired_path": None,
+        "transcript_repair_confidence": None,
+        "transcript_speakers": [],
+        "transcript_repair_notes": "",
+        "transcript_unusable_lines": None,
+    }
+    cross_check = (tx or {}).get("cross_check")
+    if tx is None:
+        from app.services.gold_story.transcript.transcript import read_transcript_metadata
+
+        metadata = read_transcript_metadata(cfg, candidate.source_id, transcript_path)
+        cross_check = metadata.get("cross_check")
+        if not metadata and existing_row:
+            cross_check = (existing_row.get("payload") or {}).get("transcript_cross_check")
+    transcript_failure = ""
+    transcript_failure_stage = "H0b"
+    if isinstance(cross_check, dict) and cross_check.get("available") and cross_check.get("passed") is False:
+        transcript_failure = f"OCR/ASR 交叉验证未通过（agreement={cross_check.get('agreement')}）"
+        transcript_for_h2 = ""
+    if transcript_for_h2 and cfg.gold_story_transcript_repair:
         try:
             h0c = llm_steps.repair_transcript(
                 title=candidate.title,
@@ -184,6 +204,25 @@ def process_candidate(
                 candidate.source_id,
                 exc,
             )
+            transcript_failure = str(exc)
+            transcript_failure_stage = "H0c"
+            transcript_for_h2 = ""
+
+    source_inputs = []
+    if transcript_for_h2:
+        source_inputs.append("transcript")
+    if str(candidate.description or "").strip():
+        source_inputs.append("description")
+    if any(str(reply or "").strip() for reply in candidate.top_replies):
+        source_inputs.append("replies")
+    if transcript_failure and not source_inputs:
+        return {**base, "action": "error", "stage": transcript_failure_stage,
+                "error": transcript_failure, "transcript_cross_check": cross_check}
+    h0c_meta.update({
+        "transcript_status": "unusable" if transcript_failure else ("usable" if transcript_for_h2 else "missing"),
+        "transcript_failure_reason": transcript_failure or None,
+        "source_inputs": source_inputs,
+    })
 
     if dry_run:
         return {
@@ -307,7 +346,7 @@ def process_candidate(
         **h0c_meta,
         # 两路转写交叉验证结果（缺失即未做验证，不是失败）。
         # 保留在 payload 里，便于日后回看这条 seed 的原始素材可信度。
-        "transcript_cross_check": (tx or {}).get("cross_check"),
+        "transcript_cross_check": cross_check,
     }
     funny_ok, funny_reason = passes_funny_gate_from_payload(payload, level="l2")
     if not funny_ok:

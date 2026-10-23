@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 import shutil
 from datetime import datetime, timezone
@@ -225,6 +226,19 @@ def _resolve_transcription(
     }
 
 
+def read_transcript_metadata(config: Config, source_id: str, path: Path) -> dict[str, Any]:
+    """只读取与当前逐字稿路径绑定的转写诊断，缓存命中也不能丢失失败状态。"""
+    metadata_path = config.gold_story_media_workspace / "metadata" / f"{source_id}.json"
+    if metadata_path.is_file():
+        try:
+            loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and loaded.get("transcript_path") == str(path):
+                return loaded
+        except (OSError, ValueError):
+            logger.warning("gold_story transcript metadata unreadable: %s", metadata_path)
+    return {}
+
+
 def transcribe_media(
     source: str,
     *,
@@ -241,11 +255,14 @@ def transcribe_media(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     if skip_existing and out_path.exists() and out_path.stat().st_size > 0:
+        metadata = read_transcript_metadata(cfg, ref.source_id, out_path)
         return {
             "source": ref.source,
             "source_id": ref.source_id,
             "action": "skip",
             "transcript_path": str(out_path),
+            "cross_check": metadata.get("cross_check"),
+            "transcript_backend": metadata.get("transcript_backend"),
         }
 
     workspace = cfg.gold_story_media_workspace
@@ -292,6 +309,7 @@ def transcribe_media(
             "language": transcription.get("language"),
             "transcript_backend": transcription.get("source"),
             "transcript_quality_score": transcription.get("quality_score"),
+            "cross_check": transcription.get("cross_check"),
             "transcript_path": str(out_path),
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
@@ -306,6 +324,7 @@ def transcribe_media(
         "model": transcription["model"],
         "transcript_backend": transcription.get("source"),
         "quality_score": transcription.get("quality_score"),
+        "cross_check": transcription.get("cross_check"),
     }
 
 

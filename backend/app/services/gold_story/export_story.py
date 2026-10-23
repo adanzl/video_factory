@@ -42,6 +42,10 @@ def _load_repaired_transcript_text(
 ) -> str:
     cfg = config or Config()
     payload = cast(dict[str, Any], row.get("payload") or {})
+    if payload.get("transcript_status") == "unusable":
+        return ""
+    if "transcript_repaired_path" in payload and not payload["transcript_repaired_path"]:
+        return ""
     raw_path = str(payload.get("transcript_repaired_path") or "").strip()
     path = (
         Path(raw_path)
@@ -66,7 +70,7 @@ def load_transcript_for_row(
         row=row,
         config=cfg,
     )
-    transcript_main = transcript_repaired or transcript_raw
+    transcript_main = "" if payload.get("transcript_status") == "unusable" else (transcript_repaired or transcript_raw)
 
     raw_path = str(row.get("transcript_path") or "").strip()
     default_raw = cfg.gold_story_transcript_dir / f"{sid}.txt"
@@ -75,8 +79,10 @@ def load_transcript_for_row(
 
     repaired_path = str(payload.get("transcript_repaired_path") or "").strip()
     default_rep = cfg.gold_story_transcript_dir / f"{sid}.repaired.txt"
-    if not repaired_path and default_rep.is_file():
+    if not repaired_path and transcript_repaired and default_rep.is_file():
         repaired_path = str(default_rep)
+    if not transcript_repaired:
+        repaired_path = ""
 
     raw_display = format_transcript_display(transcript_raw)
     repaired_display = format_transcript_display(transcript_repaired)
@@ -93,6 +99,9 @@ def load_transcript_for_row(
         "transcript_repair_confidence": payload.get("transcript_repair_confidence"),
         "transcript_speakers": payload.get("transcript_speakers"),
         "transcript_repair_notes": payload.get("transcript_repair_notes"),
+        "transcript_status": payload.get("transcript_status"),
+        "transcript_failure_reason": payload.get("transcript_failure_reason"),
+        "source_inputs": payload.get("source_inputs"),
         "has_transcript": bool(transcript_raw or transcript_repaired),
         "has_repaired": bool(transcript_repaired),
         "transcript_raw": raw_display,
@@ -118,7 +127,7 @@ def export_story_files(
         row=row,
         config=config,
     )
-    transcript_main = transcript_repaired or transcript_raw
+    transcript_main = "" if payload.get("transcript_status") == "unusable" else (transcript_repaired or transcript_raw)
     transcript_raw_display = format_transcript_display(transcript_raw)
     transcript_main_display = format_transcript_display(transcript_main)
     export = {
@@ -145,10 +154,13 @@ def export_story_files(
         "transcript_repaired": transcript_repaired,
         "transcript_backend": row.get("transcript_backend"),
         "transcript_path": row.get("transcript_path"),
-        "transcript_repaired_path": payload.get("transcript_repaired_path"),
+        "transcript_repaired_path": payload.get("transcript_repaired_path") if transcript_repaired else None,
         "transcript_repair_confidence": payload.get("transcript_repair_confidence"),
         "transcript_speakers": payload.get("transcript_speakers"),
         "transcript_repair_notes": payload.get("transcript_repair_notes"),
+        "transcript_status": payload.get("transcript_status"),
+        "transcript_failure_reason": payload.get("transcript_failure_reason"),
+        "source_inputs": payload.get("source_inputs"),
         "beat": payload.get("beat"),
         "dialogue_seed": payload.get("dialogue_seed"),
         "closing_intent": payload.get("closing_intent"),
@@ -180,6 +192,9 @@ def export_story_files(
         f"- status: {export.get('status') or 'active'}",
         f"- story_raw 字数: {len(str(export.get('story_raw') or ''))}",
         f"- 逐字稿字数: {len(transcript_main.replace(chr(10), ''))}",
+        f"- 本轮提炼输入: {'、'.join(payload.get('source_inputs') or []) or '未记录'}",
+        f"- 转写状态: {payload.get('transcript_status') or '未记录'}",
+        f"- 转写失败原因: {payload.get('transcript_failure_reason') or '无'}",
         f"- funny_signal: {export.get('funny_signal')}",
         f"- 弹幕笑密度: {export.get('danmaku_laugh_ratio')}",
         f"- 热评笑反应: {export.get('comment_laugh_ratio')}",

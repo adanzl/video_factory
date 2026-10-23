@@ -2089,6 +2089,28 @@ def format_source_revision_user(
     )
 
 
+SOURCE_BEAT_MAPPING_SYSTEM = """你为已有素材句声明它属于哪个事件拍，只输出 JSON 索引。
+一条 seed 是不可拆分的素材单元，按输入顺序每条恰好分配一次，不改文字、说话人或顺序。
+同一事件拍可包含多角色问答；必须由实际语义判断归属，不能仅按最近同角色猜。
+拍号必须单调不减，每个真实事件拍都须包含该拍拍主的素材句。
+不得把真实内容塞进无关的合成反应/收束拍以凑覆盖；没有合法映射就输出空 assignments。
+只输出 {"assignments":[{"seed_id":1,"beat":1},...]}，不要输出正文或角色字段。
+"""
+
+
+def format_source_beat_mapping_user(
+    *, scene_contract: dict, beat_chain: list, seed: list[dict], story_raw: str, diagnostic: str,
+) -> str:
+    return (
+        f"【只读原素材】{story_raw}\n"
+        f"【场景契约】{json.dumps(scene_contract, ensure_ascii=False)}\n"
+        f"【事件拍】{json.dumps(beat_chain, ensure_ascii=False)}\n"
+        f"【逐条素材】{json.dumps([{**s, 'seed_id': i} for i, s in enumerate(seed, 1)], ensure_ascii=False)}\n"
+        f"【角色顺序快路失败诊断】{diagnostic}\n"
+        "为每条素材声明事件拍；结构匹配不等于语义合格，后续仍会全文审读。"
+    )
+
+
 SOURCE_LINE_PLAN_SYSTEM = """你为家庭对话稿补充接话意图，只输出 JSON。
 分句计划已按已有素材的说话人和先后顺序锁定，content 行不许改。
 你只填写 reaction 行的 intent。只回应上一句的具体内容，不引入新事实，不抢说后面的答案。

@@ -1666,6 +1666,7 @@ def _validate_line_plan(
     scene_contract: dict[str, Any],
     beat_chain: list[Any],
     target_lines: int,
+    validate_intents: bool = True,
 ) -> list[str]:
     """计划的结构校验：句数/说话人/额度/拍序/覆盖/intent，全部确定性。"""
     from app.services.gold_story.scene import resolve_parent_lines_budget
@@ -1702,6 +1703,8 @@ def _validate_line_plan(
         elif beat_no < prev_beat:
             errors.append(f"第{idx}句拍号 {beat_no} 早于上一句")
         prev_beat = max(prev_beat, beat_no)
+        if not validate_intents:
+            continue
         intent = str(row.get("intent") or "")
         if len(intent) < 4:
             errors.append(f"第{idx}句缺 intent 或太短")
@@ -1752,7 +1755,7 @@ def _validate_line_plan(
     # 拆句行必须写「本拍另一半」：拍意图能被切成两半时，拆句 intent 要含
     # 后半那块里的实词；切不出两半（骨架不会标 split）时不做这项校验。
     for idx, row in enumerate(plan, 1):
-        if not row.get("split"):
+        if not validate_intents or not row.get("split"):
             continue
         half = str(row.get("split_half") or "").strip()
         if not half:
@@ -1772,7 +1775,7 @@ def _validate_line_plan(
     duplicated = {
         text for text in normalized if text and normalized.count(text) > 1
     }
-    if duplicated:
+    if validate_intents and duplicated:
         errors.append("intent 有重复：" + "、".join(sorted(duplicated)[:2]))
     return errors
 
@@ -1832,11 +1835,12 @@ def _line_plan_settle_stage_intents(
 
 def _source_plan_skeleton(
     scene_contract: dict[str, Any], beat_chain: list[Any], seed: list[dict[str, Any]],
+    *, source_beats: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """按角色与先后顺序对齐显式素材单元；真实事件映射不唯一时不猜。"""
     from functools import lru_cache
     from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN, chat_line_cap, is_n_filler_intent
-    from app.services.gold_story.gold_chat.repair import GoldChatContractError
+    from app.services.gold_story.gold_chat.repair import GoldChatContractError, GoldChatSourceMappingError
 
     beats = [b for b in beat_chain if isinstance(b, dict)]
     synthetic = [is_n_filler_intent(str(b.get("intent") or "")) for b in beats]
@@ -1864,9 +1868,25 @@ def _source_plan_skeleton(
                     return tuple(found.values())
         return tuple(found.values())
 
-    choices = align(0, 0)
-    if len(choices) != 1:
-        raise GoldChatContractError("perbeat: 素材到真实契约拍的角色/顺序映射缺失或不唯一，须重建契约")
+    if source_beats is None:
+        choices = align(0, 0)
+        if len(choices) != 1:
+            diagnostic = {
+                "kind": "missing" if not choices else "ambiguous",
+                "beats": [{"beat": i, "speaker": b.get("speaker")} for i, b in enumerate(beats, 1)],
+                "seeds": [{"seed_id": i, "speaker": s.get("speaker")} for i, s in enumerate(seed, 1)],
+            }
+            raise GoldChatSourceMappingError(
+                "perbeat: 素材到真实契约拍的角色/顺序映射缺失或不唯一，须显式分配或重建契约；"
+                + json.dumps(diagnostic, ensure_ascii=False)
+            )
+        counts = choices[0]
+    else:
+        if (len(source_beats) != len(seed)
+                or any(type(b) is not int or not 1 <= b <= len(beats) for b in source_beats)
+                or source_beats != sorted(source_beats)):
+            raise GoldChatContractError("perbeat: 显式分配须逐条覆盖素材，拍号合法且不倒序")
+        counts = tuple(source_beats.count(b) for b in range(1, len(beats) + 1))
     kids = [k for k in _KID_NAMES if k in scene_contract.get("characters", [])]
     plan: list[dict[str, Any]] = []
     si = 0
@@ -1875,11 +1895,11 @@ def _source_plan_skeleton(
         return {"beat": bid, "speaker": speaker, "intent": intent,
                 "role": "reaction", "source_seed_ids": [], "source_plan": True}
 
-    for bid, count in enumerate(choices[0], 1):
+    for bid, count in enumerate(counts, 1):
         owner = str(beats[bid - 1].get("speaker") or "")
         rows = []
         for index in range(si, si + count):
-            rows.append({"beat": bid, "speaker": owner, "intent": seed[index]["intent"],
+            rows.append({"beat": bid, "speaker": seed[index]["speaker"], "intent": seed[index]["intent"],
                          "role": "content", "source_seed_ids": [index + 1],
                          "source_plan": True, "from_beat": True})
         if not rows and synthetic[bid - 1] and bid != len(beats):
@@ -1888,7 +1908,7 @@ def _source_plan_skeleton(
             rows = [reaction(bid, owner, str(beats[bid - 1].get("intent") or ""))]
         for row in rows:
             if plan and plan[-1]["speaker"] == row["speaker"]:
-                other = next((k for k in kids if k != owner), "")
+                other = next((k for k in kids if k != row["speaker"]), "")
                 if not other:
                     raise GoldChatContractError("perbeat: 素材单元之间没有合法的接话角色")
                 plan.append(reaction(int(plan[-1]["beat"]), other))
@@ -1913,6 +1933,7 @@ def _validate_source_line_plan(
     scene_contract: dict[str, Any],
     beat_chain: list[Any],
     seed: list[dict[str, Any]],
+    validate_intents: bool = True,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """校验模型声明的素材单元和句槽映射；内容是否忠实仍交全文终验。"""
     from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN, chat_line_cap, is_n_filler_intent
@@ -1964,6 +1985,8 @@ def _validate_source_line_plan(
         actual = [ref for r in plan if r["beat"] == bid for ref in r["source_seed_ids"]]
         if not isinstance(expected, list) or expected != actual:
             errors.append(f"第{bid}拍 beat_sources 与内容句引用不一致")
+        if is_n_filler_intent(str(beat.get("intent") or "")) and actual:
+            errors.append(f"第{bid}拍是合成反应拍，不能承载真实素材内容")
         # 旧流水线插入的态度模板不是源素材事件，不要求它凭空拥有一个 seed。
         if not is_n_filler_intent(str(beat.get("intent") or "")) and not any(
             r["beat"] == bid and r["role"] == "content"
@@ -1974,7 +1997,8 @@ def _validate_source_line_plan(
     if not CHAT_LINE_COUNT_MIN <= len(plan) <= cap:
         errors.append(f"句数须{CHAT_LINE_COUNT_MIN}–{cap}，当前{len(plan)}")
     errors.extend(_validate_line_plan(plan, scene_contract=scene_contract,
-                                      beat_chain=beats, target_lines=len(plan)))
+                                      beat_chain=beats, target_lines=len(plan),
+                                      validate_intents=validate_intents))
     return plan, errors
 
 
@@ -1983,12 +2007,49 @@ def _build_source_line_plan(
     seed: list[dict[str, Any]], story_raw: str, temperature: float,
 ) -> list[dict[str, Any]]:
     """多素材单元不能被压成每拍一句；先声明完整映射，再按固定计划填词。"""
-    from app.services.gold_story.gold_chat.prompts import SOURCE_LINE_PLAN_SYSTEM, format_source_line_plan_user
-    from app.services.gold_story.gold_chat.repair import GoldChatContractError
+    from app.services.gold_story.gold_chat.prompts import (
+        SOURCE_LINE_PLAN_SYSTEM, format_source_line_plan_user,
+        SOURCE_BEAT_MAPPING_SYSTEM, format_source_beat_mapping_user,
+    )
+    from app.services.gold_story.gold_chat.repair import GoldChatContractError, GoldChatSourceMappingError
 
-    skeleton = _source_plan_skeleton(scene_contract, beat_chain, seed)
+    try:
+        skeleton = _source_plan_skeleton(scene_contract, beat_chain, seed)
+    except GoldChatSourceMappingError as exc:
+        # 模型仅分配索引；正文、角色、顺序都从原 seed 回填，不允许改写或丢素材。
+        try:
+            data = _chat_json(
+                SOURCE_BEAT_MAPPING_SYSTEM,
+                format_source_beat_mapping_user(scene_contract=scene_contract, beat_chain=beat_chain,
+                                              seed=seed, story_raw=story_raw, diagnostic=str(exc)),
+                temperature=0.0, max_tokens=1800, json_mode=False, model=_source_plan_model(),
+            )
+        except ValueError as mapping_exc:
+            from app.services.llm.llm_mgr import LLMTimeBudgetExceeded
+
+            if isinstance(mapping_exc, LLMTimeBudgetExceeded):
+                raise
+            raise GoldChatContractError(f"perbeat: 显式素材分配失败：{mapping_exc}") from mapping_exc
+        assignments = data.get("assignments") if isinstance(data, dict) else None
+        if assignments == [] and seed:
+            raise GoldChatContractError("perbeat: 模型判断素材与事件拍无合法映射；" + str(exc)) from exc
+        if (not isinstance(assignments, list) or len(assignments) != len(seed)
+                or any(not isinstance(item, dict) or set(item) != {"seed_id", "beat"}
+                       or type(item["seed_id"]) is not int or item["seed_id"] != i
+                       for i, item in enumerate(assignments, 1))):
+            raise GoldChatContractError("perbeat: 显式素材分配须按原顺序逐条给出 seed_id/beat，不能增删或改写素材") from exc
+        skeleton = _source_plan_skeleton(scene_contract, beat_chain, seed,
+                                         source_beats=[item["beat"] for item in assignments])
+        logger.info("[GOLD_CHAT] source beat mapping explicit units=%s", len(seed))
     declared = {str(b): [s for row in skeleton if row["beat"] == b for s in row["source_seed_ids"]]
                 for b in range(1, len(beat_chain) + 1)}
+    # 覆盖、角色、顺序和额度不合格时，改写接话意图也无法修复，直接重建契约。
+    _, structural_errors = _validate_source_line_plan(
+        {"lines": skeleton, "beat_sources": declared}, scene_contract=scene_contract,
+        beat_chain=beat_chain, seed=seed, validate_intents=False,
+    )
+    if structural_errors:
+        raise GoldChatContractError("perbeat: 素材分句结构不合格：" + "；".join(structural_errors[:8]))
     feedback = ""
     for attempt in range(LINE_PLAN_ATTEMPTS):
         data = _chat_json(
