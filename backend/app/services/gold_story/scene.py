@@ -4200,6 +4200,10 @@ def validate_scene(contract: dict[str, Any] | None) -> list[str]:
             if n and n not in ALLOWED_SPEAKERS:
                 errors.append(f"scene_contract_illegal_character:{n}")
     chain = contract.get("beat_chain") or []
+    from app.services.daily_story.speaker import collect_character_address_errors
+
+    if isinstance(chain, list):
+        errors.extend(collect_character_address_errors(chain))
     if not isinstance(chain, list) or len(chain) < BEAT_CHAIN_MIN:
         errors.append(
             f"beat_chain_too_short:"
@@ -4662,7 +4666,9 @@ def collect_narration_dialogue_errors(dialogue: list[Any]) -> list[str]:
 
 
 def collect_voice_errors(dialogue: list[Any]) -> list[str]:
-    errors: list[str] = []
+    from app.services.daily_story.speaker import collect_character_address_errors
+
+    errors = collect_character_address_errors(dialogue)
     for i, item in enumerate(dialogue or []):
         if not isinstance(item, dict):
             continue

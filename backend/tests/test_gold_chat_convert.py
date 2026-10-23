@@ -6197,3 +6197,67 @@ def test_authorized_adaptation_rebuilds_old_contract_from_effective_source(monke
         gc._rebuild_h3a_h3b_on_convert(row)
     assert len(called) == 1
     assert row["payload"]["scene_contract"] == contract
+
+
+def test_wrong_named_address_forces_rebuild_and_never_reuses_bad_seed(monkeypatch):
+    row = _sample_row()
+    row['payload']['story_raw'] = '昭昭和灿灿在客厅玩手工，妈妈过来问他们是谁做的，两人各自解释。' * 3
+    row['payload']['dialogue_seed'] = [{'speaker': '灿灿', 'intent': '昭昭姐姐，你做得真好。'}]
+    row['payload']['scene_contract'] = {'beat_chain': [{'speaker': '灿灿', 'intent': '问昭昭姐姐能否一起玩'}]}
+    called = []
+
+    def fail_build(**kwargs):
+        called.append(kwargs)
+        raise ValueError('test rebuild unavailable')
+
+    monkeypatch.setattr('app.services.gold_story.collect.llm.build_scene_contract', fail_build)
+    with pytest.raises(ValueError, match='test rebuild unavailable'):
+        gc._rebuild_h3a_h3b_on_convert(row)
+    assert len(called) == 1
+    assert '角色关系不合格' in called[0]['h3']['generation_constraints']['previous_plan_error']
+
+
+def test_revise_indices_use_issue_targets_not_context_citations():
+    from app.services.gold_story.gold_chat.finalize import GoldChatSemanticBlocked
+    exc = GoldChatSemanticBlocked(
+        '第[5]句：第4句的请求被错认，与第6句重复；第[15]句：第14句与第17句之间插话错位',
+        issues=[{'lines': [5], 'desc': '第4句与第6句是证据'}, {'lines': [15], 'desc': '第14句与第17句是证据'}],
+    )
+    assert gc._revise_line_indices(exc, 18) == [5, 15]
+
+
+def test_source_audit_feedback_keeps_evidence_without_old_line_coordinates():
+    from app.services.gold_story.gold_chat.finalize import GoldChatSemanticBlocked
+    from app.services.gold_story.gold_chat.prompts import format_retry_missing_events_block
+    story = {'dialogue': [{'speaker': '灿灿', 'line': '可以给我玩吗？'}, {'speaker': '昭昭', 'line': '我保证不弄坏。'}]}
+    exc = GoldChatSemanticBlocked('错位', issues=[{'lines': [2], 'desc': '替请求者作保证', 'source_audit_failed': True}])
+    row = gc._attach_source_audit_feedback({}, exc, story)
+    evidence = row['gold_chat_retry_feedback']['source_audit_failures'][0]
+    assert evidence['speaker'] == '昭昭'
+    assert evidence['previous_line']['speaker'] == '灿灿'
+    assert 'lines' not in evidence
+    text = format_retry_missing_events_block(row)
+    assert '禁止照抄' in text and '替请求者作保证' in text
+    assert gc._attach_source_audit_feedback({}, ValueError('ordinary'), story) == {}
+
+
+def test_spot_revision_updates_only_generated_reaction_plan(monkeypatch):
+    chat = {'dialogue': [
+        {'speaker': '灿灿', 'line': '能给我玩一下吗？'},
+        {'speaker': '昭昭', 'line': '我保证不弄坏它。'},
+        {'speaker': '灿灿', 'line': '我会小心点儿的。'},
+        {'speaker': '昭昭', 'line': '等我做好再给你。'},
+    ], 'gold_source_line_plan': [
+        {'line': 1, 'role': 'content', 'speaker': '灿灿', 'intent': '请求玩', 'source_seed_ids': [1]},
+        {'line': 2, 'role': 'reaction', 'speaker': '昭昭', 'intent': '我保证不弄坏它。', 'source_seed_ids': []},
+    ]}
+    def chat_json(system, user, **kwargs):
+        assert '不是原始素材' in user
+        return {'lines': [{'i': 2, 'line': '等我做好，再借给你玩。'}]}
+    monkeypatch.setattr(gc, '_chat_json', chat_json)
+    result = gc._try_revise_draft(chat, ValueError('第2句说错人'), temperature=0.4)
+    assert result is not None
+    fixed, _ = result
+    assert fixed['gold_source_line_plan'][1]['intent'] == fixed['dialogue'][1]['line']
+    assert fixed['gold_source_line_plan'][0] == chat['gold_source_line_plan'][0]
+    assert chat['gold_source_line_plan'][1]['intent'] == '我保证不弄坏它。'

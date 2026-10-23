@@ -4541,3 +4541,11 @@ def test_citation_issue_without_attribution_is_demoted():
     assert out.issues == [attribution]
     assert len(out.downgraded) == 1
     assert out.downgraded[0]["downgrade_reason"] == "no_attribution"
+
+
+def test_named_character_sister_conflict_is_blocking_even_for_parent_speech():
+    for speaker in ('灿灿', '妈妈'):
+        story = {'dialogue': [{'speaker': speaker, 'line': '昭昭姐姐，你拼得真好。'}]}
+        issues = collect_sibling_address_issues(story)
+        assert issues and issues[0]['kind'] == '称谓'
+        assert collect_export_blocking_local_issues(story)

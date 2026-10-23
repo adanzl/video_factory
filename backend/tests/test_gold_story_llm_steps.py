@@ -397,3 +397,39 @@ def test_build_dialogue_seed_keeps_first_pass_when_retry_still_conflicts(
     intents = [row["intent"] for row in out["dialogue_seed"]]
     assert "谁告诉你我晚上偷吃烤串儿啦" not in intents
     assert intents == [row["intent"] for row in _seed_contract()["beat_chain"]]
+
+
+def test_build_dialogue_seed_retries_wrong_character_address(monkeypatch):
+    calls = []
+
+    def chat(system, user):
+        calls.append(user)
+        return {
+            'dialogue_confidence': 0.9,
+            'dialogue_seed': [
+                {'speaker': '灿灿', 'intent': '昭昭姐姐，这个是谁做的？' if len(calls) == 1 else '昭昭，这个是谁做的？'},
+                {'speaker': '昭昭', 'intent': '我自己做的，你看好不好？'},
+                {'speaker': '灿灿', 'intent': '看着挺好，能给我吗？'},
+                {'speaker': '昭昭', 'intent': '姐姐，等我做好再给你。'},
+            ],
+        }
+
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    out = llm_steps.build_dialogue_seed(story_raw='姐弟在玩手工', h3={}, scene_contract={})
+    assert len(calls) == 2
+    assert '称谓绑定返修' in calls[1]
+    assert all('昭昭姐姐' not in r['intent'] for r in out['dialogue_seed'])
+
+
+def test_build_dialogue_seed_rejects_persistent_wrong_address(monkeypatch):
+    import pytest
+    calls = []
+
+    def chat(*args):
+        calls.append(1)
+        return {'dialogue_seed': [{'speaker': '灿灿', 'intent': '昭昭姐姐，过来。'}]}
+
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    with pytest.raises(ValueError, match='H3b角色关系不合格'):
+        llm_steps.build_dialogue_seed(story_raw='姐弟在玩手工', h3={}, scene_contract={})
+    assert len(calls) == 2

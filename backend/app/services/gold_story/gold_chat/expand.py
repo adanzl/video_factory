@@ -2084,6 +2084,7 @@ def _validate_source_line_plan(
 def _build_source_line_plan(
     *, scene_contract: dict[str, Any], beat_chain: list[Any],
     seed: list[dict[str, Any]], story_raw: str, temperature: float,
+    retry_feedback: str = "",
 ) -> list[dict[str, Any]]:
     """多素材单元不能被压成每拍一句；先声明完整映射，再按固定计划填词。"""
     from app.services.gold_story.gold_chat.prompts import (
@@ -2129,7 +2130,7 @@ def _build_source_line_plan(
     )
     if structural_errors:
         raise GoldChatContractError("perbeat: 素材分句结构不合格：" + "；".join(structural_errors[:8]))
-    feedback = ""
+    feedback = retry_feedback
     for attempt in range(LINE_PLAN_ATTEMPTS):
         data = _chat_json(
             SOURCE_LINE_PLAN_SYSTEM,
@@ -2154,7 +2155,7 @@ def _build_source_line_plan(
             logger.info("[GOLD_CHAT] source line_plan ok attempt=%s lines=%s units=%s",
                         attempt + 1, len(plan), len(seed))
             return plan
-        feedback = "；".join(errors[:8])
+        feedback = "\n".join(filter(None, (retry_feedback, "；".join(errors[:8]))))
         logger.info("[GOLD_CHAT] source line_plan rejected: %s", feedback)
     raise GoldChatContractError("perbeat: 素材分句计划不合格：" + feedback)
 
@@ -2168,6 +2169,7 @@ def _build_line_plan(
     temperature: float,
     no_material_speakers: set[str] | None = None,
     seed: list[Any] | None = None,
+    retry_feedback: str = "",
 ) -> list[dict[str, Any]]:
     """确定性骨架 + 一次 intent 规划：结构不过关只重写 intent，不动骨架。"""
     from app.services.gold_story.gold_chat.prompts import (
@@ -2188,6 +2190,7 @@ def _build_line_plan(
         return _build_source_line_plan(
             scene_contract=scene_contract, beat_chain=beats, seed=source_units,
             story_raw=story_raw, temperature=temperature,
+            retry_feedback=retry_feedback,
         )
     capacity_errors = _line_plan_capacity(
         scene_contract, beats, target_lines=target_lines
@@ -5572,6 +5575,7 @@ def _generate_perbeat_candidate(
                 temperature=temperature,
                 no_material_speakers=no_material_speakers,
                 seed=seed,
+                retry_feedback=format_retry_missing_events_block(row or {}),
             )
         except ValueError as exc:
             # 骨架排不出 / intent 两轮不合格：退回旧槽，但要让日志能看见。

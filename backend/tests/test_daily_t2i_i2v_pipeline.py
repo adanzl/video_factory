@@ -1794,3 +1794,22 @@ def test_assemble_daily_image_prompts_fixes_grip_two_hand_conflict():
     assert "双手抱头" not in prompt
     assert "左手抱头" in prompt
     assert "右手握遥控器另一端" in prompt
+
+
+def test_visual_inventory_preserves_long_modifier_without_excluding_other_props():
+    from app.services.script.visual_brief import daily_locked_inventory, build_visual_brief_prompts
+    setting = '客厅里，昭昭面前摆着拼到一半的新灯笼，灿灿凑在旁边看，门上还挂着旧灯笼'
+    segs = [{'segment_index': 1, 'text': '旧灯笼给你玩。', 'dialogue': [{'speaker': '昭昭', 'text': '旧灯笼给你玩。'}]}]
+    locked = daily_locked_inventory(segs, setting)
+    assert '新灯笼' in locked
+    assert '新' not in locked
+    prompts = build_visual_brief_prompts({'setting': setting, 'segments': segs}, content_style='daily_story')
+    assert '只允许这些物品' not in prompts['system']
+    assert '不是完整物品清单' in prompts['system']
+    assert '旧灯笼' in prompts['user']
+
+
+def test_visual_inventory_handles_other_long_modified_props():
+    from app.services.script.visual_brief import daily_locked_inventory
+    assert '红色纸风车' in daily_locked_inventory([], '昭昭面前摆着刚刚亲手折好的红色纸风车。')
+    assert '新' not in daily_locked_inventory([], '昭昭面前摆着新的。')

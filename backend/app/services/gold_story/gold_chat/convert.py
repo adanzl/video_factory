@@ -402,6 +402,29 @@ def _semantic_retry_constraints_from(source: Any) -> list[str]:
     return capped
 
 
+def _attach_source_audit_feedback(row: dict, exc: BaseException, chat: dict) -> dict:
+    """失败文本绑定原说话人和上下文；旧行号不作为下一版的修改坐标。"""
+    dialogue = chat.get("dialogue") or []
+    evidence = []
+    for issue in _iter_review_issues(exc):
+        if not issue.get("source_audit_failed"):
+            continue
+        for idx in issue.get("lines") or []:
+            if type(idx) is not int or not 1 <= idx <= len(dialogue):
+                continue
+            current = dialogue[idx - 1]
+            evidence.append({
+                "speaker": current.get("speaker"), "failed_line": current.get("line"),
+                "previous_line": dialogue[idx - 2] if idx > 1 else None,
+                "reason": str(issue.get("desc") or "")[:600],
+            })
+    if not evidence:
+        return row
+    feedback = dict(row.get("gold_chat_retry_feedback") or {})
+    feedback["source_audit_failures"] = evidence[:4]
+    return {**row, "gold_chat_retry_feedback": feedback}
+
+
 def _attach_retry_semantic_issues(
     row: dict[str, Any],
     constraints: list[str],
@@ -1792,7 +1815,18 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
     payload = dict(cast(dict[str, Any], row.get("payload") or {}))
     raw0 = gold_chat_source_text(row).strip()
     story_raw = remap_story_raw_sibling_roles(raw0)
+    from app.services.daily_story.speaker import collect_character_address_errors
+
+    old_contract = payload.get("scene_contract") or {}
+    role_rows = list(payload.get("dialogue_seed") or [])
+    if isinstance(old_contract, dict):
+        role_rows.extend(old_contract.get("beat_chain") or [])
+    role_errors = collect_character_address_errors(role_rows)
+    if role_errors:
+        row = {**row, "_gold_chat_rebuild_contract": "角色关系不合格：" + "；".join(role_errors)}
     if len(story_raw) < 40:
+        if role_errors:
+            raise ValueError("角色关系不合格且原始素材不足，无法重建：" + "；".join(role_errors))
         logger.warning(
             "[GOLD_CHAT] skip H3a/H3b rebuild id=%s: story_raw too short",
             row.get("id"),
@@ -1974,7 +2008,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             video_title=source_title,
         )
     except Exception as exc:
-        if row.get("_gold_chat_rebuild_contract"):
+        if row.get("_gold_chat_rebuild_contract") or role_errors:
             raise
         logger.warning(
             "[GOLD_CHAT] H3a rebuild failed id=%s: %s; keep old contract",
@@ -2003,7 +2037,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         )
     except Exception as exc:
         # H3a 已含迁龄/家长预算；H3b 失败时用 beat_chain 兜底 seed，勿整段回退
-        if row.get("_gold_chat_rebuild_contract"):
+        if row.get("_gold_chat_rebuild_contract") or role_errors:
             # 来源已否定旧素材时，不能再把抽象拍意图伪装成忠实素材继续导出。
             raise
         from app.services.gold_story.scene import seed_from_beat_chain
@@ -2097,6 +2131,14 @@ _REVISE_MAX_TRIES = 3
 
 def _revise_line_indices(exc: BaseException, line_count: int) -> list[int]:
     """从终检报错里抠出被点名的行号；问题太多就不改稿（改不动）。"""
+    issues = _iter_review_issues(exc)
+    if issues:
+        indices = sorted({
+            idx for item in issues for idx in (item.get("lines") or [])
+            if type(idx) is int and 1 <= idx <= line_count
+        })
+        # desc 引用的前后句只是证据，不得扩大修改范围或挤掉真正的故障行。
+        return indices if len(indices) <= _REVISE_MAX_LINES else []
     nums: list[int] = []
     for group in _REVISE_LINE_NO_RE.findall(str(exc)):
         for part in re.split(r"[,，]", group):
@@ -2150,7 +2192,9 @@ def _try_revise_draft(
     if source_plan:
         from app.services.gold_story.gold_chat.expand import _source_plan_model
 
-        user += ("\n【只读来源分句计划】每行保留自己的素材含义，接话可以重新措辞，不能补新事实。\n"
+        user += ("\n【来源分句计划】content行保留原素材含义；reaction行是生成的接话，不是原始素材。"
+                 "审稿点名reaction说错人或添事实时，必须纠正它的原intent，不能坚持保留错误意图。"
+                 "说话人固定，不能替其他人回答或保证，也不能新增事实。\n"
                  + json.dumps(source_plan, ensure_ascii=False)
                  + "\n【只读原始素材】\n" + str(chat.get("source_raw") or "")
                  + "\n【类型表达契约】" + json.dumps(chat.get("gold_n_expression_contract"), ensure_ascii=False))
@@ -2189,6 +2233,16 @@ def _try_revise_draft(
         return None
     revised = dict(chat)
     revised["dialogue"] = dialogue
+    if isinstance(source_plan, list):
+        updated_plan = deepcopy(source_plan)
+        for slot in updated_plan:
+            if not isinstance(slot, dict) or slot.get("role") != "reaction":
+                continue
+            idx = slot.get("line")
+            if type(idx) is int and idx in indices and 1 <= idx <= len(dialogue):
+                if slot.get("speaker") == dialogue[idx - 1]["speaker"]:
+                    slot["intent"] = dialogue[idx - 1]["line"]
+        revised["gold_source_line_plan"] = updated_plan
     return revised, indices
 
 
@@ -2610,6 +2664,8 @@ def convert_gold_chat(
                     if found:
                         retry_feedback = found
                 found_constraints = _semantic_retry_constraints_from(exc)
+                if isinstance(chat, dict):
+                    row = _attach_source_audit_feedback(row, exc, chat)
                 if isinstance(exc, GoldChatFillError):
                     found_constraints = [str(exc)[:1200]]
                 if found_constraints and found_constraints != retry_constraints:

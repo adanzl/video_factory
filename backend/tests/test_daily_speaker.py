@@ -621,3 +621,24 @@ def test_zhao_cancan_renamed_to_jiejie():
     assert story["dialogue"][2]["line"] == "灿灿卷子给我。"
     assert story["dialogue"][3]["line"] == "我到处说姐姐低分怎么了！"
     assert story["discovery_opening"][0]["line"] == "姐姐考砸了，我见人就说！"
+import pytest
+
+
+@pytest.mark.parametrize("row", [
+    {"speaker": "灿灿", "line": "昭昭姐姐，这个能给我吗？"},
+    {"speaker": "妈妈", "line": "去找灿灿弟弟玩吧。"},
+    {"speaker": "灿灿", "addressee": "昭昭", "intent": "姐姐，给我看看。"},
+])
+def test_character_address_errors_bind_named_target(row):
+    from app.services.daily_story.speaker import collect_character_address_errors
+    assert collect_character_address_errors([row])
+
+
+@pytest.mark.parametrize("line", [
+    "姐姐，帮我拿一下。", "灿灿姐姐，来看看。", "邻居家的姐姐来了。",
+    "昭昭的姐姐在门外。", "她说过‘姐姐’，我记住了。",
+    "他刚叫你“昭昭姐姐”，我都笑了。",
+])
+def test_character_address_errors_preserve_valid_and_third_party(line):
+    from app.services.daily_story.speaker import collect_character_address_errors
+    assert collect_character_address_errors([{"speaker": "昭昭", "line": line}]) == []

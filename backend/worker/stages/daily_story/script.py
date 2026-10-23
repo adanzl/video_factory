@@ -7,6 +7,8 @@ from app.services.llm.llm_mgr import llm_mgr
 from app.services.script.optimize_title import CHAT_TITLE_MAX_LEN, build_chat_title_prompts, ensure_chat_title_candidates, extract_core_anchor_words, extract_hard_anchor_words, extract_theme_action_phrase, maybe_keep_cover_draft, parse_chat_title_candidates_payload, pick_best_chat_title, polish_chat_title
 from app.utils.job_cancel import job_cancel
 from app.utils.job_info import parse_job_info
+from app.exceptions import JobStageFailureError
+from app.services.daily_story.speaker import collect_character_address_errors
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 from app.repositories.sql_exec import atomic
@@ -48,6 +50,11 @@ class DailyScriptStage(StageExecutor):
         with atomic():
             story = repo_daily_story.get_story(daily_story_id)
         story_content = story['story']
+        address_errors = collect_character_address_errors(story_content.get('dialogue') or [])
+        if address_errors:
+            raise JobStageFailureError(
+                '对话稿人物关系不合格，请重新生成并审核对话稿：' + '；'.join(address_errors)
+            )
         scenes_data = llm_mgr.generate_daily_script(story_content, job=ctx.job, chars_per_sec=chars_per_sec)
         scenes = scenes_data.get('scenes') or []
         if not scenes:

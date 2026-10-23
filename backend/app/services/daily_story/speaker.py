@@ -3,9 +3,41 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 DAILY_STORY_SPEAKER_NAMES: tuple[str, ...] = ("昭昭", "灿灿", "妈妈", "爸爸")
 _PARENT_SPEAKERS = frozenset({"妈妈", "爸爸"})
+
+DAILY_STORY_RELATION_RULE = (
+    "【固定人物关系】昭昭是7岁男孩、弟弟；灿灿是10岁女孩、姐姐。"
+    "昭昭称灿灿为姐姐，灿灿称昭昭为昭昭或弟弟。"
+    "源素材的人名、性别、长幼关系须整体映射，不能只换speaker而保留错误称呼；"
+    "这条角色事实也约束契约和素材种子，优先于其中沿用的错误称谓。"
+    "第三方亲属与明确引用的别人的话须按实际指向区分。"
+)
+
+
+def collect_character_address_errors(rows: list[Any]) -> list[str]:
+    """只判已绑定站内人物的称谓冲突，不把合法亲属词全局禁掉。"""
+    invalid = {"昭昭": ("姐姐", "妹妹", "哥哥"), "灿灿": ("哥哥", "弟弟", "妹妹")}
+    errors: list[str] = []
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        line = str(row.get("line") or row.get("text") or row.get("intent") or "")
+        # 引用里可能是在复述他人的称呼错误；留给全文语义审核判断。
+        direct = re.sub(r'“[^”]*”|「[^」]*」|"[^"]*"', "", line)
+        for name, terms in invalid.items():
+            for term in terms:
+                named = re.search(rf"{name}{term}(?!的)", direct)
+                addressed = (
+                    row.get("addressee") == name
+                    and re.match(rf"^{term}[，,！!？?]", direct.strip())
+                )
+                if named or addressed:
+                    errors.append(f"第{i + 1}行称谓与人物不符：{name}不能称为{term}")
+                    break
+    return errors
 
 # 点名但非当场在画：转述旧规矩、询问去向、刻意避开等（不授予入画）
 # 口语常写「妈」；妈妈? = 妈|妈妈，避免「别让妈看见」漏判导致粘性硬塞三人

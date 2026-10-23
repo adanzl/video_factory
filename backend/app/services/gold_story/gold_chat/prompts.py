@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
+from app.services.daily_story.speaker import DAILY_STORY_RELATION_RULE
 from app.services.daily_story.prompts import (
     DAILY_STORY_BODY_CHARS_MAX,
     DAILY_STORY_BODY_CHARS_MIN,
@@ -136,6 +137,7 @@ def _mom_adjudicate_wanted(
     )
 
 _SYSTEM = (
+    f"{DAILY_STORY_RELATION_RULE}\n"
     "你是日常故事编剧。输入为金故事 scene_contract（可拍场景契约）"
     "与 dialogue_seed intent，扩写成**契约在场人物**的可拍对白剧本"
     "（人物与人数一律以【出场角色】块为准，不得沿用其它题材的常见组合）。\n"
@@ -259,6 +261,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 
 
 _FIX_SYSTEM = (
+    f"{DAILY_STORY_RELATION_RULE}\n"
     "你是日常故事编辑。根据校验错误修正 JSON。\n"
     "须改成第一人称现场对白：角色当场说，禁止转述/旁白/括号说明。\n"
     "speaker 只能用【出场角色】块列出的人物（父亲/老爸/宝爸归一为爸爸；"
@@ -1321,6 +1324,14 @@ def format_retry_missing_events_block(row: dict[str, Any]) -> str:
     constraints = feedback.get("semantic_constraints")
     constraints = constraints if isinstance(constraints, list) else []
     lines: list[str] = []
+    failures = feedback.get("source_audit_failures")
+    if isinstance(failures, list) and failures:
+        lines += [
+            "【上轮来源审核失败反例】以下不是候选台词，禁止照抄。",
+            "只用于同一说话人回应相同内容的位置；新计划按说话人与上下文重新定位，"
+            "不得把旧句位置套到新行，也不得把别人经历改成自己的。",
+            json.dumps(failures[:4], ensure_ascii=False),
+        ]
     if events:
         lines += [
             "【上一轮缺拍·必须补齐】",
@@ -1574,6 +1585,7 @@ def format_align_issues_block(issues: list[dict[str, Any]]) -> str:
 
 
 PERBEAT_SYSTEM = (
+    f"{DAILY_STORY_RELATION_RULE}\n"
     "你是日常家庭对白的「单拍填词器」。只写当前这一拍的一句台词。\n"
     "硬性要求：\n"
     "1. 说话人必须等于本拍给出的 speaker，绝不替别的角色说话，也不得替后面的拍说出关键句。\n"
@@ -1757,6 +1769,7 @@ def format_perbeat_filler_rewrite_user(
 
 
 PERBEAT_BATCH_SYSTEM = (
+    f"{DAILY_STORY_RELATION_RULE}\n"
     "你是家庭日常对白的「填词器」。给你一张**已经定好的分配表**：每一句的序号、谁来念、这一句要干什么、必须出现哪个词。你只负责把台词填进去，**不许改序号、不许改说话人、不许增删句子**。\n"
     "硬性要求：\n"
     "1. 说话人严格按分配表，绝不替别的角色说话，也不许把两句合成一句；某个动作/要求/表态是拍主的活，别人不能替他做（换了人就是「串戏」）。\n"
@@ -1966,6 +1979,7 @@ def format_perbeat_batch_user(
 
 
 LINE_PLAN_SYSTEM = (
+    f"{DAILY_STORY_RELATION_RULE}\n"
     "你是家庭日常短视频的「对白编排」。说话人、拍号和句序已经排好，你只负责"
     "给指定待填行写 intent——这一句要干什么；其余固定行只读。你不写台词。\n"
     "硬性规则：\n"
@@ -2081,7 +2095,7 @@ pass 只有在来源支持且当前全文里的上下句仍自然成立时为tru
 输出 {"dialogue_link_audit":[{"i":序号,"pass":false,"source_supports_act":false,"quote":"当前句引文","previous_quote":"前句引文","source_quote":"原文引文","reason":"核验理由"}]}。
 """
 
-SOURCE_BATCH_SYSTEM = """你是对白编剧，任务是润色扩写简略素材，写成自然家庭对白，只输出JSON。
+SOURCE_BATCH_SYSTEM = DAILY_STORY_RELATION_RULE + "\n" + """你是对白编剧，任务是润色扩写简略素材，写成自然家庭对白，只输出JSON。
 序号、说话人、内容单元归属与顺序不可改变。content行润色素材，完整表达事实；reaction行已是上一阶段生成的直接台词，只校正代词、口语和长度，保留意思及一二人称，不重新生成接话意图。
 content行表达自己被分配的素材；reaction行仅对已出事件表态或追问，不能代说后续答案、补新事实、空转或重复。原文中尚未在前面台词交代的细节，也不能被reaction提前说出。
 昭昭7岁、灿灿10岁，接话要像孩子当面对家人说话，不用成人评论员口吻分析论证、话术或台词作用。旁观者不能替被问的人回答，只能说听完后的当场感受。
@@ -2164,7 +2178,7 @@ def format_source_beat_mapping_user(
     )
 
 
-SOURCE_LINE_PLAN_SYSTEM = """你为家庭对话稿补充接话，只输出 JSON。
+SOURCE_LINE_PLAN_SYSTEM = DAILY_STORY_RELATION_RULE + "\n" + """你为家庭对话稿补充接话，只输出 JSON。
 分句计划已按已有素材的说话人和先后顺序锁定，content 行不许改。
 你只填写 reaction 行的 line：说话人此刻对家人直接说出口的完整台词，不生成意图、梗概或第三人称说话过程说明。
 对一个现场角色说话，不向观众解说“妈妈问姐姐/妈妈说/姐姐怎么了”。只回应已说的具体内容，不引入新事实，不抢说后面的答案。
@@ -2209,7 +2223,7 @@ def format_source_line_plan_user(
     )
 
 
-REVISE_SYSTEM = """你是家庭对话稿的修稿人。给你一篇已经写好的对白和审读意见，
+REVISE_SYSTEM = DAILY_STORY_RELATION_RULE + "\n" + """你是家庭对话稿的修稿人。给你一篇已经写好的对白和审读意见，
 你只改被点名的那几行，其余行一个字都不许动。
 
 规则：

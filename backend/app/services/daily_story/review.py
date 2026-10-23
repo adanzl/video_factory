@@ -24,6 +24,10 @@ from app.services.gold_story.gold_chat.pad_stack import (
     pad_stack_issue_for_line,
 )
 from app.services.gold_story.scene import has_dialogue_meta_label
+from app.services.daily_story.speaker import (
+    DAILY_STORY_RELATION_RULE,
+    collect_character_address_errors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -517,9 +521,10 @@ def collect_sibling_address_issues(story: dict) -> list[dict[str, Any]]:
     for i, row in enumerate(_dialogue(story), 1):
         speaker = str(row.get("speaker") or "").strip()
         line = str(row.get("line") or "").strip()
-        if not line or speaker not in ("昭昭", "灿灿"):
+        if not line:
             continue
-        violations = _sibling_address_violations(speaker, line)
+        violations = collect_character_address_errors([row])
+        violations.extend(_sibling_address_violations(speaker, line))
         if not violations:
             continue
         issues.append({
@@ -1941,6 +1946,7 @@ def build_review_prompts(
         )
     system = (
         "你是儿童短视频文案的审稿人，不是作者。"
+        f"{DAILY_STORY_RELATION_RULE}\n"
         "你的唯一任务是像观众一样逐句读这段对白，挑出「读着出戏」的硬伤。\n"
         "先做五项全文关系核对，且只依据稿内可验证信息，不靠题材常识脑补：\n"
         "A 自然对白：角色是在对现场的人说话，而不是念剧情指令、规则说明、舞台动作或作者旁白；"

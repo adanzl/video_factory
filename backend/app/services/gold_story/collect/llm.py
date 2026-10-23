@@ -6,6 +6,10 @@ import json
 import logging
 import re
 from typing import Any
+from app.services.daily_story.speaker import (
+    DAILY_STORY_RELATION_RULE,
+    collect_character_address_errors,
+)
 
 from app.services.gold_story.types import (
     GOLD_STORY_MECHANISM_CODES,
@@ -336,6 +340,7 @@ banned_literals 规则（仅填 remap/真名，勿填场景与笑点词）：
 
 
 _H3A_SYSTEM = (
+    f"{DAILY_STORY_RELATION_RULE}\n"
     "你是金故事场景契约师。把 story_raw 转成昭昭(7岁弟)/灿灿(10岁姐) **可拍现场契约**。\n"
     "口播/教程须强制 remap 为姐弟现场：施教方→灿灿(立规)，被教方→昭昭，陌生小孩→灿灿(占物)。\n"
     "characters 允许昭昭/灿灿/妈妈/爸爸；"
@@ -529,6 +534,7 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 
 
 _H3B_SYSTEM = (
+    f"{DAILY_STORY_RELATION_RULE}\n"
     "你是金故事对话化师。根据 scene_contract.beat_chain 展开 dialogue_seed。\n"
     "intent 必须能转成一句角色可说出口的现场对白；动作只能伴随对白，"
     "纯沉默/低头/不再接话不能单独成为 seed。\n"
@@ -1022,6 +1028,16 @@ def build_dialogue_seed(
             + json.dumps(h3["generation_constraints"].get("previous_plan_error"), ensure_ascii=False)
         )
     data = _chat_json(_H3B_SYSTEM, user)
+    address_errors = collect_character_address_errors(_seed_rows(data))
+    if address_errors:
+        data = _chat_json(
+            _H3B_SYSTEM,
+            user + "\n【称谓绑定返修】" + "；".join(address_errors)
+            + "。按固定人物关系重新生成完整素材种子，不能沿用错误称谓。",
+        )
+        address_errors = collect_character_address_errors(_seed_rows(data))
+        if address_errors:
+            raise ValueError("H3b角色关系不合格：" + "；".join(address_errors))
     seed = _seed_rows(data)
     seed, _silent_seed_notes = trim_terminal_no_reply_rows(seed)
     seed, unintelligible_notes = drop_unintelligible_seed_rows(seed)
@@ -1125,6 +1141,9 @@ def build_dialogue_seed(
     from app.services.gold_story.scene import mark_seed_source_origins
 
     seed = mark_seed_source_origins(seed, story_raw)
+    address_errors = collect_character_address_errors(seed)
+    if address_errors:
+        raise ValueError("H3b角色关系不合格：" + "；".join(address_errors))
     data["dialogue_seed"] = seed
     confidence = float(data.get("dialogue_confidence") or 0.0)
     if confidence < 0.35:

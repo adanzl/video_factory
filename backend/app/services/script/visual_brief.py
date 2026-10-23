@@ -703,14 +703,14 @@ _NAMED_CONTAINER_RE = re.compile(
     r"(?:举着|拿着|握着|拎着)?"
     r"(?:那)?"
     r"(?:一盘|一碗|一块|几根|一根|一些|两块|一袋|一双)?"
-    r"([\u4e00-\u9fa5]{1,8})"
+    r"([\u4e00-\u9fa5]+)"
 )
 _DEIXIS_CONTAINER_RE = re.compile(
     r"(你|我)(?:的)?"
     r"(碗里|盘里|手里|面前)"
     r"(?:那)?"
     r"(?:一盘|一碗|一块|几根)?"
-    r"([\u4e00-\u9fa5]{1,8})"
+    r"([\u4e00-\u9fa5]+)"
 )
 # 碗/盘/面前 = 桌面容器归属；手里/手中/端着/捧着 = 手持，不得写入碗里
 _BOWL_CONTAINER_MARKERS = frozenset({"面前", "碗里", "盘里"})
@@ -718,7 +718,7 @@ _SETTING_SURFACE_RE = re.compile(
     r"(?:桌上|茶几上|地垫上)"
     r"(?:摊着|放着|摆着|立着)?"
     r"(?:一张|一把|一个|一双|两只)?"
-    r"([^，。；]{1,14})"
+    r"([^，,。；;！？!?\n]+)"
 )
 
 
@@ -1687,6 +1687,8 @@ _PROP_NOUN_SKIP = frozenset(
         "自己",
         "人家",
         "就是",
+        "新",
+        "旧",
     }
 )
 _PROP_VERB_LEAD_RE = re.compile(
@@ -1712,6 +1714,7 @@ def _prop_key(prop: str) -> str:
         return ""
     if "的" in text:
         text = text.rsplit("的", 1)[1].strip()
+        return text
     m = _MEASURE_HEAD_RE.match(text)
     if m and m.end() < len(text):
         return text[m.end() :]
@@ -2404,10 +2407,11 @@ def build_visual_brief_prompts(
             if locked:
                 names = "、".join(sorted(locked, key=len, reverse=True))
                 setting_rule += (
-                    f"【物品锁定】本片只允许这些物品入画：{names}。"
-                    "禁止新增分镜1/setting/台词没有的家具、文具或第二件同款"
-                    "（如尺子、铅笔、沙发、另一张纸）；"
-                    "剪刀全片同一把，写「剪刀」，勿改成安全剪/金属锋利剪。"
+                    f"【已识别物件】{names}。这是部分提取结果，不是完整物品清单；"
+                    "必须结合完整setting和各镜台词补全原文物件，不得排除原文明确存在的道具。"
+                    "以原文为准：未交代的数量、新旧或归属不得自行补设；"
+                    "新旧、数量和归属按原文分别保留，不能把明确不同的两件物品合成一件；"
+                    "禁止无依据增添物件或增加同款数量。"
                 )
             dlg_rows: list[dict] = []
             for seg in segments:
@@ -2508,6 +2512,12 @@ def build_visual_brief_prompts(
         )
     user = append_supplementary_to_user(
         (
+            "【输出覆盖】segments 必须且只能包含这些编号，每个编号恰好一项："
+            + ", ".join(str(i) for i in (
+                segment_indices if segment_indices is not None
+                else [int(s["segment_index"]) for s in segments]
+            )) + "。示例只展示字段，不能只返回示例的第一段。\n"
+            +
             f"标题：{title}\n"
             f"{setting_line}"
             f"{style_line}"

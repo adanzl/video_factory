@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import logging
 import re
 import time
@@ -647,6 +648,39 @@ def _chunk_indices(indices: list[int], batch_size: int) -> list[list[int]]:
 
 # LLM 偶发漏段时的补全重试上限（只对缺段局部重试，成本低）
 _IMAGE_PROMPT_RETRY_ON_MISSING = 2
+_VISUAL_BRIEF_RETRY_ON_MISSING = 2
+
+
+def _valid_visual_brief_rows(payload: dict, required: list[int]) -> dict[int, dict]:
+    """重复编号、无效编号或空内容都不能冒充一段完成的画面。"""
+    grouped: dict[int, list[dict]] = {}
+    rows = payload.get("segments")
+    for item in rows if isinstance(rows, list) else []:
+        if not isinstance(item, dict):
+            continue
+        raw = item.get("segment_index")
+        if isinstance(raw, bool) or not re.fullmatch(r"[1-9][0-9]*", str(raw)):
+            continue
+        idx = int(str(raw))
+        if idx in required:
+            grouped.setdefault(idx, []).append(item)
+    valid: dict[int, dict] = {}
+    for idx, items in grouped.items():
+        if len(items) != 1:
+            continue
+        item = items[0]
+        subjects = item.get("visual_subjects")
+        if isinstance(subjects, list) and subjects:
+            if not all(
+                isinstance(s, dict) and str(s.get("name") or "").strip()
+                and any(str(s.get(k) or "").strip() for k in ("posture", "action", "expression"))
+                for s in subjects
+            ):
+                continue
+        elif not isinstance(item.get("visual_brief"), str) or not item["visual_brief"].strip():
+            continue
+        valid[idx] = item
+    return valid
 
 
 def _missing_image_prompt_indices(
@@ -1064,37 +1098,60 @@ class DeepSeekClient(LLMClient):
         segments = script.get("segments") or []
         if not segments:
             raise ValueError("script has no segments for visual_brief")
-        if not str(script.get("visual_style") or "").strip():
-            script["visual_style"] = _resolve_visual_style(job)
+        working = copy.deepcopy(script)
+        if not str(working.get("visual_style") or "").strip():
+            working["visual_style"] = _resolve_visual_style(job)
         required = segment_indices or [
             int(seg["segment_index"]) for seg in segments
         ]
         started = time.perf_counter()
-        prompts = build_visual_brief_prompts(
-            script,
-            feedback=feedback,
-            supplementary_info=supplementary_info,
-            job=job,
-            segment_indices=segment_indices,
+        collected: dict[int, dict] = {}
+        missing = list(required)
+        for attempt in range(_VISUAL_BRIEF_RETRY_ON_MISSING + 1):
+            raise_if_job_cancelled(job)
+            prompts = build_visual_brief_prompts(
+                working,
+                feedback=feedback,
+                supplementary_info=supplementary_info,
+                job=job,
+                segment_indices=segment_indices if attempt == 0 else missing,
+            )
+            payload, finish = self._chat_json(
+                prompts["system"],
+                prompts["user"],
+                thinking_enabled=False,
+                temperature=_TEMP_CREATIVE_MID,
+            )
+            raise_if_job_cancelled(job)
+            valid = _valid_visual_brief_rows(payload, missing) if finish != "length" else {}
+            collected.update(valid)
+            missing = [idx for idx in required if idx not in collected]
+            if not missing:
+                break
+            logger.warning(
+                "[SCRIPT] visual_brief incomplete job=%s attempt=%s finish=%s "
+                "accepted=%s missing=%s payload=%s",
+                (job or {}).get("id"), attempt + 1, finish,
+                sorted(collected), missing, json.dumps(payload, ensure_ascii=False)[:6000],
+            )
+        if missing:
+            raise JobStageFailureError(
+                "画面描述生成不完整：分镜 " + "、".join(map(str, missing))
+                + " 缺失、重复或内容为空，自动补全2次后仍未通过"
+            )
+        _merge_visual_briefs(
+            working, {"segments": list(collected.values())}, required_indices=required,
         )
-        payload, finish = self._chat_json(
-            prompts["system"],
-            prompts["user"],
-            thinking_enabled=False,
-            temperature=_TEMP_CREATIVE_MID,
-        )
-        raise_if_job_cancelled(job)
-        if finish == "length":
-            raise ValueError("LLM visual_brief response truncated")
-        _merge_visual_briefs(script, payload, required_indices=required)
         elapsed = time.perf_counter() - started
         logger.info(
             "[SCRIPT] visual_brief done segments=%d elapsed=%.1fs",
             len(required),
             elapsed,
         )
-        timing = script.setdefault("_llm_timing", {})
+        timing = working.setdefault("_llm_timing", {})
         timing["visual_brief_sec"] = round(elapsed, 1)
+        script.clear()
+        script.update(working)
         return script
 
     def fill_visual_briefs(
