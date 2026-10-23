@@ -79,8 +79,8 @@
               size="small"
               class="w-40!"
             />
-            <span v-if="scheduleEnabled && schedulePreview" class="text-sm text-gray-500">
-              将于 {{ schedulePreview }} 发布
+            <span v-if="scheduleEnabled" class="text-sm text-gray-500">
+              {{ schedulePreview ? `将于 ${schedulePreview} 发布` : "提交时按所选时分排期" }}
             </span>
             <el-button
               type="primary"
@@ -702,27 +702,26 @@ const canRegenerateTags = computed(
   () => !isChatPipeline.value && Boolean(script.value?.narration?.trim())
 );
 
+const savedPlan = computed(() => props.job.publish_plan ?? null);
+
+/**
+ * 计划发布时间完全由后端给出（/jobs/get 的 publish_plan），前端不再重算。
+ * 时分被改动后后端没有对应计划，此时只显示时分，日期以提交结果为准。
+ */
 const schedulePreview = computed(() => {
   if (!scheduleEnabled.value || !scheduleTime.value) {
     return "";
   }
-  const [hourText, minuteText] = scheduleTime.value.split(":");
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  if (Number.isNaN(hour) || Number.isNaN(minute)) {
+  const plan = savedPlan.value;
+  if (!plan?.enabled || plan.time !== scheduleTime.value || !plan.next_at) {
     return "";
   }
-  const now = new Date();
-  const candidate = new Date(now);
-  candidate.setHours(hour, minute, 0, 0);
-  if (candidate <= now) {
-    candidate.setDate(candidate.getDate() + 1);
+  // 直接取后端返回的墙钟（Asia/Shanghai），避免浏览器时区不同显示成别的时间
+  const matched = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(plan.next_at);
+  if (!matched) {
+    return "";
   }
-  const month = candidate.getMonth() + 1;
-  const day = candidate.getDate();
-  const hh = String(candidate.getHours()).padStart(2, "0");
-  const mm = String(candidate.getMinutes()).padStart(2, "0");
-  return `${month}月${day}日 ${hh}:${mm}`;
+  return `${Number(matched[2])}月${Number(matched[3])}日 ${matched[4]}:${matched[5]}`;
 });
 
 const coverPath = computed(() => props.job.cover_path?.trim() || "");

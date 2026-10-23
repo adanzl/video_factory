@@ -98,6 +98,12 @@ export interface JobDetail extends JobListItem {
   created_at?: string | null;
   /** 后台 worker 仍持锁（含中止后等待当前步骤结束） */
   worker_busy?: boolean;
+  /** /jobs/get 附带：按已保存时分算好的下一次发布时间，仅用于展示 */
+  publish_plan?: {
+    enabled?: boolean;
+    time?: string | null;
+    next_at?: string | null;
+  } | null;
 }
 
 export type Job = JobDetail;

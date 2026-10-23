@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from importlib import import_module
 from unittest.mock import MagicMock
 
 from app.config import config
-from app.repositories import repo_daily_story
+from app.repositories import repo_daily_story, repo_job
 from app.services.publish.bilibili.schedule import (
     PUBLISH_TZ,
     parse_publish_schedule,
+    preview_publish_plan,
     resolve_next_publish_dtime,
     resolve_publish_dtime_from_job,
 )
@@ -327,6 +328,25 @@ def test_resolve_next_publish_dtime_tomorrow() -> None:
     assert dtime == int(planned.timestamp())
 
 
+def test_resolve_next_publish_dtime_friday_night_to_monday() -> None:
+    # 周五 20:00 已过 09:00 -> 次日周六 -> 顺延到下周一 09:00
+    now = datetime(2026, 8, 21, 20, 0, tzinfo=PUBLISH_TZ)
+    dtime, planned = resolve_next_publish_dtime("09:00", now=now)
+    assert planned.date() == date(2026, 8, 24)
+    assert planned.weekday() == 0
+    assert planned.hour == 9
+    assert dtime == int(planned.timestamp())
+
+
+def test_resolve_next_publish_dtime_sunday_to_monday() -> None:
+    # 周日 06:00 还没到 09:00 -> 当天是周日 -> 顺延到下周一 09:00
+    now = datetime(2026, 8, 23, 6, 0, tzinfo=PUBLISH_TZ)
+    dtime, planned = resolve_next_publish_dtime("09:00", now=now)
+    assert planned.date() == date(2026, 8, 24)
+    assert planned.hour == 9
+    assert dtime == int(planned.timestamp())
+
+
 def test_resolve_publish_dtime_from_job(monkeypatch) -> None:
     fixed_now = datetime(2026, 8, 19, 8, 0, tzinfo=PUBLISH_TZ)
     monkeypatch.setattr(
@@ -350,6 +370,67 @@ def test_parse_publish_schedule_disabled() -> None:
     assert parse_publish_schedule({"enabled": False, "time": "09:00"}) == {
         "enabled": False,
         "time": "09:00",
+    }
+
+
+def test_preview_publish_plan_returns_next_weekday(monkeypatch) -> None:
+    fixed_now = datetime(2026, 8, 21, 20, 0, tzinfo=PUBLISH_TZ)
+    monkeypatch.setattr(
+        "app.services.publish.bilibili.schedule.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {"now": staticmethod(lambda tz=None: fixed_now)},
+        ),
+    )
+    job = {
+        "info": merge_job_info(None, publish_schedule={"enabled": True, "time": "09:00"}),
+    }
+    assert preview_publish_plan(job) == {
+        "enabled": True,
+        "time": "09:00",
+        "next_at": "2026-08-24T09:00:00+08:00",
+    }
+
+
+def test_preview_publish_plan_disabled_or_missing() -> None:
+    assert preview_publish_plan({}) is None
+    disabled = {
+        "info": merge_job_info(None, publish_schedule={"enabled": False, "time": "09:00"}),
+    }
+    assert preview_publish_plan(disabled) == {
+        "enabled": False,
+        "time": "09:00",
+        "next_at": None,
+    }
+
+
+def test_preview_publish_plan_invalid_time_does_not_raise() -> None:
+    bad = {"info": {"publish_schedule": {"enabled": True, "time": "9:0"}}}
+    assert preview_publish_plan(bad) is None
+
+
+def test_job_detail_route_includes_publish_plan(app_ctx, monkeypatch) -> None:
+    fixed_now = datetime(2026, 8, 21, 20, 0, tzinfo=PUBLISH_TZ)
+    monkeypatch.setattr(
+        "app.services.publish.bilibili.schedule.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {"now": staticmethod(lambda tz=None: fixed_now)},
+        ),
+    )
+    job = repo_job.create_job(
+        "周末排期",
+        info={"publish_schedule": {"enabled": True, "time": "09:00"}},
+    )
+    client = app_ctx.test_client()
+    resp = client.get("/v_factory/api/jobs/get", query_string={"id": job["id"]})
+    assert resp.status_code == 200
+    assert resp.get_json()["publish_plan"] == {
+        "enabled": True,
+        "time": "09:00",
+        "next_at": "2026-08-24T09:00:00+08:00",
     }
 
 

@@ -551,7 +551,11 @@ def list_jobs_route():
 
 @bp.get("/get")
 def get_job_route():
-    return json_ok(job_mgr.get_job(parse_id()))
+    job = job_mgr.get_job(parse_id())
+    from app.services.publish.bilibili.schedule import preview_publish_plan
+
+    job["publish_plan"] = preview_publish_plan(job)
+    return json_ok(job)
 
 
 @bp.post("/add")
