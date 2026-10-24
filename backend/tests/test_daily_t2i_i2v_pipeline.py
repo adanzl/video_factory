@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from app.services.media.media_mgr import (
     _inject_mouth_motion,
     inject_speaking_times_into_motion_prompts,
@@ -1827,3 +1829,69 @@ def test_script_stage_blocks_stale_source_before_llm(app_ctx, monkeypatch):
     ctx = SimpleNamespace(job={"id": 1, "info": json.dumps({"daily_story_id": did})}, script_speech_chars_per_sec=4)
     with pytest.raises(JobStageFailureError, match="重新转换对话"):
         DailyScriptStage().run(ctx)
+
+
+@pytest.mark.parametrize("phase", ["storyboard", "visual", "image"])
+@pytest.mark.parametrize("change", [None, "source_stale", "new_draft"])
+def test_script_stage_cannot_persist_old_results_after_draft_changes(app_ctx, monkeypatch, phase, change):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from app.exceptions import JobStageFailureError
+    from app.repositories import repo_daily_story, repo_job, repo_segment
+    from app.services.script import image_prompt
+    from worker.stages.daily_story.script import DailyScriptStage, llm_mgr
+    content = {"scene_title": "收拾书桌", "dialogue": [{"speaker": "昭昭", "line": "书本放回书架吧。"}], "quality": {}}
+    did = repo_daily_story.insert_story(theme="整理", story=content, status="active")
+    job = repo_job.create_job("整理", info={"daily_story_id": did}, script_json={"previous": True})
+    jid = job["id"]
+    before = []
+    def edit_source():
+        if change is None:
+            return
+        before.append((repo_job.get_job(jid)["script_json"], repo_segment.list_segments(jid)))
+        new = deepcopy(content)
+        if change == "source_stale":
+            new["quality"]["source_stale"] = True
+        else:
+            new["dialogue"][0]["line"] = "这次我们来整理玩具。"
+        repo_daily_story.update_story(did, story=new, status="review_pending")
+    def generate(*a, **k):
+        if phase == "storyboard": edit_source()
+        return {"scenes": [{"dialogue": [{"speaker": "昭昭", "text": "书本放回书架吧。"}]}]}
+    def visual(script, **k):
+        if phase == "visual": edit_source()
+        script["segments"][0]["visual_brief"] = "昭昭把书本放回书架。"
+    def image(script, **k):
+        if phase == "image": edit_source()
+        script["segments"][0]["image_prompt"] = "旧稿生成的画面"
+    monkeypatch.setattr(llm_mgr, "generate_daily_script", generate)
+    monkeypatch.setattr(llm_mgr, "fill_visual_briefs", visual)
+    monkeypatch.setattr(llm_mgr, "fill_image_prompts_with_retries", image)
+    monkeypatch.setattr(image_prompt, "wrap_image_prompts", lambda *a, **k: None)
+    ctx = SimpleNamespace(job=job, script_speech_chars_per_sec=4, script_skip_title_optimize=True)
+    if change is None:
+        DailyScriptStage().run(ctx)
+        assert len(repo_segment.list_segments(jid)) == 1
+        assert repo_job.get_job(jid)["script_json"]["segments"][0]["image_prompt"] == "旧稿生成的画面"
+        return
+    with pytest.raises(JobStageFailureError, match="稿件已变化"):
+        DailyScriptStage().run(ctx)
+    assert len(before) == 1
+    assert (repo_job.get_job(jid)["script_json"], repo_segment.list_segments(jid)) == before[0]
+
+
+@pytest.mark.parametrize("dialogue", [[], ["？！"], [{"speaker": "昭昭", "text": "？！"}]])
+def test_script_stage_rejects_zero_usable_segments_before_writing(app_ctx, monkeypatch, dialogue):
+    from types import SimpleNamespace
+    from app.exceptions import JobStageFailureError
+    from app.repositories import repo_daily_story, repo_job, repo_segment
+    from worker.stages.daily_story.script import DailyScriptStage, llm_mgr
+    did = repo_daily_story.insert_story(theme="整理", story={"dialogue": [{"speaker": "昭昭", "line": "把书放好。"}]}, status="active")
+    job = repo_job.create_job("整理", info={"daily_story_id": did}, script_json={"previous": True})
+    monkeypatch.setattr(llm_mgr, "generate_daily_script", lambda *a, **k: {"scenes": [{"dialogue": dialogue}]})
+    monkeypatch.setattr(llm_mgr, "fill_visual_briefs", lambda *a, **k: pytest.fail("empty storyboard reached visual generation"))
+    ctx = SimpleNamespace(job=job, script_speech_chars_per_sec=4, script_skip_title_optimize=True)
+    with pytest.raises(JobStageFailureError, match="没有有效对白"):
+        DailyScriptStage().run(ctx)
+    assert repo_job.get_job(job["id"])["script_json"] == {"previous": True}
+    assert repo_segment.list_segments(job["id"]) == []

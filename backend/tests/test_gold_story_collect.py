@@ -711,7 +711,14 @@ def test_collect_failure_cannot_overwrite_concurrent_changes(app_ctx, monkeypatc
     monkeypatch.setattr(p.time, "sleep", lambda *a: pytest.fail("superseded attempt must not retry"))
     result = p.drain_pending_stories()
     assert len(saved) == 1
-    assert repo.get_story(gid) == saved[0]
+    fresh = repo.get_story(gid)
+    if edit == "archived":
+        assert fresh == saved[0]
+    else:
+        assert fresh["status"] == "failed"
+        assert fresh["payload"]["user_note"] == "keep concurrent edit"
+        assert fresh["payload"]["collect_attempts"] == 1
+        assert result["failed"] == 1
     assert result["results"][0]["reason"] == "source_changed"
 
 
@@ -865,3 +872,34 @@ def test_drain_honors_explicit_transcript_refresh_but_reuses_cache_by_default(ap
     monkeypatch.setattr(p, "process_candidate", process)
     p.drain_pending_stories(**({} if force is None else {"force_transcript": force}))
     assert seen == [bool(force)]
+
+
+def test_collect_recovery_fences_old_runner_before_next_attempt(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    gid = _pending_source()
+    claims = []
+    def offline(*a, **k):
+        raise TimeoutError("temporary upstream failure")
+    def recover(*a):
+        repo.reset_processing_to_pending()
+        claims.append(repo.claim_next_pending())
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", offline)
+    monkeypatch.setattr(p.time, "sleep", recover)
+    report = p.drain_pending_stories()
+    assert len(claims) == 1
+    fresh = repo.get_story(gid)
+    assert fresh["status"] == "processing"
+    assert fresh["payload"]["collect_attempts"] == 1
+    assert report["results"][0]["reason"] == "source_changed"
+
+
+def test_collect_claim_changes_on_recovery(app_ctx):
+    from app.repositories import repo_gold_story as repo
+    gid = _pending_source()
+    first = repo.claim_next_pending()
+    repo.begin_collect_attempt(gid, max_attempts=3)
+    repo.reset_processing_to_pending()
+    second = repo.claim_next_pending()
+    assert first["payload"]["collect_claim_id"] != second["payload"]["collect_claim_id"]
+    assert second["payload"]["collect_attempts"] == 1

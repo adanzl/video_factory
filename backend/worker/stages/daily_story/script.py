@@ -2,6 +2,7 @@
 from __future__ import annotations
 import logging
 import re
+from copy import deepcopy
 from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.script.optimize_title import CHAT_TITLE_MAX_LEN, build_chat_title_prompts, ensure_chat_title_candidates, extract_core_anchor_words, extract_hard_anchor_words, extract_theme_action_phrase, maybe_keep_cover_draft, parse_chat_title_candidates_payload, pick_best_chat_title, polish_chat_title
@@ -11,13 +12,22 @@ from app.exceptions import JobStageFailureError
 from app.services.daily_story.speaker import collect_character_address_errors
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
-from app.repositories.sql_exec import atomic
+from app.repositories.sql_exec import atomic, execute
 logger = logging.getLogger(__name__)
 
 
-def _persist_daily_script(job_id: int, script: dict, *, log_msg: str) -> None:
+def _persist_daily_script(job_id: int, script: dict, *, log_msg: str, expected_story: dict) -> None:
     """分步子进度落库：script_json + segments 同步写入。"""
     with atomic():
+        # 先获得 SQLite 写锁，将来源核对与分镜写回放在同一事务中。
+        # 长模型调用期间允许重导；回来时只能发布仍对应当前稿件的结果。
+        execute("UPDATE daily_story SET updated_at=updated_at WHERE id=?", (script['daily_story_id'],))
+        try:
+            fresh = repo_daily_story.get_story(script['daily_story_id'])
+        except KeyError as exc:
+            raise JobStageFailureError('生成期间稿件已变化或删除，请使用当前稿件重新制作') from exc
+        if fresh.get('story') != expected_story or (fresh.get('story', {}).get('quality') or {}).get('source_stale'):
+            raise JobStageFailureError('生成期间稿件已变化，请使用当前稿件重新制作')
         title = script.get('title')
         if title:
             repo_job.update_job(job_id, title=title, script_json=script)
@@ -50,6 +60,7 @@ class DailyScriptStage(StageExecutor):
         with atomic():
             story = repo_daily_story.get_story(daily_story_id)
         story_content = story['story']
+        source_snapshot = deepcopy(story_content)
         if (story_content.get('quality') or {}).get('source_stale'):
             raise JobStageFailureError('来源素材已重新导入，请重新转换对话并导入新稿后再制作')
         address_errors = collect_character_address_errors(story_content.get('dialogue') or [])
@@ -77,7 +88,7 @@ class DailyScriptStage(StageExecutor):
             else:
                 segment_text = ''.join((str(l) for l in raw_lines))
                 dialogue = []
-            if not str(segment_text).strip():
+            if not re.search(r'\w', str(segment_text)):
                 logger.warning('scene %d: empty text after parse, skipping', scene_pos)
                 continue
             narration_parts.append(segment_text)
@@ -94,6 +105,8 @@ class DailyScriptStage(StageExecutor):
                 seg['dialogue'] = dialogue
             segments.append(seg)
             next_index += 1
+        if not segments:
+            raise JobStageFailureError('分镜没有有效对白，未写入空片段，请重新生成分镜')
         narration = ''.join(narration_parts)
         title = (story_content.get('scene_title') or ctx.job.get('title') or '').strip()
         total_chars = sum((len(d.get('line', '')) for d in story_content.get('dialogue') or []))
@@ -103,6 +116,7 @@ class DailyScriptStage(StageExecutor):
         _persist_daily_script(
             job_id,
             script,
+            expected_story=source_snapshot,
             log_msg=(
                 f"daily story storyboard cut: scenes={len(scenes)}, "
                 f"segments={len(segments)}, closeups={closeup_count}"
@@ -124,6 +138,7 @@ class DailyScriptStage(StageExecutor):
         _persist_daily_script(
             job_id,
             script,
+            expected_story=source_snapshot,
             log_msg=f"daily story visual_brief ready: segments={len(script.get('segments') or [])}",
         )
         if not ctx.script_skip_title_optimize:
@@ -234,6 +249,7 @@ class DailyScriptStage(StageExecutor):
         _persist_daily_script(
             job_id,
             script,
+            expected_story=source_snapshot,
             log_msg=(
                 f"daily story script ready: scenes={len(scenes)}, "
                 f"narration_chars={len(narration)}, total_chars={total_chars}, "

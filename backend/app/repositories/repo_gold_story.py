@@ -1107,7 +1107,8 @@ def reset_processing_to_pending() -> int:
     result = sql.execute(
         """
         UPDATE gold_story
-        SET status = 'pending', updated_at = ?
+        SET status = 'pending', updated_at = ?,
+            payload_json = json_remove(COALESCE(payload_json, '{}'), '$.collect_claim_id')
         WHERE status = 'processing'
         """,
         (now,),
@@ -1117,45 +1118,48 @@ def reset_processing_to_pending() -> int:
 
 
 def claim_next_pending() -> dict[str, Any] | None:
-    """取出一条 pending → processing（单飞认领）。"""
-    row = sql.fetchone(
-        """
-        SELECT id FROM gold_story
-        WHERE status = 'pending'
-        ORDER BY id ASC
-        LIMIT 1
-        """
-    )
-    if row is None:
+    """逐条认领；每次恢复生成新归属标记，旧执行器不能续跑或收口。"""
+    while True:
+        row = sql.fetchone("SELECT id FROM gold_story WHERE status='pending' ORDER BY id ASC LIMIT 1")
+        if row is None:
+            sql.commit()
+            return None
+        gid = int(row["id"])
+        claim_id = uuid.uuid4().hex
+        result = sql.execute("""UPDATE gold_story SET status='processing', updated_at=datetime('now'),
+                payload_json=json_set(COALESCE(payload_json, '{}'), '$.collect_claim_id', ?)
+            WHERE id=? AND status='pending'""", (claim_id, gid))
         sql.commit()
-        return None
-    gid = int(row["id"])
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    result = sql.execute(
-        """
-        UPDATE gold_story
-        SET status = 'processing', updated_at = ?
-        WHERE id = ? AND status = 'pending'
-        """,
-        (now, gid),
-    )
-    sql.commit()
-    if int(result.rowcount or 0) <= 0:
-        return None
-    return get_story(gid, include_payload_snapshot=True)
+        if result.rowcount != 1:
+            continue
+        try:
+            claimed = get_story(gid, include_payload_snapshot=True)
+        except KeyError:
+            continue
+        if claimed["status"] == "processing" and claimed["payload"].get("collect_claim_id") == claim_id:
+            return claimed
 
 
-def begin_collect_attempt(gold_story_id: int, *, max_attempts: int) -> dict | None:
+def begin_collect_attempt(gold_story_id: int, *, max_attempts: int, claim_id: str | None = None) -> dict | None:
     """执行前持久化计数，崩溃恢复不能重置尝试预算。"""
     result = sql.execute("""UPDATE gold_story SET payload_json=json_set(
             COALESCE(payload_json, '{}'), '$.collect_attempts',
             COALESCE(json_extract(payload_json, '$.collect_attempts'), 0)+1),
             updated_at=datetime('now')
         WHERE id=? AND status='processing'
-          AND COALESCE(json_extract(payload_json, '$.collect_attempts'), 0) < ?""",
-        (gold_story_id, max_attempts))
+          AND COALESCE(json_extract(payload_json, '$.collect_attempts'), 0) < ?
+          AND (? IS NULL OR json_extract(payload_json, '$.collect_claim_id')=?)""",
+        (gold_story_id, max_attempts, claim_id, claim_id))
     sql.commit()
-    return get_story(gold_story_id, include_payload_snapshot=True) if result.rowcount == 1 else None
+    if result.rowcount != 1:
+        return None
+    try:
+        row = get_story(gold_story_id, include_payload_snapshot=True)
+    except KeyError:
+        return None
+    if row["status"] != "processing" or (claim_id is not None and row["payload"].get("collect_claim_id") != claim_id):
+        return None
+    return row
 
 
 def record_collect_failure(
@@ -1177,6 +1181,16 @@ def record_collect_failure(
          expected_row["_payload_json_snapshot"], expected_row.get("mechanism"),
          expected_row.get("structure_type"), expected_row.get("conflict_core"),
          expected_row.get("title"), expected_row.get("gold_chat_daily_story_id")))
+    sql.commit()
+    return result.rowcount == 1
+
+
+def release_changed_collect_claim(gold_story_id: int, *, claim_id: str, outcome: dict[str, Any]) -> bool:
+    """保留人工修改，结束本执行器仍持有但已失效的任务；不碰其他执行器。"""
+    result = sql.execute("""UPDATE gold_story SET status='failed', updated_at=datetime('now'),
+            payload_json=json_set(payload_json, '$.collect_failure', json(?))
+        WHERE id=? AND status='processing' AND json_extract(payload_json, '$.collect_claim_id')=?""",
+        (json.dumps(outcome, ensure_ascii=False), gold_story_id, claim_id))
     sql.commit()
     return result.rowcount == 1
 

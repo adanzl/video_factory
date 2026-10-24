@@ -916,6 +916,16 @@ def drain_pending_stories(
             "results": list(results),
         }
 
+    def _source_changed(gid: int, source_id: str, claim_id: str) -> dict[str, Any]:
+        nonlocal failed
+        outcome = {"id": gid, "source_id": source_id, "action": "error", "stage": "drain",
+                   "reason": "source_changed", "error": "采集期间素材已被修改，本次执行已停止，请重新导入",
+                   "retryable": False}
+        if repo_gold_story.release_changed_collect_claim(gid, claim_id=claim_id, outcome=outcome):
+            failed += 1
+            return {**outcome, "status": "failed"}
+        return {"id": gid, "source_id": source_id, "action": "superseded", "reason": "source_changed"}
+
     while True:
         if limit is not None and processed >= max(0, int(limit)):
             break
@@ -924,8 +934,9 @@ def drain_pending_stories(
             break
         gid = int(row["id"])
         source_id = str(row.get("source_id") or "")
+        claim_id = str((row.get("payload") or {}).get("collect_claim_id") or "")
         while True:
-            attempt_row = repo_gold_story.begin_collect_attempt(gid, max_attempts=_COLLECT_MAX_ATTEMPTS)
+            attempt_row = repo_gold_story.begin_collect_attempt(gid, max_attempts=_COLLECT_MAX_ATTEMPTS, claim_id=claim_id)
             if attempt_row is None:
                 outcome = {"action": "error", "stage": "drain", "error": "采集尝试次数已耗尽", "retryable": False}
             else:
@@ -944,7 +955,7 @@ def drain_pending_stories(
             attempts = int((row.get("payload") or {}).get("collect_attempts") or 0)
             retry = bool(outcome.get("retryable")) and attempts < _COLLECT_MAX_ATTEMPTS
             if not repo_gold_story.record_collect_failure(gid, outcome, retry=retry, expected_row=row):
-                outcome = {"id": gid, "source_id": source_id, "action": "superseded", "reason": "source_changed"}
+                outcome = _source_changed(gid, source_id, claim_id)
                 break
             logger.warning("gold_story collect failed id=%s attempt=%s retry=%s: %s", gid, attempts, retry, outcome.get("error"))
             if not retry:
@@ -961,7 +972,7 @@ def drain_pending_stories(
                 outcome = {**outcome, "status": "rejected", "id": gid}
                 gate_rejected += 1
             else:
-                outcome = {"id": gid, "source_id": source_id, "action": "superseded", "reason": "source_changed"}
+                outcome = _source_changed(gid, source_id, claim_id)
         elif action == "ok" or status == "active":
             inserted_active += 1
         elif action == "reject" or status == "rejected":
