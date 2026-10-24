@@ -269,6 +269,10 @@ def batch_route():
             source_ids=source_ids,
             force=force,
         )
+    except KeyError as exc:
+        raise APIError(str(exc), status_code=404) from exc
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400) from exc
     except RuntimeError as exc:
         raise APIError(str(exc), status_code=409, code="convert_busy") from exc
     logger.debug(

@@ -596,18 +596,21 @@ def expire_chat_task(gold_story_id: int, task: dict[str, Any]) -> None:
 
 
 def publish_chat_export(gold_story_id: int, patch: dict[str, Any], *, task_id: str | None = None,
-                        expected_row: dict[str, Any]) -> None:
+                        task_owner_id: int | None = None, expected_row: dict[str, Any]) -> None:
     """单次提交导出版本和成功摘要；过期或被替换的执行器不能发布。"""
     result = sql.execute(
         """UPDATE gold_story SET payload_json = json_patch(COALESCE(payload_json, '{}'), json(?)),
                updated_at = ? WHERE id = ? AND payload_json IS ?
                AND COALESCE(mechanism, '') = ? AND COALESCE(structure_type, '') = ?
-               AND (? IS NULL OR (
-               json_extract(payload_json, '$.gold_chat_task.task_id') = ? AND
-               json_extract(payload_json, '$.gold_chat_task.status') = 'running'))""",
+               AND (? IS NULL OR EXISTS (
+               SELECT 1 FROM gold_story AS owner WHERE owner.id=? AND
+               json_extract(owner.payload_json, '$.gold_chat_task.task_id') = ? AND
+               json_extract(owner.payload_json, '$.gold_chat_task.status') = 'running' AND
+               json_extract(owner.payload_json, '$.gold_chat_task.expires_at') > ?))""",
         (json.dumps(patch, ensure_ascii=False), datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
          gold_story_id, expected_row["_payload_json_snapshot"],
-         expected_row.get("mechanism") or "", expected_row.get("structure_type") or "", task_id, task_id),
+         expected_row.get("mechanism") or "", expected_row.get("structure_type") or "",
+         task_id, task_owner_id or gold_story_id, task_id, datetime.now(timezone.utc).timestamp()),
     )
     if result.rowcount != 1:
         sql.rollback()

@@ -45,6 +45,7 @@ def _backfill_gold_story_after_export(
     paths: dict[str, str],
     config: Config,
     task_id: str | None = None,
+    task_owner_id: int | None = None,
 ) -> None:
     """单次 DB 提交发布完整版本。采集元数据不再占用成稿发布链路。"""
     gid = int(row.get("id") or 0)
@@ -100,7 +101,8 @@ def _backfill_gold_story_after_export(
             error = ValueError("导出前制作检查未通过：" + "；".join(eligibility["reasons"]))
             setattr(error, "candidate", deepcopy(chat))
             raise error
-        repo_gold_story.publish_chat_export(gid, payload_patch, task_id=task_id, expected_row=fresh)
+        repo_gold_story.publish_chat_export(gid, payload_patch, task_id=task_id,
+                                           task_owner_id=task_owner_id, expected_row=fresh)
 
     try:
         fresh = repo_gold_story.get_story(gid)

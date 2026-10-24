@@ -2349,6 +2349,7 @@ def convert_gold_chat(
 
     gid_for_status = int(row.get("id") or 0)
     publication_task_id = row.get("_gold_chat_task_id")
+    publication_owner_id = int(row.get("_gold_chat_task_owner_id") or 0) or None
     started = time.perf_counter()
     stage_started = started
     current_stage = "contract"
@@ -2759,6 +2760,7 @@ def convert_gold_chat(
             _backfill_gold_story_after_export(
                 row, chat=chat, paths=paths, config=cfg,
                 task_id=str(publication_task_id) if publication_task_id else None,
+                task_owner_id=publication_owner_id,
             )
         except BaseException:
             fresh = repo_gold_story.get_story(gid_for_status) if gid_for_status > 0 else {}

@@ -920,3 +920,97 @@ def test_missing_committed_file_is_not_skipped_as_already_exported(app_ctx, monk
     result = mgr.gold_story_mgr.convert_one(gold_story_id=gid)
     assert result["action"] == "ok"
     assert calls == [gid]
+
+
+@pytest.mark.parametrize("state", ["running", "expired", "replaced", "failed"])
+def test_publish_checks_batch_owner_and_expiry_without_polling(app_ctx, state):
+    import time
+    owner = int(_insert_sample(app_ctx)["id"])
+    child = repo_gold_story.insert_pending(source="bili", source_id="BV1CHILD001", url="", title="子任务")["id"]
+    now = time.time()
+    task = {"task_id": "batch-owner", "status": "running", "started_at": now - 10,
+            "expires_at": now - 1 if state == "expired" else now + 60}
+    assert repo_gold_story.claim_chat_task(owner, task)
+    if state == "failed":
+        repo_gold_story.update_chat_task(owner, {**task, "status": "failed"})
+    elif state == "replaced":
+        repo_gold_story.patch_story_payload(owner, {"gold_chat_task": {**task, "task_id": "replacement"}})
+    row = repo_gold_story.get_story(child, include_payload_snapshot=True)
+    def publish():
+        repo_gold_story.publish_chat_export(child, {"gold_chat_json": "new.json"}, expected_row=row,
+                                           task_id="batch-owner", task_owner_id=owner)
+    if state == "running":
+        publish()
+        assert repo_gold_story.get_story(child)["payload"]["gold_chat_json"] == "new.json"
+    else:
+        with pytest.raises(RuntimeError, match="任务已结束"):
+            publish()
+        assert not repo_gold_story.get_story(child)["payload"].get("gold_chat_json")
+
+
+def test_batch_refreshes_each_row_deduplicates_and_reports_missing_targets(app_ctx, monkeypatch, tmp_path):
+    from app.services.gold_story.gold_chat import batch
+    first = int(_insert_sample(app_ctx)["id"])
+    second = repo_gold_story.insert_pending(source="bili", source_id="BV1BATCH002", url="", title="第二条")["id"]
+    calls = []
+    def convert(row, **kwargs):
+        calls.append(row["id"])
+        if row["id"] == first:
+            repo_gold_story.patch_story_payload(second, {"user_note": "latest source"})
+        else:
+            assert row["payload"]["user_note"] == "latest source"
+        return {"chat_lines": 2}
+    monkeypatch.setattr(batch, "convert_gold_chat", convert)
+    monkeypatch.setattr(batch, "_write_batch_report", lambda *a: tmp_path / "report.json")
+    result = batch.run_gold_chat_batch(gold_story_ids=[first, first, 999999, second], skip_existing=False)
+    assert calls == [first, second]
+    assert result["ok"] == 2 and result["failed"] == 1
+    assert any(item.get("gold_story_id") == 999999 and item["action"] == "error" for item in result["results"])
+
+
+def test_async_batch_propagates_publication_owner(app_ctx, monkeypatch, tmp_path):
+    import importlib
+    from app.services.gold_story.gold_chat import batch
+    mgr = importlib.import_module("app.services.gold_story.gold_story_mgr")
+    first = int(_insert_sample(app_ctx)["id"])
+    second = repo_gold_story.insert_pending(source="bili", source_id="BV1BATCH002", url="", title="第二条")["id"]
+    callbacks = []
+    captured = []
+    monkeypatch.setattr(mgr, "run_in_background", callbacks.append)
+    monkeypatch.setattr(batch, "_write_batch_report", lambda *a: tmp_path / "report.json")
+    def convert(row, **kwargs):
+        captured.append((row["id"], row.get("_gold_chat_task_id"), row.get("_gold_chat_task_owner_id")))
+        return {"chat_lines": 2}
+    monkeypatch.setattr(batch, "convert_gold_chat", convert)
+    task = mgr.gold_story_mgr.submit_batch_conversion(gold_story_ids=[first, second], force=True)
+    callbacks[0]()
+    assert captured == [(first, task["task_id"], first), (second, task["task_id"], first)]
+    assert mgr.gold_story_mgr.conversion_task(first, task["task_id"])["result"]["ok"] == 2
+
+
+@pytest.mark.parametrize("target", [{"ids": [999999]}, {"source_ids": ["BV1MISSING01"]}])
+def test_async_batch_missing_targets_are_not_server_errors(app_ctx, monkeypatch, target):
+    import importlib
+    mgr = importlib.import_module("app.services.gold_story.gold_story_mgr")
+    monkeypatch.setattr(mgr, "run_in_background", lambda *a: pytest.fail("missing batch must not start"))
+    assert app_ctx.test_client().post("/v_factory/api/gold_chat/batch", json={**target, "async": True}).status_code == 404
+
+
+def test_expired_batch_does_not_start_later_items_or_overwrite_failure_metadata(app_ctx, monkeypatch, tmp_path):
+    import time
+    from app.services.gold_story.gold_chat import batch
+    first = int(_insert_sample(app_ctx)["id"])
+    second = repo_gold_story.insert_pending(source="bili", source_id="BV1BATCH002", url="", title="第二条")["id"]
+    now = time.time()
+    task = {"task_id": "owner", "status": "running", "started_at": now, "expires_at": now + 60}
+    repo_gold_story.claim_chat_task(first, task)
+    monkeypatch.setattr(batch, "_write_batch_report", lambda *a: tmp_path / "report.json")
+    calls = []
+    def convert(row, **kwargs):
+        calls.append(row["id"])
+        repo_gold_story.patch_story_payload(first, {"gold_chat_task": {**task, "expires_at": now - 1}, "gold_chat_last_error": "keep newer state"})
+        raise RuntimeError("old executor stopped")
+    monkeypatch.setattr(batch, "convert_gold_chat", convert)
+    result = batch.run_gold_chat_batch(gold_story_ids=[first, second], skip_existing=False, task_id="owner", task_owner_id=first)
+    assert calls == [first] and result["failed"] == 2
+    assert repo_gold_story.get_story(first)["payload"]["gold_chat_last_error"] == "keep newer state"

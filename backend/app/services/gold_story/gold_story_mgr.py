@@ -656,6 +656,7 @@ class GoldStoryMgr:
                                 result = run_gold_chat_batch(
                                     gold_story_ids=batch_ids, max_items=len(batch_ids),
                                     skip_existing=not force,
+                                    task_id=str(task["task_id"]), task_owner_id=gid,
                                 )
                             else:
                                 result = self._convert_one_unlocked(
@@ -696,16 +697,27 @@ class GoldStoryMgr:
     ) -> dict[str, Any]:
         _ensure_schema()
         if gold_story_ids:
-            ids = gold_story_ids[:max_items]
+            ids = list(dict.fromkeys(gold_story_ids))[:max_items]
         elif source_ids:
-            rows = [repo_gold_story.get_by_source_id(source_id=sid) for sid in source_ids[:max_items]]
+            rows = []
+            for sid in list(dict.fromkeys(source_ids))[:max_items]:
+                row = repo_gold_story.get_by_source_id(source_id=sid)
+                if row is None:
+                    raise KeyError(f"金故事不存在：{sid}")
+                rows.append(row)
             ids = [int(row["id"]) for row in rows if row]
         else:
             ids = [int(row["id"]) for row in repo_gold_story.list_stories(status=status or None, limit=max_items)]
         if not ids:
             return {"workflow": "gold_chat", "requested": max_items, "selected": 0,
                     "ok": 0, "failed": 0, "skipped": 0, "results": []}
-        return self.submit_conversion(gold_story_id=ids[0], force=force, batch_ids=ids)
+        for gid in ids:
+            try:
+                repo_gold_story.get_story(gid)
+            except KeyError:
+                continue
+            return self.submit_conversion(gold_story_id=gid, force=force, batch_ids=ids)
+        raise KeyError("请求的金故事均不存在")
 
     def convert_one(
         self, *, gold_story_id: int | None = None,
