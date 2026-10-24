@@ -50,6 +50,8 @@ class DailyScriptStage(StageExecutor):
         with atomic():
             story = repo_daily_story.get_story(daily_story_id)
         story_content = story['story']
+        if (story_content.get('quality') or {}).get('source_stale'):
+            raise JobStageFailureError('来源素材已重新导入，请重新转换对话并导入新稿后再制作')
         address_errors = collect_character_address_errors(story_content.get('dialogue') or [])
         if address_errors:
             raise JobStageFailureError(

@@ -52,6 +52,7 @@ def _backfill_gold_story_after_export(
     if gid <= 0 or not sid:
         return
     payload_patch = {
+        "gold_chat_stale": None,
         "gold_chat_exported_at": datetime.now(timezone.utc).isoformat(),
         "gold_chat_scene_title": chat.get("scene_title"),
         "gold_chat_lines": len(chat.get("dialogue") or []),
@@ -93,6 +94,7 @@ def _backfill_gold_story_after_export(
             chat, fresh,
             candidates=repo_daily_story.list_all_stories(exclude_id=own_id),
             exclude_story_id=own_id,
+            for_export=True,
         )
         if not eligibility["ok"]:
             error = ValueError("导出前制作检查未通过：" + "；".join(eligibility["reasons"]))
@@ -316,6 +318,8 @@ def load_gold_chat_for_row(
     if not sid:
         return None
     payload = cast(dict[str, Any], row.get("payload") or {})
+    if payload.get("gold_chat_stale"):
+        return None
     alt_json = str(payload.get("gold_chat_json") or "").strip()
     if not alt_json:
         return load_gold_chat(sid, config=config)
@@ -395,6 +399,8 @@ def gold_chat_summary(
     row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """列表页用的导出摘要（优先读导出 JSON，其次读库内 payload）。"""
+    if row is not None and (row.get("payload") or {}).get("gold_chat_stale"):
+        return {"has_gold_chat": False, "gold_chat_stale": True}
     data = load_gold_chat_for_row(row, config=config) if row is not None else load_gold_chat(source_id, config=config)
     if data:
         daily = data.get("daily_story") if isinstance(data.get("daily_story"), dict) else {}
@@ -425,6 +431,8 @@ def gold_chat_summary(
         row = repo_gold_story.get_by_source_id(source_id=str(source_id or "").strip())
     if row:
         payload = cast(dict[str, Any], row.get("payload") or {})
+        if payload.get("gold_chat_stale"):
+            return {"has_gold_chat": False, "gold_chat_stale": True}
         cached = _summary_from_payload(payload)
         if cached:
             return cached

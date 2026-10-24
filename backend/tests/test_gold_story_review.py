@@ -204,3 +204,14 @@ def test_audit_story_llm_pass(monkeypatch):
     )
     assert out["pass"] is True
     assert out["stage"] == "llm"
+
+
+def test_audit_transport_or_invalid_response_is_not_content_rejection(monkeypatch):
+    import pytest
+    from app.config import Config
+    monkeypatch.setattr(review, "run_rule_audit", lambda **k: (True, []))
+    def invalid(**k): raise ValueError("LLM returned invalid JSON")
+    monkeypatch.setattr(review.llm_steps, "audit_story_fit", invalid)
+    with pytest.raises(ValueError, match="invalid JSON"):
+        review.audit_story(title="姐弟日常", story_raw="姐弟抢遥控器。" * 20,
+                           conflict_core="争抢", config=Config())

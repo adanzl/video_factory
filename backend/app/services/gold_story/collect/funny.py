@@ -356,6 +356,7 @@ def compute_audience_funny_metrics(
     reply_count: int,
     replies: list[str],
     session: requests.Session | None = None,
+    strict: bool = False,
 ) -> AudienceFunnyMetrics:
     """H0：整支视频观众好笑信号。"""
     danmaku_texts: list[str] = []
@@ -369,6 +370,8 @@ def compute_audience_funny_metrics(
             )
             fetch_ok = True
         except Exception as exc:
+            if strict:
+                raise
             logger.warning(
                 "danmaku fetch failed bvid=%s cid=%s: %s",
                 source_id,

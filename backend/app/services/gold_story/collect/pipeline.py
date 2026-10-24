@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
+
+import requests
 
 from app.config import Config
 from app.repositories import repo_gold_story
@@ -36,6 +39,25 @@ from app.services.gold_story.transcript import (
 from app.services.gold_story.transcript.download import VideoTooLongError, normalize_bv
 
 logger = logging.getLogger(__name__)
+
+_COLLECT_MAX_ATTEMPTS = 3
+
+
+def _execution_failure(exc: Exception, stage: str) -> dict[str, Any]:
+    """仅明确的网络/服务暂不可用错误重试，不把程序错误当内容驳回。"""
+    retryable = False
+    cause: BaseException | None = exc
+    seen: set[int] = set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        code = getattr(cause, "status_code", None)
+        response = getattr(cause, "response", None)
+        if code is None and response is not None:
+            code = getattr(response, "status_code", None)
+        retryable |= isinstance(cause, (TimeoutError, ConnectionError, requests.Timeout, requests.ConnectionError))
+        retryable |= isinstance(code, int) and (code == 429 or 500 <= code < 600)
+        cause = cause.__cause__
+    return {"action": "error", "stage": stage, "error": str(exc), "retryable": retryable}
 
 
 def _read_transcript(path: Path) -> str:
@@ -76,6 +98,13 @@ def process_candidate(
         )
     if existing_row and not overwrite_existing:
         return {**base, "action": "skip", "reason": "already_in_db"}
+    if existing_row:
+        from app.services.gold_story.gold_chat.status import gold_chat_converting_from_payload
+        if gold_chat_converting_from_payload(existing_row.get("payload") or {}):
+            return {**base, "action": "error", "stage": "reimport", "error": "对话转换进行中，不能重导素材", "retryable": False}
+
+    if dry_run:
+        return {**base, "action": "dry_run"}
 
     # H1 标题门控：孕产/分娩、育儿课、游戏 IP 这类题材，标题就能判死。
     # 队列里早已入队（或手工重导）的 BV 也走这里，避免继续白下载+转写。
@@ -129,10 +158,8 @@ def process_candidate(
             if tx.get("action") in {"ok", "skip"}:
                 transcript_path = Path(str(tx.get("transcript_path") or transcript_path))
                 transcript_text = _read_transcript(transcript_path)
-            elif overwrite_existing:
-                return {**base, "action": "error", "stage": "H0b", "error": tx}
             else:
-                return {**base, "action": "error", "stage": "H0b", "error": tx}
+                return {**base, "action": "error", "stage": "H0b", "error": tx, "retryable": False}
         except VideoTooLongError as exc:
             logger.info(
                 "gold_story h0b skip bvid=%s reason=too_long: %s",
@@ -152,13 +179,10 @@ def process_candidate(
                 candidate.source_id,
                 exc,
             )
-            if overwrite_existing:
-                return {**base, "action": "error", "stage": "H0b", "error": str(exc)}
-            if not candidate.description and not candidate.top_replies:
-                return {**base, "action": "error", "stage": "H0b", "error": str(exc)}
+            return {**base, **_execution_failure(exc, "H0b")}
 
-    if overwrite_existing and not transcript_text:
-        return {**base, "action": "error", "stage": "H0b", "error": "empty transcript"}
+    if not transcript_text:
+        return {**base, "action": "reject", "stage": "H0b", "reason": "source_unusable:empty_transcript"}
 
     transcript_for_h2 = transcript_text
     # 本轮未修复时不能继承上一轮成功的 confidence/path/notes。
@@ -168,6 +192,8 @@ def process_candidate(
         "transcript_speakers": [],
         "transcript_repair_notes": "",
         "transcript_unusable_lines": None,
+        "transcript_scene_line_indices": None,
+        "transcript_scene_evidence": None,
     }
     cross_check = (tx or {}).get("cross_check")
     if tx is None:
@@ -188,6 +214,7 @@ def process_candidate(
                 title=candidate.title,
                 transcript=transcript_text,
                 description=candidate.description,
+                require_complete_scene=True,
             )
             rep_path = repaired_transcript_path(cfg, candidate.source_id)
             transcript_for_h2 = save_repaired_transcript(rep_path, h0c["lines"])
@@ -197,6 +224,8 @@ def process_candidate(
                 "transcript_speakers": h0c.get("speakers") or [],
                 "transcript_repair_notes": h0c.get("repair_notes") or "",
                 "transcript_unusable_lines": h0c.get("unusable_lines") or 0,
+                "transcript_scene_line_indices": h0c.get("scene_line_indices"),
+                "transcript_scene_evidence": h0c.get("scene_evidence"),
             }
         except Exception as exc:
             logger.warning(
@@ -204,6 +233,8 @@ def process_candidate(
                 candidate.source_id,
                 exc,
             )
+            if not isinstance(exc, ValueError) or str(exc).startswith("LLM ") or _execution_failure(exc, "H0c")["retryable"]:
+                return {**base, **_execution_failure(exc, "H0c")}
             transcript_failure = str(exc)
             transcript_failure_stage = "H0c"
             transcript_for_h2 = ""
@@ -215,32 +246,32 @@ def process_candidate(
         source_inputs.append("description")
     if any(str(reply or "").strip() for reply in candidate.top_replies):
         source_inputs.append("replies")
-    if transcript_failure and not source_inputs:
-        return {**base, "action": "error", "stage": transcript_failure_stage,
-                "error": transcript_failure, "transcript_cross_check": cross_check}
+    if transcript_failure or not transcript_for_h2.strip():
+        return {**base, "action": "reject", "stage": transcript_failure_stage,
+                "reason": "source_unusable", "error": transcript_failure or "empty repaired transcript",
+                "transcript_cross_check": cross_check}
     h0c_meta.update({
         "transcript_status": "unusable" if transcript_failure else ("usable" if transcript_for_h2 else "missing"),
         "transcript_failure_reason": transcript_failure or None,
         "source_inputs": source_inputs,
     })
 
-    if dry_run:
-        return {
-            **base,
-            "action": "dry_run",
-            "transcript_chars": len(transcript_text),
-            "transcript_repaired_chars": len(transcript_for_h2),
-            "reply_count": len(candidate.top_replies),
-        }
-
     try:
-        h2 = llm_steps.extract_story_raw(
-            title=candidate.title,
-            transcript=transcript_for_h2,
-            description=candidate.description,
-            replies=list(candidate.top_replies),
-        )
-        story_raw_text = str(h2["story_raw"])
+        source_feedback = ""
+        for source_attempt in range(2):
+            h2 = llm_steps.extract_story_raw(
+                title=candidate.title, transcript=transcript_for_h2,
+                description=candidate.description, replies=list(candidate.top_replies),
+                source_feedback=source_feedback,
+            )
+            story_raw_text = str(h2["story_raw"])
+            try:
+                source_audit = llm_steps.review_story_source(transcript=transcript_for_h2, story_raw=story_raw_text)
+                break
+            except ValueError as exc:
+                if source_attempt or not str(exc).startswith("H2 source_unfaithful:"):
+                    raise
+                source_feedback = str(exc)
         near = repo_gold_story.find_near_duplicate(story_raw_text)
         self_id = int(existing_row["id"]) if existing_row and existing_row.get("id") else None
         if near and (self_id is None or int(near["id"]) != self_id):
@@ -283,6 +314,8 @@ def process_candidate(
             video_title=candidate.title,
         )
     except ValueError as exc:
+        if _execution_failure(exc, "LLM")["retryable"] or str(exc).startswith("LLM "):
+            return {**base, **_execution_failure(exc, "LLM")}
         logger.info(
             "gold_story LLM reject bvid=%s reason=%s",
             candidate.source_id,
@@ -290,20 +323,23 @@ def process_candidate(
         )
         return {**base, "action": "reject", "reason": str(exc), "stage": "LLM"}
     except Exception as exc:
-        return {**base, "action": "error", "stage": "LLM", "error": str(exc)}
+        return {**base, **_execution_failure(exc, "LLM")}
 
-    audit = gs_review.audit_story(
-        title=str(h3.get("title") or candidate.title),
-        video_title=candidate.title,
-        story_raw=story_raw_text,
-        conflict_core=str(h3.get("conflict_core") or ""),
-        transcript=transcript_for_h2,
-        description=candidate.description,
-        h3=h3,
-        h3a=h3a,
-        h3b=h3b,
-        config=cfg,
-    )
+    try:
+        audit = gs_review.audit_story(
+            title=str(h3.get("title") or candidate.title),
+            video_title=candidate.title,
+            story_raw=story_raw_text,
+            conflict_core=str(h3.get("conflict_core") or ""),
+            transcript=transcript_for_h2,
+            description=candidate.description,
+            h3=h3,
+            h3a=h3a,
+            h3b=h3b,
+            config=cfg,
+        )
+    except Exception as exc:
+        return {**base, **_execution_failure(exc, "H4a")}
     insert_status = "active" if audit.get("pass") else "rejected"
 
     norm = engagement_norm(candidate.view_count, candidate.reply_count)
@@ -342,6 +378,7 @@ def process_candidate(
         "search_keyword": candidate.keyword,
         "engagement_norm": norm,
         "audit": audit,
+        "source_fidelity_audit": source_audit,
         **funny_payload,
         **h0c_meta,
         # 两路转写交叉验证结果（缺失即未做验证，不是失败）。
@@ -380,6 +417,7 @@ def process_candidate(
             engagement_score=float(norm),
             engagement_norm=norm,
             status=insert_status,
+            expected_row=existing_row,
         )
         fresh = repo_gold_story.get_story(gid)
         paths = export_story_files(source_id=candidate.source_id, row=fresh, config=cfg)
@@ -445,24 +483,9 @@ def _build_candidate_from_bvid(
     config: Config,
     existing_row: dict[str, Any] | None = None,
 ) -> VideoCandidate:
-    """拉 B 站元数据 + 热评，拼 H0 候选。已有行时元数据失败可降级。"""
-    try:
-        meta = fetch_video_meta(source_id, config=config)
-        replies = fetch_top_replies(int(meta.get("aid") or 0), config=config, limit=8)
-    except Exception as exc:
-        if existing_row is None:
-            raise
-        logger.warning("overwrite meta failed bvid=%s: %s", source_id, exc)
-        meta = {
-            "title": existing_row.get("title") or source_id,
-            "description": "",
-            "view_count": 0,
-            "reply_count": 0,
-            "url": str(existing_row.get("url") or ""),
-            "cid": 0,
-            "duration": int((existing_row.get("payload") or {}).get("duration_sec") or 0),
-        }
-        replies = []
+    """拉取真实元数据；故障向队列上报，不能用零分伪装成内容驳回。"""
+    meta = fetch_video_meta(source_id, config=config)
+    replies = fetch_top_replies(int(meta.get("aid") or 0), config=config, limit=8)
 
     http = _bili_http(config)
     funny = compute_audience_funny_metrics(
@@ -472,6 +495,7 @@ def _build_candidate_from_bvid(
         reply_count=int(meta.get("reply_count") or 0),
         replies=replies,
         session=http,
+        strict=True,
     )
     source = "bili"
     if existing_row:
@@ -500,7 +524,7 @@ def overwrite_existing_story(
 ) -> dict[str, Any]:
     """已入库条目再跑 H0b–H4，回写同一行。"""
     cfg = config or Config()
-    row = repo_gold_story.get_story(int(gold_story_id))
+    row = repo_gold_story.get_story(int(gold_story_id), include_payload_snapshot=True)
     source_id = str(row.get("source_id") or "").strip()
     base = {
         "id": gold_story_id,
@@ -509,19 +533,26 @@ def overwrite_existing_story(
     }
     if not source_id:
         return {**base, "action": "error", "error": "missing source_id"}
+    from app.services.gold_story.gold_chat.status import gold_chat_converting_from_payload
+    if gold_chat_converting_from_payload(row.get("payload") or {}):
+        return {**base, "action": "error", "stage": "reimport",
+                "error": "对话转换进行中，不能重导素材", "retryable": False}
 
-    candidate = _build_candidate_from_bvid(
-        source_id,
-        config=cfg,
-        existing_row=row,
-    )
-    outcome = process_candidate(
-        candidate,
-        config=cfg,
-        overwrite_existing=True,
-        force_transcript=force_transcript,
-        existing_row=row,
-    )
+    try:
+        candidate = _build_candidate_from_bvid(
+            source_id,
+            config=cfg,
+            existing_row=row,
+        )
+        outcome = process_candidate(
+            candidate,
+            config=cfg,
+            overwrite_existing=True,
+            force_transcript=force_transcript,
+            existing_row=row,
+        )
+    except Exception as exc:
+        outcome = _execution_failure(exc, "reimport")
     return {**base, **outcome}
 
 
@@ -820,23 +851,6 @@ def enqueue_collect_candidates(
     return _snapshot()
 
 
-def _finalize_pending_failure(
-    gold_story_id: int,
-    *,
-    reason: str,
-    stage: str = "pipeline",
-) -> None:
-    repo_gold_story.update_story_status(
-        int(gold_story_id),
-        status="rejected",
-        audit={
-            "pass": False,
-            "stage": stage,
-            "reject_reasons": [reason],
-        },
-    )
-
-
 def drain_pending_stories(
     *,
     config: Config | None = None,
@@ -848,6 +862,11 @@ def drain_pending_stories(
 ) -> dict[str, Any]:
     """异步队列：pending → OCR/H0c/H2–H4 → active|rejected。"""
     cfg = config or Config()
+    if dry_run:
+        rows = repo_gold_story.list_stories(status="pending", limit=limit or 100000)
+        return {"phase": "done", "processed": 0, "inserted": 0, "inserted_rejected": 0,
+                "gate_rejected": 0, "failed": 0,
+                "results": [{"id": row["id"], "source_id": row["source_id"], "action": "dry_run"} for row in rows]}
     results: list[dict[str, Any]] = []
     inserted_active = 0
     inserted_rejected = 0
@@ -874,71 +893,41 @@ def drain_pending_stories(
             break
         gid = int(row["id"])
         source_id = str(row.get("source_id") or "")
-        if dry_run:
-            repo_gold_story.update_story_status(gid, status="pending")
-            results.append(
-                {
-                    "id": gid,
-                    "source_id": source_id,
-                    "action": "dry_run",
-                }
-            )
-            processed += 1
-            continue
-
-        try:
-            candidate = _build_candidate_from_bvid(
-                source_id,
-                config=cfg,
-                existing_row=row,
-            )
-            outcome = process_candidate(
-                candidate,
-                config=cfg,
-                skip_transcript=skip_transcript,
-                overwrite_existing=True,
-                # 有稿则复用；无稿才转写（不必 force 重跑）
-                force_transcript=False,
-                existing_row=row,
-            )
-        except Exception as exc:
-            logger.exception("gold_story drain failed id=%s bv=%s", gid, source_id)
-            _finalize_pending_failure(gid, reason=str(exc), stage="drain")
-            outcome = {
-                "id": gid,
-                "source_id": source_id,
-                "action": "error",
-                "error": str(exc),
-            }
-            failed += 1
-            results.append(outcome)
-            processed += 1
-            if on_progress is not None:
+        while True:
+            attempt_row = repo_gold_story.begin_collect_attempt(gid, max_attempts=_COLLECT_MAX_ATTEMPTS)
+            if attempt_row is None:
+                outcome = {"action": "error", "stage": "drain", "error": "采集尝试次数已耗尽", "retryable": False}
+            else:
+                row = attempt_row
                 try:
-                    on_progress(_snapshot())
-                except Exception:
-                    logger.exception("gold_story drain on_progress failed")
-            continue
+                    candidate = _build_candidate_from_bvid(source_id, config=cfg, existing_row=row)
+                    outcome = process_candidate(candidate, config=cfg, skip_transcript=skip_transcript,
+                                                overwrite_existing=True, force_transcript=False, existing_row=row)
+                except Exception as exc:
+                    outcome = _execution_failure(exc, "drain")
+            if outcome.get("action") != "error":
+                break
+            attempts = int((row.get("payload") or {}).get("collect_attempts") or 0)
+            retry = bool(outcome.get("retryable")) and attempts < _COLLECT_MAX_ATTEMPTS
+            if not repo_gold_story.record_collect_failure(gid, outcome, retry=retry, expected_row=row):
+                outcome = {"id": gid, "source_id": source_id, "action": "superseded", "reason": "source_changed"}
+                break
+            logger.warning("gold_story collect failed id=%s attempt=%s retry=%s: %s", gid, attempts, retry, outcome.get("error"))
+            if not retry:
+                outcome = {**outcome, "id": gid, "source_id": source_id, "status": "failed"}
+                failed += 1
+                break
+            time.sleep(min(2 ** max(0, attempts - 1), 4))
 
         action = str(outcome.get("action") or "")
         status = str(outcome.get("status") or "")
         # 早退（OCR/LLM 软拒）未回写 status 时，收口为 rejected
-        if action in {"error", "reject", "skip"} and status not in {"active", "rejected"}:
-            reason = str(
-                outcome.get("reason")
-                or outcome.get("error")
-                or action
-            )
-            _finalize_pending_failure(
-                gid,
-                reason=reason,
-                stage=str(outcome.get("stage") or action),
-            )
-            outcome = {**outcome, "status": "rejected", "id": gid}
-            if action == "error":
-                failed += 1
-            else:
+        if action in {"reject", "skip"} and status not in {"active", "rejected"}:
+            if repo_gold_story.record_collect_failure(gid, outcome, retry=False, expected_row=row):
+                outcome = {**outcome, "status": "rejected", "id": gid}
                 gate_rejected += 1
+            else:
+                outcome = {"id": gid, "source_id": source_id, "action": "superseded", "reason": "source_changed"}
         elif action == "ok" or status == "active":
             inserted_active += 1
         elif action == "reject" or status == "rejected":
@@ -967,6 +956,13 @@ def run_collect_pipeline(
 ) -> dict[str, Any]:
     """H0/H1 先 pending 入库，再异步队列跑 OCR→结构化。"""
     cfg = config or Config()
+    if dry_run:
+        candidates = collect_candidates(config=cfg, max_candidates=max_candidates,
+                                        keywords=keywords, advance_cursor=False)
+        return {"phase": "done", "candidates": len(candidates), "enqueued": 0,
+                "processed": 0, "inserted": 0, "inserted_rejected": 0, "failed": 0,
+                "results": [{"source_id": item.source_id, "title": item.title,
+                             "action": "dry_run"} for item in candidates]}
 
     def _emit(partial: dict[str, Any]) -> None:
         if on_progress is None:
@@ -984,16 +980,6 @@ def run_collect_pipeline(
         on_progress=on_progress,
     )
     _emit({**enq, "phase": "enqueued"})
-
-    if dry_run:
-        return {
-            **enq,
-            "phase": "done",
-            "processed": 0,
-            "inserted": 0,
-            "inserted_rejected": 0,
-            "gate_rejected": 0,
-        }
 
     drain = drain_pending_stories(
         config=cfg,

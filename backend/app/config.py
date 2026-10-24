@@ -482,6 +482,9 @@ class Config:
         self.gold_story_use_proxy: bool = _bool("GOLD_STORY_USE_PROXY", False)
         self.gold_story_enabled: bool = _bool("GOLD_STORY_ENABLED", False)
         self.gold_story_cron_max: int = int(os.getenv("GOLD_STORY_CRON_MAX", "10"))
+        self.gold_story_search_max_page: int = max(1, min(50, int(
+            os.getenv("GOLD_STORY_SEARCH_MAX_PAGE", "10")
+        )))
         self.gold_story_min_view: int = int(os.getenv("GOLD_STORY_MIN_VIEW", "100000"))
         self.gold_story_min_reply: int = int(os.getenv("GOLD_STORY_MIN_REPLY", "50"))
         # 单条站外视频最长时长（秒）：超时长的合集/直播回放直接丢，

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import uuid
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, cast
@@ -144,6 +145,23 @@ def has_source(*, source: str, source_id: str) -> bool:
     )
     sql.commit()
     return row is not None
+
+
+def search_cursor(key: str, *, advance_from: int | None = None) -> int:
+    """预览只读；搜索成功后 CAS 推进，失败和并发旧请求不覆盖进度。"""
+    if advance_from is None:
+        exists = sql.fetchone("SELECT 1 FROM sqlite_master WHERE type='table' AND name='gold_story_search_cursor'")
+        if not exists:
+            sql.commit()
+            return 0
+    if advance_from is not None:
+        sql.execute("""INSERT INTO gold_story_search_cursor(search_key, position) VALUES (?, ?)
+            ON CONFLICT(search_key) DO UPDATE SET position=excluded.position
+            WHERE gold_story_search_cursor.position=?""",
+            (key, advance_from + 1, advance_from))
+    row = sql.fetchone("SELECT position FROM gold_story_search_cursor WHERE search_key=?", (key,))
+    sql.commit()
+    return int(row["position"]) if row else 0
 
 
 def get_story(gold_story_id: int, *, include_payload_snapshot: bool = False) -> dict:
@@ -661,6 +679,7 @@ def update_story_from_pipeline(
     dialogue_confidence: float | None = None,
     auto_score: float | None = None,
     status: str = "active",
+    expected_row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """H0c–H4 重跑后回写 gold_story。"""
     mechanism = normalize_mechanism(mechanism)
@@ -699,40 +718,74 @@ def update_story_from_pipeline(
     payload["dialogue_confidence"] = dialogue_confidence
     c_hash = content_hash(story_raw)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    sql.execute(
-        """
-        UPDATE gold_story
-        SET mechanism = ?,
-            structure_type = ?,
-            title = ?,
-            conflict_core = ?,
-            auto_score = ?,
-            engagement_score = ?,
-            content_hash = ?,
-            transcript_backend = ?,
-            transcript_path = ?,
-            payload_json = ?,
-            status = ?,
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (
-            mechanism,
-            structure_type,
-            title,
-            conflict_core,
-            score,
-            engagement_score,
-            c_hash,
-            transcript_backend,
-            transcript_path,
-            json.dumps(payload, ensure_ascii=False),
-            status,
-            now,
-            gold_story_id,
-        ),
-    )
-    sql.commit()
+    from app.services.gold_story.gold_chat.status import gold_chat_converting_from_payload
+    from app.repositories import repo_daily_story
+    from copy import deepcopy
+
+    fresh = get_story(gold_story_id, include_payload_snapshot=True)
+    if gold_chat_converting_from_payload(fresh.get("payload") or {}):
+        raise RuntimeError("对话转换进行中，不能重导素材")
+    if expected_row is not None and any(fresh.get(key) != expected_row.get(key)
+            for key in ("payload", "status", "mechanism", "structure_type", "conflict_core", "title", "gold_chat_daily_story_id")):
+        raise RuntimeError("采集期间来源已变化，请刷新后重试")
+    payload.pop("collect_failure", None)
+    old_payload = fresh.get("payload") or {}
+    daily_id = fresh.get("gold_chat_daily_story_id")
+    # 旧库可能只有平铺文件、没有版本路径；已处理条目重导也须封住旧缓存。
+    invalidate = fresh["status"] not in {"pending", "processing"} or bool(old_payload.get("gold_chat_json") or daily_id)
+    if invalidate:
+        payload["gold_chat_source_revision"] = uuid.uuid4().hex
+        payload["gold_chat_stale"] = {"reason": "素材已重新导入，请重新转换并导入日常", "at": now}
+        # 历史正式稿文件和路径保留；旧候选不能再作为当前来源的待审稿。
+        for key in ("gold_chat_review_status", "gold_chat_review_pending_candidate",
+                    "gold_chat_failed_candidate", "gold_chat_candidate_contract"):
+            payload.pop(key, None)
+    with sql.atomic():
+        changed = sql.execute(
+            """
+            UPDATE gold_story
+            SET mechanism = ?,
+                structure_type = ?,
+                title = ?,
+                conflict_core = ?,
+                auto_score = ?,
+                engagement_score = ?,
+                content_hash = ?,
+                transcript_backend = ?,
+                transcript_path = ?,
+                payload_json = ?,
+                status = ?,
+                updated_at = ?
+            WHERE id = ? AND payload_json IS ? AND status IS ? AND gold_chat_daily_story_id IS ?
+              AND mechanism IS ? AND structure_type IS ? AND conflict_core IS ? AND title IS ?
+            """,
+            (
+                mechanism,
+                structure_type,
+                title,
+                conflict_core,
+                score,
+                engagement_score,
+                c_hash,
+                transcript_backend,
+                transcript_path,
+                json.dumps(payload, ensure_ascii=False),
+                status,
+                now,
+                gold_story_id,
+                fresh["_payload_json_snapshot"], fresh["status"], fresh.get("gold_chat_daily_story_id"),
+                fresh.get("mechanism"), fresh.get("structure_type"), fresh.get("conflict_core"), fresh.get("title"),
+            ),
+        )
+        if changed.rowcount != 1:
+            raise RuntimeError("采集期间来源已变化，请刷新后重试")
+        if invalidate and daily_id:
+            daily = repo_daily_story.get_story(int(daily_id))
+            story = deepcopy(daily.get("story") or {})
+            quality = story.setdefault("quality", {})
+            quality["source_stale"] = True
+            quality["production_reasons"] = ["来源素材已重新导入，需重新转换并导入新稿"]
+            repo_daily_story.update_story(int(daily_id), story=story, status="review_pending")
     return {"id": gold_story_id, "auto_score": score, "status": status}
 
 
@@ -1088,7 +1141,43 @@ def claim_next_pending() -> dict[str, Any] | None:
     sql.commit()
     if int(result.rowcount or 0) <= 0:
         return None
-    return get_story(gid)
+    return get_story(gid, include_payload_snapshot=True)
+
+
+def begin_collect_attempt(gold_story_id: int, *, max_attempts: int) -> dict | None:
+    """执行前持久化计数，崩溃恢复不能重置尝试预算。"""
+    result = sql.execute("""UPDATE gold_story SET payload_json=json_set(
+            COALESCE(payload_json, '{}'), '$.collect_attempts',
+            COALESCE(json_extract(payload_json, '$.collect_attempts'), 0)+1),
+            updated_at=datetime('now')
+        WHERE id=? AND status='processing'
+          AND COALESCE(json_extract(payload_json, '$.collect_attempts'), 0) < ?""",
+        (gold_story_id, max_attempts))
+    sql.commit()
+    return get_story(gold_story_id, include_payload_snapshot=True) if result.rowcount == 1 else None
+
+
+def record_collect_failure(
+    gold_story_id: int, outcome: dict[str, Any], *, retry: bool, expected_row: dict[str, Any],
+) -> bool:
+    """仅收口当前认领的快照，不能覆盖归档、人工编辑或其他采集结果。"""
+    rejected = outcome.get("action") in {"reject", "skip"}
+    key = "$.audit" if rejected else "$.collect_failure"
+    value = ({"pass": False, "stage": outcome.get("stage") or "pipeline",
+              "reject_reasons": [str(outcome.get("reason") or outcome.get("error") or "pipeline_reject")]}
+             if rejected else outcome)
+    status = "rejected" if rejected else ("processing" if retry else "failed")
+    result = sql.execute("""UPDATE gold_story SET status=?, payload_json=json_set(
+            COALESCE(payload_json, '{}'), ?, json(?)),
+            updated_at=datetime('now') WHERE id=? AND status='processing'
+              AND payload_json IS ? AND mechanism IS ? AND structure_type IS ?
+              AND conflict_core IS ? AND title IS ? AND gold_chat_daily_story_id IS ?""",
+        (status, key, json.dumps(value, ensure_ascii=False), gold_story_id,
+         expected_row["_payload_json_snapshot"], expected_row.get("mechanism"),
+         expected_row.get("structure_type"), expected_row.get("conflict_core"),
+         expected_row.get("title"), expected_row.get("gold_chat_daily_story_id")))
+    sql.commit()
+    return result.rowcount == 1
 
 
 def update_story_status(

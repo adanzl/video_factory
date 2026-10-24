@@ -313,6 +313,11 @@ def _backfill_daily_story_key(conn: sqlite3.Connection) -> None:
 
 
 _GOLD_STORY_DDL = """
+CREATE TABLE IF NOT EXISTS gold_story_search_cursor (
+    search_key TEXT PRIMARY KEY,
+    position INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS gold_story (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL,

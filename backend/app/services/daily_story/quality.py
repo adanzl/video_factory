@@ -159,6 +159,8 @@ def gold_story_review_contract(
         ).strip(),
         "mom_lines_max": mom_lines_max,
     }
+    if payload.get("gold_chat_source_revision"):
+        out["source_revision"] = payload["gold_chat_source_revision"]
     if payload.get("gold_chat_adaptation") is not None:
         from app.services.gold_story.gold_chat.status import gold_chat_source_text
 
@@ -296,6 +298,8 @@ def story_production_eligibility(
         reasons.append("好笑分待最终审核")
     elif funny < HUMOR_PUBLISH_MIN:
         reasons.append(f"好笑分不足：{funny}<{HUMOR_PUBLISH_MIN}")
+    if quality.get("source_stale"):
+        reasons.append("来源素材已重新导入，需重新转换并导入新稿")
     if quality.get("semantic_pass") is not True:
         reasons.append("最终正文语义审核未通过或待审")
     current_hash = story_review_content_hash(

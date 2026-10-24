@@ -15,6 +15,7 @@ export interface GoldChatListItem {
   conflict_core?: string;
   auto_score?: number;
   has_gold_chat: boolean;
+  gold_chat_stale?: boolean;
   chat_chars?: number;
   chat_lines?: number;
   scene_title?: string;

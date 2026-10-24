@@ -68,6 +68,7 @@
               转换中
             </span>
           </el-tag>
+          <el-tag v-else-if="row.gold_chat_stale" type="warning" size="small">需重转</el-tag>
           <el-tooltip
             v-else-if="row.gold_chat_error?.review_status === 'review_pending'"
             placement="top"
@@ -314,6 +315,7 @@ const reimportProgressText = computed(() => {
 function formatStoryStatus(status: string): string {
   if (status === "pending") return "排队中";
   if (status === "processing") return "处理中";
+  if (status === "failed") return "采集失败";
   if (status === "active") return "通过";
   if (status === "rejected") return "驳回";
   if (status === "archived") return "归档";
@@ -327,6 +329,7 @@ function statusTagType(
 ): "success" | "danger" | "warning" | "info" {
   if (status === "active" || status === "promoted") return "success";
   if (status === "processing") return "warning";
+  if (status === "failed") return "danger";
   if (status === "pending") return "info";
   if (status === "rejected") return "info";
   if (status === "archived") return "info";

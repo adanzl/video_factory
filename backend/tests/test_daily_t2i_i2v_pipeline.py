@@ -1813,3 +1813,17 @@ def test_visual_inventory_handles_other_long_modified_props():
     from app.services.script.visual_brief import daily_locked_inventory
     assert '红色纸风车' in daily_locked_inventory([], '昭昭面前摆着刚刚亲手折好的红色纸风车。')
     assert '新' not in daily_locked_inventory([], '昭昭面前摆着新的。')
+
+
+def test_script_stage_blocks_stale_source_before_llm(app_ctx, monkeypatch):
+    import json
+    import pytest
+    from types import SimpleNamespace
+    from app.exceptions import JobStageFailureError
+    from app.repositories import repo_daily_story
+    from worker.stages.daily_story.script import DailyScriptStage, llm_mgr
+    did = repo_daily_story.insert_story(theme="旧稿", story={"dialogue": [], "quality": {"source_stale": True}}, status="review_pending")
+    monkeypatch.setattr(llm_mgr, "generate_daily_script", lambda *a, **k: pytest.fail("stale source must not reach generation"))
+    ctx = SimpleNamespace(job={"id": 1, "info": json.dumps({"daily_story_id": did})}, script_speech_chars_per_sec=4)
+    with pytest.raises(JobStageFailureError, match="重新转换对话"):
+        DailyScriptStage().run(ctx)

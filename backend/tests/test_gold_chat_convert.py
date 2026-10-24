@@ -6261,3 +6261,90 @@ def test_spot_revision_updates_only_generated_reaction_plan(monkeypatch):
     assert fixed['gold_source_line_plan'][1]['intent'] == fixed['dialogue'][1]['line']
     assert fixed['gold_source_line_plan'][0] == chat['gold_source_line_plan'][0]
     assert chat['gold_source_line_plan'][1]['intent'] == '我保证不弄坏它。'
+
+
+@pytest.mark.parametrize("failure", [None, "daily_write", "converting", "concurrent_edit"])
+def test_reimport_invalidates_old_export_and_daily_atomically(app_ctx, tmp_path, monkeypatch, failure):
+    import time
+    from copy import deepcopy
+    from app.config import Config
+    from app.repositories import repo_daily_story, repo_gold_story
+    from app.services.daily_story.quality import gold_story_review_contract, stamp_story_review_binding
+    from app.services.gold_story.gold_chat.import_story import gold_chat_production_eligibility
+
+    sample = _sample_row()
+    created = repo_gold_story.insert_or_skip(
+        source="bili", source_id=sample["source_id"], url=sample["url"],
+        mechanism=sample["mechanism"], structure_type=sample["structure_type"],
+        story_raw="重导事务测试的来源原文" * 20, payload=sample["payload"],
+        title=sample["title"], conflict_core=sample["conflict_core"], auto_score=0.9,
+    )
+    gid = created["id"]
+    row = repo_gold_story.get_story(gid)
+    chat = _sample_chat(); chat["story_type"] = "A"
+    chat["quality"] = {"structure_score": 80, "humor": {"funny_score": 11}}
+    stamp_story_review_binding(chat, semantic_pass=True, review_contract=gold_story_review_contract(row, chat))
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    paths = gce.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat)
+    gce._backfill_gold_story_after_export(row, chat=chat, paths=paths, config=Config())
+    imported = gc.import_gold_chat_daily_story(repo_gold_story.get_story(gid))
+    did = imported["daily_story_id"]
+    assert imported["status"] == "active"
+    expected = repo_gold_story.get_story(gid, include_payload_snapshot=True)
+    before_daily = repo_daily_story.get_story(did)
+    old_bytes = {key: Path(path).read_bytes() for key, path in paths.items()}
+    update_payload = deepcopy(expected["payload"])
+    if failure == "converting":
+        assert repo_gold_story.claim_chat_task(gid, {"task_id": "inflight", "status": "running",
+                                                   "started_at": time.time(), "expires_at": time.time()+60})
+    elif failure == "concurrent_edit":
+        repo_gold_story.patch_story_payload(gid, {"user_note": "keep this edit"})
+    elif failure == "daily_write":
+        def broken(*a, **k): raise RuntimeError("daily write failed")
+        monkeypatch.setattr(repo_daily_story, "update_story", broken)
+    before_gold = repo_gold_story.get_story(gid)
+    def reimport():
+        return repo_gold_story.update_story_from_pipeline(
+            gid, mechanism=row["mechanism"], structure_type=row["structure_type"], title=row["title"],
+            conflict_core=row["conflict_core"], story_raw="新转写提炼出的来源" * 25, payload=update_payload,
+            expected_row=expected,
+        )
+    if failure:
+        with pytest.raises(RuntimeError): reimport()
+        assert repo_gold_story.get_story(gid) == before_gold
+        assert repo_daily_story.get_story(did) == before_daily
+    else:
+        reimport()
+        fresh = repo_gold_story.get_story(gid)
+        daily = repo_daily_story.get_story(did)
+        assert fresh["payload"]["gold_chat_stale"]
+        assert fresh["payload"]["gold_chat_json"] == paths["json"]
+        assert gce.load_gold_chat_for_row(fresh) is None
+        assert gce.gold_chat_summary(row["source_id"], row=fresh) == {"has_gold_chat": False, "gold_chat_stale": True}
+        assert daily["status"] == "review_pending"
+        assert daily["story"]["dialogue"] == before_daily["story"]["dialogue"]
+        assert daily["story"]["quality"]["source_stale"] is True
+        assert daily["job_id"] == before_daily["job_id"]
+        # A request holding the pre-reimport snapshot must not erase source_stale.
+        with pytest.raises(ValueError, match="素材已重新导入"):
+            gc.import_gold_chat_daily_story(expected, force=True)
+        assert repo_daily_story.get_story(did) == daily
+        assert not gold_chat_production_eligibility(daily["story"], fresh, candidates=[], exclude_story_id=did)["ok"]
+        with pytest.raises(ValueError, match="重新转换"):
+            gc.import_gold_chat_daily_story(fresh, force=True)
+        assert not gold_chat_production_eligibility(chat, fresh, candidates=[], for_export=True)["ok"]
+        with pytest.raises(ValueError, match="旧终验结果已失效"):
+            gce._backfill_gold_story_after_export(fresh, chat=chat, paths=paths, config=Config())
+        # 即使摘要和契约相同，旧日常稿也必须显式换成新发布稿才能恢复。
+        new_chat = deepcopy(chat)
+        stamp_story_review_binding(new_chat, semantic_pass=True, review_contract=gold_story_review_contract(fresh, new_chat))
+        new_paths = gce.export_gold_chat_files(source_id=row["source_id"], row=fresh, chat=new_chat, publish=False)
+        gce._backfill_gold_story_after_export(fresh, chat=new_chat, paths=new_paths, config=Config())
+        published = repo_gold_story.get_story(gid)
+        assert not published["payload"].get("gold_chat_stale")
+        assert not gold_chat_production_eligibility(daily["story"], published, candidates=[], exclude_story_id=did)["ok"]
+        restored = gc.import_gold_chat_daily_story(published, force=True)
+        assert restored["daily_story_id"] == did and restored["status"] == "active"
+        assert not restored["daily_story"]["quality"].get("source_stale")
+    for key, path in paths.items():
+        assert Path(path).read_bytes() == old_bytes[key]

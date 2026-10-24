@@ -433,3 +433,67 @@ def test_build_dialogue_seed_rejects_persistent_wrong_address(monkeypatch):
     with pytest.raises(ValueError, match='H3b角色关系不合格'):
         llm_steps.build_dialogue_seed(story_raw='姐弟在玩手工', h3={}, scene_contract={})
     assert len(calls) == 2
+
+
+def test_repair_transcript_rejects_all_unusable_even_with_high_confidence(monkeypatch):
+    import pytest
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a, **k: {
+        "lines": [{"speaker": "未知", "text": "garbled", "status": "unusable"}] * 2,
+        "repair_confidence": 0.9,
+    })
+    with pytest.raises(ValueError, match="no usable transcript"):
+        llm_steps.repair_transcript(title="真实素材", transcript="无法理解的原始内容")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("has_complete_scene", False), ("has_complete_scene", None),
+    ("scene_line_indices", [0, 1]), ("scene_line_indices", [1, 1]),
+    ("scene_line_indices", [2, 1]), ("scene_line_indices", [1, 4]),
+    ("scene_line_indices", [True, 2]), ("scene_line_indices", [1, 3]),
+    ("scene_evidence", ""),
+])
+def test_repair_requires_grounded_single_scene(monkeypatch, field, value):
+    data = {"repair_confidence": 0.9, "has_complete_scene": True,
+            "scene_line_indices": [1, 2], "scene_evidence": "同一事件的回应和收束",
+            "lines": [{"speaker": "妈妈", "text": "关灯睡觉", "status": "ok"},
+                      {"speaker": "宝宝", "text": "知道了", "status": "ok"},
+                      {"speaker": "未知", "text": "另一段故事", "status": "ok"}]}
+    data[field] = value
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: data)
+    with pytest.raises(ValueError, match="source_unusable"):
+        llm_steps.repair_transcript(title="测试", transcript="原始来源", require_complete_scene=True)
+
+
+def test_repair_selects_one_scene_skipping_only_noise(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {
+        "repair_confidence": 0.9, "has_complete_scene": True,
+        "scene_line_indices": [1, 3], "scene_evidence": "妈妈让孩子关灯，孩子答应了",
+        "lines": [{"speaker": "妈妈", "text": "关灯睡觉", "status": "ok"},
+                  {"speaker": "未知", "text": "乱码", "status": "unusable"},
+                  {"speaker": "宝宝", "text": "知道了", "status": "ok"},
+                  {"speaker": "未知", "text": "另一段故事", "status": "ok"}],
+    })
+    result = llm_steps.repair_transcript(title="测试", transcript="原始来源", require_complete_scene=True)
+    assert [row["text"] for row in result["lines"]] == ["关灯睡觉", "知道了"]
+    assert result["scene_line_indices"] == [1, 3]
+
+
+@pytest.mark.parametrize("response", [
+    {"faithful": False, "unsupported_claims": ["门铃响了"]},
+    {"faithful": True, "unsupported_claims": ["门铃响了"]},
+    {"faithful": True}, {},
+])
+def test_source_audit_rejects_invented_events_or_incomplete_review(monkeypatch, response):
+    def review(system, user):
+        assert "唯一事实依据" in system and "关灯睡觉" in user and "门铃响了" in user
+        return response
+    monkeypatch.setattr(llm_steps, "_chat_json", review)
+    with pytest.raises(ValueError, match="source_unfaithful"):
+        llm_steps.review_story_source(transcript="妈妈：关灯睡觉", story_raw="门铃响了，孩子跑出去开门。")
+
+
+def test_source_audit_accepts_faithful_role_mapping(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {
+        "faithful": True, "unsupported_claims": [], "summary": "仅等价转述和角色改名",
+    })
+    assert llm_steps.review_story_source(transcript="宝宝：知道了", story_raw="昭昭答应了妈妈。")['faithful']

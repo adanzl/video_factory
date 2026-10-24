@@ -203,32 +203,23 @@ def audit_story(
         base.update({"pass": True, "stage": "disabled", "reject_reasons": []})
         return base
 
-    try:
-        llm = llm_steps.audit_story_fit(
-            video_title=video_title or title,
-            title=str(h3.get("title") or title),
-            story_raw=story_raw,
-            conflict_core=conflict_core,
-            mechanism=str(h3.get("mechanism") or ""),
-            structure_type=str(h3.get("structure_type") or ""),
-            speaker_map_note=speaker_map_note,
-            dialogue_seed=dialogue_seed,
-            beat=beat,
-            transcript=transcript,
-            description=description,
-            min_sibling_fit=cfg.gold_story_audit_min_sibling_fit,
-            min_age_fit=cfg.gold_story_audit_min_age_fit,
-            min_conflict_usable=cfg.gold_story_audit_min_conflict_usable,
-            min_mapping_fit=cfg.gold_story_audit_min_mapping_fit,
-        )
-    except ValueError as exc:
-        base.update(
-            {
-                "stage": "llm",
-                "reject_reasons": [str(exc)],
-            }
-        )
-        return base
+    llm = llm_steps.audit_story_fit(
+        video_title=video_title or title,
+        title=str(h3.get("title") or title),
+        story_raw=story_raw,
+        conflict_core=conflict_core,
+        mechanism=str(h3.get("mechanism") or ""),
+        structure_type=str(h3.get("structure_type") or ""),
+        speaker_map_note=speaker_map_note,
+        dialogue_seed=dialogue_seed,
+        beat=beat,
+        transcript=transcript,
+        description=description,
+        min_sibling_fit=cfg.gold_story_audit_min_sibling_fit,
+        min_age_fit=cfg.gold_story_audit_min_age_fit,
+        min_conflict_usable=cfg.gold_story_audit_min_conflict_usable,
+        min_mapping_fit=cfg.gold_story_audit_min_mapping_fit,
+    )
 
     base["llm"] = llm
     base["stage"] = "llm"

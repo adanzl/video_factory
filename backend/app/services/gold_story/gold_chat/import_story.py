@@ -75,6 +75,7 @@ def gold_chat_production_eligibility(
     *,
     candidates: list[dict[str, Any]],
     exclude_story_id: int | None = None,
+    for_export: bool = False,
 ) -> dict[str, Any]:
     """发布、导入和建任务共用的只读检查；不改稿、不调用模型或数据库。
 
@@ -102,6 +103,8 @@ def gold_chat_production_eligibility(
         review_contract=gold_story_review_contract(row, imported),
     )
     reasons = eligibility["reasons"]
+    if not for_export and (row.get("payload") or {}).get("gold_chat_stale") and not (story.get("quality") or {}).get("source_stale"):
+        reasons.append("来源素材已重新导入，需重新转换并导入新稿")
     if not eligibility.get("reviewed_content_hash"):
         reasons.append("导出稿缺少当前正文终验摘要，需重新终验")
     if _source_facts_not_resolved(row):
@@ -134,6 +137,8 @@ def import_gold_chat_daily_story(
     from app.repositories import repo_daily_story
 
     gid = int(row.get("id") or 0)
+    if (row.get("payload") or {}).get("gold_chat_stale"):
+        raise ValueError("素材已重新导入，请先重新转换对话，再导入日常")
     sid = str(row.get("source_id") or "").strip()
     if gid <= 0 or not sid:
         raise ValueError("gold_story 缺少 id 或 source_id")
@@ -197,6 +202,9 @@ def import_gold_chat_daily_story(
 
     with atomic():
         fresh = repo_gold_story.get_story(gid)
+        fresh_payload = fresh.get("payload") or {}
+        if fresh_payload.get("gold_chat_stale") or fresh_payload.get("gold_chat_source_revision") != (row.get("payload") or {}).get("gold_chat_source_revision"):
+            raise ValueError("素材已重新导入，请刷新后重新转换并导入新稿")
         if int(fresh.get("gold_chat_daily_story_id") or 0) != int(existing_raw or 0):
             raise ValueError("导入关联已变化，请刷新后重试")
         if (fresh.get("payload") or {}).get("gold_chat_json") != (row.get("payload") or {}).get("gold_chat_json"):

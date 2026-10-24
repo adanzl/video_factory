@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -216,6 +218,7 @@ def search_bilibili(
     keyword: str,
     *,
     limit: int = 20,
+    page: int = 1,
     config: Config | None = None,
     session: requests.Session | None = None,
 ) -> list[str]:
@@ -228,7 +231,7 @@ def search_bilibili(
         {
             "keyword": keyword,
             "search_type": "video",
-            "page": 1,
+            "page": max(1, int(page)),
             "page_size": limit,
             "order": "totalrank",
             "platform": "pc",
@@ -259,27 +262,43 @@ def collect_candidates(
     config: Config | None = None,
     max_candidates: int | None = None,
     keywords: list[str] | None = None,
+    advance_cursor: bool = True,
 ) -> list[VideoCandidate]:
     """H0 + H1：搜索并初筛，去重 BV。"""
     cfg = config or Config()
     cap = max_candidates if max_candidates is not None else cfg.gold_story_cron_max
     cap = max(1, min(cap, 50))
     words = keywords or search_keywords(cfg)
+    cursor_key = hashlib.sha256(json.dumps(words, ensure_ascii=False).encode()).hexdigest()
+    cursor = repo_gold_story.search_cursor(cursor_key)
+    offset = cursor % len(words)
+    words = words[offset:] + words[:offset]
+    max_page = cfg.gold_story_search_max_page
+    first_page = (cursor // len(words)) % max_page
     session = _bili_http(cfg)
     seen: set[str] = set()
     results: list[VideoCandidate] = []
 
-    for keyword in words:
+    searched = False
+    search_failed = False
+    candidate_failure: Exception | None = None
+    # 每页轮过所有关键词，最多三页/词，避免前面的词垄断整次搜索。
+    searches = ((word, (first_page + depth) % max_page + 1)
+                for depth in range(min(3, max_page)) for word in words)
+    for keyword, page in searches:
         if len(results) >= cap:
             break
         try:
             bv_list = search_bilibili(
                 keyword,
+                page=page,
                 limit=min(20, max(cap * 5, 10)),
                 config=cfg,
                 session=session,
             )
+            searched = True
         except Exception as exc:
+            search_failed = True
             logger.warning("gold_story search failed keyword=%r: %s", keyword, exc)
             continue
         for bvid in bv_list:
@@ -295,6 +314,7 @@ def collect_candidates(
             try:
                 meta = fetch_video_meta(bvid, config=cfg, session=session)
             except Exception as exc:
+                candidate_failure = exc
                 logger.warning("gold_story view failed bvid=%s: %s", bvid, exc)
                 continue
             duration_sec = int(meta.get("duration") or 0)
@@ -314,20 +334,26 @@ def collect_candidates(
                     meta["title"][:40],
                 )
                 continue
-            replies = fetch_top_replies(
-                int(meta.get("aid") or 0),
-                config=cfg,
-                session=session,
-                limit=8,
-            )
-            funny = compute_audience_funny_metrics(
-                source_id=bvid,
-                cid=int(meta.get("cid") or 0),
-                view_count=int(meta["view_count"]),
-                reply_count=int(meta["reply_count"]),
-                replies=replies,
-                session=session,
-            )
+            try:
+                replies = fetch_top_replies(
+                    int(meta.get("aid") or 0),
+                    config=cfg,
+                    session=session,
+                    limit=8,
+                )
+                funny = compute_audience_funny_metrics(
+                    source_id=bvid,
+                    cid=int(meta.get("cid") or 0),
+                    view_count=int(meta["view_count"]),
+                    reply_count=int(meta["reply_count"]),
+                    replies=replies,
+                    session=session,
+                    strict=True,
+                )
+            except Exception as exc:
+                candidate_failure = exc
+                logger.warning("gold_story audience fetch failed bvid=%s: %s", bvid, exc)
+                continue
             funny_ok, funny_reason = passes_funny_gate(funny, level="l1", config=cfg)
             if not funny_ok:
                 logger.info(
@@ -353,6 +379,13 @@ def collect_candidates(
                     duration_sec=duration_sec,
                 )
             )
+    if not searched:
+        raise RuntimeError("B 站搜索均失败，请稍后重试")
+    if candidate_failure is not None and not results:
+        raise RuntimeError("B 站候选信息获取失败，请稍后重试") from candidate_failure
+    # 保留成功候选；局部故障时保留位置，下次跳过已入库项并补采遗漏项。
+    if advance_cursor and not search_failed and candidate_failure is None:
+        repo_gold_story.search_cursor(cursor_key, advance_from=cursor)
     return results
 
 

@@ -19,7 +19,9 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.config import Config
-from app.core import create_app
+from flask import Flask
+from app.repositories.database import init_database, get_dbapi_connection
+from app.repositories.schema import apply_gold_story_schema
 from app.services.gold_story.collect import (
     collect_candidates,
     write_candidate_list,
@@ -27,9 +29,23 @@ from app.services.gold_story.collect import (
 from app.services.gold_story.collect.pipeline import run_collect_pipeline
 
 
+def _cli_app(cfg: Config, *, preview: bool = False) -> Flask:
+    """CLI 不启动 Web 的任务恢复钩子，预览不建库或迁移表。"""
+    if preview and not cfg.sqlite_path.is_file():
+        raise RuntimeError("采集预览需要已有数据库，不会自动创建数据库")
+    app = Flask("gold-story-collect-cli")
+    init_database(app)
+    if not preview:
+        with app.app_context():
+            conn = get_dbapi_connection()
+            apply_gold_story_schema(conn)
+            conn.commit()
+    return app
+
+
 def _cmd_collect(args: argparse.Namespace) -> int:
     cfg = Config()
-    app = create_app()
+    app = _cli_app(cfg)
     with app.app_context():
         rows = collect_candidates(
             config=cfg,
@@ -56,9 +72,11 @@ def _cmd_collect(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    app = create_app()
+    cfg = Config()
+    app = _cli_app(cfg, preview=args.dry_run)
     with app.app_context():
         report = run_collect_pipeline(
+            config=cfg,
             max_candidates=args.max,
             keywords=_keywords(args),
             skip_transcript=args.skip_transcript,
@@ -68,10 +86,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if args.dry_run:
         return 0 if report.get("candidates") else 1
-    if report.get("inserted"):
-        return 0
-    # 有候选但全 skip/reject 仍算链路跑通
-    return 0 if report.get("candidates") else 1
+    if report.get("failed"):
+        return 1
+    # 内容驳回是正常结果；已有队列处理完成也算链路跑通。
+    return 0 if report.get("candidates") or report.get("processed") or report.get("inserted") else 1
 
 
 def _keywords(args: argparse.Namespace) -> list[str] | None:
@@ -96,12 +114,12 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument(
                 "--dry-run",
                 action="store_true",
-                help="只采集+转写统计，不调 LLM、不入库",
+                help="只搜索预览，不下载、不调 LLM、不入库、不写候选文件或推进搜索游标",
             )
             p.add_argument(
                 "--skip-transcript",
                 action="store_true",
-                help="不跑 H0b，仅用简介/热评走 H2",
+                help="不重新下载转写，只使用已有可信转写；没有转写则拒绝",
             )
         p.set_defaults(func=_cmd_collect if name == "collect" else _cmd_run)
 
