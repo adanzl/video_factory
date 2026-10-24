@@ -24,6 +24,7 @@ export interface GoldChatListItem {
   humor_score?: number | null;
   gold_chat_daily_story_id?: number | null;
   gold_chat_error?: GoldChatErrorInfo | null;
+  collect_error?: GoldStoryCollectionError | null;
   /** 远程/本机正在把这条金故事转成对话稿 */
   gold_chat_converting?: boolean;
   updated_at?: string;
@@ -69,6 +70,12 @@ export interface GoldStoryAudit {
   };
 }
 
+export interface GoldStoryCollectionError {
+  error: string;
+  stage?: string | null;
+  attempts: number;
+}
+
 export interface GoldChatErrorInfo {
   error: string;
   failed_at?: string;
@@ -102,6 +109,7 @@ export interface GoldStoryDetail {
   auto_score?: number;
   gold_chat_daily_story_id?: number | null;
   audit?: GoldStoryAudit | null;
+  collect_error?: GoldStoryCollectionError | null;
   dump: GoldStoryDump;
   has_gold_chat: boolean;
   gold_chat?: GoldChatPayload | null;

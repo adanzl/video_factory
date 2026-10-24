@@ -1014,3 +1014,18 @@ def test_expired_batch_does_not_start_later_items_or_overwrite_failure_metadata(
     result = batch.run_gold_chat_batch(gold_story_ids=[first, second], skip_existing=False, task_id="owner", task_owner_id=first)
     assert calls == [first] and result["failed"] == 2
     assert repo_gold_story.get_story(first)["payload"]["gold_chat_last_error"] == "keep newer state"
+
+
+def test_collection_failure_reason_is_visible_and_disappears_after_success(app_ctx):
+    gid = int(_insert_sample(app_ctx)["id"])
+    repo_gold_story.patch_story_payload(gid, {"collect_attempts": 3,
+        "collect_failure": {"stage": "H0b", "error": "视频下载超时", "retryable": True}})
+    repo_gold_story.set_story_status(gid, status="failed")
+    client = app_ctx.test_client()
+    detail = client.get(f"/v_factory/api/gold_chat/get?id={gid}").get_json()
+    rows = client.get("/v_factory/api/gold_chat/list").get_json()["items"]
+    expected = {"error": "视频下载超时", "stage": "H0b", "attempts": 3}
+    assert detail["collect_error"] == expected
+    assert next(row for row in rows if row["id"] == gid)["collect_error"] == expected
+    repo_gold_story.set_story_status(gid, status="active")
+    assert "collect_error" not in client.get(f"/v_factory/api/gold_chat/get?id={gid}").get_json()

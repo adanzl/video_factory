@@ -37,6 +37,14 @@
               </div>
             </div>
 
+            <el-alert v-if="detail.collect_error" title="采集失败" type="error" :closable="false" show-icon>
+              <p class="whitespace-pre-wrap wrap-break-word">{{ detail.collect_error.error }}</p>
+              <p class="mt-1 text-xs">
+                <span v-if="detail.collect_error.attempts">已尝试 {{ detail.collect_error.attempts }} 次。</span>
+                可返回列表重新导入。
+              </p>
+            </el-alert>
+
             <div
               v-if="auditBlock"
               class="rounded-lg border border-red-100 bg-red-50 p-3"

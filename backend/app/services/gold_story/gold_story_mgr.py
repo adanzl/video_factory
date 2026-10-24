@@ -345,6 +345,18 @@ def _run_reimport_job(
                 )
 
 
+def _row_to_collection_error(row: dict[str, Any]) -> dict[str, Any] | None:
+    payload = row.get("payload") or {}
+    failure = payload.get("collect_failure")
+    if row.get("status") != "failed" or not isinstance(failure, dict):
+        return None
+    error = failure.get("error") or failure.get("reason") or "采集未完成"
+    if isinstance(error, dict):
+        error = error.get("error") or error.get("reason") or str(error)
+    return {"error": str(error)[:2000], "stage": failure.get("stage"),
+            "attempts": int(payload.get("collect_attempts") or 0)}
+
+
 def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
     sid = str(row.get("source_id") or "").strip()
     payload = cast(dict[str, Any], row.get("payload") or {})
@@ -372,6 +384,9 @@ def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
     )
     if gold_chat_error is not None:
         out["gold_chat_error"] = gold_chat_error
+    collect_error = _row_to_collection_error(row)
+    if collect_error is not None:
+        out["collect_error"] = collect_error
     out["gold_chat_converting"] = gold_chat_converting_from_payload(payload)
     return out
 
@@ -460,6 +475,9 @@ def _row_to_detail_header(row: dict[str, Any]) -> dict[str, Any]:
     audit = _row_to_audit_summary(payload)
     if audit is not None:
         out["audit"] = audit
+    collect_error = _row_to_collection_error(row)
+    if collect_error is not None:
+        out["collect_error"] = collect_error
     return out
 
 

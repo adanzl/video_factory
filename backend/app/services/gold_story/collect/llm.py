@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from typing import Any
 from app.services.daily_story.speaker import (
@@ -662,15 +663,35 @@ def _type_catalog() -> str:
 
 
 def _chat_json(system: str, user: str) -> dict[str, Any]:
-    raw, _finish = _client()._chat_json(  # type: ignore[attr-defined]
-        system,
-        user,
-        thinking_enabled=False,
-        temperature=0.35,
-    )
+    try:
+        raw, _finish = _client()._chat_json(  # type: ignore[attr-defined]
+            system, user, thinking_enabled=False, temperature=0.35,
+        )
+    except ValueError as exc:
+        raise ValueError("LLM JSON response invalid") from exc
     if not isinstance(raw, dict):
         raise ValueError("LLM JSON must be object")
     return raw
+
+
+def _response_bool(data: dict[str, Any], field: str, stage: str) -> bool:
+    value = data.get(field)
+    if type(value) is not bool:
+        raise ValueError(f"LLM {stage} {field} must be a JSON boolean")
+    return value
+
+
+def _response_score(data: dict[str, Any], field: str, stage: str) -> float:
+    value = data.get(field)
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"LLM {stage} invalid score: {field}")
+    try:
+        score = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"LLM {stage} invalid score: {field}") from exc
+    if not math.isfinite(score) or not 0 <= score <= 1:
+        raise ValueError(f"LLM {stage} invalid score: {field}")
+    return score
 
 
 def repair_transcript(
@@ -690,9 +711,11 @@ def repair_transcript(
         transcript=transcript_text[:12000],
     )
     data = _chat_json(_H0C_SYSTEM, user)
+    if require_complete_scene and not _response_bool(data, "has_complete_scene", "H0c"):
+        raise ValueError("H0c source_unusable: no complete source scene")
     lines = data.get("lines") or []
     if not isinstance(lines, list) or len(lines) < 2:
-        raise ValueError("H0c lines must have at least 2 entries")
+        raise ValueError("LLM H0c lines must have at least 2 entries")
     cleaned: list[dict[str, str]] = []
     unusable_lines = 0
     for row in lines:
@@ -710,20 +733,20 @@ def repair_transcript(
                 {"speaker": speaker, "text": text, "status": status or "ok"}
             )
     if len(cleaned) < 2:
-        raise ValueError("H0c cleaned lines too short")
+        raise ValueError("LLM H0c cleaned lines too short")
     if all(row["text"] == UNINTELLIGIBLE_MARKER for row in cleaned):
         raise ValueError("H0c no usable transcript lines")
-    confidence = float(data.get("repair_confidence") or 0.0)
+    confidence = _response_score(data, "repair_confidence", "H0c")
     if confidence < 0.35:
         raise ValueError(f"H0c low repair_confidence={confidence:.2f}")
     indices = data.get("scene_line_indices")
     evidence = str(data.get("scene_evidence") or "").strip()
     if require_complete_scene:
-        if (data.get("has_complete_scene") is not True or not evidence or len(cleaned) != len(lines)
+        if (not isinstance(data.get("scene_evidence"), str) or not evidence or len(cleaned) != len(lines)
                 or not isinstance(indices, list) or len(indices) < 2
                 or any(type(i) is not int or i < 1 or i > len(cleaned) for i in indices)
                 or indices != sorted(set(indices))):
-            raise ValueError("H0c source_unusable: no complete source scene")
+            raise ValueError("LLM H0c invalid scene selection or evidence")
         selected = [cleaned[i - 1] for i in indices]
         if any(row["status"] not in {"ok", "vague"} or UNINTELLIGIBLE_MARKER in row["text"] for row in selected):
             raise ValueError("H0c source_unusable: scene contains unintelligible lines")
@@ -766,7 +789,10 @@ def review_story_source(*, transcript: str, story_raw: str) -> dict[str, Any]:
         "【唯一来源转写】\n" + transcript[:12000] + "\n【待核对故事】\n" + story_raw[:4000],
     )
     claims = data.get("unsupported_claims")
-    if data.get("faithful") is not True or not isinstance(claims, list) or claims:
+    faithful = _response_bool(data, "faithful", "H2 source audit")
+    if not isinstance(claims, list) or any(not isinstance(item, str) or not item.strip() for item in claims):
+        raise ValueError("LLM H2 source audit unsupported_claims must be a list of strings")
+    if not faithful or claims:
         raise ValueError("H2 source_unfaithful: " + str(claims or data.get("summary") or "来源审核未通过"))
     return data
 
@@ -807,14 +833,15 @@ def extract_story_raw(
     if source_feedback:
         user += "\n【上一轮来源审核未通过，重新从转写提炼，禁止补造这些事实】\n" + source_feedback[:1500]
     data = _chat_json(_H2_SYSTEM, user)
-    story_raw = str(data.get("story_raw") or "").strip()
-    if not story_raw:
-        raise ValueError("H2 missing story_raw")
+    raw_story = data.get("story_raw")
+    if not isinstance(raw_story, str) or not raw_story.strip():
+        raise ValueError("LLM H2 missing story_raw")
+    story_raw = raw_story.strip()
     story_raw, scrubbed_quotes = scrub_unintelligible_quotes(story_raw)
     if scrubbed_quotes:
         logger.info("H2 scrubbed unintelligible quotes=%s", scrubbed_quotes)
-    confidence = float(data.get("extract_confidence") or 0.0)
-    has_arc = bool(data.get("has_complete_arc"))
+    confidence = _response_score(data, "extract_confidence", "H2")
+    has_arc = _response_bool(data, "has_complete_arc", "H2")
     if not has_arc or confidence < 0.5:
         raise ValueError(
             f"H2 rejected arc={has_arc} confidence={confidence:.2f}"
@@ -871,7 +898,7 @@ def structurize_story(
         note = str(data.get("structure_mapping_note") or "").strip()
         suffix = ";".join(resolve_notes)
         data["structure_mapping_note"] = f"{note};{suffix}".strip(";") if note else suffix
-    confidence = float(data.get("structure_confidence") or 0.0)
+    confidence = _response_score(data, "structure_confidence", "H3")
     if confidence < 0.5:
         raise ValueError(f"H3 low structure_confidence={confidence:.2f}")
     return data
@@ -1202,7 +1229,7 @@ def build_dialogue_seed(
     if address_errors:
         raise ValueError("H3b角色关系不合格：" + "；".join(address_errors))
     data["dialogue_seed"] = seed
-    confidence = float(data.get("dialogue_confidence") or 0.0)
+    confidence = _response_score(data, "dialogue_confidence", "H3b")
     if confidence < 0.35:
         raise ValueError(f"H3b low dialogue_confidence={confidence:.2f}")
     if not str(data.get("closing_intent") or "").strip():
@@ -1506,19 +1533,22 @@ def audit_story_fit(
         transcript=str(transcript or description or "")[:4000] or "（无）",
     )
     data = _chat_json(_H4A_SYSTEM, user)
-    sibling_fit = float(data.get("sibling_fit") or 0.0)
-    age_fit = float(data.get("age_fit") or 0.0)
-    conflict_usable = float(data.get("conflict_usable") or 0.0)
-    mapping_fit = float(data.get("mapping_fit") or 0.0)
-    llm_pass = bool(data.get("pass"))
-    reasons = [str(r) for r in (data.get("reject_reasons") or []) if str(r).strip()]
+    sibling_fit = _response_score(data, "sibling_fit", "H4a")
+    age_fit = _response_score(data, "age_fit", "H4a")
+    conflict_usable = _response_score(data, "conflict_usable", "H4a")
+    mapping_fit = _response_score(data, "mapping_fit", "H4a")
+    llm_pass = _response_bool(data, "pass", "H4a")
+    raw_reasons = data.get("reject_reasons", [])
+    if not isinstance(raw_reasons, list) or any(not isinstance(item, str) for item in raw_reasons):
+        raise ValueError("LLM H4a reject_reasons must be a list of strings")
+    reasons = [reason.strip() for reason in raw_reasons if reason.strip()]
     thresholds_ok = (
         sibling_fit >= min_sibling_fit
         and age_fit >= min_age_fit
         and conflict_usable >= min_conflict_usable
         and mapping_fit >= min_mapping_fit
     )
-    passed = llm_pass and thresholds_ok
+    passed = llm_pass and thresholds_ok and not reasons
     if not thresholds_ok:
         if sibling_fit < min_sibling_fit:
             reasons.append(f"sibling_fit_low:{sibling_fit:.2f}")

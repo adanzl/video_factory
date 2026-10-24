@@ -460,7 +460,8 @@ def test_repair_requires_grounded_single_scene(monkeypatch, field, value):
                       {"speaker": "未知", "text": "另一段故事", "status": "ok"}]}
     data[field] = value
     monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: data)
-    with pytest.raises(ValueError, match="source_unusable"):
+    content_rejection = (field == "has_complete_scene" and value is False) or (field == "scene_line_indices" and value == [1, 3])
+    with pytest.raises(ValueError, match="source_unusable" if content_rejection else "LLM "):
         llm_steps.repair_transcript(title="测试", transcript="原始来源", require_complete_scene=True)
 
 
@@ -488,7 +489,7 @@ def test_source_audit_rejects_invented_events_or_incomplete_review(monkeypatch, 
         assert "唯一事实依据" in system and "关灯睡觉" in user and "门铃响了" in user
         return response
     monkeypatch.setattr(llm_steps, "_chat_json", review)
-    with pytest.raises(ValueError, match="source_unfaithful"):
+    with pytest.raises(ValueError, match="source_unfaithful" if "unsupported_claims" in response else "LLM "):
         llm_steps.review_story_source(transcript="妈妈：关灯睡觉", story_raw="门铃响了，孩子跑出去开门。")
 
 
@@ -497,3 +498,44 @@ def test_source_audit_accepts_faithful_role_mapping(monkeypatch):
         "faithful": True, "unsupported_claims": [], "summary": "仅等价转述和角色改名",
     })
     assert llm_steps.review_story_source(transcript="宝宝：知道了", story_raw="昭昭答应了妈妈。")['faithful']
+
+
+def _audit_response(response, monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: response)
+    return llm_steps.audit_story_fit(video_title="姐弟日常", title="整理书桌", story_raw="姐弟一起整理书桌。",
+        conflict_core="分工", mechanism="M6", structure_type="A", speaker_map_note="", dialogue_seed=[], beat=[])
+
+
+@pytest.mark.parametrize("flag", ["false", "true", 0, 1, None, [], {}])
+@pytest.mark.parametrize("stage", ["extract", "audit"])
+def test_review_flags_require_json_booleans(monkeypatch, flag, stage):
+    if stage == "extract":
+        monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {
+            "story_raw": "姐弟两人整理书桌，姐姐先收拾书本，弟弟接着把桌子擦干净。" * 4,
+            "has_complete_arc": flag, "extract_confidence": 0.9,
+        })
+        call = lambda: llm_steps.extract_story_raw(title="整理书桌", transcript="真实素材")
+    else:
+        call = lambda: _audit_response({"pass": flag, "sibling_fit": 0.9, "age_fit": 0.9,
+            "conflict_usable": 0.9, "mapping_fit": 0.9, "reject_reasons": []}, monkeypatch)
+    with pytest.raises(ValueError, match="LLM .*boolean"):
+        call()
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), -0.1, 1.1, True, None, "bad"])
+def test_review_scores_reject_nonfinite_out_of_range_or_invalid_values(monkeypatch, score):
+    with pytest.raises(ValueError, match="LLM .*score"):
+        _audit_response({"pass": True, "sibling_fit": score, "age_fit": 0.9,
+            "conflict_usable": 0.9, "mapping_fit": 0.9, "reject_reasons": []}, monkeypatch)
+
+
+def test_audit_reject_reasons_cannot_coexist_with_pass(monkeypatch):
+    result = _audit_response({"pass": True, "sibling_fit": 0.9, "age_fit": 0.9,
+        "conflict_usable": 0.9, "mapping_fit": 0.9, "reject_reasons": ["来源不完整"]}, monkeypatch)
+    assert result["pass"] is False
+
+
+def test_source_audit_schema_failure_does_not_become_source_rejection(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {"error": "incomplete response"})
+    with pytest.raises(ValueError, match="LLM "):
+        llm_steps.review_story_source(transcript="完整来源", story_raw="来源中的完整故事")

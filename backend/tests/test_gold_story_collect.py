@@ -903,3 +903,16 @@ def test_collect_claim_changes_on_recovery(app_ctx):
     second = repo.claim_next_pending()
     assert first["payload"]["collect_claim_id"] != second["payload"]["collect_claim_id"]
     assert second["payload"]["collect_attempts"] == 1
+
+
+def test_invalid_model_response_is_execution_failure_not_rejected_source(app_ctx, tmp_path, monkeypatch):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    cfg = Config(); cfg.gold_story_transcript_dir = tmp_path; cfg.gold_story_transcript_repair = True
+    sid = "BV1SCHEMA001"; (tmp_path / (sid + '.txt')).write_text("妈妈：关灯睡觉\n孩子：知道了")
+    candidate = VideoCandidate(source="bili", source_id=sid, url="", title="姐弟日常", description="", view_count=1, reply_count=1, keyword="")
+    monkeypatch.setattr(p.llm_steps, "_chat_json", lambda *a: {})
+    result = p.process_candidate(candidate, config=cfg)
+    assert result["action"] == "error" and result["stage"] == "H0c"
+    assert result["error"].startswith("LLM ")
