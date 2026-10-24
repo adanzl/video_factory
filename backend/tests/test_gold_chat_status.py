@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.repositories import repo_gold_story
 from app.services.gold_story.gold_chat.status import (
     clear_gold_chat_failure,
@@ -354,3 +356,35 @@ def test_adaptation_changes_invalidate_review_contract_and_export_retains_origin
     assert result["gold_meta"]["adaptation"] == row["payload"]["gold_chat_adaptation"]
     markdown = Path(paths["markdown"]).read_text()
     assert "用户授权重构" in markdown and row["story_raw"] in markdown
+
+
+@pytest.mark.parametrize("task_state", ["succeeded", "failed", "expired", "running"])
+@pytest.mark.parametrize("new_marker", [False, True])
+def test_old_task_does_not_hide_new_legacy_conversion(task_state, new_marker):
+    from datetime import datetime, timedelta, timezone
+    from app.services.gold_story.gold_chat.status import gold_chat_converting_from_payload
+    now = datetime.now(timezone.utc)
+    task = {"task_id": "previous", "status": "running" if task_state == "expired" else task_state,
+            "started_at": (now - timedelta(seconds=120)).timestamp(),
+            "expires_at": (now + timedelta(seconds=-60 if task_state == "expired" else 60)).timestamp()}
+    if task_state in {"succeeded", "failed"}:
+        task["finished_at"] = (now - timedelta(seconds=30)).timestamp()
+    payload = {"gold_chat_task": task, "gold_chat_convert_status": "converting",
+               "gold_chat_convert_started_at": (now - timedelta(seconds=5 if new_marker else 100)).isoformat()}
+    assert gold_chat_converting_from_payload(payload, now=now) is (new_marker or task_state == "running")
+
+
+def test_reimport_is_blocked_during_legacy_conversion_after_completed_task(app_ctx, monkeypatch):
+    import time
+    from app.services.gold_story.collect import pipeline
+    from app.services.gold_story.gold_chat.status import mark_gold_chat_converting, clear_gold_chat_converting
+    gid = _insert_row(app_ctx)
+    now = time.time()
+    task = {"task_id": "previous", "status": "running", "started_at": now - 60, "expires_at": now + 120}
+    repo_gold_story.claim_chat_task(gid, task)
+    repo_gold_story.update_chat_task(gid, {**task, "status": "succeeded", "finished_at": now - 30})
+    mark_gold_chat_converting(gid)
+    monkeypatch.setattr(pipeline, "_build_candidate_from_bvid", lambda *a, **k: pytest.fail("conversion in progress must block reimport"))
+    result = pipeline.overwrite_existing_story(gid)
+    assert result["action"] == "error" and "转换进行中" in result["error"]
+    clear_gold_chat_converting(gid)

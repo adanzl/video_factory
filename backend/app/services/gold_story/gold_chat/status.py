@@ -127,11 +127,16 @@ def gold_chat_converting_from_payload(
     """payload 是否表示这条金故事正在转对话。过期标记视为已结束。"""
     if not isinstance(payload, dict):
         return False
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
     task = payload.get("gold_chat_task")
+    task_ended_at = 0.0
     if isinstance(task, dict) and task.get("task_id"):
-        current_time = now or datetime.now(timezone.utc)
-        return (task.get("status") in {"queued", "running"}
-                and current_time.timestamp() < float(task.get("expires_at") or 0))
+        expires_at = float(task.get("expires_at") or 0)
+        if task.get("status") in {"queued", "running"} and current.timestamp() < expires_at:
+            return True
+        task_ended_at = float(task.get("finished_at") or expires_at)
     if str(payload.get("gold_chat_convert_status") or "").strip() != "converting":
         return False
     started_raw = str(payload.get("gold_chat_convert_started_at") or "").strip()
@@ -143,9 +148,10 @@ def gold_chat_converting_from_payload(
         return False
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.utc)
-    current = now or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
+    # 上一次任务的终态不能遮住后来通过同步接口或批处理开始的转换；
+    # 但同一旧任务遗留的标记仍必须按结束/到期时间失效。
+    if started.timestamp() <= task_ended_at:
+        return False
     age = (current - started).total_seconds()
     return age <= _CONVERTING_STALE_SEC
 
