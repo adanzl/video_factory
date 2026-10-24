@@ -70,6 +70,16 @@ def _existing_source(source: str, source_id: str) -> bool:
     return repo_gold_story.has_source(source=source, source_id=source_id)
 
 
+def _export_collection_result(row: dict[str, Any], config: Config) -> dict[str, Any]:
+    """入库已经提交；导出失败须单独报告，不能重跑生成或伪装成并发跳过。"""
+    try:
+        return {"export": export_story_files(source_id=str(row["source_id"]), row=row, config=config)}
+    except Exception as exc:
+        logger.warning("gold_story export failed id=%s: %s", row["id"], exc)
+        return {"action": "error", "stage": "export", "error": str(exc),
+                "retryable": False, "persisted": True}
+
+
 def process_candidate(
     candidate: VideoCandidate,
     *,
@@ -272,9 +282,9 @@ def process_candidate(
                 if source_attempt or not str(exc).startswith("H2 source_unfaithful:"):
                     raise
                 source_feedback = str(exc)
-        near = repo_gold_story.find_near_duplicate(story_raw_text)
         self_id = int(existing_row["id"]) if existing_row and existing_row.get("id") else None
-        if near and (self_id is None or int(near["id"]) != self_id):
+        near = repo_gold_story.find_near_duplicate(story_raw_text, exclude_id=self_id)
+        if near:
             return {
                 **base,
                 "action": "skip",
@@ -420,7 +430,7 @@ def process_candidate(
             expected_row=existing_row,
         )
         fresh = repo_gold_story.get_story(gid)
-        paths = export_story_files(source_id=candidate.source_id, row=fresh, config=cfg)
+        export_result = _export_collection_result(fresh, cfg)
         action = "ok" if insert_status == "active" else "reject"
         reason = None
         if action == "reject":
@@ -441,7 +451,7 @@ def process_candidate(
             "transcript_repaired_chars": len(transcript_for_h2),
             "story_raw_chars": len(story_raw_text),
             "auto_score": updated.get("auto_score"),
-            "export": paths,
+            **export_result,
         }
 
     result = repo_gold_story.insert_or_skip(
@@ -463,8 +473,7 @@ def process_candidate(
     )
     if result.get("action") == "insert" and result.get("id"):
         row = repo_gold_story.get_story(int(result["id"]))
-        paths = export_story_files(source_id=candidate.source_id, row=row, config=cfg)
-        result["export"] = paths
+        result.update(_export_collection_result(row, cfg))
     action = result.get("action")
     if action == "insert" and insert_status == "rejected":
         result["action"] = "reject"
@@ -586,14 +595,19 @@ def import_or_overwrite_source(
         candidate = _build_candidate_from_bvid(bvid, config=cfg)
     except Exception as exc:
         logger.warning("reimport meta failed bvid=%s: %s", bvid, exc)
-        return {**base, "action": "error", "stage": "H0", "error": str(exc)}
+        return {**base, **_execution_failure(exc, "H0")}
 
-    outcome = process_candidate(
-        candidate,
-        config=cfg,
-        overwrite_existing=False,
-        force_transcript=force_transcript,
-    )
+    try:
+        outcome = process_candidate(
+            candidate,
+            config=cfg,
+            overwrite_existing=False,
+            force_transcript=force_transcript,
+        )
+    except Exception as exc:
+        from app.repositories import sql_exec as sql
+        sql.rollback()
+        outcome = _execution_failure(exc, "import")
     return {**base, **outcome}
 
 
@@ -635,7 +649,7 @@ def reimport_stories(
     seen_bvs: set[str] = set()
 
     work: list[tuple[str, int | str]] = []
-    for gid in gold_story_ids or []:
+    for gid in dict.fromkeys(gold_story_ids or []):
         work.append(("id", int(gid)))
     for raw in source_ids or []:
         work.append(("bv", str(raw or "").strip()))
@@ -668,8 +682,8 @@ def reimport_stories(
                     proc_bv = normalize_bv(str(p_val))
                 except ValueError:
                     proc_bv = str(p_val).strip() or None
-        on_progress(
-            {
+        try:
+            on_progress({
                 "processed": idx,
                 "requested": total,
                 "processing_id": proc_id,
@@ -677,13 +691,17 @@ def reimport_stories(
                 "queued_ids": queued_ids,
                 "queued_source_ids": queued_bvs,
                 "results": list(results),
-            }
-        )
+            })
+        except Exception:
+            logger.exception("gold_story reimport on_progress failed")
 
     for idx, (kind, value) in enumerate(work):
         _emit_progress(idx, processing=(kind, value))
         if kind == "id":
             gid = int(value)
+            if gid in seen_ids:
+                continue
+            seen_ids.add(gid)
             try:
                 outcome = overwrite_existing_story(
                     gid,
@@ -696,6 +714,10 @@ def reimport_stories(
                     "action": "error",
                     "error": f"gold_story {gid} not found",
                 }
+            except Exception as exc:
+                from app.repositories import sql_exec as sql
+                sql.rollback()
+                outcome = {"id": gid, **_execution_failure(exc, "reimport")}
             sid = str(outcome.get("source_id") or "").strip()
             if outcome.get("id"):
                 seen_ids.add(int(outcome["id"]))
@@ -723,11 +745,16 @@ def reimport_stories(
         existing = repo_gold_story.get_by_source_id(source_id=bvid)
         if existing and int(existing["id"]) in seen_ids:
             continue
-        outcome = import_or_overwrite_source(
-            bvid,
-            config=cfg,
-            force_transcript=force_transcript,
-        )
+        try:
+            outcome = import_or_overwrite_source(
+                bvid,
+                config=cfg,
+                force_transcript=force_transcript,
+            )
+        except Exception as exc:
+            from app.repositories import sql_exec as sql
+            sql.rollback()
+            outcome = {"source_id": bvid, **_execution_failure(exc, "import")}
         if outcome.get("id"):
             seen_ids.add(int(outcome["id"]))
         seen_bvs.add(bvid)
@@ -777,6 +804,7 @@ def enqueue_collect_candidates(
     results: list[dict[str, Any]] = []
     enqueued = 0
     skipped = 0
+    failed = 0
 
     def _snapshot() -> dict[str, Any]:
         return {
@@ -784,6 +812,7 @@ def enqueue_collect_candidates(
             "candidates": len(candidates),
             "enqueued": enqueued,
             "skipped": skipped,
+            "failed": failed,
             "processed": 0,
             "inserted": 0,
             "inserted_rejected": 0,
@@ -816,6 +845,8 @@ def enqueue_collect_candidates(
                 payload=payload,
             )
         except Exception as exc:
+            sql.rollback()
+            failed += 1
             logger.exception("gold_story enqueue failed bvid=%s", row.source_id)
             outcome = {
                 "source_id": row.source_id,
@@ -855,7 +886,7 @@ def drain_pending_stories(
     *,
     config: Config | None = None,
     skip_transcript: bool = False,
-    force_transcript: bool = True,
+    force_transcript: bool = False,
     dry_run: bool = False,
     limit: int | None = None,
     on_progress: Any | None = None,
@@ -902,10 +933,13 @@ def drain_pending_stories(
                 try:
                     candidate = _build_candidate_from_bvid(source_id, config=cfg, existing_row=row)
                     outcome = process_candidate(candidate, config=cfg, skip_transcript=skip_transcript,
-                                                overwrite_existing=True, force_transcript=False, existing_row=row)
+                                                overwrite_existing=True, force_transcript=force_transcript, existing_row=row)
                 except Exception as exc:
                     outcome = _execution_failure(exc, "drain")
             if outcome.get("action") != "error":
+                break
+            if outcome.get("persisted"):
+                failed += 1
                 break
             attempts = int((row.get("payload") or {}).get("collect_attempts") or 0)
             retry = bool(outcome.get("retryable")) and attempts < _COLLECT_MAX_ATTEMPTS
@@ -981,12 +1015,17 @@ def run_collect_pipeline(
     )
     _emit({**enq, "phase": "enqueued"})
 
+    def _with_enqueue(partial: dict[str, Any]) -> dict[str, Any]:
+        return {**enq, **partial,
+                "failed": int(enq.get("failed") or 0) + int(partial.get("failed") or 0),
+                "results": list(enq.get("results") or []) + list(partial.get("results") or [])}
+
     drain = drain_pending_stories(
         config=cfg,
         skip_transcript=skip_transcript,
-        force_transcript=not skip_transcript,
+        force_transcript=False,
         dry_run=False,
-        on_progress=on_progress,
+        on_progress=lambda partial: _emit(_with_enqueue(partial)),
     )
     return {
         "phase": "done",
@@ -997,7 +1036,7 @@ def run_collect_pipeline(
         "inserted": drain.get("inserted", 0),
         "inserted_rejected": drain.get("inserted_rejected", 0),
         "gate_rejected": drain.get("gate_rejected", 0),
-        "failed": drain.get("failed", 0),
+        "failed": int(enq.get("failed") or 0) + int(drain.get("failed") or 0),
         "results": list(enq.get("results") or []) + list(drain.get("results") or []),
         "candidates_file": enq.get("candidates_file"),
     }

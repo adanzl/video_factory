@@ -65,7 +65,7 @@ def is_near_duplicate_story(left: str, right: str) -> bool:
     return longest >= NEAR_DUP_LCS_MIN
 
 
-def find_near_duplicate(story_raw: str) -> dict[str, Any] | None:
+def find_near_duplicate(story_raw: str, *, exclude_id: int | None = None) -> dict[str, Any] | None:
     """库内近重复：转载换 BV、LLM 抽稿措辞不同仍能命中。"""
     compact_new = compact_story_raw(story_raw)
     if len(compact_new) < NEAR_DUP_LCS_MIN:
@@ -74,8 +74,9 @@ def find_near_duplicate(story_raw: str) -> dict[str, Any] | None:
         """
         SELECT id, source_id, title,
                json_extract(payload_json, '$.story_raw') AS story_raw
-        FROM gold_story
+        FROM gold_story WHERE (? IS NULL OR id != ?)
         """,
+        (exclude_id, exclude_id),
     )
     sql.commit()
     best: dict[str, Any] | None = None

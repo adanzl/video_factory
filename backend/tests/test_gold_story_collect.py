@@ -43,7 +43,7 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
     metadata_dir = cfg.gold_story_media_workspace / "metadata"
     metadata_dir.mkdir(parents=True)
     (metadata_dir / f"{sid}.json").write_text(json.dumps({"transcript_path": str(transcript_path), "cross_check": cross}))
-    existing = {"id": 10, "payload": {"transcript_repair_confidence": 0.8,
+    existing = {"id": 10, "source_id": sid, "payload": {"transcript_repair_confidence": 0.8,
                 "transcript_repair_notes": "上一次的修复说明", "transcript_repaired_path": "old.repaired.txt",
                 "transcript_cross_check": {"available": True, "passed": True}}}
     if not is_failure:
@@ -71,7 +71,7 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
         return {"story_raw": "来自独立来源的完整故事" * 12, "source_type": "mixed"}
     monkeypatch.setattr(p.llm_steps, "extract_story_raw", extract)
     monkeypatch.setattr(p.llm_steps, "review_story_source", lambda **_kw: {"faithful": True})
-    monkeypatch.setattr(p.repo_gold_story, "find_near_duplicate", lambda *_a: None)
+    monkeypatch.setattr(p.repo_gold_story, "find_near_duplicate", lambda *_a, **_kw: None)
     monkeypatch.setattr(p.llm_steps, "structurize_story", lambda **_kw: {"mechanism": "M6", "structure_type": "N"})
     monkeypatch.setattr(p.llm_steps, "build_scene_contract", lambda **_kw: {})
     monkeypatch.setattr(p, "sync_h3_from_scene_contract", lambda h3, *_a, **_kw: (h3, []))
@@ -378,7 +378,7 @@ def test_reimport_stories_on_progress(app_ctx, monkeypatch):
             url=f"https://www.bilibili.com/video/BV1PROGTEST{i}",
             mechanism="M6",
             structure_type="A",
-            story_raw="稿" * 20,
+            story_raw=f"稿{i}" * 20,
             payload={"beat": ["a", "b", "c", "d"]},
             title=f"进度{i}",
             auto_score=0.8,
@@ -728,3 +728,140 @@ def test_collect_cli_exit_code_reports_execution_failure(app_ctx, monkeypatch, r
     monkeypatch.setattr(cli, "_cli_app", lambda *a, **k: app_ctx)
     monkeypatch.setattr(cli, "run_collect_pipeline", lambda **k: report)
     assert cli.main(["run"]) == expected
+
+
+def test_reimport_duplicate_ids_run_once_and_continue_after_item_failure(app_ctx, monkeypatch):
+    from app.services.gold_story.collect import pipeline as p
+    ids = [_pending_source("BV1BATCH0001"), _pending_source("BV1BATCH0002")]
+    calls = []
+    def overwrite(gid, **kwargs):
+        calls.append(gid)
+        if gid == ids[0]:
+            raise OSError("item unavailable")
+        return {"id": gid, "action": "ok", "source_id": "BV1BATCH0002"}
+    monkeypatch.setattr(p, "overwrite_existing_story", overwrite)
+    report = p.reimport_stories(gold_story_ids=[ids[0], ids[0], ids[1]], source_ids=["BV1BATCH0002"])
+    assert calls == ids
+    assert report["requested"] == 2 and report["failed"] == 1 and report["updated"] == 1
+
+
+def test_new_bv_batch_isolates_processing_and_progress_failures(app_ctx, monkeypatch):
+    from app.services.gold_story.collect import pipeline as p
+    calls = []
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda sid, **k: sid)
+    def process(sid, **kwargs):
+        calls.append(sid)
+        if sid == "BV1BATCH0001":
+            raise OSError("storage unavailable")
+        return {"action": "insert", "id": 123}
+    def progress(report):
+        raise RuntimeError("progress subscriber disconnected")
+    monkeypatch.setattr(p, "process_candidate", process)
+    report = p.reimport_stories(source_ids=["BV1BATCH0001", "BV1BATCH0002", "BV1BATCH0001"], on_progress=progress)
+    assert calls == ["BV1BATCH0001", "BV1BATCH0002"]
+    assert report["failed"] == 1 and report["inserted"] == 1
+    assert report["results"][0]["error"] == "storage unavailable"
+
+
+def test_reimport_dedupe_excludes_self_before_selecting_best_match(app_ctx, tmp_path, monkeypatch):
+    from app.config import Config
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    text = "姐姐拿着书本询问弟弟是否喜欢学习，弟弟说你听不懂我说话我也听不懂你说话，所以彼此一样。姐姐反驳说他只是嘴硬，弟弟无话可说。"
+    first = _pending_source("BV1BATCH0001")
+    other = _pending_source("BV1BATCH0002")
+    repo.patch_story_payload(first, {"story_raw": text})
+    repo.patch_story_payload(other, {"story_raw": text + "妈妈听见后笑出了声。"})
+    assert repo.find_near_duplicate(text)["id"] == first
+    row = repo.get_story(first)
+    cfg = Config(); cfg.gold_story_transcript_dir = tmp_path; cfg.gold_story_transcript_repair = False
+    (tmp_path / "BV1BATCH0001.txt").write_text(text)
+    monkeypatch.setattr(p.llm_steps, "extract_story_raw", lambda **k: {"story_raw": text})
+    monkeypatch.setattr(p.llm_steps, "review_story_source", lambda **k: {"faithful": True})
+    monkeypatch.setattr(p.llm_steps, "structurize_story", lambda **k: pytest.fail("duplicate reached H3"))
+    candidate = VideoCandidate(source="bili", source_id="BV1BATCH0001", url="", title="姐弟日常", description="", view_count=1, reply_count=1, keyword="")
+    result = p.process_candidate(candidate, config=cfg, skip_transcript=True, overwrite_existing=True, existing_row=row)
+    assert result["reason"] == "duplicate_similar_story"
+    assert result["similar_source_id"] == "BV1BATCH0002"
+
+
+def test_enqueue_failures_survive_aggregate_report_and_progress(app_ctx, monkeypatch):
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    candidates = [VideoCandidate(source="bili", source_id=f"BV1BATCH000{i}", url="", title="姐弟日常", description="", view_count=1, reply_count=1, keyword="") for i in (1, 2)]
+    monkeypatch.setattr(p, "collect_candidates", lambda **k: candidates)
+    original = p.repo_gold_story.insert_pending
+    def insert(**kwargs):
+        if kwargs["source_id"] == "BV1BATCH0001":
+            raise OSError("database write failed")
+        return original(**kwargs)
+    monkeypatch.setattr(p.repo_gold_story, "insert_pending", insert)
+    def drain(**kwargs):
+        result = {"phase": "process", "processed": 1, "failed": 1, "results": [{"action": "error", "source_id": "BV1BATCH0002"}]}
+        kwargs["on_progress"](result)
+        return result
+    monkeypatch.setattr(p, "drain_pending_stories", drain)
+    updates = []
+    result = p.run_collect_pipeline(write_list=False, on_progress=updates.append)
+    assert result["enqueued"] == 1 and result["failed"] == 2
+    assert updates[-1]["failed"] == 2 and updates[-1]["candidates"] == 2
+
+
+@pytest.mark.parametrize("queued", [False, True])
+@pytest.mark.parametrize("export_fails", [False, True])
+def test_collection_export_failure_keeps_committed_story_and_reports_failure(app_ctx, tmp_path, monkeypatch, queued, export_fails):
+    from app.config import Config
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    sid = "BV1EXPORT001"
+    cfg = Config(); cfg.gold_story_transcript_dir = tmp_path; cfg.gold_story_transcript_repair = False
+    (tmp_path / (sid + ".txt")).write_text("妈妈：谁收拾桌上的书本？\n姐姐：我来收拾。\n弟弟：那我擦桌子。")
+    candidate = VideoCandidate(source="bili", source_id=sid, url="", title="姐弟日常", description="", view_count=500000, reply_count=500, keyword="", funny_metrics={"funny_signal": 0.8})
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: candidate)
+    monkeypatch.setattr(p.llm_steps, "extract_story_raw", lambda **k: {"story_raw": "姐弟一起收拾书本并擦干净桌子。" * 15, "extract_confidence": 0.9})
+    monkeypatch.setattr(p.llm_steps, "review_story_source", lambda **k: {"faithful": True})
+    monkeypatch.setattr(p.llm_steps, "structurize_story", lambda **k: {"mechanism": "M6", "structure_type": "A", "structure_confidence": 0.9})
+    monkeypatch.setattr(p.llm_steps, "build_scene_contract", lambda **k: {})
+    monkeypatch.setattr(p, "sync_h3_from_scene_contract", lambda h3, *a, **k: (h3, []))
+    monkeypatch.setattr(p.llm_steps, "build_dialogue_seed", lambda **k: {"dialogue_confidence": 0.9})
+    monkeypatch.setattr(p.gs_review, "audit_story", lambda **k: {"pass": True})
+    monkeypatch.setattr(p, "passes_funny_gate_from_payload", lambda *a, **k: (True, "ok"))
+    calls = []
+    def export(**kwargs):
+        calls.append(kwargs["row"]["id"])
+        if export_fails:
+            raise OSError("export disk full")
+        return {"json": "export.json", "markdown": "export.md"}
+    monkeypatch.setattr(p, "export_story_files", export)
+    if queued:
+        _pending_source(sid)
+        report = p.drain_pending_stories(config=cfg)
+    else:
+        report = p.reimport_stories(source_ids=[sid], config=cfg, force_transcript=False)
+    stored = repo.get_by_source_id(source_id=sid)
+    assert stored["status"] == "active"
+    assert len(calls) == 1
+    assert report["failed"] == int(export_fails)
+    outcome = report["results"][0]
+    if export_fails:
+        assert outcome["stage"] == "export" and outcome["persisted"] is True
+        assert outcome["error"] == "export disk full"
+        assert outcome["id"] == stored["id"]
+    else:
+        assert outcome["export"]["json"] == "export.json"
+
+
+@pytest.mark.parametrize("force", [None, False, True])
+def test_drain_honors_explicit_transcript_refresh_but_reuses_cache_by_default(app_ctx, monkeypatch, force):
+    from app.services.gold_story.collect import pipeline as p
+    _pending_source()
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: object())
+    seen = []
+    def process(*a, **kwargs):
+        seen.append(kwargs["force_transcript"])
+        return {"action": "reject", "reason": "source_unusable"}
+    monkeypatch.setattr(p, "process_candidate", process)
+    p.drain_pending_stories(**({} if force is None else {"force_transcript": force}))
+    assert seen == [bool(force)]
