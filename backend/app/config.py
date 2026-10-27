@@ -316,7 +316,7 @@ class Config:
         self.llm_provider: str = os.getenv("LLM_PROVIDER", "deepseek").strip().lower()
         self.deepseek_api_key: str | None = deepseek_key
         self.deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        self.deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+        self.deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4.1-flash")
         # 保留旧配置名；规划/重试默认跟随主模型，避免隐式切换到 Pro。
         self.deepseek_pro_model: str = os.getenv("DEEPSEEK_PRO_MODEL") or self.deepseek_model
         self.deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768"))

@@ -460,7 +460,7 @@ def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
         )
         return
     if not re.search(
-        r"不算|只是|这次|刚才|例外|因为|我这是|教你|示范|检查|试试|本来",
+        r"不(?:能|该|应(?:该)?)?算|算不上|只是|这次|刚才|例外|因为|我这是|教你|示范|检查|试试|本来",
         ln3,
     ):
         errors.append(

@@ -16,14 +16,14 @@ def test_session_id_stable_for_same_prompt() -> None:
     assert a.startswith("vf-")
 
 
-@pytest.mark.parametrize("pro_value", [None, "", "deepseek-v4-flash"])
+@pytest.mark.parametrize("pro_value", [None, "", "deepseek-v4.1-flash"])
 def test_flash_config_reaches_default_planning_and_multiturn_requests(monkeypatch, pro_value):
     import importlib
     config_module = importlib.import_module("app.config")
     from app.services.gold_story.gold_chat import expand
 
     monkeypatch.setattr(config_module, "load_dotenv", lambda *_a, **_kw: None)
-    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4.1-flash")
     monkeypatch.setenv("OPENCODE_GO_API_KEY", "test-key")
     monkeypatch.setenv("LLM_PROVIDER", "opencode_go")
     if pro_value is None:
@@ -32,8 +32,8 @@ def test_flash_config_reaches_default_planning_and_multiturn_requests(monkeypatc
         monkeypatch.setenv("DEEPSEEK_PRO_MODEL", pro_value)
     settings = config_module.Config()
     monkeypatch.setattr(config_module, "config", settings)
-    assert settings.deepseek_pro_model == settings.deepseek_model == "deepseek-v4-flash"
-    assert expand._source_plan_model() == "deepseek-v4-flash"
+    assert settings.deepseek_pro_model == settings.deepseek_model == "deepseek-v4.1-flash"
+    assert expand._source_plan_model() == "deepseek-v4.1-flash"
     response = MagicMock()
     response.json.return_value = {"choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}]}
     with patch("requests.post", return_value=response) as post:
@@ -43,7 +43,7 @@ def test_flash_config_reaches_default_planning_and_multiturn_requests(monkeypatc
         client._chat("system", "user", model=expand._source_plan_model())
         client.chat_messages([{"role": "user", "content": "test"}], model=client._pro_model)
     assert len(post.call_args_list) == 4
-    assert all(call.kwargs["json"]["model"] == "deepseek-v4-flash" for call in post.call_args_list)
+    assert all(call.kwargs["json"]["model"] == "deepseek-v4.1-flash" for call in post.call_args_list)
 
 
 @pytest.mark.parametrize("base_url", [
@@ -64,7 +64,7 @@ def test_opencode_chat_headers_and_url(monkeypatch, base_url) -> None:
     )
     monkeypatch.setattr(config, "opencode_go_user_agent", "video-factory-test/1", raising=False)
     monkeypatch.setattr(config, "deepseek_api_key", "ds-key", raising=False)
-    monkeypatch.setattr(config, "deepseek_model", "deepseek-v4-flash", raising=False)
+    monkeypatch.setattr(config, "deepseek_model", "deepseek-v4.1-flash", raising=False)
     monkeypatch.setattr(config, "deepseek_max_tokens", 1024, raising=False)
     monkeypatch.setattr(config, "deepseek_thinking_enabled", False, raising=False)
 
@@ -98,7 +98,7 @@ def test_opencode_chat_headers_and_url(monkeypatch, base_url) -> None:
     assert headers["User-Agent"] == "video-factory-test/1"
     assert headers["x-opencode-session"] == _session_id_for_chat("system", "user")
     body = kwargs["json"]
-    assert body["model"] == "deepseek-v4-flash"
+    assert body["model"] == "deepseek-v4.1-flash"
     assert body["thinking"] == {"type": "disabled"}
     assert "response_format" not in body
     assert body["temperature"] == 0.5

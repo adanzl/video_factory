@@ -1089,6 +1089,35 @@ def test_a_closing_role_pair_follows_beat_speech_acts():
     assert wrong_errors and "末句必须妈妈" in wrong_errors[0]
 
 
+@pytest.mark.parametrize(
+    "excuse, accepted",
+    [
+        ("借来看一眼不能算拿走。", True),
+        ("我只摸一下，不该算拿走吧。", True),
+        ("借用一下算不上拿走。", True),
+        ("那不一样。", False),
+        ("我是姐姐，听我的。", False),
+    ],
+)
+def test_a_closing_recognizes_negative_classification(excuse, accepted):
+    from app.services.daily_story.story_types.a.validate import append_closing_structure_errors
+
+    story = {
+        "punchline_explain": "A类权威翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我也想看。"},
+            {"speaker": "灿灿", "line": "看完才能拿走。"},
+            {"speaker": "昭昭", "line": "你刚才说看完才能拿走，你看完了吗？"},
+            {"speaker": "灿灿", "line": excuse},
+            {"speaker": "昭昭", "line": "为什么借用就能拿走？"},
+            {"speaker": "灿灿", "line": "行吧，还给你。"},
+        ],
+    }
+    errors: list[str] = []
+    append_closing_structure_errors(story, errors)
+    assert (not errors) is accepted
+
+
 def test_a_closing_allows_two_kids_on_challenger_side():
     """2 孩子 vs 1 大人：末四拍两个孩子在挑战方一侧换着说，不算错。"""
     from app.services.daily_story.story_types.a.validate import (
