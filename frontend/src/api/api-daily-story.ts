@@ -220,12 +220,19 @@ export async function generateDailyStoryThemes(
     .filter((item): item is DailyStoryThemeItem => item != null);
 }
 
-export async function createDailyStoryJob(storyId: number, params?: { speechRate?: number; lineGap?: number }): Promise<any> {
-  const response = await api.post("/v_factory/api/daily_story/create_job", {
-    id: storyId,
-    speech_chars_per_sec: params?.speechRate,
-    phrase_gap_sec: params?.lineGap,
-  });
+export async function createDailyStoryJob(
+  storyId: number,
+  params?: { speechRate?: number; lineGap?: number; skipErrorNotice?: boolean },
+): Promise<{ id: number }> {
+  const response = await api.post<{ id: number }>(
+    "/v_factory/api/daily_story/create_job",
+    {
+      id: storyId,
+      speech_chars_per_sec: params?.speechRate,
+      phrase_gap_sec: params?.lineGap,
+    },
+    { skipErrorNotice: params?.skipErrorNotice === true },
+  );
   return response.data;
 }
 

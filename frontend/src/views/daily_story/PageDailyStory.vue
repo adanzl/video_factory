@@ -21,9 +21,18 @@
         <el-radio-button value="no">无任务</el-radio-button>
       </el-radio-group>
       <el-button
+        type="primary"
+        size="small"
+        :disabled="!selectedIds.length || deleting"
+        :loading="creatingJobs"
+        @click="handleBatchCreateJobs"
+      >
+        发起任务{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
+      </el-button>
+      <el-button
         type="danger"
         size="small"
-        :disabled="!selectedIds.length"
+        :disabled="!selectedIds.length || creatingJobs"
         :loading="deleting"
         @click="handleDeleteSelected"
       >
@@ -171,6 +180,7 @@ import CreateStory from "@/views/daily_story/dialogs/CreateStory.vue";
 import {
   listDailyStories,
   deleteDailyStories,
+  createDailyStoryJob,
   DAILY_STORY_TYPE_FILTER_OPTIONS,
   formatDailyStoryType,
   type DailyStoryRecord,
@@ -183,6 +193,7 @@ const router = useRouter();
 const stories = ref<DailyStoryRecord[]>([]);
 const loading = ref(false);
 const deleting = ref(false);
+const creatingJobs = ref(false);
 const selectedIds = ref<number[]>([]);
 const showDetailDialog = ref(false);
 const currentStory = ref<DailyStoryRecord | null>(null);
@@ -329,6 +340,61 @@ async function handleDeleteOne(id: number) {
     await fetchStories();
   } catch (e) {
     if (e !== "cancel") handleError(e, "删除失败");
+  }
+}
+
+function canCreateJob(row: DailyStoryRecord): boolean {
+  if (row.job_id) return false;
+  if (row.status === "processing" || row.status === "review_pending") return false;
+  return (row.story?.dialogue?.length || 0) > 0;
+}
+
+function jobCreateError(error: unknown): string {
+  const data = (error as { response?: { data?: { error?: string } } })?.response?.data;
+  return data?.error?.trim() || "创建失败";
+}
+
+async function handleBatchCreateJobs() {
+  if (!selectedIds.value.length || creatingJobs.value) return;
+  const selected = stories.value.filter((row) => selectedIds.value.includes(row.id));
+  const targets = selected.filter(canCreateJob);
+  const skipped = selected.length - targets.length;
+  if (!targets.length) {
+    ElMessage.warning("选中的故事已有任务，或尚未就绪");
+    return;
+  }
+  const skipHint = skipped ? `，跳过 ${skipped} 条已有任务或未就绪的` : "";
+  try {
+    await ElMessageBox.confirm(`确定为 ${targets.length} 条故事发起任务${skipHint}？`, "确认", {
+      type: "warning",
+    });
+  } catch (e) {
+    if (e !== "cancel") handleError(e, "发起任务失败");
+    return;
+  }
+  creatingJobs.value = true;
+  let created = 0;
+  const failed: string[] = [];
+  try {
+    for (const row of targets) {
+      try {
+        await createDailyStoryJob(row.id, { skipErrorNotice: true });
+        created += 1;
+      } catch (e) {
+        failed.push(`#${row.id} ${jobCreateError(e)}`);
+      }
+    }
+    if (!failed.length) {
+      ElMessage.success(`已发起 ${created} 个任务`);
+    } else if (created > 0) {
+      ElMessage.warning(`已发起 ${created} 个，失败 ${failed.length} 个：${failed[0]}`);
+    } else {
+      ElMessage.error(failed[0] || "发起任务失败");
+    }
+    selectedIds.value = [];
+    await fetchStories();
+  } finally {
+    creatingJobs.value = false;
   }
 }
 
