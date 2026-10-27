@@ -16,10 +16,10 @@
         从BV导入
       </el-button>
       <el-button type="primary" size="small" :disabled="!selectedIds.length" :loading="batching" @click="handleBatchConvert">
-        批量转对话{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
+        转对话{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
       <el-button type="danger" size="small" :disabled="!selectedIds.length" :loading="deleting" @click="handleBatchDelete">
-        批量删除{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
+        删除{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
       <el-checkbox v-model="batchForce" size="small">已导出也重跑</el-checkbox>
       <el-checkbox v-model="filterExcludeArchived" size="small" @change="onFilterChange">
