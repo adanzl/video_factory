@@ -9,8 +9,8 @@
       <el-button type="primary" size="small" :loading="collecting" @click="handleCollect">
         {{ collectButtonLabel }}
       </el-button>
-      <el-button type="primary" size="small" :loading="reimporting" @click="handleReimport">
-        重新导入
+      <el-button type="primary" size="small" :disabled="!selectedIds.length || batching || reimporting" :loading="importing" @click="handleImportDaily">
+        导入日常故事
       </el-button>
       <el-button type="success" size="small" :loading="reimporting" @click="handleImportBV">
         从BV导入
@@ -195,6 +195,7 @@ import {
   getGoldChatConvertStatus,
   getGoldStoryCollectStatus,
   getGoldStoryReimportStatus,
+  importGoldChat,
   listGoldChats,
   reimportGoldStories,
   type GoldChatListItem,
@@ -214,6 +215,7 @@ const tableRef = ref<any>(null);
 const loading = ref(false);
 const collecting = ref(false);
 const reimporting = ref(false);
+const importing = ref(false);
 const POLL_INTERVAL_MS = 3000;
 let collectPollTimer: ReturnType<typeof setInterval> | null = null;
 let reimportPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -1045,42 +1047,55 @@ async function handleImportBV() {
   await startReimportJob({ sourceId: raw });
 }
 
-async function handleReimport() {
-  if (selectedIds.value.length) {
-    const n = selectedIds.value.length;
-    try {
-      await ElMessageBox.confirm(
-        `将从 BV 重跑转写与结构化，覆盖选中的 ${n} 条金稿。` +
-        "已导出的 gold_chat 不会自动重转。继续？",
-        "重新导入",
-        { type: "warning" },
-      );
-    } catch {
-      return;
-    }
-    await startReimportJob({ ids: [...selectedIds.value] });
-    return;
-  }
-  let raw = "";
+async function handleImportDaily() {
+  if (importing.value) return;
+  const targets = [...new Set(selectedIds.value)].map((id) => ({
+    id,
+    force: !!items.value.find((row) => row.id === id)?.gold_chat_daily_story_id,
+  }));
+  if (!targets.length) return;
+  const existing = targets.filter((target) => target.force).length;
   try {
-    const { value } = await ElMessageBox.prompt(
-      "输入 BV 号或 B 站视频链接。已入库的会覆盖金稿，未入库的会新导入。",
-      "重新导入金稿",
-      {
-        inputPlaceholder: "BV1xxxx 或视频链接",
-        confirmButtonText: "开始导入",
-        inputValidator: (val: string) => {
-          if (!String(val || "").trim()) return "请输入 BV 号";
-          return true;
-        },
-      },
+    await ElMessageBox.confirm(
+      `将把选中的 ${targets.length} 条故事的对话稿导入日常故事。` +
+        (existing ? `其中 ${existing} 条已导入，将更新对应日常故事的稿子。` : "") +
+        "未生成或已过期的对话稿无法导入；缺少有效审核结果的稿子导入后仍需审核。继续？",
+      "导入日常故事",
+      { type: existing ? "warning" : "info", confirmButtonText: "开始导入" },
     );
-    raw = String(value || "").trim();
   } catch {
     return;
   }
-  if (!raw) return;
-  await startReimportJob({ sourceId: raw });
+  importing.value = true;
+  let imported = 0;
+  let pendingReview = 0;
+  let skipped = 0;
+  const failures: number[] = [];
+  let firstError: unknown;
+  try {
+    for (const target of targets) {
+      try {
+        const res = await importGoldChat(target);
+        if (res.action === "skip") skipped += 1;
+        else {
+          imported += 1;
+          if (res.status === "review_pending") pendingReview += 1;
+        }
+      } catch (error) {
+        if (!failures.length) firstError = error;
+        failures.push(target.id);
+      }
+    }
+    const summary = `导入日常故事完成：成功 ${imported}（待审核 ${pendingReview}），跳过 ${skipped}，失败 ${failures.length}`;
+    if (failures.length) {
+      handleError(firstError, `${summary}；失败条目：${failures.map((id) => `#${id}`).join("、")}（首条失败原因）`);
+    } else {
+      ElMessage.success(summary);
+    }
+    await fetchItems();
+  } finally {
+    importing.value = false;
+  }
 }
 
 async function handleCollect() {
