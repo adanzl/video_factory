@@ -46,14 +46,20 @@ def test_flash_config_reaches_default_planning_and_multiturn_requests(monkeypatc
     assert all(call.kwargs["json"]["model"] == "deepseek-v4-flash" for call in post.call_args_list)
 
 
-def test_opencode_chat_headers_and_url(monkeypatch) -> None:
+@pytest.mark.parametrize("base_url", [
+    "https://opencode.ai/zen/go/v1",
+    " https://opencode.ai/zen/go/v1/ ",
+    "https://opencode.ai/inference/go/openai/v1",
+    "https://proxy.example/v1/",
+])
+def test_opencode_chat_headers_and_url(monkeypatch, base_url) -> None:
     from app.config import config
 
     monkeypatch.setattr(config, "opencode_go_api_key", "oc-test-key", raising=False)
     monkeypatch.setattr(
         config,
         "opencode_go_base_url",
-        "https://opencode.ai/zen/go/v1",
+        base_url,
         raising=False,
     )
     monkeypatch.setattr(config, "opencode_go_user_agent", "video-factory-test/1", raising=False)
@@ -82,7 +88,11 @@ def test_opencode_chat_headers_and_url(monkeypatch) -> None:
     assert content == "hello"
     mock_post.assert_called_once()
     _args, kwargs = mock_post.call_args
-    assert _args[0] == "https://opencode.ai/zen/go/v1/chat/completions"
+    expected_base = (
+        "https://proxy.example/v1" if "proxy.example" in base_url
+        else "https://opencode.ai/inference/go/openai/v1"
+    )
+    assert _args[0] == f"{expected_base}/chat/completions"
     headers = kwargs["headers"]
     assert headers["Authorization"] == "Bearer oc-test-key"
     assert headers["User-Agent"] == "video-factory-test/1"
@@ -92,6 +102,35 @@ def test_opencode_chat_headers_and_url(monkeypatch) -> None:
     assert body["thinking"] == {"type": "disabled"}
     assert "response_format" not in body
     assert body["temperature"] == 0.5
+
+    messages = [{"role": "user", "content": "hello"}]
+    with patch("requests.post", return_value=ok_resp) as post:
+        client.chat_messages(messages)
+        client.chat_messages(messages)
+    first, retry = post.call_args_list
+    assert first.args[0] == f"{expected_base}/chat/completions"
+    assert first.kwargs["headers"]["Authorization"] == "Bearer oc-test-key"
+    assert first.kwargs["headers"]["x-opencode-session"]
+    assert first.kwargs["headers"]["x-opencode-session"] == retry.kwargs["headers"]["x-opencode-session"]
+
+
+@pytest.mark.parametrize("env_value, expected", [
+    (None, "https://opencode.ai/inference/go/openai/v1"),
+    ("", "https://opencode.ai/inference/go/openai/v1"),
+    (" https://opencode.ai/zen/go/v1/ ", "https://opencode.ai/inference/go/openai/v1"),
+    ("https://opencode.ai/inference/go/openai/v1/", "https://opencode.ai/inference/go/openai/v1"),
+    ("https://proxy.example/zen/go/v1/", "https://proxy.example/zen/go/v1"),
+])
+def test_opencode_config_migrates_retired_url(monkeypatch, env_value, expected):
+    import importlib
+
+    config_module = importlib.import_module("app.config")
+    monkeypatch.setattr(config_module, "load_dotenv", lambda *_a, **_kw: None)
+    if env_value is None:
+        monkeypatch.delenv("OPENCODE_GO_BASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("OPENCODE_GO_BASE_URL", env_value)
+    assert config_module.Config().opencode_go_base_url == expected
 
 
 def test_deadline_limits_each_request_and_expired_budget_makes_no_request(monkeypatch):

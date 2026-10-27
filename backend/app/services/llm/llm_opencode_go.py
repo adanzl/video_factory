@@ -5,7 +5,7 @@ import hashlib
 import logging
 from typing import Any
 
-from app.config import get_settings
+from app.config import get_settings, normalize_opencode_go_base_url
 from app.services.llm.llm_mgr import llm_request_timeout
 from app.services.llm.llm_deepseek import (
     DeepSeekClient,
@@ -30,7 +30,7 @@ def _opencode_client_class() -> type:
         return _opencode_client_cls
 
     class OpenCodeGoClient(DeepSeekClient):
-        """复用 DeepSeekClient 业务逻辑，HTTP 走 OpenCode Go zen 网关。"""
+        """复用 DeepSeekClient 业务逻辑，HTTP 走 OpenCode Go inference 网关。"""
 
         def __init__(self) -> None:
             super().__init__()
@@ -41,7 +41,7 @@ def _opencode_client_class() -> type:
                     "OPENCODE_GO_API_KEY 未配置，无法使用 LLM_PROVIDER=opencode_go"
                 )
             self._api_key = key
-            self._base_url = settings.opencode_go_base_url.rstrip("/")
+            self._base_url = normalize_opencode_go_base_url(settings.opencode_go_base_url)
             self._user_agent = settings.opencode_go_user_agent
 
         def _chat(

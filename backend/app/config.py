@@ -23,6 +23,17 @@ def _opt(key: str) -> str | None:
     return os.getenv(key) or None
 
 
+DEFAULT_OPENCODE_GO_BASE_URL = "https://opencode.ai/inference/go/openai/v1"
+
+
+def normalize_opencode_go_base_url(value: str) -> str:
+    """迁移已停用的官方 Zen 地址，保留用户自定义代理。"""
+    base_url = value.strip().rstrip("/")
+    if not base_url or base_url == "https://opencode.ai/zen/go/v1":
+        return DEFAULT_OPENCODE_GO_BASE_URL
+    return base_url
+
+
 def gold_chat_perbeat_enabled() -> bool:
     """生成、补丁和篇幅处理共用同一模式，默认启用逐拍。"""
     return str(os.getenv("GOLD_CHAT_PERBEAT") or "").strip().lower() not in {
@@ -311,10 +322,9 @@ class Config:
         self.deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768"))
         self.deepseek_thinking_enabled: bool = _bool("DEEPSEEK_THINKING", default=True)
         self.opencode_go_api_key: str | None = opencode_go_key
-        self.opencode_go_base_url: str = os.getenv(
-            "OPENCODE_GO_BASE_URL",
-            "https://opencode.ai/zen/go/v1",
-        ).rstrip("/")
+        self.opencode_go_base_url: str = normalize_opencode_go_base_url(
+            os.getenv("OPENCODE_GO_BASE_URL", DEFAULT_OPENCODE_GO_BASE_URL)
+        )
         self.opencode_go_user_agent: str = os.getenv(
             "OPENCODE_GO_USER_AGENT",
             "video-factory/1.0",
