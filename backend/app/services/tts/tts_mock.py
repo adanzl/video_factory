@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.media.ffmpeg_utils import build_srt_from_cues, concat_clips, generate_silent_mp3
+from app.services.media.ffmpeg_utils import (
+    build_srt_from_cues,
+    concat_clips,
+    generate_silent_mp3,
+    probe_duration,
+)
 from app.services.tts.phrase_timing import build_segment_tts_text
 from app.services.tts.tts_mgr import (
     SubtitleCue,
@@ -42,6 +47,7 @@ class MockTTSClient(TTSClient):
         *,
         voice: str | None = None,
         speech_rate: float | None = None,
+        reuse_existing: bool = False,
     ) -> TTSResult:
         output_dir.mkdir(parents=True, exist_ok=True)
         clips_dir = output_dir / "clips"
@@ -56,9 +62,12 @@ class MockTTSClient(TTSClient):
             seg_index = seg["segment_index"]
             phrases = tts_mgr.phrase_chunks_for_segment(seg)
             segment_text = build_segment_tts_text(phrases)
-            seg_duration = _estimate_duration(segment_text)
             clip_path = clips_dir / f"{seg_index}.mp3"
-            generate_silent_mp3(clip_path, seg_duration)
+            if reuse_existing and clip_path.is_file() and clip_path.stat().st_size > 0:
+                seg_duration = probe_duration(clip_path)
+            else:
+                seg_duration = _estimate_duration(segment_text)
+                generate_silent_mp3(clip_path, seg_duration)
             clip_paths.append(clip_path)
 
             total_chars = sum(max(len(tts.strip()), 1) for tts, _ in phrases) or 1

@@ -76,9 +76,9 @@ def _advance_after_stage(job_id: int, stage_cls: type[StageExecutor], *, status:
         _prepare_publish_hold(job_id)
     return None
 
-def _run_one_stage(job_id: int, stage_cls: type[StageExecutor], *, segment_indices: list[int] | None=None, segment_scope: str | None=None, advance: bool=True, hold: bool=False, intro_hold_tail_sec: float | None=None, intro_orientation: str | None=None, tts_speech_rate: float | None=None, tts_voice_id: str | None=None, tts_speaker_configs: dict | None=None, script_segment_target_sec: float | None=None, script_max_title_length: int | None=None, script_narration_target_words: int | None=None, script_speech_chars_per_sec: float | None=None, script_skip_title_optimize: bool=False, script_generate_image_prompts: bool=False, script_supplementary_info: str | None=None, script_video_timeline: str | None=None, script_segment_index: int | None=None, material_narration: str | None=None) -> dict:
+def _run_one_stage(job_id: int, stage_cls: type[StageExecutor], *, segment_indices: list[int] | None=None, segment_scope: str | None=None, advance: bool=True, hold: bool=False, intro_hold_tail_sec: float | None=None, intro_orientation: str | None=None, tts_speech_rate: float | None=None, tts_voice_id: str | None=None, tts_speaker_configs: dict | None=None, script_segment_target_sec: float | None=None, script_max_title_length: int | None=None, script_narration_target_words: int | None=None, script_speech_chars_per_sec: float | None=None, script_skip_title_optimize: bool=False, script_generate_image_prompts: bool=False, script_supplementary_info: str | None=None, script_video_timeline: str | None=None, script_segment_index: int | None=None, material_narration: str | None=None, fill_missing: bool=False, fill_state: dict[str, bool] | None=None) -> dict:
     job = _reload_job(job_id)
-    ctx = JobContext.from_job(job, rerun_segment_indices=tuple(segment_indices) if segment_indices else None, segment_scope=segment_scope, intro_hold_tail_sec=intro_hold_tail_sec, intro_orientation=intro_orientation, tts_speech_rate=tts_speech_rate, tts_voice_id=tts_voice_id, tts_speaker_configs=tts_speaker_configs, script_segment_target_sec=script_segment_target_sec, script_max_title_length=script_max_title_length, script_narration_target_words=script_narration_target_words, script_speech_chars_per_sec=script_speech_chars_per_sec, script_skip_title_optimize=script_skip_title_optimize, script_generate_image_prompts=script_generate_image_prompts, script_supplementary_info=script_supplementary_info, script_video_timeline=script_video_timeline, script_segment_index=script_segment_index, material_narration=material_narration)
+    ctx = JobContext.from_job(job, rerun_segment_indices=tuple(segment_indices) if segment_indices else None, segment_scope=segment_scope, intro_hold_tail_sec=intro_hold_tail_sec, intro_orientation=intro_orientation, tts_speech_rate=tts_speech_rate, tts_voice_id=tts_voice_id, tts_speaker_configs=tts_speaker_configs, script_segment_target_sec=script_segment_target_sec, script_max_title_length=script_max_title_length, script_narration_target_words=script_narration_target_words, script_speech_chars_per_sec=script_speech_chars_per_sec, script_skip_title_optimize=script_skip_title_optimize, script_generate_image_prompts=script_generate_image_prompts, script_supplementary_info=script_supplementary_info, script_video_timeline=script_video_timeline, script_segment_index=script_segment_index, material_narration=material_narration, fill_missing=fill_missing, fill_state=fill_state)
     _execute_stage(job_id, stage_cls, ctx)
     if not advance:
         job_cancel.raise_if_cancelled(job_id)
@@ -92,7 +92,40 @@ def _run_one_stage(job_id: int, stage_cls: type[StageExecutor], *, segment_indic
         return done
     return _reload_job(job_id)
 
-def _run_from(job_id: int, start_cls: type[StageExecutor], *, segment_indices: list[int] | None=None, segment_scope: str | None=None, intro_hold_tail_sec: float | None=None, intro_orientation: str | None=None, tts_speech_rate: float | None=None, tts_voice_id: str | None=None, tts_speaker_configs: dict | None=None, script_segment_target_sec: float | None=None, script_max_title_length: int | None=None, script_narration_target_words: int | None=None, script_speech_chars_per_sec: float | None=None, script_skip_title_optimize: bool=False, script_generate_image_prompts: bool=False, script_supplementary_info: str | None=None, script_video_timeline: str | None=None, script_segment_index: int | None=None, material_narration: str | None=None) -> dict:
+def _stage_complete(job: dict, stage_name: str) -> bool:
+    from app.config import get_settings
+    from app.repositories import repo_segment
+    from app.services.job.job_fill import stage_outputs_complete
+
+    media_dir = get_settings().video_data_dir / str(job['id'])
+    segments = None
+    if stage_name in {'tts', 'segment'}:
+        segments = repo_segment.list_segments(int(job['id']))
+    return stage_outputs_complete(job, stage_name, media_dir=media_dir, segments=segments)
+
+def _nothing_to_fill(job_id: int, stage_name: str) -> dict:
+    job = _reload_job(job_id)
+    status = 'done' if job.get('stage') == 'done' else 'pending'
+    with atomic():
+        repo_job.update_job(job_id, status=status, error_message=None, fail_stage=None)
+        repo_job_log.append_log(job_id, stage_name, '成片已齐，无需补全')
+    return _reload_job(job_id)
+
+def _run_fill(job_id: int, start_cls: type[StageExecutor], **kwargs: object) -> dict:
+    """从 start_cls 起只补缺口，然后跑到发布前。已齐的阶段整段跳过。"""
+    job = _reload_job(job_id)
+    stage_cls: type[StageExecutor] | None = start_cls
+    while stage_cls is not None and stage_cls.name != 'publish':
+        if not _stage_complete(job, stage_cls.name):
+            break
+        stage_cls = next_stage_class(stage_cls, job)
+        job = _reload_job(job_id)
+    if stage_cls is None or stage_cls.name == 'publish':
+        return _nothing_to_fill(job_id, start_cls.name)
+    produced: dict[str, bool] = {'produced': False}
+    return _run_from(job_id, stage_cls, fill_missing=True, fill_state=produced, **kwargs)  # type: ignore[arg-type]
+
+def _run_from(job_id: int, start_cls: type[StageExecutor], *, segment_indices: list[int] | None=None, segment_scope: str | None=None, intro_hold_tail_sec: float | None=None, intro_orientation: str | None=None, tts_speech_rate: float | None=None, tts_voice_id: str | None=None, tts_speaker_configs: dict | None=None, script_segment_target_sec: float | None=None, script_max_title_length: int | None=None, script_narration_target_words: int | None=None, script_speech_chars_per_sec: float | None=None, script_skip_title_optimize: bool=False, script_generate_image_prompts: bool=False, script_supplementary_info: str | None=None, script_video_timeline: str | None=None, script_segment_index: int | None=None, material_narration: str | None=None, fill_missing: bool=False, fill_state: dict[str, bool] | None=None) -> dict:
     job_mgr.mark_running(job_id)
     stage_cls: type[StageExecutor] | None = start_cls
     rerun_segments = tuple(segment_indices) if segment_indices else None
@@ -100,7 +133,11 @@ def _run_from(job_id: int, start_cls: type[StageExecutor], *, segment_indices: l
     while stage_cls is not None:
         job_cancel.raise_if_cancelled(job_id)
         job = _reload_job(job_id)
-        ctx = JobContext.from_job(job, rerun_segment_indices=rerun_segments, segment_scope=scope if stage_cls.name == 'segment' else None, intro_hold_tail_sec=intro_hold_tail_sec if stage_cls.name == 'intro' else None, intro_orientation=intro_orientation if stage_cls.name == 'intro' else None, tts_speech_rate=tts_speech_rate if stage_cls.name == 'tts' else None, tts_voice_id=tts_voice_id if stage_cls.name == 'tts' else None, tts_speaker_configs=tts_speaker_configs if stage_cls.name == 'tts' else None, script_segment_target_sec=script_segment_target_sec if stage_cls.name == 'script' else None, script_max_title_length=script_max_title_length if stage_cls.name == 'script' else None, script_narration_target_words=script_narration_target_words if stage_cls.name == 'script' else None, script_speech_chars_per_sec=script_speech_chars_per_sec if stage_cls.name == 'script' else None, script_skip_title_optimize=script_skip_title_optimize if stage_cls.name == 'script' else False, script_generate_image_prompts=script_generate_image_prompts if stage_cls.name == 'script' else False, script_supplementary_info=script_supplementary_info if stage_cls.name == 'script' else None, script_video_timeline=script_video_timeline if stage_cls.name == 'script' else None, script_segment_index=script_segment_index if stage_cls.name == 'script' else None, material_narration=material_narration if stage_cls.name == 'script' else None)
+        if fill_missing:
+            with atomic():
+                repo_job.update_job(job_id, stage=stage_cls.name, status='running', error_message=None, fail_stage=None)
+            job = _reload_job(job_id)
+        ctx = JobContext.from_job(job, rerun_segment_indices=rerun_segments, segment_scope=scope if stage_cls.name == 'segment' else None, intro_hold_tail_sec=intro_hold_tail_sec if stage_cls.name == 'intro' else None, intro_orientation=intro_orientation if stage_cls.name == 'intro' else None, tts_speech_rate=tts_speech_rate if stage_cls.name == 'tts' else None, tts_voice_id=tts_voice_id if stage_cls.name == 'tts' else None, tts_speaker_configs=tts_speaker_configs if stage_cls.name == 'tts' else None, script_segment_target_sec=script_segment_target_sec if stage_cls.name == 'script' else None, script_max_title_length=script_max_title_length if stage_cls.name == 'script' else None, script_narration_target_words=script_narration_target_words if stage_cls.name == 'script' else None, script_speech_chars_per_sec=script_speech_chars_per_sec if stage_cls.name == 'script' else None, script_skip_title_optimize=script_skip_title_optimize if stage_cls.name == 'script' else False, script_generate_image_prompts=script_generate_image_prompts if stage_cls.name == 'script' else False, script_supplementary_info=script_supplementary_info if stage_cls.name == 'script' else None, script_video_timeline=script_video_timeline if stage_cls.name == 'script' else None, script_segment_index=script_segment_index if stage_cls.name == 'script' else None, material_narration=material_narration if stage_cls.name == 'script' else None, fill_missing=fill_missing, fill_state=fill_state)
         _execute_stage(job_id, stage_cls, ctx)
         job_cancel.raise_if_cancelled(job_id)
         job = _reload_job(job_id)
@@ -131,15 +168,19 @@ def run_job(job_id: int, *, from_stage: str | None=None, only_stage: str | None=
         return job
     return _run_from(job_id, stage_class_for(job['stage'], job))
 
-def run_prepare(job_id: int, *, to_end: bool=False) -> dict:
+def run_prepare(job_id: int, *, to_end: bool=False, fill: bool=False) -> dict:
     from worker.stages.material.prepare import MaterialPrepareStage
+    if fill:
+        return _run_fill(job_id, MaterialPrepareStage)
     if to_end:
         return _run_from(job_id, MaterialPrepareStage)
     return _run_one_stage(job_id, MaterialPrepareStage, hold=True)
 
-def run_script(job_id: int, *, to_end: bool=False, segment_target_sec: float | None=None, max_title_length: int | None=None, narration_target_words: int | None=None, speech_chars_per_sec: float | None=None, skip_title_optimize: bool=False, generate_image_prompts: bool=False, supplementary_info: str | None=None, video_timeline: str | None=None, material_narration: str | None=None, segment_index: int | None=None) -> dict:
+def run_script(job_id: int, *, to_end: bool=False, segment_target_sec: float | None=None, max_title_length: int | None=None, narration_target_words: int | None=None, speech_chars_per_sec: float | None=None, skip_title_optimize: bool=False, generate_image_prompts: bool=False, supplementary_info: str | None=None, video_timeline: str | None=None, material_narration: str | None=None, segment_index: int | None=None, fill: bool=False) -> dict:
     job = _reload_job(job_id)
     script_cls = stage_class_for('script', job)
+    if fill:
+        return _run_fill(job_id, script_cls, script_segment_target_sec=segment_target_sec, script_max_title_length=max_title_length, script_narration_target_words=narration_target_words, script_speech_chars_per_sec=speech_chars_per_sec, script_skip_title_optimize=skip_title_optimize, script_generate_image_prompts=generate_image_prompts, script_supplementary_info=supplementary_info, script_video_timeline=video_timeline, material_narration=material_narration)
     if to_end:
         return _run_from(job_id, script_cls, script_segment_target_sec=segment_target_sec, script_max_title_length=max_title_length, script_narration_target_words=narration_target_words, script_speech_chars_per_sec=speech_chars_per_sec, script_skip_title_optimize=skip_title_optimize, script_generate_image_prompts=generate_image_prompts, script_supplementary_info=supplementary_info, script_video_timeline=video_timeline, script_segment_index=segment_index, material_narration=material_narration)
     return _run_one_stage(job_id, script_cls, hold=True, script_segment_target_sec=segment_target_sec, script_max_title_length=max_title_length, script_narration_target_words=narration_target_words, script_speech_chars_per_sec=speech_chars_per_sec, script_skip_title_optimize=skip_title_optimize, script_generate_image_prompts=generate_image_prompts, script_supplementary_info=supplementary_info, script_video_timeline=video_timeline, script_segment_index=segment_index, material_narration=material_narration)
@@ -336,9 +377,11 @@ def _run_narration(job_id: int) -> dict:
     logger.info('job %s narration regenerated', job_id)
     return _reload_job(job_id)
 
-def run_intro(job_id: int, *, to_end: bool=False, hold_tail_sec: float | None=None, orientation: str | None=None) -> dict:
+def run_intro(job_id: int, *, to_end: bool=False, hold_tail_sec: float | None=None, orientation: str | None=None, fill: bool=False) -> dict:
     job = _reload_job(job_id)
     intro_cls = stage_class_for('intro', job)
+    if fill:
+        return _run_fill(job_id, intro_cls, intro_hold_tail_sec=hold_tail_sec, intro_orientation=orientation)
     if to_end:
         return _run_from(job_id, intro_cls, intro_hold_tail_sec=hold_tail_sec, intro_orientation=orientation)
     return _run_one_stage(job_id, intro_cls, hold=True, intro_hold_tail_sec=hold_tail_sec, intro_orientation=orientation)
@@ -348,16 +391,20 @@ def run_cover(job_id: int, *, to_end: bool=False) -> dict:
     from app.services.job.job_mgr import job_mgr
     return job_mgr.run_cover(job_id, to_end=to_end)
 
-def run_tts(job_id: int, *, to_end: bool=False, speech_rate: float | None=None, voice_id: str | None=None, speaker_configs: dict | None=None) -> dict:
+def run_tts(job_id: int, *, to_end: bool=False, speech_rate: float | None=None, voice_id: str | None=None, speaker_configs: dict | None=None, fill: bool=False) -> dict:
     job = _reload_job(job_id)
     tts_cls = stage_class_for('tts', job)
+    if fill:
+        return _run_fill(job_id, tts_cls, tts_speech_rate=speech_rate, tts_voice_id=voice_id, tts_speaker_configs=speaker_configs)
     if to_end:
         return _run_from(job_id, tts_cls, tts_speech_rate=speech_rate, tts_voice_id=voice_id, tts_speaker_configs=speaker_configs)
     return _run_one_stage(job_id, tts_cls, hold=True, tts_speech_rate=speech_rate, tts_voice_id=voice_id, tts_speaker_configs=speaker_configs)
 
-def run_merge(job_id: int, *, to_end: bool=False) -> dict:
+def run_merge(job_id: int, *, to_end: bool=False, fill: bool=False) -> dict:
     job = _reload_job(job_id)
     merge_cls = stage_class_for('merge', job)
+    if fill:
+        return _run_fill(job_id, merge_cls)
     if to_end:
         return _run_from(job_id, merge_cls)
     return _run_one_stage(job_id, merge_cls, hold=True)
@@ -382,18 +429,22 @@ def run_publish_upload(job_id: int) -> dict:
         return done
     return _reload_job(job_id)
 
-def run_segment_all(job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None) -> dict:
+def run_segment_all(job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, fill: bool=False) -> dict:
     job = _reload_job(job_id)
     if is_material_job(job):
         raise ValueError('segment stage is not available for material pipeline jobs')
     segment_cls = stage_class_for('segment', job)
+    if fill:
+        return _run_fill(job_id, segment_cls)
     job_mgr.mark_running(job_id)
     _run_one_stage(job_id, segment_cls, segment_indices=segment_indices, segment_scope='all', advance=to_end)
     if not to_end:
         return _reload_job(job_id)
     return _run_from(job_id, next_stage_class(segment_cls, job))  # type: ignore[arg-type]
 
-def run_segment_images(job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None) -> dict:
+def run_segment_images(job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, fill: bool=False) -> dict:
+    if fill:
+        return run_segment_all(job_id, fill=True)
     job = _reload_job(job_id)
     if is_material_job(job):
         raise ValueError('segment stage is not available for material pipeline jobs')
@@ -405,7 +456,9 @@ def run_segment_images(job_id: int, *, to_end: bool=False, segment_indices: list
     _run_one_stage(job_id, segment_cls, segment_indices=segment_indices, segment_scope='clips', advance=True)
     return _run_from(job_id, next_stage_class(segment_cls, job))  # type: ignore[arg-type]
 
-def run_segment_clips(job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None) -> dict:
+def run_segment_clips(job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, fill: bool=False) -> dict:
+    if fill:
+        return run_segment_all(job_id, fill=True)
     job = _reload_job(job_id)
     if is_material_job(job):
         raise ValueError('segment stage is not available for material pipeline jobs')

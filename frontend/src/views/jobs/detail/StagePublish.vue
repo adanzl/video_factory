@@ -6,6 +6,7 @@
       :disabled-reason="actionDisabledReason"
       primary-label="生成"
       :show-to-end="false"
+      :show-fill="false"
       @primary="handleRun"
     />
     <div :class="STAGE_BODY_CLASS">

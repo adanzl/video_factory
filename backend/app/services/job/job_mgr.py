@@ -30,6 +30,8 @@ _QUEUE_STAGES = {
     'run_segment_clips': 'segment', 'run_merge': 'merge', 'run_prepare': 'prepare',
     'continue_job': None, 'resume_job': None,
 }
+# 成片队列同时执行的任务数。单阶段操作占着锁或 status=running 时同样占槽。
+PIPELINE_QUEUE_SLOTS = 2
 
 
 def _queue_full_pipeline(method: Callable[..., dict]) -> Callable[..., dict]:
@@ -37,8 +39,10 @@ def _queue_full_pipeline(method: Callable[..., dict]) -> Callable[..., dict]:
     @wraps(method)
     def wrapped(self, job_id: int, **kwargs) -> dict:
         if _queue_job.get() != job_id:
+            if kwargs.get('to_end') and kwargs.get('fill'):
+                raise ValueError('to_end 与 fill 不能同时使用')
             resume = method.__name__ in {'continue_job', 'resume_job'}
-            should_queue = bool(kwargs.get('to_end')) or (
+            should_queue = bool(kwargs.get('to_end')) or bool(kwargs.get('fill')) or (
                 resume and not kwargs.get('sync', method.__name__ == 'continue_job')
             )
             if should_queue:
@@ -230,7 +234,7 @@ class JobMgr:
         return job
 
     def start_pipeline_queue(self) -> None:
-        """当前部署为单 gevent 服务进程；只有一个消费者，整条流水线占一个槽。"""
+        """单 gevent 进程里一个调度循环，最多同时跑 PIPELINE_QUEUE_SLOTS 条流水线。"""
         if self._queue_draining:
             return
         self._queue_draining = True
@@ -240,60 +244,92 @@ class JobMgr:
             self._queue_draining = False
             raise
 
+    def _occupied_pipeline_ids(self, inflight: set[int]) -> set[int]:
+        """正在执行的任务：running、持锁的单阶段，以及本轮已领出但尚未落 running 的 id。"""
+        with atomic():
+            rows = sql_exec.fetchall(
+                "SELECT id FROM video_job WHERE status = 'running'"
+            )
+        running = {int(row['id']) for row in rows}
+        locked = {job_id for job_id, lock in self._locks.items() if lock.locked()}
+        return running | locked | inflight
+
+    def _execute_queued_job(self, job_id: int) -> None:
+        """在独立 app context 里执行一条已入队流水线，避免和调度循环共用 session。"""
+        from app.repositories.database import get_app
+
+        with get_app().app_context():
+            job = self.get_job(job_id)
+            if job['status'] != 'queued':
+                return
+            request = parse_job_info(job.get('info')).get('pipeline_queue') or {}
+            token = _queue_job.set(job_id)
+            resume_token = _queue_resume.set(bool(request.get('resume')))
+            try:
+                if job_abort_hold(job):
+                    self.abort_job(job_id)
+                    return
+                method = request.get('method')
+                if method not in _QUEUE_STAGES:
+                    raise ValueError('invalid queued action')
+                kwargs = dict(request.get('kwargs') or {})
+                if request.get('resume') and _QUEUE_STAGES[method] != job['stage']:
+                    self.continue_job(job_id, sync=True)
+                else:
+                    if method in {'continue_job', 'resume_job'}:
+                        kwargs['sync'] = True
+                        kwargs.pop('allow_running', None)
+                    getattr(self, method)(job_id, **kwargs)
+            except Exception as exc:
+                logger.error('queued job %s failed: %s', job_id, exc)
+                self.mark_failed(job_id, job.get('stage') or 'script', str(exc))
+            finally:
+                _queue_resume.reset(resume_token)
+                _queue_job.reset(token)
+                try:
+                    with atomic():
+                        current = repo_job.get_job(job_id)
+                        repo_job.update_job(job_id, info=merge_job_info(
+                            current.get('info'), pipeline_queue=None,
+                        ))
+                except KeyError:
+                    pass
+
     def _drain_pipeline_queue(self) -> None:
         from app.repositories.database import get_app
-        from gevent import sleep
+        from gevent import sleep, spawn
 
+        inflight: dict[int, object] = {}
         try:
             with get_app().app_context():
                 while True:
+                    for job_id, greenlet in list(inflight.items()):
+                        if getattr(greenlet, 'dead', False):
+                            inflight.pop(job_id, None)
                     with atomic():
                         rows = sql_exec.fetchall(
                             "SELECT id FROM video_job WHERE status = 'queued' "
-                            "ORDER BY json_extract(info, '$.pipeline_queue.enqueued_at'), id LIMIT 1"
+                            "ORDER BY json_extract(info, '$.pipeline_queue.enqueued_at'), id "
+                            "LIMIT 50"
                         )
-                        active = sql_exec.fetchone(
-                            "SELECT id FROM video_job WHERE status = 'running' LIMIT 1"
-                        )
-                    if not rows:
+                    if not rows and not inflight:
                         return
-                    # 已启动的旧任务或单阶段操作先结束，再领取新的全流程。
-                    if active or any(lock.locked() for lock in self._locks.values()):
-                        sleep(0.2)
-                        continue
-                    job_id = int(rows[0]['id'])
-                    job = self.get_job(job_id)
-                    if job['status'] != 'queued':
-                        continue
-                    request = parse_job_info(job.get('info')).get('pipeline_queue') or {}
-                    token = _queue_job.set(job_id)
-                    resume_token = _queue_resume.set(bool(request.get('resume')))
-                    try:
-                        if job_abort_hold(job):
-                            self.abort_job(job_id)
-                            continue
-                        method = request.get('method')
-                        if method not in _QUEUE_STAGES:
-                            raise ValueError('invalid queued action')
-                        kwargs = dict(request.get('kwargs') or {})
-                        if request.get('resume') and _QUEUE_STAGES[method] != job['stage']:
-                            self.continue_job(job_id, sync=True)
-                        else:
-                            if method in {'continue_job', 'resume_job'}:
-                                kwargs['sync'] = True
-                                kwargs.pop('allow_running', None)
-                            getattr(self, method)(job_id, **kwargs)
-                    except Exception as exc:
-                        logger.error('queued job %s failed: %s', job_id, exc)
-                        self.mark_failed(job_id, job.get('stage') or 'script', str(exc))
-                    finally:
-                        _queue_resume.reset(resume_token)
-                        _queue_job.reset(token)
-                        with atomic():
-                            current = repo_job.get_job(job_id)
-                            repo_job.update_job(job_id, info=merge_job_info(
-                                current.get('info'), pipeline_queue=None,
-                            ))
+                    occupied = self._occupied_pipeline_ids(set(inflight))
+                    free = PIPELINE_QUEUE_SLOTS - len(occupied)
+                    started = False
+                    if free > 0:
+                        for row in rows:
+                            if free <= 0:
+                                break
+                            job_id = int(row['id'])
+                            if job_id in occupied:
+                                continue
+                            inflight[job_id] = spawn(self._execute_queued_job, job_id)
+                            occupied.add(job_id)
+                            free -= 1
+                            started = True
+                    # 槽满或这一轮没有可领的任务时让出，等正在跑的流水线结束。
+                    sleep(0 if started else 0.2)
         finally:
             self._queue_draining = False
 
@@ -880,6 +916,12 @@ class JobMgr:
         """兼容旧名 → :meth:`submit_action`（异步）。"""
         return self.submit_action(job_id, action, run, segment_indices=segment_indices, action_detail=action_detail, sync=False)
 
+    def _submit_pipeline(self, job_id: int, action: str, run: Callable[[], None], *, fill: bool, segment_indices: list[int] | None=None, action_detail: str | None=None) -> dict:
+        """全流程提交。fill 不清理已有产物。"""
+        if fill:
+            return self.submit_action(job_id, action, run, prepare=False, action_detail=action_detail, sync=False)
+        return self._run_in_background(job_id, action, run, segment_indices=segment_indices, action_detail=action_detail)
+
     def run_job_sync(self, job_id: int, *, from_stage: str | None=None, only_stage: str | None=None, segment_indices: list[int] | None=None) -> dict:
         """CLI 同步入口：持锁 + 可选 prepare，再跑 ``loop.run_job``。"""
         from worker.loop import run_job
@@ -952,7 +994,7 @@ class JobMgr:
             repo_job.update_job(job_id, info=merge_job_info(job.get('info'), video_provider=video_provider))
 
     @_queue_full_pipeline
-    def run_script(self, job_id: int, *, to_end: bool=False, title: str | None=None, segment_target_sec: float | None=None, max_title_length: int | None=None, estimated_duration_min: float | None=None, narration_target_words: int | None=None, speech_chars_per_sec: float | None=None, skip_title_optimize: bool=False, generate_image_prompts: bool=False, supplementary_info: str | None=None, video_timeline: str | None=None, orientation: str | None=None, content_style: str | None=None, segment_index: int | None=None) -> dict:
+    def run_script(self, job_id: int, *, to_end: bool=False, title: str | None=None, segment_target_sec: float | None=None, max_title_length: int | None=None, estimated_duration_min: float | None=None, narration_target_words: int | None=None, speech_chars_per_sec: float | None=None, skip_title_optimize: bool=False, generate_image_prompts: bool=False, supplementary_info: str | None=None, video_timeline: str | None=None, orientation: str | None=None, content_style: str | None=None, segment_index: int | None=None, fill: bool=False) -> dict:
         """生成文案。实现：worker/loop.run_script → worker/stages/*/script.py"""
         from worker.loop import run_script
         with atomic():
@@ -969,7 +1011,9 @@ class JobMgr:
         detail = _script_action_detail(job=job, to_end=to_end, title=title, segment_target_sec=segment_target_sec, max_title_length=max_title_length, estimated_duration_min=estimated_duration_min, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, orientation=orientation, content_style=content_style)
         if segment_index is not None:
             detail += f', segment_index={segment_index}'
-        return self._run_in_background(job_id, 'script', lambda: run_script(job_id, to_end=to_end, segment_target_sec=segment_target_sec, max_title_length=max_title_length, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, segment_index=segment_index), action_detail=detail)  # type: ignore[arg-type]
+        if fill:
+            detail += ', fill=True'
+        return self._submit_pipeline(job_id, 'script', lambda: run_script(job_id, to_end=to_end, segment_target_sec=segment_target_sec, max_title_length=max_title_length, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, segment_index=None if fill else segment_index, fill=fill), fill=fill, action_detail=detail)  # type: ignore[arg-type]
 
     def generate_script(self, job_id: int, *, prompt_type: str='image_prompt', segment_indices: list[int] | None=None) -> dict:
         """生成指定类型的提示词（不重置脚本、不清除产物）。"""
@@ -1137,7 +1181,7 @@ class JobMgr:
         return {'tags': tags, 'job': job}
 
     @_queue_full_pipeline
-    def run_intro(self, job_id: int, *, to_end: bool=False, hold_tail_sec: float | None=None, orientation: str | None=None, orientation_preference: str | None=None, intro_category: str | None=None) -> dict:
+    def run_intro(self, job_id: int, *, to_end: bool=False, hold_tail_sec: float | None=None, orientation: str | None=None, orientation_preference: str | None=None, intro_category: str | None=None, fill: bool=False) -> dict:
         """生成片头。实现：worker/loop.run_intro → worker/stages/intro/"""
         from worker.loop import run_intro
         info_patch: dict = {}
@@ -1153,7 +1197,7 @@ class JobMgr:
             with atomic():
                 job = repo_job.get_job(job_id)
                 repo_job.update_job(job_id, info=merge_job_info(job.get('info'), **info_patch))
-        return self._run_in_background(job_id, 'intro', lambda: run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec, orientation=orientation))  # type: ignore[arg-type]
+        return self._submit_pipeline(job_id, 'intro', lambda: run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec, orientation=orientation, fill=fill), fill=fill)  # type: ignore[arg-type]
 
     def run_intro_video(self, job_id: int, *, hold_tail_sec: float | None=None, orientation: str | None=None, orientation_preference: str | None=None, intro_category: str | None=None) -> dict:
         """仅重新生成片头视频，不动封面/片尾。"""
@@ -1300,35 +1344,35 @@ class JobMgr:
         return self._run_in_background(job_id, 'end', _generate)
 
     @_queue_full_pipeline
-    def run_tts(self, job_id: int, *, to_end: bool=False, speech_rate: float | None=None, voice_id: str | None=None, speaker_configs: dict | None=None) -> dict:
+    def run_tts(self, job_id: int, *, to_end: bool=False, speech_rate: float | None=None, voice_id: str | None=None, speaker_configs: dict | None=None, fill: bool=False) -> dict:
         """生成配音。实现：worker/loop.run_tts → worker/stages/common/tts.py"""
         from worker.loop import run_tts
-        return self._run_in_background(job_id, 'tts', lambda: run_tts(job_id, to_end=to_end, speech_rate=speech_rate, voice_id=voice_id, speaker_configs=speaker_configs))  # type: ignore[arg-type]
+        return self._submit_pipeline(job_id, 'tts', lambda: run_tts(job_id, to_end=to_end, speech_rate=speech_rate, voice_id=voice_id, speaker_configs=speaker_configs, fill=fill), fill=fill)  # type: ignore[arg-type]
 
     @_queue_full_pipeline
-    def run_segment_all(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, image_provider: str | None=None, video_provider: str | None=None) -> dict:
+    def run_segment_all(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, image_provider: str | None=None, video_provider: str | None=None, fill: bool=False) -> dict:
         """重跑分镜静图与图生视频。实现：worker/loop.run_segment_all → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_all
         self._persist_image_provider(job_id, image_provider)
         self._persist_video_provider(job_id, video_provider)
-        return self._run_in_background(job_id, 'segment/all', lambda: run_segment_all(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)  # type: ignore[arg-type]
+        return self._submit_pipeline(job_id, 'segment/all', lambda: run_segment_all(job_id, to_end=to_end, segment_indices=None if fill else segment_indices, fill=fill), fill=fill, segment_indices=None if fill else segment_indices)  # type: ignore[arg-type]
 
     @_queue_full_pipeline
-    def run_segment_images(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, image_provider: str | None=None) -> dict:
+    def run_segment_images(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, image_provider: str | None=None, fill: bool=False) -> dict:
         """重出分镜静图。实现：worker/loop.run_segment_images → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_images
         self._persist_image_provider(job_id, image_provider)
-        return self._run_in_background(job_id, 'segment/images', lambda: run_segment_images(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)  # type: ignore[arg-type]
+        return self._submit_pipeline(job_id, 'segment/images', lambda: run_segment_images(job_id, to_end=to_end, segment_indices=None if fill else segment_indices, fill=fill), fill=fill, segment_indices=None if fill else segment_indices)  # type: ignore[arg-type]
 
     @_queue_full_pipeline
-    def run_segment_clips(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, video_provider: str | None=None) -> dict:
+    def run_segment_clips(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, video_provider: str | None=None, fill: bool=False) -> dict:
         """重跑图生视频。实现：worker/loop.run_segment_clips → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_clips
         self._persist_video_provider(job_id, video_provider)
-        return self._run_in_background(job_id, 'segment/clips', lambda: run_segment_clips(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)  # type: ignore[arg-type]
+        return self._submit_pipeline(job_id, 'segment/clips', lambda: run_segment_clips(job_id, to_end=to_end, segment_indices=None if fill else segment_indices, fill=fill), fill=fill, segment_indices=None if fill else segment_indices)  # type: ignore[arg-type]
 
     @_queue_full_pipeline
-    def run_merge(self, job_id: int, *, to_end: bool=False, bgm: dict | None=None, subtitle: dict | None=None, xfade: dict | None=None) -> dict:
+    def run_merge(self, job_id: int, *, to_end: bool=False, bgm: dict | None=None, subtitle: dict | None=None, xfade: dict | None=None, fill: bool=False) -> dict:
         """合成成片。实现：worker/loop.run_merge → merge stage（按 pipeline 分发）"""
         from worker.loop import run_merge
         with atomic():
@@ -1351,13 +1395,13 @@ class JobMgr:
                     repo_job_log.append_log(job_id, 'api', f'merge xfade config: {normalized_xfade}')
                 updates['info'] = info
             repo_job.update_job(job_id, bump_version=True, fetch=False, **updates)  # type: ignore[arg-type]
-        return self._run_in_background(job_id, 'merge', lambda: run_merge(job_id, to_end=to_end))  # type: ignore[arg-type]
+        return self._submit_pipeline(job_id, 'merge', lambda: run_merge(job_id, to_end=to_end, fill=fill), fill=fill)  # type: ignore[arg-type]
 
     @_queue_full_pipeline
-    def run_prepare(self, job_id: int, *, to_end: bool=False) -> dict:
+    def run_prepare(self, job_id: int, *, to_end: bool=False, fill: bool=False) -> dict:
         """素材任务：复制基底视频。实现：worker/loop.run_prepare → worker/stages/material/prepare.py"""
         from worker.loop import run_prepare
-        return self._run_in_background(job_id, 'prepare', lambda: run_prepare(job_id, to_end=to_end))  # type: ignore[arg-type]
+        return self._submit_pipeline(job_id, 'prepare', lambda: run_prepare(job_id, to_end=to_end, fill=fill), fill=fill)  # type: ignore[arg-type]
 
     def generate_publish_meta(self, job_id: int) -> dict:
         from worker.stages.common.publish import ensure_publish_meta

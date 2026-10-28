@@ -180,6 +180,57 @@ def run_intro_for_category(ctx: JobContext, job: dict, *, stage: StageExecutor) 
         effective_orientation = orientation_for_resolve(job)
     width, height = resolve_intro_size(settings=ctx.settings, orientation=effective_orientation, job=job, media_dir=ctx.media_dir)
     orient_label = _orientation_label(job, intro_orientation=ctx.intro_orientation, effective_orientation=effective_orientation)
+    if ctx.fill_missing:
+        from app.services.job.job_fill import file_ok, intro_assets
+        assets = intro_assets(job, ctx.media_dir)
+        missing = [name for name, path in assets.items() if path is None]
+        if not missing:
+            updates: dict = {}
+            for key, column in (
+                ('intro', 'intro_path'),
+                ('cover', 'cover_path'),
+                ('end', 'end_path'),
+            ):
+                found = assets.get(key)
+                if found is not None and not file_ok(Path(str(job.get(column) or ''))):
+                    updates[column] = str(found.resolve())
+            with atomic():
+                if updates:
+                    repo_job.update_job(ctx.job['id'], **updates)
+                repo_job_log.append_log(ctx.job['id'], stage.name, 'intro already complete, skip')
+            return
+        changed_picture = False
+        if 'intro' in missing:
+            generate_intro(title, intro_path, category=gen_category, hold_tail_sec=ctx.intro_hold_tail_sec, width=width, height=height, pipeline=job.get('pipeline'))
+            changed_picture = True
+        cover_path = ctx.rel('cover.jpg')
+        if 'cover' in missing:
+            _generate_cover(job, cover_path, width, height)
+        end_path = None
+        if 'end' in missing:
+            from app.services.end_card import generate_end_card
+            end_path = ctx.rel('end.mp4')
+            generate_end_card(end_path, width=width, height=height)
+            changed_picture = True
+        if changed_picture:
+            ctx.note_filled()
+        with atomic():
+            updates = {}
+            intro_found = assets.get('intro') or intro_path
+            cover_found = assets.get('cover') or cover_path
+            if file_ok(intro_found):
+                updates['intro_path'] = str(intro_found.resolve())
+            if file_ok(cover_found):
+                updates['cover_path'] = str(cover_found.resolve())
+            end_found = assets.get('end') or end_path
+            if end_found is not None and file_ok(end_found):
+                updates['end_path'] = str(end_found.resolve())
+            if _normalize_title(str(job.get('title') or '')) != title:
+                updates['title'] = title
+            if updates:
+                repo_job.update_job(ctx.job['id'], **updates)
+            repo_job_log.append_log(ctx.job['id'], stage.name, f"filled intro assets: {missing}")
+        return
     generate_intro(title, intro_path, category=gen_category, hold_tail_sec=ctx.intro_hold_tail_sec, width=width, height=height, pipeline=job.get('pipeline'))
     cover_path = ctx.rel('cover.jpg')
     _generate_cover(job, cover_path, width, height)

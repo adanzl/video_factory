@@ -80,6 +80,11 @@ class MaterialScriptStage(StageExecutor):
     name = 'script'
 
     def run(self, ctx: JobContext) -> None:
+        if ctx.fill_missing:
+            from app.services.job.job_fill import fill_existing_script, mark_script_rebuilt
+            if fill_existing_script(ctx, self.name):
+                return
+            mark_script_rebuilt(ctx)
         started = time.perf_counter()
         title = ctx.job['title']
         max_title_length = ctx.script_max_title_length

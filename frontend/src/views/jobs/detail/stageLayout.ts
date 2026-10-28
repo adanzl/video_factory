@@ -3,7 +3,10 @@
 /** 阶段根：填满页签高度，操作栏固定、下方可滚 */
 export const STAGE_ROOT_CLASS = "flex h-full min-h-0 flex-1 flex-col";
 
-/** 「生成 / 从此成片」下方可滚动内容区 */
+/** 「生成 / 从此成片 / 补全成片」下方可滚动内容区 */
+
+export const FILL_CONFIRM_MESSAGE =
+  "确定补全成片吗？已有数据保持不变，只补缺失内容，然后跑完后续流水线。";
 export const STAGE_BODY_CLASS =
   "min-h-0 flex-1 overflow-y-auto scrollbar-overlay pr-1";
 

@@ -23,11 +23,19 @@ class TTSStage(StageExecutor):
 
     def run(self, ctx: JobContext) -> None:
         settings = get_settings()
+        if ctx.fill_missing:
+            from app.services.job.job_fill import clear_downstream_media, skip_complete_tts, take_script_rebuilt
+            if take_script_rebuilt(ctx):
+                clear_downstream_media(ctx.media_dir)
+            elif skip_complete_tts(ctx, self.name):
+                return
         with atomic():
             job = repo_job.get_job(ctx.job['id'])
             segments = repo_segment.list_segments(ctx.job['id'])
         script = job.get('script_json') or {}
-        result = tts_mgr.synthesize(script.get('narration', ''), segments, ctx.media_dir / 'audio', voice=ctx.tts_voice_id, speech_rate=ctx.tts_speech_rate)
+        result = tts_mgr.synthesize(script.get('narration', ''), segments, ctx.media_dir / 'audio', voice=ctx.tts_voice_id, speech_rate=ctx.tts_speech_rate, reuse_existing=ctx.fill_missing)
+        if ctx.fill_missing:
+            ctx.note_filled()
         normalize_loudness(result.audio_path, target_lufs=settings.audio_target_lufs, true_peak=settings.audio_true_peak)
         loudness = analyze_loudness(result.audio_path)
         silence = analyze_silence(result.audio_path, noise_db=settings.audio_silence_noise_db)

@@ -28,6 +28,16 @@ class JobContext:
     script_video_timeline: str | None = None
     script_segment_index: int | None = None
     material_narration: str | None = None
+    fill_missing: bool = False
+    fill_state: dict[str, bool] | None = None
+
+    def note_filled(self) -> None:
+        """本轮补全写出了会影响成片的新产物。"""
+        if self.fill_state is not None:
+            self.fill_state["produced"] = True
+
+    def filled_this_run(self) -> bool:
+        return bool(self.fill_state and self.fill_state.get("produced"))
 
     @classmethod
     def from_job(
@@ -51,6 +61,8 @@ class JobContext:
         script_video_timeline: str | None = None,
         script_segment_index: int | None = None,
         material_narration: str | None = None,
+        fill_missing: bool = False,
+        fill_state: dict[str, bool] | None = None,
     ) -> "JobContext":
         from app.utils.job_info import (
             content_style_from_job,
@@ -148,6 +160,8 @@ class JobContext:
             script_video_timeline=script_video_timeline,
             script_segment_index=script_segment_index,
             material_narration=material_narration,
+            fill_missing=fill_missing,
+            fill_state=fill_state,
         )
 
     def rel(self, name: str) -> Path:

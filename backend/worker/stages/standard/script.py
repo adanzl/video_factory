@@ -346,6 +346,11 @@ class ScriptStage(StageExecutor):
     name = 'script'
 
     def run(self, ctx: JobContext) -> None:
+        if ctx.fill_missing:
+            from app.services.job.job_fill import fill_existing_script, mark_script_rebuilt
+            if fill_existing_script(ctx, self.name):
+                return
+            mark_script_rebuilt(ctx)
         started = time.perf_counter()
         title = ctx.job['title']
         segment_target_sec = ctx.script_segment_target_sec

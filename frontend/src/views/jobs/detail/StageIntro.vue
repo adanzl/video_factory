@@ -6,6 +6,7 @@
       :disabled-reason="actionDisabledReason"
       @primary="handleRun(false)"
       @to-end="handleRun(true)"
+      @fill="handleRun(false, true)"
     />
 
     <div :class="STAGE_BODY_CLASS">
@@ -285,6 +286,7 @@ import {
   STAGE_PANEL_TITLE_TEXT_CLASS,
   STAGE_RADIO_INLINE_CLASS,
   STAGE_ROOT_CLASS,
+  FILL_CONFIRM_MESSAGE,
 } from "./stageLayout";
 import {
   buildCover43GuideLineStyles,
@@ -485,10 +487,13 @@ const handleIntroCategoryChange = (value: IntroCategory) => {
     });
 };
 
-const handleRun = async (toEnd: boolean) => {
-  const actionLabel = toEnd ? "从此成片" : "重新生成";
+const handleRun = async (toEnd: boolean, fill = false) => {
+  const actionLabel = fill ? "补全成片" : toEnd ? "从此成片" : "重新生成";
   try {
-    await ElMessageBox.confirm(`确定对「片头/封面」阶段执行「${actionLabel}」吗？`, "确认执行", {
+    await ElMessageBox.confirm(
+      fill ? FILL_CONFIRM_MESSAGE : `确定对「片头/封面」阶段执行「${actionLabel}」吗？`,
+      "确认执行",
+      {
       type: "warning",
       confirmButtonText: "执行",
       cancelButtonText: "取消",
@@ -502,12 +507,14 @@ const handleRun = async (toEnd: boolean) => {
     const payload: {
       id: number;
       to_end: boolean;
+      fill?: boolean;
       hold_tail_sec?: number;
       orientation: "auto" | "portrait" | "landscape";
       intro_category: IntroCategory;
     } = {
       id: props.job.id,
-      to_end: toEnd,
+      to_end: fill ? false : toEnd,
+      fill: fill || undefined,
       orientation: introOrientation.value,
       intro_category: introCategory.value,
     };
@@ -518,7 +525,7 @@ const handleRun = async (toEnd: boolean) => {
     introCacheVer.value++;
     coverCacheVer.value++;
     endCacheVer.value++;
-    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
+    ElMessage.success(fill || toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
     handleError(error, `${actionLabel}失败`);

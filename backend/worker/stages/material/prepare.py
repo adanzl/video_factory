@@ -14,6 +14,17 @@ class MaterialPrepareStage(StageExecutor):
     name = 'prepare'
 
     def run(self, ctx: JobContext) -> None:
+        if ctx.fill_missing:
+            from app.services.job.job_fill import file_ok
+            dest = ctx.rel('base.mp4')
+            recorded = ctx.job.get('base_path')
+            kept = file_ok(Path(str(recorded))) if recorded else False
+            if file_ok(dest) or kept:
+                with atomic():
+                    if not kept and file_ok(dest):
+                        repo_job.update_job(ctx.job['id'], base_path=str(dest.resolve()))
+                    repo_job_log.append_log(ctx.job['id'], self.name, 'base already exists, skip')
+                return
         material_id = ctx.job.get('material_id')
         if not material_id:
             raise ValueError('material_id is required for material pipeline')
@@ -34,6 +45,8 @@ class MaterialPrepareStage(StageExecutor):
         size_bytes = dest.stat().st_size
         meta_path = ctx.rel('base_meta.json')
         meta_path.write_text(json.dumps({'duration_sec': duration, 'width': width, 'height': height, 'source_width': source_w, 'source_height': source_h, 'size_bytes': size_bytes}, ensure_ascii=False), encoding='utf-8')
+        if ctx.fill_missing:
+            ctx.note_filled()
         with atomic():
             repo_job.update_job(ctx.job['id'], base_path=str(dest.resolve()))
             repo_job_log.append_log(ctx.job['id'], self.name, f'base fitted from material #{material_id}, source={source_w}x{source_h} -> {width}x{height}, duration={duration:.2f}s')

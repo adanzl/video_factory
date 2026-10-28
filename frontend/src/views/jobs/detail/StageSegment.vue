@@ -5,6 +5,7 @@
       :disabled="actionDisabled"
       @primary="handleRun(false)"
       @to-end="handleRun(true)"
+      @fill="handleRun(false, true)"
     >
       <span v-if="actionDisabledReason" class="text-sm text-gray-400">
         {{ actionDisabledReason }}
@@ -475,7 +476,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import SegmentClipSearchDialog from "@/views/clips/SegmentClipSearchDialog.vue";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
-import { STAGE_BLOCK_CLASS, STAGE_BODY_CLASS, STAGE_EMPTY_CLASS, STAGE_ROOT_CLASS } from "./stageLayout";
+import { FILL_CONFIRM_MESSAGE, STAGE_BLOCK_CLASS, STAGE_BODY_CLASS, STAGE_EMPTY_CLASS, STAGE_ROOT_CLASS } from "./stageLayout";
 
 const props = defineProps<{
   job: JobDetail;
@@ -1007,10 +1008,13 @@ const handleGenerateClip = async (segmentIndex: number) => {
   }
 };
 
-const handleRun = async (toEnd: boolean) => {
-  const actionLabel = toEnd ? "从此成片" : "重新生成";
+const handleRun = async (toEnd: boolean, fill = false) => {
+  const actionLabel = fill ? "补全成片" : toEnd ? "从此成片" : "重新生成";
   try {
-    await ElMessageBox.confirm(`确定对「分镜」阶段执行「${actionLabel}」吗？`, "确认执行", {
+    await ElMessageBox.confirm(
+      fill ? FILL_CONFIRM_MESSAGE : `确定对「分镜」阶段执行「${actionLabel}」吗？`,
+      "确认执行",
+      {
       type: "warning",
       confirmButtonText: "执行",
       cancelButtonText: "取消",
@@ -1023,9 +1027,10 @@ const handleRun = async (toEnd: boolean) => {
   try {
     const payload: RunStageActionPayload = {
       id: props.job.id,
-      to_end: toEnd,
+      to_end: fill ? false : toEnd,
+      fill: fill || undefined,
     };
-    if (selectedSegments.value.length > 0) {
+    if (!fill && selectedSegments.value.length > 0) {
       payload.segments = selectedSegments.value.map(value => Number(value));
     }
     if (segmentScope.value !== "segment/clips") {
@@ -1034,8 +1039,8 @@ const handleRun = async (toEnd: boolean) => {
     if (segmentScope.value !== "segment/images") {
       payload.video_provider = videoProvider.value;
     }
-    await runJobStageAction(segmentScope.value, payload);
-    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
+    await runJobStageAction(fill ? "segment/all" : segmentScope.value, payload);
+    ElMessage.success(fill || toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
     handleError(error, `${actionLabel}失败`);

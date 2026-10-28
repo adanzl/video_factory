@@ -863,18 +863,21 @@ def test_pipeline_queue_ten_jobs_fifo_failure_and_frozen_parameters(pipeline_que
     order = list(reversed(ids))
     events = []
     active = set()
+    peak = 0
     configs = {'昭昭': {'voice': 'original'}}
 
     def run(job_id, **kwargs):
-        assert not active
+        nonlocal peak
         active.add(job_id)
+        peak = max(peak, len(active))
         events.append(job_id)
+        assert len(active) <= _job_mgr_mod.PIPELINE_QUEUE_SLOTS
         assert repo.get_job(job_id)['status'] == 'running'
         assert kwargs['to_end'] is True
         assert kwargs['speaker_configs']['昭昭']['voice'] == 'original'
-        assert sum(repo.get_job(j)['status'] == 'running' for j in ids) == 1
+        assert sum(repo.get_job(j)['status'] == 'running' for j in ids) <= _job_mgr_mod.PIPELINE_QUEUE_SLOTS
         try:
-            gevent.sleep(0)
+            gevent.sleep(0.05)
             if job_id == order[3]:
                 raise ValueError('test stage failure')
             repo.update_job(job_id, status='pending', stage='publish')
@@ -889,6 +892,7 @@ def test_pipeline_queue_ten_jobs_fifo_failure_and_frozen_parameters(pipeline_que
     assert not events
     assert len(consumers) == 1
     consumers.pop()()
+    assert peak == _job_mgr_mod.PIPELINE_QUEUE_SLOTS
     assert events == order
     assert [j for j, _ in prepared] == order
     assert repo.get_job(order[3])['status'] == 'failed'
@@ -1048,6 +1052,24 @@ def test_pipeline_queue_all_stage_entries(pipeline_queue, monkeypatch, method, e
     assert received[0]['to_end'] is True
     for key, value in kwargs.items():
         assert received[0][key] == value
+
+
+def test_pipeline_queue_fill_keeps_existing_artifacts(pipeline_queue, monkeypatch):
+    mgr, consumers, prepared, repo, loop = pipeline_queue
+    job_id = repo.create_job('fill queue', pipeline='standard')['id']
+    received = []
+
+    def run(jid, **options):
+        received.append(options)
+        repo.update_job(jid, status='pending', stage='publish')
+
+    monkeypatch.setattr(loop, 'run_tts', run)
+    mgr.run_tts(job_id, fill=True, speech_rate=1.1)
+    assert not received
+    assert not prepared
+    consumers.pop()()
+    assert received == [{'to_end': False, 'speech_rate': 1.1, 'voice_id': None, 'speaker_configs': None, 'fill': True}]
+    assert prepared == []
 
 
 def test_pipeline_queue_api_accept_conflict_cancel(pipeline_queue, app_ctx, monkeypatch):
