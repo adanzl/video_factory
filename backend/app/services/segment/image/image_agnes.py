@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import logging
 import re
 import time
@@ -88,6 +89,31 @@ _LEG_COUNT_IDS = frozenset(
     {"zhao_legs", "can_legs", "mom_legs", "dad_legs", "extra_legs"}
 )
 _MAX_LEGS_PER_PERSON = 2
+
+# 先按年龄、发型识别角色，再核衣服，避免串衣时把本人漏掉。
+_ROLE_VERIFY = {
+    "昭昭": ("zhao", "短发小男孩"),
+    "灿灿": ("can", "扎马尾的小女孩"),
+    "妈妈": ("mom", "黑长发成年女性"),
+    "爸爸": ("dad", "短发成年男性"),
+}
+_ROLE_COUNT_IDS = frozenset(f"{role}_count" for role, _ in _ROLE_VERIFY.values())
+_ROLE_CLOTHES = {
+    "zhao_clothes": {"upper_color": "blue", "upper_style": "short_sleeve", "lower_color": "blue", "lower_style": "shorts"},
+    "can_clothes": {"upper_color": "pink", "upper_style": "hoodie", "lower_color": "blue"},
+    "mom_clothes": {"upper_color": "beige", "lower_color": "blue"},
+    "dad_clothes": {"upper_color": "gray", "lower_color": "blue"},
+}
+_ROLE_CLOTHES_IDS = frozenset(_ROLE_CLOTHES)
+_CLOTHES_VALUES = {
+    "upper_color": {"pink", "blue", "beige", "gray", "other", "hidden"},
+    "upper_style": {"short_sleeve", "long_sleeve", "hoodie", "other", "hidden"},
+    "lower_color": {"pink", "blue", "beige", "gray", "other", "hidden"},
+    "lower_style": {"shorts", "trousers", "other", "hidden"},
+}
+_REQUIRED_VERIFY_IDS = (
+    {"people", "cast_count"} | _ROLE_COUNT_IDS | _ROLE_CLOTHES_IDS | _ARM_COUNT_IDS | _LEG_COUNT_IDS
+)
 
 # ── 多手硬卡（裁剪放大数手）────────────────────────────────
 # 主校验整图数手对低分辨率下的多手会漏（图9 双手抱头+第三只手握遥控器）。
@@ -872,12 +898,15 @@ class AgnesImageProvider(ImageProvider):
 
     _VERIFY_SYSTEM_PROMPT = (
         "你是图像质检员。只根据用户列出的检查项逐项判断，每项单独一行回答。"
-        "回答格式必须为「项N: 是」或「项N: 否」"
+        "先列出观察到的人物，再核对要求，禁止把提示词要求当成图片事实。"
+        "所有项必须保留「项N: 」前缀，前缀后："
+        "人物清单项返回单行JSON数组，人数和肢体条数项返回数字，"
+        "服装项返回实际颜色与款式的JSON对象；其他项回答是或否"
         "（昭昭短发项无该角色可答「项N: 无昭昭」；"
         "灿灿发型项无该角色可答「项N: 无灿灿」；"
         "身高项缺其一可答「项N: 无昭昭」或「项N: 无灿灿」；"
         "妈妈成年项无该角色可答「项N: 无妈妈」）。"
-        "不要解释、不要编号列表外的文字、不要复述提示词。"
+        "不要输出编号列表外的文字，不要复述提示词。"
         "项「场景」：只看主场景/主体是否明显跑偏；"
         "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
         "项「手臂」：只报该角色末端呈人手形态的肢端条数，只答阿拉伯数字；"
@@ -1010,6 +1039,35 @@ class AgnesImageProvider(ImageProvider):
                 "回答「是」或「否」",
             ),
         ]
+        if content_style == CONTENT_STYLE_DAILY_STORY:
+            items.insert(0, (
+                "people",
+                "先观察图片，从左到右逐个列出所有人物，不按角色名字合并。"
+                "同样外形的站立、坐着、躺着的人必须分别列出；半身或被遮挡的人也计入。"
+                "照片、镜子反射、玩具不算。不要根据故事要求补人或删人。"
+                '本项冒号后写单行JSON数组，每个人包含position（位置）、appearance（实际发型和衣服）、'
+                'posture（姿态）三个字符串字段；无人则返回空数组。',
+            ))
+            for name in dict.fromkeys(speakers):
+                if name not in _ROLE_VERIFY:
+                    continue
+                role, appearance = _ROLE_VERIFY[name]
+                items.extend([
+                    (f"{role}_count",
+                     f"刚才逐人清单中，{appearance}实际共有几个？"
+                     "衣服串色也要计入，躺着与站着的同外形人物分别计数，不按姓名去重。"
+                     "只回答阿拉伯数字。"),
+                    (f"{role}_clothes",
+                     f"只报告图中{appearance}（{name}）实际穿的衣服，不判断对错，不照抄场景要求。"
+                     "按年龄和发型找人，不要因衣服错误改认成另一角色。"
+                     "本项冒号后返回单行JSON对象，必须含四个字段："
+                     "upper_color、lower_color均从pink（粉）、blue（蓝含深蓝藏青）、"
+                     "beige（米色）、gray（灰含深灰）、other（其他）、hidden（不可见）选择；"
+                     "upper_style从short_sleeve（短袖）、long_sleeve（长袖无帽）、"
+                     "hoodie（连帽卫衣）、other、hidden选择；"
+                     "lower_style从shorts（短裤）、trousers（长裤）、other、hidden选择。"
+                     "不可见部位填hidden，不能按故事或常识补全。"),
+                ])
         if content_style == CONTENT_STYLE_DAILY_STORY and "昭昭" in speakers:
             items.append(
                 (
@@ -1225,11 +1283,10 @@ class AgnesImageProvider(ImageProvider):
                 (
                     "cast_count",
                     f"画面清晰完整的主体人头一共几个？"
-                    f"（上限参考 {cast_max}，但须如实报数）"
                     "只数人头，不判断是谁；"
-                    "两个相同粉卫衣女孩/双胞胎外形/额外漂浮人头各算一人；"
+                    "同外形男孩或女孩、躺着与站着的人、额外漂浮人头各算一人；"
                     "背景照片墙/镜子虚影/玩具人脸/远处剪影不算。"
-                    "只回答阿拉伯数字，例如「3」",
+                    "只回答阿拉伯数字，须与逐人清单的条目数一致。",
                 )
             )
 
@@ -1278,8 +1335,7 @@ class AgnesImageProvider(ImageProvider):
     ) -> bool:
         """按检查项判定。
 
-        单项解析失败仍跳过（避免误杀）；但若整段一个有效项都没有，
-        视为质检失效，返回 False 触发重生（避免全 unknown 放行）。
+        人数清单、角色人数、服装、肢体条数等必检项漏答或解析失败不放行。
         cast_count 须报数字，并由 cast_max 卡上限（是/否已不可靠）。
         手臂/腿条数须报数字，超过 2 失败。
         其余项：答「是」通过；答「否」失败
@@ -1296,9 +1352,51 @@ class AgnesImageProvider(ImageProvider):
             raw_answers[int(m.group(1))] = m.group(2)
 
         parsed_any = False
+        people_count: int | None = None
         for i, cid in enumerate(check_ids, start=1):
             raw = raw_answers.get(i)
             if raw is None:
+                if cid in _REQUIRED_VERIFY_IDS:
+                    return False
+                continue
+            if cid == "people":
+                try:
+                    people = json.loads(raw)
+                except (ValueError, TypeError):
+                    return False
+                if not isinstance(people, list) or any(
+                    not isinstance(person, dict) or any(
+                        not isinstance(person.get(field), str) or not person[field].strip()
+                        for field in ("position", "appearance", "posture")
+                    ) for person in people
+                ):
+                    return False
+                people_count = len(people)
+                parsed_any = True
+                if cast_max is not None and people_count > cast_max:
+                    return False
+                continue
+            if cid in _ROLE_COUNT_IDS:
+                if AgnesImageProvider._parse_person_count(raw) != 1:
+                    return False
+                parsed_any = True
+                continue
+            if cid in _ROLE_CLOTHES_IDS:
+                try:
+                    clothes = json.loads(raw)
+                except (ValueError, TypeError):
+                    return False
+                if not isinstance(clothes, dict) or any(
+                    not isinstance(clothes.get(field), str) or clothes[field] not in values
+                    for field, values in _CLOTHES_VALUES.items()
+                ):
+                    return False
+                if all(clothes[field] == "hidden" for field in _CLOTHES_VALUES):
+                    return False
+                if any(clothes[field] not in {expected, "hidden"}
+                       for field, expected in _ROLE_CLOTHES[cid].items()):
+                    return False
+                parsed_any = True
                 continue
             if cid == "cast_count":
                 n = AgnesImageProvider._parse_person_count(raw)
@@ -1307,6 +1405,8 @@ class AgnesImageProvider(ImageProvider):
                     return False
                 parsed_any = True
                 if cast_max is not None and n > cast_max:
+                    return False
+                if people_count is not None and n != people_count:
                     return False
                 continue
             if cid in _ARM_COUNT_IDS:
@@ -1353,6 +1453,8 @@ class AgnesImageProvider(ImageProvider):
                 "hair_wind_dir",
             }:
                 return False
+        if people_count is not None and people_count < len(set(check_ids) & _ROLE_COUNT_IDS):
+            return False
         return parsed_any
 
     @staticmethod
@@ -1373,7 +1475,10 @@ class AgnesImageProvider(ImageProvider):
             if raw is None:
                 parts.append(f"{cid}=unknown")
                 continue
-            if cid == "cast_count" or cid in _ARM_COUNT_IDS or cid in _LEG_COUNT_IDS:
+            if cid == "people" or cid in _ROLE_CLOTHES_IDS:
+                parts.append(f"{cid}={raw}")
+                continue
+            if cid == "cast_count" or cid in _ROLE_COUNT_IDS or cid in _ARM_COUNT_IDS or cid in _LEG_COUNT_IDS:
                 n = AgnesImageProvider._parse_person_count(raw)
                 parts.append(f"{cid}={n if n is not None else 'unknown'}")
                 continue
@@ -1407,7 +1512,7 @@ class AgnesImageProvider(ImageProvider):
         优先使用 .agnes_source_url 侧车 CDN URL；上游拉取该 URL 失败时改 base64 重试。
         """
         if not image_path.exists():
-            return True
+            return False
 
         try:
             settings = get_settings()
@@ -1431,7 +1536,7 @@ class AgnesImageProvider(ImageProvider):
 
             keys = agnes_api_keys(settings)
             if not keys:
-                return True
+                return False
 
             log_tag = f"[out={image_path.name}]"
             for retry in range(_VERIFY_RETRY_COUNT + 1):
@@ -1489,7 +1594,7 @@ class AgnesImageProvider(ImageProvider):
                                         )
                                 return resp
 
-                            resp = self._run_blocking_cancellable(_post_verify)
+                            resp = cast(requests.Response, self._run_blocking_cancellable(_post_verify))
                             if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
                                 break
                             if (
@@ -1597,7 +1702,7 @@ class AgnesImageProvider(ImageProvider):
             logger.warning(
                 "agnes verify_image error [out=%s]: %s", image_path.name, exc
             )
-            return True
+            return False
 
     # ── 多手硬卡：裁剪放大数手 ────────────────────────────────
 

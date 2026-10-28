@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import json
+import pytest
 import requests
 from PIL import Image as PILImage
 
@@ -14,6 +16,15 @@ from app.services.segment.image.image_agnes import (
     _to_agnes_size,
     _verify_upstream_media_url_fetch_error,
 )
+
+
+@pytest.fixture(autouse=True)
+def block_real_http(monkeypatch):
+    """单元测试不得读取本机凭据后意外请求真实接口。"""
+    def reject(*args, **kwargs):
+        raise AssertionError("Real HTTP is forbidden in image unit tests")
+
+    monkeypatch.setattr(requests.sessions.Session, "request", reject)
 
 
 def test_to_agnes_size() -> None:
@@ -439,7 +450,14 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     )
     ids = [cid for cid, _ in items]
     assert ids == [
+        "people",
         "scene",
+        "zhao_count",
+        "zhao_clothes",
+        "can_count",
+        "can_clothes",
+        "mom_count",
+        "mom_clothes",
         "zhao_hair",
         "can_hair",
         "can_one",
@@ -546,7 +564,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "zhao_arms" in [cid for cid, _ in items_one]
     assert "zhao_legs" in [cid for cid, _ in items_one]
     assert max_one == 2
-    assert "上限参考 2" in user_one
+    assert "上限参考" not in user_one
     assert "只数人头" in user_one
     assert "只能是：" not in user_one
 
@@ -563,7 +581,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "mom_adult" not in [cid for cid, _ in items_can]
     assert "cast_count" in [cid for cid, _ in items_can]
     assert max_can == 2
-    assert "上限参考 2" in user_can
+    assert "上限参考" not in user_can
     assert "只数人头" in user_can
     assert "单侧高马尾" in user_can
     assert "彩虹挑染" in user_can
@@ -577,7 +595,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "mom_adult" in [cid for cid, _ in items_mom]
     assert max_mom == 3
     assert "成年女性" in user_mom
-    assert "上限参考 3" in user_mom
+    assert "上限参考" not in user_mom
     assert "只数人头" in user_mom
     assert "只能是：" not in user_mom
 
@@ -666,7 +684,7 @@ def test_strip_prompt_for_verify_drops_daily_wrap() -> None:
     )
     assert "基于参考图" not in user
     assert "客厅地板上昭昭举手" in user
-    assert [cid for cid, _ in items][0] == "scene"
+    assert [cid for cid, _ in items][0] == "people"
 
 
 def test_parse_hardfail_arm_answer() -> None:
@@ -1101,3 +1119,86 @@ def test_generate_acquires_slot_with_its_key_pool() -> None:
             provider.generate("测试", Path("/tmp/never.png"))
     del gevent
     assert seen == ["cn_free"]
+
+
+def _cast_reply(*, people: int = 3, boys: int = 1, clothes: str | None = None, count: int = 3) -> str:
+    inventory = [
+        {"position": f"位置{i}", "appearance": "实际衣服和发型", "posture": "坐着"}
+        for i in range(people)
+    ]
+    if clothes is None:
+        clothes = json.dumps({"upper_color": "pink", "upper_style": "hoodie", "lower_color": "blue", "lower_style": "trousers"})
+    return (
+        f"项1: {json.dumps(inventory, ensure_ascii=False)}\n"
+        f"项2: {boys}\n项3: 1\n项4: {clothes}\n项5: {count}\n"
+    )
+
+
+@pytest.mark.parametrize("reply", [
+    _cast_reply(people=4),  # 即使模型最后仍报三人，逐人清单四人也必须拦截。
+    _cast_reply(boys=2),  # 总数未超限也不能用两个男孩替代缺失角色。
+    _cast_reply(boys=0),
+    _cast_reply(clothes="否，蓝色短袖T恤和深蓝短裤"),
+    _cast_reply(clothes="无法辨认"),
+    _cast_reply(count=2),  # 汇总与清单矛盾。
+    "\n".join(line for line in _cast_reply().splitlines() if not line.startswith("项4:")),
+    _cast_reply().split("\n", 1)[1],
+    _cast_reply().replace("项5: 3\n", ""),
+    "项1: []\n项2: 1\n项3: 1\n项4: 是\n项5: 3",
+    '项1: [{"position":"左"}]\n项2: 1\n项3: 1\n项4: 是\n项5: 3',
+])
+def test_verify_rejects_duplicate_cast_wrong_clothes_and_incomplete_evidence(reply: str) -> None:
+    assert not AgnesImageProvider._evaluate_verify_response(
+        reply, ["people", "zhao_count", "can_count", "can_clothes", "cast_count"], cast_max=3,
+    )
+
+
+def test_verify_accepts_consistent_cast_and_clothes() -> None:
+    assert AgnesImageProvider._evaluate_verify_response(
+        _cast_reply(), ["people", "zhao_count", "can_count", "can_clothes", "cast_count"], cast_max=3,
+    )
+
+
+def test_verify_checklist_counts_people_without_filtering_wrong_clothes() -> None:
+    items, user, _ = AgnesImageProvider._build_verify_checklist(
+        prompt="昭昭躺在沙发上，灿灿站在右侧。",
+        expected_speakers=["昭昭", "灿灿"], content_style="daily_story",
+    )
+    questions = dict(items)
+    assert "不按角色名字合并" in questions["people"]
+    assert "衣服串色也要计入" in questions["can_count"]
+    assert "实际穿的衣服" in questions["can_clothes"]
+    assert "upper_color" in questions["can_clothes"]
+    assert "上限参考" not in user
+    assert "例如「3」" not in user
+
+
+def test_verify_image_missing_credentials_or_local_image_fails_closed(tmp_path: Path) -> None:
+    provider = AgnesImageProvider()
+    path = tmp_path / "1.png"
+    assert not provider._verify_image("客厅", path)
+    PILImage.new("RGB", (64, 64), "white").save(path)
+    with patch("app.services.segment.image.image_agnes.agnes_api_keys", return_value=[]):
+        assert not provider._verify_image("客厅", path)
+    with patch.object(AgnesImageProvider, "_encode_verify_image_data_url", side_effect=ValueError("bad image")):
+        assert not provider._verify_image("客厅", path)
+
+
+@pytest.mark.parametrize("color,style", [("blue", "short_sleeve"), ("pink", "short_sleeve"), ("other", "hoodie")])
+def test_verify_compares_observed_clothes_in_code(color: str, style: str) -> None:
+    clothes = json.dumps({"upper_color": color, "upper_style": style, "lower_color": "blue", "lower_style": "shorts"})
+    assert not AgnesImageProvider._evaluate_verify_response(
+        _cast_reply(clothes=clothes),
+        ["people", "zhao_count", "can_count", "can_clothes", "cast_count"], cast_max=3,
+    )
+
+
+def test_verify_clothes_allows_cropped_lower_body_but_not_empty_observation() -> None:
+    clothes = {"upper_color": "pink", "upper_style": "hoodie", "lower_color": "hidden", "lower_style": "hidden"}
+    assert AgnesImageProvider._evaluate_verify_response(
+        f"项1: {json.dumps(clothes)}", ["can_clothes"],
+    )
+    clothes.update(upper_color="hidden", upper_style="hidden")
+    assert not AgnesImageProvider._evaluate_verify_response(
+        f"项1: {json.dumps(clothes)}", ["can_clothes"],
+    )
