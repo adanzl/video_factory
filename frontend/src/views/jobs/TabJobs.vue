@@ -172,6 +172,8 @@ const statusTagType = (status: string) => {
       return "warning";
     case "failed":
       return "danger";
+    case "queued":
+      return "primary";
     case "idle":
       return "info";
     default:
