@@ -55,7 +55,7 @@
 
       <el-alert
         v-if="job.error_message && job.status === 'failed'"
-        type="danger"
+        type="error"
         :title="job.error_message"
         :closable="false"
         class="mb-4 shrink-0"

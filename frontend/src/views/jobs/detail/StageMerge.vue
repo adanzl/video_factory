@@ -68,7 +68,7 @@
             </el-descriptions-item>
           </el-descriptions>
 
-          <el-alert v-if="job.fail_stage === 'merge' && job.error_message" type="danger" :title="job.error_message"
+          <el-alert v-if="job.fail_stage === 'merge' && job.error_message" type="error" :title="job.error_message"
             :closable="false" class="mt-4" />
         </div>
       </div>
