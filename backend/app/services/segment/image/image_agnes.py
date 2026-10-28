@@ -275,18 +275,26 @@ def _resp_body_summary(resp: requests.Response, *, limit: int = 500) -> str:
     return text
 
 
-def _verify_upstream_media_url_fetch_error(resp: requests.Response) -> bool:
-    """Agnes VL 上游拉取 image_url 失败（CDN 慢/不可达），非业务质检结论。"""
-    if resp.status_code != 400:  # type: ignore[attr-defined,assignment]
-        return False
-    text = _resp_body_summary(resp, limit=3000).lower()
-    needles = (
-        "timed out while downloading media url",
-        "error while loading data imagedata",
-        "exception occurred while loading image data",
-        "loading image data at index",
-    )
-    return any(n in text for n in needles)
+def _local_crayon_asset(url: str) -> Path | None:
+    """GitHub raw 上的定妆图在仓库里有同名文件，国内站拉不到时改读本地。"""
+    marker = "res/host/crayon/"
+    idx = url.find(marker)
+    if idx < 0:
+        return None
+    raw_name = url[idx + len(marker):].split("?", 1)[0].split("#", 1)[0]
+    name = Path(raw_name).name
+    if not name or name != raw_name:
+        return None
+    path = Path(__file__).resolve().parents[4] / "res" / "host" / "crayon" / name
+    if path.is_file():
+        return path
+    return None
+
+
+def _encode_ref_file(path: Path) -> str:
+    mime = "image/jpeg" if path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
 
 
 class AgnesImageProvider(ImageProvider):
@@ -600,6 +608,29 @@ class AgnesImageProvider(ImageProvider):
             return None, base64.b64decode(b64)
         return None, None
 
+    def _http_ref_to_data_uri(self, url: str) -> str | None:
+        local = _local_crayon_asset(url)
+        if local is not None:
+            return _encode_ref_file(local)
+        try:
+            resp = self._run_blocking_cancellable(
+                lambda: requests.get(url, timeout=20)
+            )
+            resp.raise_for_status()  # type: ignore[attr-defined]
+            content = resp.content  # type: ignore[attr-defined]
+        except Exception:
+            logger.warning("agnes ref url unreachable, cannot inline: %s", url[:120])
+            return None
+        if not content:
+            return None
+        content_type = str(
+            getattr(resp, "headers", {}).get("Content-Type") or "image/png"
+        ).split(";", 1)[0].strip()
+        if not content_type.startswith("image/"):
+            content_type = "image/png"
+        encoded = base64.b64encode(content).decode("ascii")
+        return f"data:{content_type};base64,{encoded}"
+
     def _generate_with_key(
         self,
         api_key: AgnesApiKey,
@@ -630,9 +661,21 @@ class AgnesImageProvider(ImageProvider):
                 ref_payload: list[str] = []
                 for ref in ref_images:
                     if isinstance(ref, str) and ref.startswith(("http://", "https://")):
-                        ref_payload.append(ref)
-                        ref_names.append(ref)
-                        logger.info("%s agnes ref image url: %s", log_tag, ref)
+                        data_uri = self._http_ref_to_data_uri(ref)
+                        if not data_uri:
+                            logger.warning(
+                                "%s agnes ref image url not inlined: %s",
+                                log_tag,
+                                ref[:120],
+                            )
+                            continue
+                        ref_payload.append(data_uri)
+                        ref_names.append("data-uri")
+                        logger.info(
+                            "%s agnes ref image inlined from url: %s",
+                            log_tag,
+                            ref[:120],
+                        )
                         continue
                     if isinstance(ref, str) and ref.startswith("data:image/"):
                         ref_payload.append(ref)
@@ -1509,7 +1552,7 @@ class AgnesImageProvider(ImageProvider):
         """使用 Agnes 多模态判断图片是否匹配提示词且符合内容规则。
 
         返回 True=通过, False=不通过（触发生成重试）。
-        优先使用 .agnes_source_url 侧车 CDN URL；上游拉取该 URL 失败时改 base64 重试。
+        看图一律提交本地图的 base64，不把 CDN URL 交给上游去拉。
         """
         if not image_path.exists():
             return False
@@ -1517,15 +1560,7 @@ class AgnesImageProvider(ImageProvider):
         try:
             settings = get_settings()
 
-            image_url: str | None = None
-            sidecar = image_path.with_name(image_path.name + ".agnes_source_url")
-            if sidecar.is_file():
-                url = sidecar.read_text(encoding="utf-8").strip()
-                if url.startswith(("http://", "https://")):
-                    image_url = url
-
-            if image_url is None:
-                image_url = AgnesImageProvider._encode_verify_image_data_url(image_path)
+            image_url = AgnesImageProvider._encode_verify_image_data_url(image_path)
 
             items, user, cast_max = AgnesImageProvider._build_verify_checklist(
                 prompt=prompt,
@@ -1549,113 +1584,91 @@ class AgnesImageProvider(ImageProvider):
                         )
                         url = verify_url  # type: ignore[var-annotated]
                         host_failover_tried: set[str] = set()  # type: ignore[var-annotated]
-                        post_image_url = image_url
-                        for url_pass in range(2):
-                            payload = {
-                                "model": settings.agnes_vl_model,
-                                "messages": [
-                                    {
-                                        "role": "system",
-                                        "content": AgnesImageProvider._VERIFY_SYSTEM_PROMPT,
-                                    },
-                                    {
-                                        "role": "user",
-                                        "content": [
-                                            {"type": "text", "text": user},
-                                            {
-                                                "type": "image_url",
-                                                "image_url": {"url": post_image_url},
-                                            },
-                                        ],
-                                    },
-                                ],
-                                # agnes VL 强制思考且关不掉，预算须容纳思考链，
-                                # 否则正文为空 → 全项 unknown → 质检形同虚设
-                                "max_tokens": 16384,
-                            }
+                        payload = {
+                            "model": settings.agnes_vl_model,
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": AgnesImageProvider._VERIFY_SYSTEM_PROMPT,
+                                },
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": user},
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {"url": image_url},
+                                        },
+                                    ],
+                                },
+                            ],
+                            # agnes VL 强制思考且关不掉，预算须容纳思考链，
+                            # 否则正文为空 → 全项 unknown → 质检形同虚设
+                            "max_tokens": 16384,
+                        }
 
-                            def _post_verify() -> requests.Response:
-                                nonlocal url, verify_url  # type: ignore[var-annotated]
-                                resp = requests.post(
-                                    url, headers=headers, json=payload, timeout=300
-                                )
-                                if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
-                                    alt = agnes_apply_host_failover(
-                                        url,
-                                        host_failover_tried,  # type: ignore[var-annotated]
-                                        reason="503",
-                                        tag=f"{log_tag} verify",
-                                    )
-                                    if alt:
-                                        verify_url = alt  # type: ignore[var-annotated]
-                                        url = alt
-                                        resp = requests.post(
-                                            url, headers=headers, json=payload, timeout=300
-                                        )
-                                return resp
-
-                            resp = cast(requests.Response, self._run_blocking_cancellable(_post_verify))
+                        def _post_verify() -> requests.Response:
+                            nonlocal url, verify_url  # type: ignore[var-annotated]
+                            resp = requests.post(
+                                url, headers=headers, json=payload, timeout=300
+                            )
                             if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
-                                break
-                            if (
-                                url_pass == 0
-                                and post_image_url.startswith(("http://", "https://"))
-                                and _verify_upstream_media_url_fetch_error(resp)
-                            ):
-                                post_image_url = (
-                                    AgnesImageProvider._encode_verify_image_data_url(
-                                        image_path
+                                alt = agnes_apply_host_failover(
+                                    url,
+                                    host_failover_tried,  # type: ignore[var-annotated]
+                                    reason="503",
+                                    tag=f"{log_tag} verify",
+                                )
+                                if alt:
+                                    verify_url = alt  # type: ignore[var-annotated]
+                                    url = alt
+                                    resp = requests.post(
+                                        url, headers=headers, json=payload, timeout=300
                                     )
-                                )
-                                image_url = post_image_url
-                                logger.info(
-                                    "%s agnes verify upstream CDN fetch failed, "
-                                    "retry with base64 (%s key, retry=%s/%s)",
-                                    log_tag,
-                                    api_key.label,
-                                    retry,
-                                    _VERIFY_RETRY_COUNT,
-                                )
-                                continue
-                            if resp.ok:  # type: ignore[attr-defined,assignment]
-                                msg = (
-                                    resp.json()  # type: ignore[attr-defined,assignment]
-                                    .get("choices", [{}])[0]
-                                    .get("message", {})
-                                    or {}
-                                )
-                                content = AgnesImageProvider._vl_message_text(msg)
-                                ok = AgnesImageProvider._evaluate_verify_response(
-                                    content, check_ids, cast_max=cast_max
-                                )
-                                logger.info(
-                                    "%s agnes verify (%s key, retry=%s/%s): ok=%s %s",
-                                    log_tag,
-                                    api_key.label,
-                                    retry,
-                                    _VERIFY_RETRY_COUNT,
-                                    ok,
-                                    AgnesImageProvider._format_verify_reply(
-                                        content, check_ids
-                                    ),
-                                )
-                                if ok and content_style == CONTENT_STYLE_DAILY_STORY:
-                                    ok = self._verify_hardfail_limbs(
-                                        image_path,
-                                        expected_speakers=expected_speakers,
-                                        content_style=content_style,
-                                    )
-                                return ok
-                            logger.warning(
-                                "%s agnes verify_image http %s (%s key, retry=%s/%s), body=%s",
+                            return resp
+
+                        resp = cast(requests.Response, self._run_blocking_cancellable(_post_verify))
+                        if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
+                            break
+                        if resp.ok:  # type: ignore[attr-defined,assignment]
+                            msg = (
+                                resp.json()  # type: ignore[attr-defined,assignment]
+                                .get("choices", [{}])[0]
+                                .get("message", {})
+                                or {}
+                            )
+                            content = AgnesImageProvider._vl_message_text(msg)
+                            ok = AgnesImageProvider._evaluate_verify_response(
+                                content, check_ids, cast_max=cast_max
+                            )
+                            logger.info(
+                                "%s agnes verify (%s key, retry=%s/%s): ok=%s %s",
                                 log_tag,
-                                resp.status_code,  # type: ignore[attr-defined,assignment]
                                 api_key.label,
                                 retry,
                                 _VERIFY_RETRY_COUNT,
-                                _resp_body_summary(resp),  # type: ignore[arg-type]
+                                ok,
+                                AgnesImageProvider._format_verify_reply(
+                                    content, check_ids
+                                ),
                             )
-                            break
+                            if ok and content_style == CONTENT_STYLE_DAILY_STORY:
+                                ok = self._verify_hardfail_limbs(
+                                    image_path,
+                                    expected_speakers=expected_speakers,
+                                    content_style=content_style,
+                                )
+                            return ok
+                        logger.warning(
+                            "%s agnes verify_image http %s (%s key, retry=%s/%s), body=%s",
+                            log_tag,
+                            resp.status_code,  # type: ignore[attr-defined,assignment]
+                            api_key.label,
+                            retry,
+                            _VERIFY_RETRY_COUNT,
+                            _resp_body_summary(resp),  # type: ignore[arg-type]
+                        )
+                        break
                     except requests.Timeout as exc:
                         alt = agnes_apply_host_failover(
                             verify_url,  # type: ignore[var-annotated]

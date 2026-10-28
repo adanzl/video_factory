@@ -98,8 +98,8 @@ def test_produce_images_persists_each_image_via_callback(tmp_path: Path) -> None
 
 
 def test_produce_chat_passes_hosts_ref_images(tmp_path: Path) -> None:
-    """daily_story / chat 出图须带 hosts.png 角色参考图。"""
-    from app.services.segment.segment_mgr import _CHAT_HOSTS_REF_URL
+    """daily_story / chat 出图须带本地 hosts.png，提交时再编成 base64。"""
+    from app.services.segment.segment_mgr import _resolve_chat_ref_images
 
     media_dir = tmp_path / "75"
     images_dir = media_dir / "images"
@@ -140,7 +140,8 @@ def test_produce_chat_passes_hosts_ref_images(tmp_path: Path) -> None:
             },
         )
 
-    assert captured["ref_images"] == [_CHAT_HOSTS_REF_URL]
+    assert captured["ref_images"] == _resolve_chat_ref_images()
+    assert captured["ref_images"][0].name == "hosts.png"
     assert captured["content_style"] == "daily_story"
 
 

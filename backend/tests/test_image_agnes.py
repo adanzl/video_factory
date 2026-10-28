@@ -14,7 +14,6 @@ from app.services.segment.image.image_agnes import (
     AgnesImageVerifyFailed,
     _VERIFY_MAX_ATTEMPTS,
     _to_agnes_size,
-    _verify_upstream_media_url_fetch_error,
 )
 
 
@@ -201,7 +200,7 @@ def test_generate_downloads_url(tmp_path: Path) -> None:
 
 
 def test_generate_puts_http_ref_into_image_not_ref_images(tmp_path: Path) -> None:
-    """GitHub URL 须进 extra_body.image（角色参考）；ref_images 已失效。"""
+    """参考图 URL 先内联成 Data URI 再进 extra_body.image；ref_images 已失效。"""
     provider = AgnesImageProvider()
     output = tmp_path / "1.png"
     ref_url = (
@@ -234,8 +233,10 @@ def test_generate_puts_http_ref_into_image_not_ref_images(tmp_path: Path) -> Non
 
     payload = mock_request.call_args.kwargs["json"]
     extra = payload["extra_body"]
-    assert extra["image"] == [ref_url]
+    assert extra["image"][0].startswith("data:image/png;base64,")
+    assert ref_url not in extra["image"]
     assert "ref_images" not in extra
+    mock_request.assert_called_once()
 
 
 def test_generate_retries_verify_until_pass(tmp_path: Path) -> None:
@@ -706,48 +707,13 @@ def test_parse_hardfail_arm_answer() -> None:
     ) == (2, None)
 
 
-def test_verify_upstream_media_url_fetch_error() -> None:
-    resp = MagicMock()
-    resp.status_code = 400
-    resp.json = MagicMock(
-        return_value={
-            "error": {
-                "message": (
-                    'BadRequestError: Timed out while downloading media URL: '
-                    "https://platform-outputs.agnes-ai.space/x.png"
-                )
-            }
-        }
-    )
-    assert _verify_upstream_media_url_fetch_error(resp) is True
-
-    resp_ok = MagicMock()
-    resp_ok.status_code = 400
-    resp_ok.json = MagicMock(return_value={"error": {"message": "content policy"}})
-    assert _verify_upstream_media_url_fetch_error(resp_ok) is False
-
-
-def test_verify_image_falls_back_to_base64_on_cdn_fetch_error(tmp_path: Path) -> None:
+def test_verify_image_uses_base64_even_with_sidecar(tmp_path: Path) -> None:
     provider = AgnesImageProvider()
     img = PILImage.new("RGB", (64, 64), "red")
     path = tmp_path / "1.png"
     img.save(path)
     cdn = "https://platform-outputs.agnes-ai.space/images/out.png"
     path.with_name(path.name + ".agnes_source_url").write_text(cdn, encoding="utf-8")
-
-    resp_cdn_fail = MagicMock()
-    resp_cdn_fail.status_code = 400
-    resp_cdn_fail.ok = False
-    resp_cdn_fail.json = MagicMock(
-        return_value={
-            "error": {
-                "message": (
-                    "Error while loading data ImageData: Timed out while "
-                    "downloading media URL"
-                )
-            }
-        }
-    )
 
     resp_ok = MagicMock()
     resp_ok.status_code = 200
@@ -761,7 +727,7 @@ def test_verify_image_falls_back_to_base64_on_cdn_fetch_error(tmp_path: Path) ->
 
     def fake_post(_url, *, headers, json, timeout):  # noqa: ANN001, ARG001
         posted_urls.append(json["messages"][1]["content"][1]["image_url"]["url"])
-        return resp_cdn_fail if len(posted_urls) == 1 else resp_ok
+        return resp_ok
 
     with (
         patch(
@@ -783,9 +749,9 @@ def test_verify_image_falls_back_to_base64_on_cdn_fetch_error(tmp_path: Path) ->
         )
 
     assert ok is True
-    assert len(posted_urls) == 2
-    assert posted_urls[0] == cdn
-    assert posted_urls[1].startswith("data:image/jpeg;base64,")
+    assert len(posted_urls) == 1
+    assert posted_urls[0].startswith("data:image/jpeg;base64,")
+    assert cdn not in posted_urls[0]
 
 
 def test_crop_zone_data_url_zooms(tmp_path: Path) -> None:
