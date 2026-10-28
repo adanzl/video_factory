@@ -4,6 +4,15 @@
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h1 class="text-base font-semibold text-gray-800">总览</h1>
+          <el-button
+            type="plain"
+            size="small"
+            title="刷新"
+            :disabled="loading"
+            @click="loadOverview"
+          >
+            <el-icon><Refresh /></el-icon>
+          </el-button>
           <span class="text-xs text-gray-400">{{ todayLabel }}</span>
           <span v-if="loading" class="text-xs text-gray-400">加载中</span>
         </div>
@@ -176,6 +185,7 @@ import {
   List,
   Medal,
   Monitor,
+  Refresh,
   Search,
   VideoCamera,
   Warning,

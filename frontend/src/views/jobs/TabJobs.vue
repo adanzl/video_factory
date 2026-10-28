@@ -350,7 +350,7 @@ onMounted(() => {
     if (!loading.value && jobs.value.some(job => ["queued", "running"].includes(job.status))) {
       void fetchJobs();
     }
-  }, 3000);
+  }, 5000);
 });
 onUnmounted(() => {
   if (queuePollTimer !== null) clearInterval(queuePollTimer);
