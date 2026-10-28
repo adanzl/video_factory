@@ -9,3 +9,4 @@ export * from "./api-publish";
 export * from "./api-materials";
 export * from "./api-topic";
 export * from "./api-checkin";
+export * from "./api-home";
