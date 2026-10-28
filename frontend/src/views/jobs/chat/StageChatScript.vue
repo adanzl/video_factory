@@ -609,6 +609,7 @@ const loading = computed(() => props.job.stage === "script" && props.job.status 
 
 const actionDisabled = computed(() => {
   return (
+    props.job.status === "queued" ||
     loading.value ||
     submitting.value ||
     generatingVisualBrief.value ||
@@ -617,6 +618,7 @@ const actionDisabled = computed(() => {
 });
 
 const actionDisabledReason = computed(() => {
+  if (props.job.status === "queued") return "任务正在排队";
   if (loading.value) return "阶段正在执行中";
   if (submitting.value) return "提交中";
   if (generatingVisualBrief.value) return "正在生成画面描述";
@@ -767,7 +769,7 @@ async function handleRun(toEnd: boolean) {
       payload.skip_title_optimize = true;
     }
     await runJobStageAction("script", payload);
-    ElMessage.success("已提交执行");
+    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : "已提交执行");
     emit("refresh");
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || "提交失败");

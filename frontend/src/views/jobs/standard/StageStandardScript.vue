@@ -463,7 +463,7 @@ const displayPrompts = computed(() =>
     )
 );
 
-const actionDisabled = computed(() => props.job.status === "running");
+const actionDisabled = computed(() => ["running", "queued"].includes(props.job.status));
 const isMaterialJob = computed(() => checkMaterialJob(props.job));
 
 interface TimelineSegment {
@@ -529,7 +529,7 @@ const materialDurationLocked = computed(
   () => isMaterialJob.value && baseDurationSec.value !== null && baseDurationSec.value > 0
 );
 const actionDisabledReason = computed(() =>
-  props.job.status === "running" ? "任务运行中，请稍后再试" : ""
+  actionDisabled.value ? "任务正在排队或执行中，请稍后再试" : ""
 );
 const sourceTitleUnchanged = computed(
   () => sourceTitle.value.trim() === (props.job.title || "").trim()
@@ -1129,7 +1129,7 @@ const handleRun = async (toEnd: boolean) => {
   submitting.value = true;
   try {
     await runJobStageAction("script", buildRunPayload(toEnd, trimmedTitle, words));
-    ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
+    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
     handleError(error, `${actionLabel}失败`);

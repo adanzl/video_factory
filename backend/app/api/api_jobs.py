@@ -574,7 +574,11 @@ def update_job_route():
     updates = {k: data[k] for k in _UPDATABLE_FIELDS if k in data}
     if not updates:
         raise APIError(f"at least one field required: {', '.join(sorted(_UPDATABLE_FIELDS))}")
-    return json_ok(job_mgr.update_job(job_id, **updates))
+    try:
+        job = job_mgr.update_job(job_id, **updates)
+    except JobBusyError as exc:
+        raise APIError(str(exc), status_code=409, code="job_busy") from exc
+    return json_ok(job)
 
 
 @bp.post("/updateInfo")

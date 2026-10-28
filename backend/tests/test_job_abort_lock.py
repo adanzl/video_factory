@@ -834,3 +834,331 @@ def test_update_job_publish_true_writes_chat_success_info(app_ctx) -> None:
     updated = job_mgr.update_job(int(job["id"]), publish=True)
     assert updated["status"] == "done"
     assert updated["error_message"] == "[A权威翻车] SUCCESS"
+
+
+@pytest.fixture
+def pipeline_queue(app_ctx, monkeypatch):
+    """真实 DB/调度/任务锁；只替换执行入口，禁止调用生成服务。"""
+    from app.repositories import repo_job
+    import worker.loop as loop
+
+    mgr = JobMgr()
+    consumers = []
+    prepared = []
+    monkeypatch.setattr(_job_mgr_mod, 'run_in_background', consumers.append)
+
+    def prepare(job_id, action, **kwargs):
+        prepared.append((job_id, action))
+        repo_job.update_job(job_id, status='pending', stage=action.split('/')[0])
+
+    monkeypatch.setattr(_job_mgr_mod, 'prepare_rerun_artifacts', prepare)
+    return mgr, consumers, prepared, repo_job, loop
+
+
+def test_pipeline_queue_ten_jobs_fifo_failure_and_frozen_parameters(pipeline_queue, monkeypatch):
+    import gevent
+
+    mgr, consumers, prepared, repo, loop = pipeline_queue
+    ids = [repo.create_job(f'queue {i}', pipeline='chat')['id'] for i in range(10)]
+    order = list(reversed(ids))
+    events = []
+    active = set()
+    configs = {'昭昭': {'voice': 'original'}}
+
+    def run(job_id, **kwargs):
+        assert not active
+        active.add(job_id)
+        events.append(job_id)
+        assert repo.get_job(job_id)['status'] == 'running'
+        assert kwargs['to_end'] is True
+        assert kwargs['speaker_configs']['昭昭']['voice'] == 'original'
+        assert sum(repo.get_job(j)['status'] == 'running' for j in ids) == 1
+        try:
+            gevent.sleep(0)
+            if job_id == order[3]:
+                raise ValueError('test stage failure')
+            repo.update_job(job_id, status='pending', stage='publish')
+        finally:
+            active.remove(job_id)
+
+    monkeypatch.setattr(loop, 'run_tts', run)
+    for job_id in order:
+        assert mgr.run_tts(job_id, to_end=True, speaker_configs=configs)['status'] == 'queued'
+    configs['昭昭']['voice'] = 'changed'
+    assert not prepared
+    assert not events
+    assert len(consumers) == 1
+    consumers.pop()()
+    assert events == order
+    assert [j for j, _ in prepared] == order
+    assert repo.get_job(order[3])['status'] == 'failed'
+    assert all(not (repo.get_job(j)['info'] or {}).get('pipeline_queue') for j in ids)
+    assert all(not mgr.is_worker_active(j) for j in ids)
+    assert not mgr._queue_draining
+
+
+def test_pipeline_queue_cancel_duplicate_and_delete_waiting(pipeline_queue, monkeypatch):
+    mgr, consumers, prepared, repo, loop = pipeline_queue
+    ids = [repo.create_job(f'queue {i}', pipeline='chat')['id'] for i in range(3)]
+    ran = []
+
+    def run(job_id, **kwargs):
+        ran.append(job_id)
+        repo.update_job(job_id, status='pending', stage='publish')
+
+    monkeypatch.setattr(loop, 'run_tts', run)
+    for job_id in ids:
+        mgr.run_tts(job_id, to_end=True)
+    with pytest.raises(JobBusyError):
+        mgr.run_tts(ids[0], to_end=True)
+    with pytest.raises(JobBusyError):
+        mgr.run_tts(ids[0], to_end=False)
+    mgr.abort_job(ids[0])
+    assert repo.get_job(ids[0])['status'] == 'pending'
+    assert not repo.get_job(ids[0])['info'].get('pipeline_queue')
+    mgr.delete_job(ids[1])
+    consumers.pop()()
+    assert ran == [ids[2]]
+    assert prepared == [(ids[2], 'tts')]
+    assert repo.get_job(ids[0])['stage'] == 'script'
+
+
+def test_pipeline_queue_restart_preserves_waiting_parameters(pipeline_queue, monkeypatch):
+    mgr, consumers, prepared, repo, loop = pipeline_queue
+    job_id = repo.create_job('waiting restart', pipeline='chat')['id']
+    mgr.run_tts(job_id, to_end=True, speech_rate=1.2, voice_id='test-voice')
+    consumers.clear()  # 模拟旧进程退出，队列仅存在数据库中。
+    restarted = JobMgr()
+    restarted.recover_pipeline_queue()
+    received = []
+
+    def run(jid, **kwargs):
+        received.append(kwargs)
+        repo.update_job(jid, status='pending', stage='publish')
+
+    monkeypatch.setattr(loop, 'run_tts', run)
+    consumers.pop()()
+    assert len(received) == 1
+    assert received[0]['speech_rate'] == 1.2
+    assert received[0]['voice_id'] == 'test-voice'
+    assert prepared == [(job_id, 'tts')]
+
+
+@pytest.mark.parametrize('stage', ['tts', 'segment'])
+def test_pipeline_queue_restart_resumes_current_stage_without_reset(pipeline_queue, monkeypatch, stage):
+    mgr, consumers, prepared, repo, loop = pipeline_queue
+    job_id = repo.create_job('running restart', pipeline='chat')['id']
+    mgr.run_tts(job_id, to_end=True, speech_rate=1.2)
+    info = repo.get_job(job_id)['info']
+    info['pipeline_queue']['started'] = True
+    repo.update_job(job_id, status='running', stage=stage, info=info)
+    consumers.clear()
+    restarted = JobMgr()
+    received = []
+
+    def run(jid, **kwargs):
+        received.append((repo.get_job(jid)['stage'], kwargs))
+        repo.update_job(jid, status='pending', stage='publish')
+
+    monkeypatch.setattr(loop, 'run_tts', run)
+    monkeypatch.setattr(loop, 'run_job', run)
+    restarted.recover_pipeline_queue()
+    consumers.pop()()
+    assert not prepared
+    assert received[0][0] == stage
+    if stage == 'tts':
+        assert received[0][1]['speech_rate'] == 1.2
+    assert repo.get_job(job_id)['stage'] == 'publish'
+
+
+def test_pipeline_queue_restart_does_not_repeat_completed_or_aborted(pipeline_queue):
+    mgr, consumers, prepared, repo, _loop = pipeline_queue
+    completed = repo.create_job('completed', pipeline='chat')['id']
+    aborted = repo.create_job('aborted', pipeline='chat')['id']
+    for job_id in [completed, aborted]:
+        mgr.run_tts(job_id, to_end=True)
+        info = repo.get_job(job_id)['info']
+        info['pipeline_queue']['started'] = True
+        if job_id == aborted:
+            info['abort_hold'] = True
+        repo.update_job(job_id, status='pending', stage='publish' if job_id == completed else 'tts', info=info)
+    consumers.clear()
+    restarted = JobMgr()
+    restarted.recover_pipeline_queue()
+    consumers.pop()()
+    assert not prepared
+    assert repo.get_job(completed)['stage'] == 'publish'
+    assert repo.get_job(aborted)['status'] == 'pending'
+    assert all(not repo.get_job(j)['info'].get('pipeline_queue') for j in [completed, aborted])
+
+
+def test_pipeline_queue_abort_running_advances_next(pipeline_queue, monkeypatch):
+    from app.utils.job_cancel import JobCancelledError
+
+    mgr, consumers, _prepared, repo, loop = pipeline_queue
+    first = repo.create_job('abort running', pipeline='chat')['id']
+    second = repo.create_job('next', pipeline='chat')['id']
+    ran = []
+
+    def run(job_id, **kwargs):
+        ran.append(job_id)
+        if job_id == first:
+            with pytest.raises(JobBusyError):
+                mgr.delete_job(job_id)
+            mgr.abort_job(job_id)
+            raise JobCancelledError('test abort')
+        repo.update_job(job_id, status='pending', stage='publish')
+
+    monkeypatch.setattr(loop, 'run_tts', run)
+    mgr.run_tts(first, to_end=True)
+    mgr.run_tts(second, to_end=True)
+    consumers.pop()()
+    assert ran == [first, second]
+    assert repo.get_job(first)['info']['abort_hold'] is True
+    assert repo.get_job(first)['status'] == 'pending'
+    assert repo.get_job(second)['stage'] == 'publish'
+
+
+@pytest.mark.parametrize('method, entry, kwargs', [
+    ('run_script', 'run_script', {'skip_title_optimize': True}),
+    ('run_intro', 'run_intro', {'hold_tail_sec': 1.5}),
+    ('run_tts', 'run_tts', {'speech_rate': 1.2}),
+    ('run_segment_all', 'run_segment_all', {'segment_indices': [1, 2]}),
+    ('run_segment_images', 'run_segment_images', {'segment_indices': [1]}),
+    ('run_segment_clips', 'run_segment_clips', {'segment_indices': [2]}),
+    ('run_merge', 'run_merge', {}),
+    ('run_prepare', 'run_prepare', {}),
+])
+def test_pipeline_queue_all_stage_entries(pipeline_queue, monkeypatch, method, entry, kwargs):
+    mgr, consumers, prepared, repo, loop = pipeline_queue
+    pipeline = 'material' if method == 'run_prepare' else 'standard'
+    job_id = repo.create_job(method, pipeline=pipeline)['id']
+    received = []
+
+    def run(jid, **options):
+        received.append(options)
+        repo.update_job(jid, status='pending', stage='publish')
+
+    monkeypatch.setattr(loop, entry, run)
+    getattr(mgr, method)(job_id, to_end=True, **kwargs)
+    assert not received
+    assert not prepared
+    consumers.pop()()
+    assert len(received) == 1
+    assert received[0]['to_end'] is True
+    for key, value in kwargs.items():
+        assert received[0][key] == value
+
+
+def test_pipeline_queue_api_accept_conflict_cancel(pipeline_queue, app_ctx, monkeypatch):
+    import app.api.api_jobs as api
+
+    mgr, consumers, prepared, repo, _loop = pipeline_queue
+    monkeypatch.setattr(api, 'job_mgr', mgr)
+    job_id = repo.create_job('API queue', pipeline='chat')['id']
+    client = app_ctx.test_client()
+    url = '/v_factory/api/jobs'
+    payload = {'id': job_id, 'to_end': True, 'speech_rate': 1.1}
+    response = client.post(url + '/tts', json=payload)
+    assert response.status_code == 202
+    assert response.get_json()['status'] == 'queued'
+    assert client.post(url + '/tts', json=payload).status_code == 409
+    assert client.post(url + '/update', json={'id': job_id, 'status': 'done'}).status_code == 409
+    response = client.get(url + '/list?status=queued')
+    assert [row['id'] for row in response.get_json()['items']] == [job_id]
+    response = client.post(url + '/abort', json={'id': job_id})
+    assert response.status_code == 200
+    assert response.get_json()['status'] == 'pending'
+    consumers.pop()()
+    assert not prepared
+
+
+def test_pipeline_queue_async_resume_keeps_completed_artifacts(pipeline_queue, monkeypatch):
+    mgr, consumers, prepared, repo, loop = pipeline_queue
+    job_id = repo.create_job('resume', pipeline='chat', stage='segment', status='failed')['id']
+    ran = []
+
+    def run(jid, **kwargs):
+        ran.append(jid)
+        repo.update_job(jid, status='pending', stage='publish')
+
+    monkeypatch.setattr(loop, 'run_job', run)
+    assert mgr.resume_job(job_id)['status'] == 'queued'
+    assert not ran
+    consumers.pop()()
+    assert ran == [job_id]
+    assert not prepared
+
+
+def test_pipeline_queue_accepts_new_request_while_first_runs(pipeline_queue, monkeypatch):
+    import gevent
+
+    mgr, consumers, _prepared, repo, loop = pipeline_queue
+    first = repo.create_job('first', pipeline='chat')['id']
+    second = repo.create_job('second', pipeline='chat')['id']
+    events = []
+
+    def submit_second():
+        with _db_mod.get_app().app_context():
+            assert mgr.run_tts(second, to_end=True)['status'] == 'queued'
+
+    def run(jid, **kwargs):
+        events.append(('start', jid))
+        if jid == first:
+            g = gevent.spawn(submit_second)
+            g.get(timeout=3)
+            assert events == [('start', first)]
+            assert not consumers  # 仍由当前唯一消费者接管
+        repo.update_job(jid, status='pending', stage='publish')
+        events.append(('finish', jid))
+
+    monkeypatch.setattr(loop, 'run_tts', run)
+    mgr.run_tts(first, to_end=True)
+    consumers.pop()()
+    assert events == [('start', first), ('finish', first), ('start', second), ('finish', second)]
+
+
+def test_pipeline_queue_preserves_artifacts_until_dequeued(pipeline_queue, monkeypatch, tmp_path):
+    from app.config import config
+    from app.services.job.job_reset import prepare_rerun
+
+    mgr, consumers, _prepared, repo, loop = pipeline_queue
+    monkeypatch.setattr(config, 'video_data_dir', tmp_path / 'media')
+    monkeypatch.setattr(_job_mgr_mod, 'prepare_rerun_artifacts', prepare_rerun)
+    job_id = repo.create_job('preserve audio', pipeline='chat')['id']
+    audio = config.video_data_dir / str(job_id) / 'audio' / 'narration.mp3'
+    audio.parent.mkdir(parents=True)
+    audio.write_bytes(b'existing audio')
+    repo.update_job(job_id, audio_path=str(audio))
+
+    def run(jid, **kwargs):
+        assert not audio.exists()
+        assert repo.get_job(jid)['info']['pipeline_queue']['started'] is True
+        repo.update_job(jid, status='pending', stage='publish')
+
+    monkeypatch.setattr(loop, 'run_tts', run)
+    mgr.run_tts(job_id, to_end=True)
+    assert audio.read_bytes() == b'existing audio'
+    mgr.abort_job(job_id)
+    assert audio.read_bytes() == b'existing audio'
+    mgr.run_tts(job_id, to_end=True)
+    assert audio.exists()
+    consumers.pop()()
+    assert not audio.exists()
+    assert repo.get_job(job_id)['stage'] == 'publish'
+
+
+def test_pipeline_queue_preserves_explicit_publish_resume(pipeline_queue, monkeypatch):
+    mgr, consumers, prepared, repo, loop = pipeline_queue
+    job_id = repo.create_job('publish resume', pipeline='chat', stage='publish')['id']
+    ran = []
+
+    def run(jid, **kwargs):
+        ran.append(repo.get_job(jid)['stage'])
+        repo.update_job(jid, status='done', stage='done')
+
+    monkeypatch.setattr(loop, 'run_job', run)
+    mgr.resume_job(job_id)
+    consumers.pop()()
+    assert ran == ['publish']
+    assert not prepared

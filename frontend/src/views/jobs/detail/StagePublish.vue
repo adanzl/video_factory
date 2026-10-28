@@ -496,9 +496,9 @@ const PUBLISH_PREVIEW_OPTIONS = {
   maxViewportRatio: 0.85,
 } as const;
 
-const actionDisabled = computed(() => props.job.status === "running");
+const actionDisabled = computed(() => ["running", "queued"].includes(props.job.status));
 const actionDisabledReason = computed(() =>
-  props.job.status === "running" ? "任务运行中，请稍后再试" : ""
+  actionDisabled.value ? "任务正在排队或执行中，请稍后再试" : ""
 );
 
 const stopQrPolling = () => {
@@ -768,7 +768,7 @@ const publishActionDisabled = computed(
 const publishActionDisabledReason = computed(() => {
   if (!finalFilePath.value) return "请先在「合成」阶段生成成片";
   if (biliSessionError.value || !biliSessionUser.value) return "请先扫码登录 B 站";
-  if (props.job.status === "running") return "任务运行中，请稍后再试";
+  if (actionDisabled.value) return "任务正在排队或执行中，请稍后再试";
   return "";
 });
 

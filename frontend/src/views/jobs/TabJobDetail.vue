@@ -17,7 +17,7 @@
         </span>
         <el-button
           :loading="doneLoading"
-          :disabled="loading"
+          :disabled="loading || job.status === 'queued'"
           size="small"
           type="primary"
           @click="handleDone"
@@ -31,7 +31,7 @@
           size="small"
           @click="handleAbort"
         >
-          中止
+          {{ job.status === "queued" ? "取消排队" : "中止" }}
         </el-button>
         <el-button
           :loading="clearingLogs"
@@ -204,6 +204,8 @@ const statusLabel = (status: string) => {
     case "pending":
     case "idle":
       return "待处理";
+    case "queued":
+      return "排队中";
     case "running":
       return "运行中";
     case "done":
@@ -402,7 +404,9 @@ const handleAbort = async () => {
     job.value.status === JOB_STATUS_RUNNING || job.value.worker_busy === true;
   try {
     await ElMessageBox.confirm(
-      isRunning
+      job.value.status === "queued"
+        ? "取消此任务的排队请求？已有产物会保留。"
+        : isRunning
         ? "将中止当前正在执行的任务。已完成的步骤会保留，未完成的步骤会在当前操作结束后停止。"
         : "将把任务状态设为 pending，并清除失败信息。不会删除已生成的文件或重置 stage。",
       "中止任务",
@@ -437,6 +441,7 @@ const handleAbort = async () => {
 };
 
 const shouldKeepPolling = (detail: JobDetail) =>
+  detail.status === "queued" ||
   detail.status === JOB_STATUS_RUNNING ||
   detail.worker_busy === true ||
   stoppingWorker.value;

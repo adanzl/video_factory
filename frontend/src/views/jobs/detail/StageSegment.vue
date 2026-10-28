@@ -720,9 +720,10 @@ const handleSaveSegmentText = async () => {
 };
 
 const actionDisabled = computed(
-  () => props.job.status === "running" || props.job.worker_busy === true
+  () => ["running", "queued"].includes(props.job.status) || props.job.worker_busy === true
 );
 const actionDisabledReason = computed(() => {
+  if (props.job.status === "queued") return "任务正在排队，可在页面上方取消排队";
   if (props.job.worker_busy && props.job.status !== "running") {
     return "后台仍在执行，请稍候";
   }
@@ -1034,7 +1035,7 @@ const handleRun = async (toEnd: boolean) => {
       payload.video_provider = videoProvider.value;
     }
     await runJobStageAction(segmentScope.value, payload);
-    ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
+    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
     handleError(error, `${actionLabel}失败`);

@@ -19,6 +19,7 @@
         @change="onFilterChange"
       >
         <el-option label="待处理" value="pending" />
+        <el-option label="排队中" value="queued" />
         <el-option label="运行中" value="running" />
         <el-option label="已完成" value="done" />
         <el-option label="失败" value="failed" />
@@ -129,7 +130,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, onMounted, ref } from "vue";
+import { h, onMounted, onUnmounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElCheckbox, ElMessage, ElMessageBox } from "element-plus";
 import { createJob, deleteJob, listJobs, updateJob } from "@/api/api-jobs";
@@ -183,6 +184,8 @@ const statusLabel = (status: string) => {
     case "pending":
     case "idle": // 历史数据兼容
       return "待处理";
+    case "queued":
+      return "排队中";
     case "running":
       return "运行中";
     case "done":
@@ -340,7 +343,18 @@ const handleDelete = async (row: JobListItem) => {
   }
 };
 
-onMounted(fetchJobs);
+let queuePollTimer: ReturnType<typeof setInterval> | null = null;
+onMounted(() => {
+  void fetchJobs();
+  queuePollTimer = setInterval(() => {
+    if (!loading.value && jobs.value.some(job => ["queued", "running"].includes(job.status))) {
+      void fetchJobs();
+    }
+  }, 3000);
+});
+onUnmounted(() => {
+  if (queuePollTimer !== null) clearInterval(queuePollTimer);
+});
 
 defineExpose({ refresh: fetchJobs });
 </script>

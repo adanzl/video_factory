@@ -22,6 +22,9 @@ def _recovery_error_message(job: dict) -> str | None:
 
 
 def recover_stuck_jobs() -> int:
+    from app.services.job.job_mgr import job_mgr
+
+    job_mgr.recover_pipeline_queue()
     recovered: list[tuple[int, str]] = []
 
     with atomic():

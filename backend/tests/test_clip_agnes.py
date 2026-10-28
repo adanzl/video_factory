@@ -1515,10 +1515,10 @@ def test_resume_job_does_not_prepare() -> None:
         patch.object(JobMgr, "get_job", return_value={"id": 7, "stage": "segment"}),
         patch.object(JobMgr, "submit_action", _fake_submit),
     ):
-        JobMgr().resume_job(7)
+        JobMgr().resume_job(7, sync=True)
 
     assert calls["job_id"] == 7
     assert calls["action"] == "segment"
     assert calls["prepare"] is False, "续跑不能清产物"
-    assert calls["sync"] is False
+    assert calls["sync"] is True
     assert calls["resume_after_abort"] is False

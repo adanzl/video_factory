@@ -264,9 +264,9 @@ const voicePreviewRef = ref<HTMLAudioElement | null>(null);
 const voicePreviewLoading = ref(false);
 const voicePreviewPlaying = ref(false);
 
-const actionDisabled = computed(() => props.job.status === "running");
+const actionDisabled = computed(() => ["running", "queued"].includes(props.job.status));
 const actionDisabledReason = computed(() =>
-  props.job.status === "running" ? "任务运行中，请稍后再试" : ""
+  actionDisabled.value ? "任务正在排队或执行中，请稍后再试" : ""
 );
 
 const audioUrl = computed(() => getMediaFileUrl(props.job.audio_path ?? "", props.job.audio_version));
@@ -439,7 +439,7 @@ const handleRun = async (toEnd: boolean) => {
       payload.voice_id = voiceId.value.trim();
     }
     await runJobStageAction("tts", payload);
-    ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
+    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
     handleError(error, `${actionLabel}失败`);

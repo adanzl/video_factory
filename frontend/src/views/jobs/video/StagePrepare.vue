@@ -111,9 +111,9 @@ const loadError = ref("");
 const actualDuration = ref<number | null>(null);
 const videoMeta = ref<{ width: number; height: number } | null>(null);
 
-const actionDisabled = computed(() => props.job.status === "running");
+const actionDisabled = computed(() => ["running", "queued"].includes(props.job.status));
 const actionDisabledReason = computed(() =>
-  props.job.status === "running" ? "任务运行中，请稍后再试" : ""
+  actionDisabled.value ? "任务正在排队或执行中，请稍后再试" : ""
 );
 
 const videoUrl = computed(() => getMediaFileUrl(props.job.base_path ?? ""));
@@ -179,7 +179,7 @@ const handleRun = async (toEnd: boolean) => {
   submitting.value = true;
   try {
     await runJobStageAction("prepare", { id: props.job.id, to_end: toEnd });
-    ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
+    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
     handleError(error, `${actionLabel}失败`);
