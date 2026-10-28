@@ -673,7 +673,8 @@ def _cpu_model() -> str:
             name = out.strip()
             if name:
                 return name
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, TypeError, subprocess.SubprocessError):
+            # gevent patch(subprocess=True) 下非默认 loop 会抛 TypeError
             pass
     return "CPU"
 
@@ -724,7 +725,7 @@ def _darwin_memory() -> tuple[int, int, int, int] | None:
         )
         vm = subprocess.check_output(["vm_stat"], text=True, timeout=1)
         swap = subprocess.check_output(["sysctl", "-n", "vm.swapusage"], text=True, timeout=1)
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except (OSError, TypeError, subprocess.SubprocessError, ValueError):
         return None
     page = 4096
     pages: dict[str, int] = {}
