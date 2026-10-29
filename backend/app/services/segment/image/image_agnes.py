@@ -189,10 +189,16 @@ class AgnesImageVerifyFailed(RuntimeError):
         *,
         output_path: Path,
         prompt: str,
+        verify_feedback: str | None = None,
     ) -> None:
         super().__init__(message)
         self.output_path = output_path
         self.prompt = prompt
+        self.verify_feedback = verify_feedback
+
+
+class AgnesImageVerificationUnavailable(AgnesImageError):
+    """质检未完成；保留图片并中止，不作为质量不合格继续重画。"""
 
 
 class _AgnesImageKeyFailover(AgnesImageError):
@@ -815,9 +821,15 @@ class AgnesImageProvider(ImageProvider):
         last_key: AgnesApiKey | None = None
         # 质检失败不换 Key：沿用上一把成功出图的 key
         sticky_key: AgnesApiKey | None = None
+        verify_feedback: list[str] = []
+        pending_edit: tuple[str, str] | None = None
+        edit_attempted = False
 
         for attempt in range(_VERIFY_MAX_ATTEMPTS):
             self._raise_if_job_cancelled()
+            draw_prompt = pending_edit[0] if pending_edit else prompt
+            draw_refs: list[Path | str] | None = [pending_edit[1]] if pending_edit else ref_images
+            pending_edit = None
             usable = [k for k in keys if k.value not in exhausted]
             if not usable:
                 break
@@ -843,10 +855,10 @@ class AgnesImageProvider(ImageProvider):
                 try:
                     result = self._generate_with_key(
                         key,
-                        prompt,
+                        draw_prompt,
                         output_path,
                         size=size,
-                        ref_images=ref_images,
+                        ref_images=draw_refs,
                         max_retries=key_retries,
                     )
                     sticky_key = key
@@ -898,11 +910,14 @@ class AgnesImageProvider(ImageProvider):
                 )
                 return result
 
+            # 每张图单独收集，避免上次结果或并发分镜的结果串入当前反馈。
+            verify_feedback.clear()
             verified = self._verify_image(
                 prompt,
                 result,
                 expected_speakers=expected_speakers,
                 content_style=content_style,
+                feedback=verify_feedback,
             )
             key_label = last_key.label if last_key else "?"
             if verified:
@@ -915,6 +930,19 @@ class AgnesImageProvider(ImageProvider):
                 )
                 return result
             more = attempt + 1 < _VERIFY_MAX_ATTEMPTS
+            if (
+                more and not edit_attempted and last_key is not None
+                and content_style == CONTENT_STYLE_DAILY_STORY
+                and expected_speakers and verify_feedback
+                and self._has_excess_people(verify_feedback[-1], len(set(expected_speakers)))
+            ):
+                edit_attempted = True
+                pending_edit = self._plan_excess_people_edit(
+                    prompt, result, expected_speakers=expected_speakers,
+                    feedback=verify_feedback[-1], api_key=last_key,
+                )
+                if pending_edit:
+                    logger.info("%s next attempt uses targeted people removal; original scene remains the QC target", log_tag)
             logger.warning(
                 "%s agnes image verify FAILED (%s key, attempt=%s/%s, "
                 "prompt_chars=%s, speakers=%s)%s",
@@ -932,10 +960,79 @@ class AgnesImageProvider(ImageProvider):
                 f"agnes image verify failed after {_VERIFY_MAX_ATTEMPTS} attempts",
                 output_path=result,
                 prompt=prompt,
+                verify_feedback=verify_feedback[-1] if verify_feedback else None,
             )
         if last_exc:
             raise last_exc
         raise AgnesImageError("agnes generate failed without exception")
+
+    @staticmethod
+    def _has_excess_people(feedback: str, expected_count: int) -> bool:
+        try:
+            observations = json.loads(feedback).get("observations", {})
+        except (ValueError, AttributeError, TypeError):
+            return False
+        if not isinstance(observations, dict):
+            return False
+        people, total = observations.get("people"), observations.get("cast_count")
+        return (
+            isinstance(people, list) and isinstance(total, int)
+            and len(people) == total and total > expected_count > 0
+            and all(isinstance(p, dict) and all(isinstance(p.get(k), str) and p[k].strip()
+                    for k in ("position", "appearance", "posture")) for p in people)
+        )
+
+    def _plan_excess_people_edit(
+        self, prompt: str, image_path: Path, *, expected_speakers: list[str],
+        feedback: str, api_key: AgnesApiKey,
+    ) -> tuple[str, str] | None:
+        """一次 VL 定位保留/删除对象；不确定就继续原重抽，不编辑肢体。"""
+        try:
+            image_url = self._encode_verify_image_data_url(image_path)
+            question = (
+                '你是图像修复审核员。人数质检发现图片有多余人物。请结合图片与目标描述，'
+                '定位应删除的人物，保留符合目标姿态的原有人物。只返回JSON：'
+                '{"confident":true,"remove_description":"明确空间位置、服装与姿态，80字以内",'
+                '"keep_description":"逐一列出应保留人物的空间位置、服装与现有姿态，150字以内，'
+                '特别区分相同外貌但姿态不同的人","remaining_count":整数}。'
+                '无法确定则confident=false；只删除多余人物，不新增人物或改动剧情。'
+                f'目标出场角色：{"、".join(expected_speakers)}。目标分镜：{prompt}。'
+                f'上一轮观察仅供核对，必须以图片为准：{feedback}'
+            )
+            response = cast(requests.Response, self._run_blocking_cancellable(lambda: requests.post(
+                agnes_key_base_url(api_key, get_settings()) + "/chat/completions",
+                headers=agnes_auth_header(api_key.value),
+                json={"model": get_settings().agnes_vl_model, "max_tokens": 2048,
+                      "messages": [{"role": "user", "content": [
+                          {"type": "text", "text": question},
+                          {"type": "image_url", "image_url": {"url": image_url}},
+                      ]}]}, timeout=(10, 60),
+            )))
+            response.raise_for_status()
+            body = response.json()
+            logger.info("[out=%s] people edit plan (%s key), usage=%s", image_path.name, api_key.label, body.get("usage"))
+            raw = body.get("choices", [{}])[0].get("message", {}).get("content") or ""
+            raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+            plan = json.loads(raw)
+            if not isinstance(plan, dict) or plan.get("confident") is not True:
+                return None
+            if type(plan.get("remaining_count")) is not int or plan["remaining_count"] != len(set(expected_speakers)):
+                return None
+            keep, remove = plan.get("keep_description"), plan.get("remove_description")
+            if not all(isinstance(text, str) and 0 < len(text.strip()) <= 400 for text in (keep, remove)):
+                return None
+            edit = (
+                f'保留这些原有人物：{keep}。只移除这些多余人物：{remove}。'
+                f'编辑后共{plan["remaining_count"]}个人。移除区域补回连续背景，'
+                '保留人物的动作、表情、服装以及原画风和道具。'
+            )
+            # 先编码成不可变数据，下一次出图可安全覆盖原路径，并发镜头互不共享状态。
+            mime = "image/jpeg" if image_path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+            source = f"data:{mime};base64," + base64.b64encode(image_path.read_bytes()).decode("ascii")
+            return edit, source
+        except (requests.RequestException, ValueError, TypeError, KeyError, IndexError, AttributeError, OSError) as exc:
+            logger.warning("[out=%s] people edit plan unavailable (%s); continue original generation", image_path.name, type(exc).__name__)
+            return None
 
     # ── image-text match verification ────────────────────────────────
 
@@ -979,11 +1076,11 @@ class AgnesImageProvider(ImageProvider):
     def _strip_prompt_for_verify(prompt: str) -> str:
         """去掉 daily wrap 硬编码前缀，只留给 VL 核心场景句。"""
         body = (prompt or "").strip()
-        marker = "孩子气的构图。"
+        marker = "孩子气的构图"
         if "基于参考图调整人物动作" in body and marker in body:
             idx = body.find(marker)
             if idx >= 0:
-                stripped = body[idx + len(marker) :].strip()
+                stripped = body[idx + len(marker) :].lstrip("。；;. \n\t")
                 if stripped:
                     return stripped
         return body
@@ -1072,6 +1169,8 @@ class AgnesImageProvider(ImageProvider):
         """返回 ([(check_id, question), ...], user_prompt, cast_max)。"""
         speakers = [str(s).strip() for s in (expected_speakers or []) if str(s).strip()]
         scene_prompt = AgnesImageProvider._strip_prompt_for_verify(prompt)
+        # 风格/画风属于绘画描述，不是场景里的吹风条件。
+        wind_prompt = re.sub(r"画风|风格", "", scene_prompt)
 
         items: list[tuple[str, str]] = [
             (
@@ -1243,18 +1342,22 @@ class AgnesImageProvider(ImageProvider):
                     "回答「是」或「否」",
                 )
             )
-        # 单扇门：提示词写门时校验，防 T2I 画成双开门/对开门
-        if "门" in scene_prompt:
+        # 只约束房间出入口，不能把双门冰箱等道具误判成双开房门。
+        from app.services.script.image_prompt import scene_has_room_door
+
+        if scene_has_room_door(scene_prompt):
             items.append(
                 (
                     "door_single",
-                    "画面中的门是否只有一个门扇（单扇门/单开门）？"
+                    "仅检查房间出入口的门，不包括家电、柜体、车辆或电梯门。"
+                    "画面中房间出入口的门是否只有一个门扇（单扇门/单开门）？"
                     "若为双开门/对开门（左右各一个门扇）答「否」。"
+                    "画面没有房间出入口的门则答「是」。"
                     "回答「是」或「否」",
                 )
             )
         # 无独立飘发：提示词写风吹头发时校验，防独立马尾/发丝从门外飘入
-        if any(w in scene_prompt for w in ("风", "吹")) and any(
+        if any(w in wind_prompt for w in ("风", "吹")) and any(
             w in scene_prompt for w in ("头发", "马尾")
         ):
             items.append(
@@ -1268,7 +1371,7 @@ class AgnesImageProvider(ImageProvider):
         # 风向：门+风吹头发时，发丝须背离门口（顺风），防逆风朝门飘
         if (
             "门" in scene_prompt
-            and any(w in scene_prompt for w in ("风", "吹"))
+            and any(w in wind_prompt for w in ("风", "吹"))
             and any(w in scene_prompt for w in ("头发", "马尾"))
         ):
             items.append(
@@ -1344,12 +1447,28 @@ class AgnesImageProvider(ImageProvider):
 
     @staticmethod
     def _extract_item_lines(text: str) -> str:
-        """从正文或思考链中抽出「项N: …」行。"""
-        lines = [
-            ln.strip()
-            for ln in (text or "").splitlines()
-            if _ITEM_LINE_RE.match(ln.strip())
-        ]
+        """抽取编号答案；完整的跨行 JSON 规范成单行，残缺 JSON 仍交由校验拒绝。"""
+        items: list[list[str]] = []
+        for line in (text or "").splitlines():
+            line = line.strip()
+            if _ITEM_LINE_RE.match(line):
+                items.append([line])
+            elif items:
+                items[-1].append(line)
+        lines = []
+        for item in items:
+            match = _ITEM_LINE_RE.match(item[0])
+            if match is None:
+                continue
+            raw = match.group(2).strip()
+            if raw.startswith(("[", "{")):
+                # 只接受完整 JSON；不从错误报告中截取看似正确的部分。
+                try:
+                    value = json.loads("\n".join([raw, *item[1:]]).strip())
+                    raw = json.dumps(value, ensure_ascii=False)
+                except (ValueError, TypeError):
+                    pass
+            lines.append(f"项{match.group(1)}: {raw}")
         return "\n".join(lines)
 
     @staticmethod
@@ -1501,6 +1620,51 @@ class AgnesImageProvider(ImageProvider):
         return parsed_any
 
     @staticmethod
+    def _verify_feedback_observations(content: str, check_ids: list[str]) -> dict[str, Any] | None:
+        """仅回传可解析、人数自洽的观察，避免把漏答或复述题目当成事实。"""
+        observed: dict[str, Any] = {}
+        for line in content.splitlines():
+            match = _ITEM_LINE_RE.match(line.strip())
+            if not match or not 1 <= int(match.group(1)) <= len(check_ids):
+                continue
+            cid = check_ids[int(match.group(1)) - 1]
+            raw = match.group(2).strip()
+            if cid in _ROLE_COUNT_IDS | _ARM_COUNT_IDS | _LEG_COUNT_IDS | {"cast_count"}:
+                number = re.fullmatch(r"(\d+)\s*(?:人|位|条)?", raw)
+                if number:
+                    observed[cid] = int(number.group(1))
+            elif cid == "people" or cid in _ROLE_CLOTHES_IDS:
+                try:
+                    value = json.loads(raw)
+                except (ValueError, TypeError):
+                    continue
+                if cid == "people":
+                    if isinstance(value, list) and all(
+                        isinstance(p, dict) and all(isinstance(p.get(k), str) and p[k].strip()
+                        for k in ("position", "appearance", "posture")) for p in value
+                    ):
+                        observed[cid] = value
+                elif isinstance(value, dict) and all(
+                    isinstance(value.get(k), str) and value[k] in allowed
+                    for k, allowed in _CLOTHES_VALUES.items()
+                ):
+                    observed[cid] = {k: value[k] for k in _CLOTHES_VALUES}
+            else:
+                answer = AgnesImageProvider._parse_item_answer(raw)
+                if answer in {"yes", "no"}:
+                    observed[cid] = answer
+        people = observed.get("people")
+        total = observed.get("cast_count")
+        if isinstance(people, list):
+            if total is not None and len(people) != total:
+                return None
+            total = len(people)
+        known_roles = sum(observed.get(cid, 0) for cid in _ROLE_COUNT_IDS)
+        if total is not None and known_roles > total:
+            return None
+        return observed or None
+
+    @staticmethod
     def _format_verify_reply(content: str, check_ids: list[str]) -> str:
         """解析回复，生成「scene=yes cast_count=4 …」格式的简短日志。"""
         raw_answers: dict[int, str] = {}
@@ -1548,6 +1712,7 @@ class AgnesImageProvider(ImageProvider):
         *,
         expected_speakers: list[str] | None = None,
         content_style: str | None = None,
+        feedback: list[str] | None = None,
     ) -> bool:
         """使用 Agnes 多模态判断图片是否匹配提示词且符合内容规则。
 
@@ -1658,6 +1823,16 @@ class AgnesImageProvider(ImageProvider):
                                     expected_speakers=expected_speakers,
                                     content_style=content_style,
                                 )
+                                if not ok and feedback is not None:
+                                    feedback.append("最后一张图的肢体复检未通过。")
+                            elif not ok and feedback is not None:
+                                observations = AgnesImageProvider._verify_feedback_observations(content, check_ids)
+                                if observations:
+                                    feedback.append(json.dumps({
+                                        "expected_roles": expected_speakers,
+                                        "role_ids": {role: name for name, (role, _) in _ROLE_VERIFY.items()},
+                                        "observations": observations,
+                                    }, ensure_ascii=False))
                             return ok
                         logger.warning(
                             "%s agnes verify_image http %s (%s key, retry=%s/%s), body=%s",
@@ -1669,6 +1844,8 @@ class AgnesImageProvider(ImageProvider):
                             _resp_body_summary(resp),  # type: ignore[arg-type]
                         )
                         break
+                    except AgnesImageVerificationUnavailable:
+                        raise
                     except requests.Timeout as exc:
                         alt = agnes_apply_host_failover(
                             verify_url,  # type: ignore[var-annotated]
@@ -1711,6 +1888,8 @@ class AgnesImageProvider(ImageProvider):
                 _VERIFY_RETRY_COUNT + 1,
             )
             return False
+        except AgnesImageVerificationUnavailable:
+            raise
         except Exception as exc:
             logger.warning(
                 "agnes verify_image error [out=%s]: %s", image_path.name, exc
@@ -1764,17 +1943,17 @@ class AgnesImageProvider(ImageProvider):
     ) -> bool:
         """多手硬卡：对出镜角色裁剪放大后数手，任何角色 >2 手即失败。
 
-        返回 False 触发整图重生成。网络/解析失败跳过该角色（不误杀），
-        仅当 VL 明确给出「>2 手」或「多手=是」时才判失败。
+        明确多手返回 False 触发重生成；无法完成复核则抛出不可用异常，
+        不把接口故障当成图片通过或图片不合格。
         """
         if content_style != CONTENT_STYLE_DAILY_STORY:
             return True
         if not image_path.exists():
-            return True
+            raise AgnesImageVerificationUnavailable("肢体质检未完成：图片不存在")
         settings = get_settings()
         keys = agnes_api_keys(settings)
         if not keys:
-            return True
+            raise AgnesImageVerificationUnavailable("肢体质检未完成：未配置质检接口")
         speakers = [str(s).strip() for s in (expected_speakers or []) if str(s).strip()]
         allowed = AgnesImageProvider._allowed_cast_for_verify(
             speakers=speakers,
@@ -1793,7 +1972,7 @@ class AgnesImageProvider(ImageProvider):
                 logger.warning(
                     "%s agnes hardfail crop %s error: %s", log_tag, name, exc
                 )
-                continue
+                raise AgnesImageVerificationUnavailable(f"肢体质检未完成：{name}图片裁剪失败") from exc
             look = _DAILY_LOOK.get(name, name)
             question = (
                 _HARD_FAIL_ARM_Q1.format(look=look)
@@ -1802,8 +1981,10 @@ class AgnesImageProvider(ImageProvider):
             )
             answer = self._ask_hardfail_vl(settings, keys, data_url, question, log_tag)
             if answer is None:
-                continue
+                raise AgnesImageVerificationUnavailable(f"肢体质检未完成：{name}复核接口不可用，请稍后重试")
             count, extra = AgnesImageProvider._parse_hardfail_arm_answer(answer)
+            if count is None and extra is None:
+                raise AgnesImageVerificationUnavailable(f"肢体质检未完成：{name}复核结果无法解析")
             hit = (count is not None and count > _MAX_ARMS_PER_PERSON) or (
                 extra is True
             )
@@ -1827,7 +2008,7 @@ class AgnesImageProvider(ImageProvider):
         question: str,
         log_tag: str,
     ) -> str | None:
-        """裁剪图数手 VL 调用；网络失败返回 None（跳过该角色）。"""
+        """裁剪图数手 VL 调用；网络失败返回 None，由调用方报告质检未完成。"""
         for api_key in keys:
             try:
                 headers = agnes_auth_header(api_key.value)
@@ -1885,7 +2066,7 @@ class AgnesImageProvider(ImageProvider):
         """解析硬卡两问回答，返回 (count, extra)。
 
         项1 数字为手臂条数；项2 是/否为多手确认。
-        解析失败返回 None，调用方跳过（不误杀）。
+        解析失败返回 None，由调用方区分无法复核与实际多手。
         """
         count: int | None = None
         extra: bool | None = None

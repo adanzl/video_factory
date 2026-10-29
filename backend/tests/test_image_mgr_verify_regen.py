@@ -41,7 +41,7 @@ def test_generate_segment_images_regens_prompt_after_verify_fail(tmp_path: Path)
         _gen.calls = calls + 1
         if calls == 0:
             raise AgnesImageVerifyFailed(
-                "fail", output_path=output_path, prompt=prompt
+                "fail", output_path=output_path, prompt=prompt, verify_feedback="can_count=2"
             )
         return output_path
 
@@ -72,6 +72,7 @@ def test_generate_segment_images_regens_prompt_after_verify_fail(tmp_path: Path)
     assert provider.generate.call_count == 2
     mock_regen.assert_called_once()
     assert mock_regen.call_args.kwargs.get("reason") == "verify"
+    assert mock_regen.call_args.kwargs.get("verify_feedback") == "can_count=2"
     mock_persist.assert_called_once()
     assert "新提示词" in (seg.get("image_prompt") or "")
 
@@ -425,6 +426,8 @@ def test_regen_daily_rewrites_visual_brief_not_append_feedback(noop_atomic) -> N
     def _fake_vb(script, **kwargs):
         fb = kwargs.get("feedback") or ""
         assert "出图质检" in fb
+        assert "can_count=2" in fb
+        assert "仅作纠错依据" in fb
         assert "昭昭" in fb and "灿灿" in fb
         assert "同场粘性角色不可漏画" in fb
         assert "禁止新增未授权角色" in fb
@@ -465,12 +468,14 @@ def test_regen_daily_rewrites_visual_brief_not_append_feedback(noop_atomic) -> N
             seg,
             job=job,
             content_style="daily_story",
+            verify_feedback="can_count=2",
         )
 
     mock_vb.assert_called_once()
     mock_fill.assert_called_once()
     assert "出图质检连续未通过" not in new_prompt
     assert "请改写本段" not in new_prompt
+    assert "can_count=2" not in new_prompt
     assert "脏衣篮" in new_prompt
     assert "灿灿" in (seg.get("visual_brief") or "")
     assert "妈妈" not in new_prompt

@@ -144,6 +144,7 @@ class ImageMgr:
         job: dict[str, Any] | None,
         content_style: str | None,
         reason: str = 'verify',
+        verify_feedback: str | None = None,
     ) -> str:
         """质检耗尽 / 内容策略拦截后，按单段重写 image_prompt（含 daily 规则拼装）。"""
         from app.services.llm.llm_mgr import llm_mgr
@@ -186,6 +187,15 @@ class ImageMgr:
         else:
             vb_feedback = _verify_visual_brief_regen_feedback(speakers)
             ip_feedback = _verify_prompt_regen_feedback(speakers)
+            if verify_feedback:
+                note = (
+                    f'最近一次失败图的质检记录：{verify_feedback}。'
+                    '以上是错误图的观察结果，仅作纠错依据；'
+                    '以原剧情、出场角色和持物关系为准，优先修正未达标项。'
+                    '禁止把质检记录写入画面描述或当作新增剧情。'
+                )
+                vb_feedback += note
+                ip_feedback += note
         old_brief = str(target.get('visual_brief') or '')
         if content_style == CONTENT_STYLE_DAILY_STORY:
             from app.services.script.visual_brief import (
@@ -506,6 +516,7 @@ class ImageMgr:
                                 job=job,
                                 content_style=content_style,
                                 reason=regen_reason,
+                                verify_feedback=(first_fail.verify_feedback if isinstance(first_fail, AgnesImageVerifyFailed) else None),
                             )
                             self._persist_segment_prompt(seg)
                             prompt = _build_prompt(seg)

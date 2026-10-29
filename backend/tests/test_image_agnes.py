@@ -12,6 +12,7 @@ from app.services.llm.llm_agnes import AgnesApiKey
 from app.services.segment.image.image_agnes import (
     AgnesImageProvider,
     AgnesImageVerifyFailed,
+    AgnesImageVerificationUnavailable,
     _VERIFY_MAX_ATTEMPTS,
     _to_agnes_size,
 )
@@ -821,27 +822,28 @@ def test_verify_hardfail_limbs_fails_on_third_arm(tmp_path: Path) -> None:
     assert ok is False
 
 
-def test_verify_hardfail_limbs_skips_on_vl_failure(tmp_path: Path) -> None:
-    """VL 网络失败/解析不出时跳过该角色，不误杀。"""
+@pytest.mark.parametrize("answer", [None, "", "无法识别图片"])
+def test_verify_hardfail_limbs_reports_incomplete_on_vl_failure(tmp_path: Path, answer) -> None:
+    """VL 网络失败/无法解析不能算作质检完成。"""
     provider = AgnesImageProvider()
     img = PILImage.new("RGB", (1000, 600), "white")
     path = tmp_path / "skip.png"
     img.save(path)
 
     with (
-        patch.object(provider, "_ask_hardfail_vl", return_value=None),
+        patch.object(provider, "_ask_hardfail_vl", return_value=answer),
         patch(
             "app.services.segment.image.image_agnes.agnes_api_keys",
             return_value=[AgnesApiKey("primary", "k")],
         ),
         patch.object(provider, "_allowed_cast_for_verify", return_value=["灿灿"]),
+        pytest.raises(AgnesImageVerificationUnavailable, match="肢体质检未完成"),
     ):
-        ok = provider._verify_hardfail_limbs(
+        provider._verify_hardfail_limbs(
             path,
             expected_speakers=["灿灿"],
             content_style="daily_story",
         )
-    assert ok is True
 
 
 def test_verify_hardfail_limbs_non_daily_skips(tmp_path: Path) -> None:
@@ -1168,3 +1170,259 @@ def test_verify_clothes_allows_cropped_lower_body_but_not_empty_observation() ->
     assert not AgnesImageProvider._evaluate_verify_response(
         f"项1: {json.dumps(clothes)}", ["can_clothes"],
     )
+
+
+@pytest.mark.parametrize(('cid', 'answer', 'expected'), [
+    ('zhao_count', '2', '"zhao_count": 2'),
+    ('can_count', '2', '"can_count": 2'),
+    ('mom_count', '2', '"mom_count": 2'),
+    ('can_clothes', '{"upper_color":"blue","upper_style":"short_sleeve","lower_color":"blue","lower_style":"shorts"}', '"upper_color": "blue"'),
+])
+def test_verify_observations_reach_feedback(tmp_path: Path, cid, answer, expected) -> None:
+    provider = AgnesImageProvider()
+    path = tmp_path / 'rejected.png'
+    PILImage.new('RGB', (16, 16), 'white').save(path)
+    response = MagicMock(status_code=200, ok=True)
+    response.json.return_value = {'choices': [{'message': {'content': f'项1: {answer}'}}]}
+    feedback: list[str] = []
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('free', 'test')]),
+        patch('app.services.segment.image.image_agnes.requests.post', return_value=response),
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch.object(AgnesImageProvider, '_build_verify_checklist', return_value=([(cid, '检查项')], '检查图片', 3)),
+    ):
+        assert not provider._verify_image('原提示词', path, expected_speakers=['昭昭','灿灿','妈妈'], feedback=feedback)
+    assert len(feedback) == 1
+    assert expected in feedback[0]
+    assert json.loads(feedback[0])['expected_roles'] == ['昭昭','灿灿','妈妈']
+
+
+def test_generate_feedback_is_local_and_only_uses_latest_image(tmp_path: Path) -> None:
+    import gevent
+
+    provider = AgnesImageProvider()
+    calls: dict[str, int] = {}
+
+    def generate(_key, _prompt, output_path, **_kwargs):
+        output_path.write_bytes(b'png')
+        return output_path
+
+    def verify(_prompt, path, *, feedback, **_kwargs):
+        calls[path.stem] = calls.get(path.stem, 0) + 1
+        if calls[path.stem] == 1:
+            feedback.append(path.stem + ': previous')
+        elif path.stem == 'a':
+            feedback.append(path.stem + ': latest')
+        # b 的最后一轮无结果：不得沿用上一张图片的观察。
+        gevent.sleep(0)
+        return False
+
+    def run(name):
+        try:
+            provider.generate('原提示词', tmp_path / f'{name}.png')
+        except AgnesImageVerifyFailed as exc:
+            return exc.verify_feedback
+        raise AssertionError('expected verification failure')
+
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('free', 'test')]),
+        patch('app.services.segment.image.image_agnes._VERIFY_MAX_ATTEMPTS', 2),
+        patch.object(provider, '_generate_with_key', side_effect=generate) as generated,
+        patch.object(provider, '_verify_image', side_effect=verify),
+    ):
+        workers = [gevent.spawn(run, name) for name in ('a', 'b')]
+        gevent.joinall(workers, raise_error=True)
+    assert [worker.value for worker in workers] == ['a: latest', None]
+    assert generated.call_count == 4
+    assert all(call.args[1] == '原提示词' for call in generated.call_args_list)
+
+
+def test_verify_feedback_discards_inconsistent_or_unparsed_reports() -> None:
+    observations = AgnesImageProvider._verify_feedback_observations
+    ids = ['people', 'zhao_count', 'can_count', 'can_clothes', 'cast_count']
+    assert observations(_cast_reply(people=1, count=1), ids) is None
+    assert observations(_cast_reply(count=2), ids) is None
+    assert observations('项1: 无法访问图片\n项2: 请回答2条手臂\n项4: 请返回衣服颜色', ids) is None
+    facts = observations('项1: 无法访问图片\n项2: 2\n项3: 1\n项5: 4', ids)
+    assert facts == {'zhao_count': 2, 'can_count': 1, 'cast_count': 4}
+
+
+@pytest.mark.parametrize('ending', ['。', '；', ';'])
+def test_verify_strips_joined_style_prefix_without_creating_wind_checks(ending) -> None:
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+
+    scene = '门边，昭昭站在左侧，灿灿站在右侧，灿灿的马尾自然下垂。'
+    prompt = assemble_daily_t2i_prompt({
+        'shot_type':'中景', 'speakers':['昭昭','灿灿'], 'visual_brief':scene,
+        'dialogue':[{'speaker':'昭昭','text':'看这里。'}],
+    })
+    # 覆盖实际拼装器的分号，以及旧提示词的句号。
+    prompt = prompt.replace('孩子气的构图；', '孩子气的构图'+ending)
+    prompt = '严格保留参考图发色：灿灿头发通体纯黑，头顶到马尾同一黑色。'+prompt
+    stripped = AgnesImageProvider._strip_prompt_for_verify(prompt)
+    assert '保持参考图外貌' not in stripped
+    assert '门边' in stripped
+    items, _, _ = AgnesImageProvider._build_verify_checklist(prompt=prompt, expected_speakers=['昭昭','灿灿'], content_style='daily_story')
+    ids = [cid for cid,_ in items]
+    assert 'door_single' in ids
+    assert 'no_float_hair' not in ids
+    assert 'hair_wind_dir' not in ids
+
+
+def test_legacy_painting_style_is_not_a_wind_condition() -> None:
+    items,_,_=AgnesImageProvider._build_verify_checklist(
+        prompt='蜡笔画风、手绘风格。门边灿灿的黑色马尾自然下垂。',
+        expected_speakers=['昭昭','灿灿'],content_style='daily_story',
+    )
+    assert not {'no_float_hair','hair_wind_dir'} & {cid for cid,_ in items}
+
+
+@pytest.mark.parametrize("field", ["content", "reasoning_content"])
+def test_multiline_people_json_is_preserved_from_vl_message(field):
+    text = '项1: [\n {"position":"左边","appearance":"蓝衣男孩","posture":"坐着"}\n]\n项2: 1'
+    normalized = AgnesImageProvider._vl_message_text({field: text})
+    assert AgnesImageProvider._evaluate_verify_response(normalized, ["people", "cast_count"], cast_max=1)
+    observations = AgnesImageProvider._verify_feedback_observations(normalized, ["people", "cast_count"])
+    assert observations["people"][0]["posture"] == "坐着"
+    malformed = AgnesImageProvider._vl_message_text({field: text.replace('\n]', '')})
+    assert not AgnesImageProvider._evaluate_verify_response(malformed, ["people", "cast_count"], cast_max=1)
+
+
+@pytest.mark.parametrize("edit_passes", [True, False])
+def test_excess_people_edit_uses_failed_image_but_keeps_original_qc(tmp_path, edit_passes):
+    provider = AgnesImageProvider()
+    output = tmp_path / "frame.png"
+    refs = [tmp_path / "hosts.png"]
+    feedback = json.dumps({"observations": {
+        "cast_count": 3, "people": [{"position": str(i), "appearance": "人物", "posture": "站着"} for i in range(3)]
+    }})
+    generated = []
+    verified = []
+
+    def generate(key, prompt, path, **kwargs):
+        generated.append((prompt, kwargs["ref_images"]))
+        path.write_bytes(b"image")
+        return path
+
+    def verify(prompt, path, **kwargs):
+        verified.append(prompt)
+        if len(verified) == 1 or (not edit_passes and len(verified) == 2):
+            kwargs["feedback"].append(feedback)
+            return False
+        return edit_passes or len(verified) == 3
+
+    with (
+        patch("app.services.segment.image.image_agnes.agnes_api_keys", return_value=[AgnesApiKey("cn_free", "test-key")]),
+        patch.object(provider, "_generate_with_key", side_effect=generate),
+        patch.object(provider, "_verify_image", side_effect=verify),
+        patch.object(provider, "_plan_excess_people_edit", return_value=("只删除多余人物", "data:image/png;base64,aW1hZ2U=")) as plan,
+    ):
+        assert provider.generate("原剧情动作", output, ref_images=refs, expected_speakers=["昭昭", "灿灿"], content_style="daily_story") == output
+    plan.assert_called_once()
+    assert generated[1] == ("只删除多余人物", ["data:image/png;base64,aW1hZ2U="])
+    assert len(set(verified)) == 1
+    assert "原剧情动作" in verified[0]
+    if not edit_passes:
+        assert generated[2] == generated[0]
+    assert refs == [tmp_path / "hosts.png"]
+
+
+@pytest.mark.parametrize("observations", [
+    {"cast_count": 2, "zhao_arms": 3},
+    {"cast_count": 3},
+    {"cast_count": 3, "people": [{"position":"左", "appearance":"男孩", "posture":"躺着"}]},
+    {"cast_count": 3, "people": [{}, {}, {}]},
+])
+def test_people_edit_gate_rejects_limbs_or_uncertain_counts(observations):
+    assert not AgnesImageProvider._has_excess_people(json.dumps({"observations": observations}), 2)
+
+
+@pytest.mark.parametrize("plan", [
+    {"confident": False, "remaining_count": 2, "keep_description": "保留", "remove_description": "删除"},
+    {"confident": True, "remaining_count": 1, "keep_description": "保留", "remove_description": "删除"},
+    {"confident": True, "remaining_count": 2, "remove_description": "删除"},
+    {"confident": True, "remaining_count": 2, "keep_description": "", "remove_description": "删除"},
+])
+def test_people_edit_plan_rejects_ambiguous_or_incomplete_plan(tmp_path, plan):
+    provider = AgnesImageProvider()
+    source = tmp_path / "source.png"
+    PILImage.new("RGB", (8,8)).save(source)
+    response = MagicMock()
+    response.json.return_value = {"choices": [{"message": {"content": json.dumps(plan)}}]}
+    with patch.object(provider, "_run_blocking_cancellable", side_effect=lambda fn: fn()), patch("requests.post", return_value=response):
+        assert provider._plan_excess_people_edit("原稿", source, expected_speakers=["昭昭", "灿灿"], feedback="观察", api_key=AgnesApiKey("cn_free", "test-key")) is None
+
+
+@pytest.mark.parametrize("attempt_budget", [1, 3])
+def test_uncertain_people_edit_keeps_original_retry_budget(tmp_path, attempt_budget):
+    provider = AgnesImageProvider()
+    output = tmp_path / "frame.png"
+    output.write_bytes(b"image")
+    refs = [tmp_path / "hosts.png"]
+    observation = json.dumps({"observations": {
+        "cast_count": 3,
+        "people": [{"position": str(i), "appearance": "人物", "posture": "站着"} for i in range(3)],
+    }})
+
+    def verify(_prompt, _path, *, feedback, **_kwargs):
+        feedback.append(observation)
+        return False
+
+    with (
+        patch("app.services.segment.image.image_agnes.agnes_api_keys", return_value=[AgnesApiKey("cn_free", "test-key")]),
+        patch("app.services.segment.image.image_agnes._VERIFY_MAX_ATTEMPTS", attempt_budget),
+        patch.object(provider, "_generate_with_key", return_value=output) as generate,
+        patch.object(provider, "_verify_image", side_effect=verify),
+        patch.object(provider, "_plan_excess_people_edit", return_value=None) as plan,
+        pytest.raises(AgnesImageVerifyFailed),
+    ):
+        provider.generate("原剧情", output, ref_images=refs, expected_speakers=["昭昭", "灿灿"], content_style="daily_story")
+    assert generate.call_count == attempt_budget
+    assert plan.call_count == (1 if attempt_budget > 1 else 0)
+    assert all(call.kwargs["ref_images"] == refs for call in generate.call_args_list)
+    assert len({call.args[1] for call in generate.call_args_list}) == 1
+
+
+@pytest.mark.parametrize("noun", ["冰箱门", "衣柜门", "烤箱门", "车门", "电梯门"])
+def test_object_doors_do_not_trigger_room_door_rules(noun):
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+
+    prompt = assemble_daily_t2i_prompt({"speakers":["昭昭","灿灿"], "visual_brief":f"昭昭站在{noun}旁边，灿灿叉腰。", "shot_type":"中景"})
+    assert "一扇单开门" not in prompt
+    items,_,_=AgnesImageProvider._build_verify_checklist(prompt=prompt, expected_speakers=["昭昭","灿灿"], content_style="daily_story")
+    assert "door_single" not in dict(items)
+    items,_,_=AgnesImageProvider._build_verify_checklist(prompt=prompt+"房门半掩。", expected_speakers=["昭昭","灿灿"], content_style="daily_story")
+    assert "door_single" in dict(items)
+
+
+def test_ambiguous_door_word_checks_room_entrances_only():
+    items, _, _ = AgnesImageProvider._build_verify_checklist(
+        prompt="客厅角落放着双门冰箱，关着门。", expected_speakers=["昭昭", "灿灿"],
+        content_style="daily_story",
+    )
+    question = dict(items)["door_single"]
+    assert "仅检查房间出入口" in question
+    assert "不包括家电、柜体、车辆或电梯门" in question
+
+
+def test_limb_api_failure_preserves_image_without_redrawing(tmp_path):
+    provider = AgnesImageProvider()
+    output = tmp_path / "frame.png"
+    PILImage.new("RGB", (32, 32), "white").save(output)
+    original = output.read_bytes()
+    response = MagicMock(status_code=200, ok=True)
+    response.json.return_value = {"choices": [{"message": {"content": "项1: 是"}}]}
+    with (
+        patch("app.services.segment.image.image_agnes.agnes_api_keys", return_value=[AgnesApiKey("cn_free", "test-key")]),
+        patch.object(provider, "_generate_with_key", return_value=output) as generate,
+        patch.object(AgnesImageProvider, "_build_verify_checklist", return_value=([("scene", "场景一致吗")], "检查图像", None)),
+        patch.object(provider, "_run_blocking_cancellable", side_effect=lambda fn: fn()),
+        patch("requests.post", return_value=response),
+        patch.object(provider, "_ask_hardfail_vl", return_value=None),
+        patch.object(provider, "_plan_excess_people_edit") as plan,
+        pytest.raises(AgnesImageVerificationUnavailable, match="肢体质检未完成"),
+    ):
+        provider.generate("原剧情", output, expected_speakers=["昭昭", "灿灿"], content_style="daily_story")
+    generate.assert_called_once()
+    plan.assert_not_called()
+    assert output.read_bytes() == original
