@@ -216,11 +216,39 @@ def is_body_part_object(obj: str) -> bool:
 
 _HAND_INJURY_SETTING_RE = re.compile(r"手(?:上有伤|背.{0,2}伤|.{0,2}肿)|肿.{0,4}手")
 _HAND_INJURY_DIALOGUE_RE = re.compile(
-    r"手.{0,4}肿|肿成馒头|你这手|手都|擦擦药|擦药"
+    r"手(?:背|掌|指)?[^，。！？；\n]{0,6}(?:肿|受伤|有伤|擦伤|烫伤|划伤|淤青|擦擦药|擦药)"
 )
 _HAND_BANDAGE_DIALOGUE_RE = re.compile(r"擦擦药|擦药|包扎|缠(?:上)?纱布|创可贴|缠绷带")
 _HAND_INJURY_FORM_RE = re.compile(r"红肿|淤青|擦伤|肿胀|肿")
 _HAND_BANDAGED_RE = re.compile(r"纱布|绷带|创可贴|包扎|缠好")
+_INJECTED_HAND_COVER_RE = re.compile(
+    r"(?P<covering>左|右)手捂住(?P<injured>左|右)手手背[，,]"
+    r"(?P<injury>(?P=injured)手手背[^，,。；;]*[，,])"
+    r"(?=(?:左手|右手|双手|两手)[^，,。；;]*(?:拿|握|捧|抱|托|端|提|递|接|指|摊|按|扶|撑|举|叉|交叠))"
+)
+
+
+def normalize_injected_hand_injury(text: str, *, injury_active: bool | None = None) -> str:
+    """撤回旧版自动注入的误伤势/冲突姿态；未知剧情时只修动作冲突。"""
+    if injury_active is False:
+        # 此重复措辞来自 promote 的固定默认值；不泛删作者的伤势描述。
+        return re.sub(
+            r"(?:左手捂住右手手背[，,])?右手手背红肿肿胀"
+            r"(?:[，,]左手捂住右手手背)?[，,]?",
+            "",
+            text,
+        )
+
+    def replace(match: re.Match[str]) -> str:
+        injury = match.group("injury")
+        if (
+            match.group("covering") != match.group("injured")
+            and _HAND_INJURY_FORM_RE.search(injury)
+        ):
+            return injury
+        return match.group(0)
+
+    return _INJECTED_HAND_COVER_RE.sub(replace, text)
 
 
 def _segment_dialogue_text(seg: dict) -> str:
@@ -228,7 +256,7 @@ def _segment_dialogue_text(seg: dict) -> str:
     for row in seg.get("dialogue") or []:
         if isinstance(row, dict):
             parts.append(str(row.get("text") or row.get("line") or ""))
-    return "".join(parts)
+    return "\n".join(parts)
 
 
 def hand_injury_story_active(
@@ -238,7 +266,10 @@ def hand_injury_story_active(
     if setting and _HAND_INJURY_SETTING_RE.search(setting):
         return True
     if segments:
-        return bool(_HAND_INJURY_DIALOGUE_RE.search(_dialogue_blob(segments)))
+        return any(
+            _HAND_INJURY_DIALOGUE_RE.search(_segment_dialogue_text(seg))
+            for seg in segments
+        )
     return False
 
 
@@ -292,7 +323,8 @@ def _enrich_subject_hand_injury_swollen(
     injured_side: str,
     form_phrase: str,
 ) -> None:
-    action = str(sub.get("action") or "").strip()
+    action = normalize_injected_hand_injury(str(sub.get("action") or "").strip())
+    sub["action"] = action
     if _HAND_INJURY_FORM_RE.search(action):
         return
     covering = "左" if injured_side == "右手" else "右"
@@ -302,9 +334,8 @@ def _enrich_subject_hand_injury_swollen(
     elif "捂" in action and "手" in action:
         sub["action"] = f"{action}，{injury_clause}".strip("，")
     elif action:
-        sub["action"] = (
-            f"{covering}手捂住{injured_side}手背，{injury_clause}，{action}"
-        )
+        # 伤势是外观状态，不应抢占原剧情动作所需的手。
+        sub["action"] = f"{injury_clause}，{action}"
     else:
         sub["action"] = f"{covering}手捂住{injured_side}手背，{injury_clause}"
 
@@ -393,6 +424,18 @@ def promote_hand_injury_across_segments(
 ) -> None:
     """全片手伤：擦药前红肿，擦药镜及之后包扎（不写断肢道具）。"""
     if not hand_injury_story_active(setting, segments):
+        for seg in segments:
+            changed = False
+            for sub in seg.get("visual_subjects") or []:
+                if not isinstance(sub, dict):
+                    continue
+                action = str(sub.get("action") or "")
+                corrected = normalize_injected_hand_injury(action, injury_active=False)
+                if corrected != action:
+                    sub["action"] = corrected
+                    changed = True
+            if changed:
+                _refresh_visual_brief_from_subjects(seg)
         return
     bandage_from = _first_bandage_segment_index(segments)
     swollen_form = "红肿肿胀"
@@ -446,7 +489,7 @@ def daily_hand_injury_s4_clause(seg: dict, setting: str | None = None) -> str:
     if _HAND_INJURY_FORM_RE.search(vb):
         return ""
     return (
-        "昭昭右手手背红肿肿胀，左手捂住右手手背，"
+        "昭昭右手手背红肿肿胀，"
         "双手连着昭昭身体，不是漂浮断肢"
     )
 

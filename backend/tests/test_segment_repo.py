@@ -202,6 +202,10 @@ def test_sync_image_paths_from_disk(app_ctx, tmp_path) -> None:
     )
     images_dir = tmp_path / "images"
     images_dir.mkdir()
+    pending = images_dir / "1.pending.png"
+    pending.write_bytes(b"unverified")
+    assert repo_segment.sync_image_paths_from_disk(job_id, images_dir) == 0
+    assert not repo_segment.list_segments(job_id)[0]["image_path"]
     png = images_dir / "1.png"
     png.write_bytes(b"fake")
     fixed = repo_segment.sync_image_paths_from_disk(job_id, images_dir)

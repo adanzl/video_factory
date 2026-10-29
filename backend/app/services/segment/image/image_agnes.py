@@ -174,9 +174,14 @@ _MOUTH_FIRST_SPEAKER_RE = re.compile(
     r"(昭昭|灿灿|妈妈|爸爸)(?:嘴唇微张，|(?:嘴巴明显张开|微微张嘴|嘴巴微张)?)正在开口说话"
 )
 _PROP_HOLDER_RE = re.compile(
-    r"(?P<hand>右手|左手)?"
+    r"(?:(?P<hand>右手|左手|双手)(?:在[^，。；、]{1,6})?)?"
     r"(?:握着|握住|握|拿着|持着|持|举着|端着|托着|托住|提着|接过|递出|抓住|抓着|拿起|紧握)"
     r"(?P<prop>[^，。；、]{1,8})"
+)
+_PROP_SUBJECT_RE = re.compile(
+    r"(?:^|[，,])\s*"
+    r"(?:(?:画面)?(?:左边|右边|左侧|右侧|中间|中央)(?:站着|站的是|是)?)?"
+    r"(?P<role>昭昭|灿灿|妈妈|爸爸)(?!和|与|、|的(?![左右双两]?手))"
 )
 
 
@@ -745,6 +750,7 @@ class AgnesImageProvider(ImageProvider):
             output_path.parent.mkdir(parents=True, exist_ok=True)
             if image_bytes is not None:
                 output_path.write_bytes(image_bytes)
+                output_path.with_name(output_path.name + ".agnes_source_url").unlink(missing_ok=True)
                 logger.info(
                     "%s agnes saved b64 image (%s key) in %.1fs, bytes=%s path=%s",
                     log_tag,
@@ -1307,9 +1313,17 @@ class AgnesImageProvider(ImageProvider):
             m = _PROP_HOLDER_RE.search(clause)
             if not m:
                 continue
-            roles = re.findall(r"昭昭|灿灿|妈妈|爸爸", clause[: m.start()])
-            if roles:
-                prop_match = (roles[-1], m.group("hand") or "手中", m.group("prop"))
+            # 只认明确主语；比较、看向、相对位置中的角色名是宾语。
+            subjects = [
+                subject for subject in _PROP_SUBJECT_RE.finditer(clause)
+                if subject.start() < m.start()
+            ]
+            if subjects:
+                prop_match = (
+                    subjects[-1].group("role"),
+                    m.group("hand") or "手中",
+                    m.group("prop"),
+                )
                 break
         if content_style == CONTENT_STYLE_DAILY_STORY and prop_match:
             holder, hand, prop = prop_match

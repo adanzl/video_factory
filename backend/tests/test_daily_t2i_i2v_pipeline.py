@@ -1283,6 +1283,94 @@ def test_body_part_object_states_do_not_render_detached_hand():
     assert "红肿" in prompt
 
 
+@pytest.mark.parametrize("action", ["双手接过蓝抱枕", "左手指向衣服", "右手食指指向衣服", "双手端着碗", "右手握着杯子"])
+@pytest.mark.parametrize("old_prefix", ["", "左手捂住右手手背，右手手背红肿肿胀，"])
+def test_hand_injury_preserves_plot_action_without_injected_cover(action, old_prefix):
+    from app.services.script.visual_brief import promote_hand_injury_across_segments
+
+    sub = {"name": "昭昭", "posture": "站在画面左边", "action": old_prefix + action}
+    seg = {"segment_index": 1, "speakers": ["昭昭"], "visual_subjects": [sub]}
+    promote_hand_injury_across_segments([seg], setting="昭昭手背受伤。")
+    assert sub["action"] == "右手手背红肿肿胀，" + action
+    once = copy.deepcopy(seg)
+    promote_hand_injury_across_segments([seg], setting="昭昭手背受伤。")
+    assert seg == once
+    assert "捂" not in seg["visual_brief"]
+
+
+def test_old_hand_cover_cleanup_is_narrow_and_preserves_other_subjects():
+    from app.services.script.visual_brief import normalize_injected_hand_injury
+
+    prefix = "画面左边是妈妈，右手捂住左手手背，左手手背淤青，"
+    original = prefix + "双手端着碗。爸爸双手抱臂。"
+    assert normalize_injected_hand_injury(original) == "画面左边是妈妈，左手手背淤青，双手端着碗。爸爸双手抱臂。"
+    for text in (
+        prefix + "皱眉瞪眼。爸爸双手端着碗。",
+        prefix + "爸爸双手端着碗。",
+        "左手捂住右手手背，双手接过抱枕",  # 没有系统伤势前缀，不推测删改
+        "右手缠着白色纱布绷带，左手拿着杯子",
+        "左手抬起捂住右手，右手手背红肿",
+    ):
+        assert normalize_injected_hand_injury(text) == text
+
+
+def test_hand_injury_fallback_adds_appearance_without_pose():
+    from app.services.script.visual_brief import daily_hand_injury_s4_clause
+
+    result = daily_hand_injury_s4_clause(
+        {"speakers": ["昭昭"], "visual_brief": "昭昭双手端碗。"}, setting="昭昭手背受伤。",
+    )
+    assert "红肿" in result
+    assert "捂" not in result
+
+
+@pytest.mark.parametrize("punctuation", ["。", "；"])
+def test_saved_daily_style_refresh_only_updates_known_prefix(punctuation):
+    from app.services.script.image_prompt import refresh_saved_daily_t2i_style
+
+    old = (
+        "基于参考图调整人物动作，保持参考图外貌，保留昭昭与灿灿的外貌、发型、服装与身高比例，"
+        "只改本镜动作、表情与道具状态。儿童涂鸦蜡笔画风格，粗黑轮廓线，彩铅蜡笔涂色质感，"
+        "涂色出界，手绘感，童真插画。孩子气的构图" + punctuation
+    )
+    body = "客厅；昭昭躺在沙发上，灿灿站在旁边；桌上的杯子保持不变。"
+    wardrobe = "昭昭保持蓝色短袖T恤、深蓝短裤，灿灿保持粉色连帽卫衣、蓝色裤子。"
+    actual = refresh_saved_daily_t2i_style(old + body)
+    assert actual == (old + body).replace("儿童涂鸦蜡笔画风格", wardrobe + "儿童涂鸦蜡笔画风格", 1)
+    assert refresh_saved_daily_t2i_style(actual) == actual
+    assert refresh_saved_daily_t2i_style(body) == body
+
+
+@pytest.mark.parametrize("line", ["我认真照做了，手都没敢压下去，真没偷懒。", "你手都占着，遥控器在茶几，够不着吧？", "你这手拿得真稳。", "我给膝盖擦药。"])
+def test_noninjury_dialogue_does_not_invent_hand_injury(line):
+    from app.services.script.visual_brief import hand_injury_story_active, promote_hand_injury_across_segments
+
+    sub = {"name": "昭昭", "action": "左手捂住右手手背，右手手背红肿肿胀，双手接过抱枕"}
+    seg = {"segment_index": 1, "speakers": ["昭昭"], "text": line, "visual_subjects": [sub]}
+    assert not hand_injury_story_active("客厅", [seg])
+    promote_hand_injury_across_segments([seg], setting="客厅")
+    assert sub["action"] == "双手接过抱枕"
+    assert "红肿" not in seg["visual_brief"]
+
+
+@pytest.mark.parametrize("line", ["你手怎么肿成馒头了？", "右手手背擦伤了。", "你这手有伤。", "我给你手背擦药。"])
+def test_explicit_hand_injury_dialogue_still_activates(line):
+    from app.services.script.visual_brief import hand_injury_story_active
+
+    assert hand_injury_story_active("客厅", [{"dialogue": [{"speaker": "灿灿", "text": line}]}])
+
+
+def test_unfounded_injury_cleanup_keeps_original_injury_description():
+    from app.services.script.visual_brief import normalize_injected_hand_injury
+
+    authored = "昭昭左手手背擦伤，右手捂着伤口。灿灿右手缠着绷带。"
+    assert normalize_injected_hand_injury(authored, injury_active=False) == authored
+    mixed = "右手手背红肿肿胀，手腕有淤青，左手有烫伤。"
+    assert normalize_injected_hand_injury(mixed, injury_active=False) == "手腕有淤青，左手有烫伤。"
+    old_fallback = "昭昭右手手背红肿肿胀，左手捂住右手手背，双手连着昭昭身体"
+    assert normalize_injected_hand_injury(old_fallback, injury_active=False) == "昭昭双手连着昭昭身体"
+
+
 def test_promote_hand_injury_from_setting_without_object_states():
     from app.services.script.image_prompt import assemble_daily_image_prompts
 
