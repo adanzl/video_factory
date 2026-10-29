@@ -838,8 +838,8 @@ def _du_bytes(path: Path) -> int | None:
             ["du", "-skx", str(path)],
             timeout=25,
         )
-    except (OSError, RuntimeError):
-        logger.warning("[HOME] du failed path=%s", path, exc_info=True)
+    except (OSError, RuntimeError) as exc:
+        logger.warning("[HOME] du failed path=%s: %s", path, str(exc).replace("\n", " "))
         return None
     if code != 0:
         logger.warning("[HOME] du exit %s path=%s", code, path)
