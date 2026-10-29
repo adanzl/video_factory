@@ -1,6 +1,7 @@
 """多数派字色过滤（白底只是特征）。"""
 
 import numpy as np
+import pytest
 
 from app.services.gold_story.transcript.ocr import (
     _box_ink_color_key,
@@ -133,3 +134,56 @@ def test_preprocess_upscales_thin_crop():
     kept = filter_hits_by_majority_color(hits, color_key=key)
     kept_txts = [str(h["text"]) for h in kept]
     assert len(kept_txts) >= 1
+
+
+def test_materialize_preserves_multicolor_dialogue_and_repeated_short_subtitles():
+    from app.services.gold_story.transcript.ocr import materialize_ocr_rows, merge_ocr_rows
+    rows = [{"timestamp_sec": i, "hits": [{"text": text, "color_key": color,
+             "score": 0.98, "box_h": 36.0}]} for i, (text, color) in enumerate([
+                 ("轮到你了吗", "yellow"), ("轮到你了吗", "yellow"),
+                 ("还没有", "white"), ("还没有", "white"),
+                 ("那我再等一会", "yellow"), ("联系删除", "white"),
+             ])]
+    result = materialize_ocr_rows(rows, color_key="yellow", min_height_ratio=0.65,
+                                  min_dialogue_box_px=22)
+    text, _, _ = merge_ocr_rows(result)
+    assert text.splitlines() == ["轮到你了吗", "还没有", "那我再等一会"]
+
+
+def test_repeated_dialogue_is_not_a_watermark():
+    hits = [{"text": "知道了", "color_key": "white"}] * 8
+    assert filter_repeat_watermark_hits(hits) == hits
+
+
+@pytest.mark.parametrize('narrow_score,wide_score,expect_wide,extractions', [
+    (0.2, 0.8, True, 2), (0.2, 0.1, False, 2), (0.8, 0.9, False, 1),
+])
+def test_bad_subtitle_region_retries_wide_search_without_lowering_quality(
+    monkeypatch, tmp_path, narrow_score, wide_score, expect_wide, extractions,
+):
+    from app.config import Config
+    from app.services.gold_story.transcript import ocr
+    cfg = Config(); cfg.gold_story_ocr_region_detect = True; cfg.gold_story_ocr_quality_min = 0.55
+    frames = [ocr.OcrFrame(0, tmp_path / 'frame.jpg')]
+    calls = []
+    def extract(*a, **kw):
+        calls.append(kw)
+        return frames
+    monkeypatch.setattr(ocr, 'extract_subtitle_frames', extract)
+    monkeypatch.setattr(ocr, 'dedupe_frames', lambda frames: frames)
+    monkeypatch.setattr(ocr, 'detect_subtitle_region_from_images', lambda *a, **kw:
+        ocr.SubtitleRegion(y_ratio=0.7, h_ratio=0.07, method='test', samples=1, confidence=1))
+    monkeypatch.setattr(ocr, 'crop_search_band_frames_to_region', lambda frames, *a, **kw: frames)
+    monkeypatch.setattr(ocr, 'ocr_frames_parallel', lambda *a: [{
+        'timestamp_sec': 0, 'hits': [{'text': '水印' if len(calls) == 1 else '完整对白',
+        'score': 0.99, 'color_key': 'white', 'box_h': 40}]}])
+    monkeypatch.setattr(ocr.gs_merge, 'score_transcript_text', lambda text, **kw:
+        narrow_score if text == '水印' else wide_score)
+    result = ocr.transcribe_video_ocr(tmp_path / 'video.mp4', config=cfg, workspace=tmp_path,
+                                      source_id='example', duration_sec=30)
+    assert len(calls) == extractions
+    assert result['text'] == ('完整对白' if expect_wide else '水印')
+    assert result['quality_score'] == (wide_score if expect_wide else narrow_score)
+    if extractions == 2:
+        assert calls[1]['crop_bottom_ratio'] == cfg.gold_story_ocr_region_search_ratio
+        assert result['region_recovery']['used_wide'] is expect_wide

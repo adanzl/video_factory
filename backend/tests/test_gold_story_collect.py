@@ -39,7 +39,7 @@ def test_h0c_retry_keeps_resolution_and_returns_validation_feedback(monkeypatch)
     assert seen[1]["repair_feedback"] == "scene jumps across dialogue"
 
 
-@pytest.mark.parametrize("failure", ["cross_check", "cross_resolved", "repair", "recovered", "cross_missing", "cross_unavailable"])
+@pytest.mark.parametrize("failure", ["cross_check", "cross_resolved", "repair", "repair_audit", "clip_audit", "recovered", "cross_missing", "cross_unavailable"])
 @pytest.mark.parametrize("independent", ["none", "replies", "description"])
 @pytest.mark.parametrize("cached", [False, True])
 def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
@@ -63,7 +63,7 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
         cross = None
     elif failure == "cross_unavailable":
         cross = {"available": False}
-    is_failure = failure in {"cross_check", "repair"}
+    is_failure = failure in {"cross_check", "repair", "repair_audit"}
     metadata_dir = cfg.gold_story_media_workspace / "metadata"
     metadata_dir.mkdir(parents=True)
     (metadata_dir / f"{sid}.json").write_text(json.dumps({"transcript_path": str(transcript_path), "cross_check": cross}))
@@ -81,6 +81,11 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
     monkeypatch.setattr(p, "transcribe_bilibili", lambda *_a, **_kw: {
         "action": "ok", "transcript_path": str(transcript_path), "cross_check": cross, "transcript_backend": "ocr",
     })
+    def audit(**_kw):
+        if failure == "repair_audit":
+            raise p.llm_steps.ModelOutputError("transcript repair unfaithful: invented speaker")
+        return {"faithful": True, "reason": "原文可核实"}
+    monkeypatch.setattr(p.llm_steps, "review_transcript_repair", audit)
     if failure == "cross_resolved":
         monkeypatch.setattr(p.llm_steps, "reconcile_transcripts", lambda *_a, **_kw: {
             "status": "resolved", "source": "ocr", "text": "独立审核确认的OCR原文"})
@@ -110,7 +115,7 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
     monkeypatch.setattr(p.llm_steps, "build_scene_contract", lambda **_kw: {})
     monkeypatch.setattr(p, "sync_h3_from_scene_contract", lambda h3, *_a, **_kw: (h3, []))
     monkeypatch.setattr(p.llm_steps, "build_dialogue_seed", lambda **_kw: {})
-    monkeypatch.setattr(p.gs_review, "audit_story", lambda **_kw: {"pass": True})
+    monkeypatch.setattr(p.gs_review, "audit_story", lambda **_kw: {"pass": failure != "clip_audit"})
     monkeypatch.setattr(p, "passes_funny_gate_from_payload", lambda *_a, **_kw: (True, "ok"))
     saved = []
     def update(_gid, **kwargs):
@@ -121,10 +126,21 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
     monkeypatch.setattr(p, "export_story_files", lambda **_kw: {})
 
     result = p.process_candidate(candidate, config=cfg, overwrite_existing=True,
-                                 force_transcript=not cached, existing_row=existing)
-    if is_failure:
-        assert result["action"] == ("error" if failure == "cross_check" else "reject")
-        assert result["reason"] == ("transcript_conflict" if failure == "cross_check" else "source_unusable")
+                                 force_transcript=not cached, existing_row=existing,
+                                 clip_transcript=({"transcript_path": str(transcript_path), "cross_check": cross,
+                                                   "source_clip": {"start_sec": 10, "end_sec": 40}}
+                                                  if failure == "clip_audit" else None))
+    if failure == "clip_audit":
+        assert result["action"] == "reject" and result["stage"] == "H4a"
+        assert result["source_clip"] == {"start_sec": 10, "end_sec": 40}
+        assert len(extracted) == 1 and saved == []
+    elif is_failure:
+        assert result["action"] == ("error" if failure in {"cross_check", "repair_audit"} else "reject")
+        if failure == "repair_audit":
+            assert "unfaithful" in result["error"]
+            assert result["retryable"] is True
+        else:
+            assert result["reason"] == ("transcript_conflict" if failure == "cross_check" else "source_unusable")
         if failure == "cross_check":
             assert result["retryable"] is False
         assert result["stage"] == ("H0b" if failure == "cross_check" else "H0c")
@@ -138,6 +154,7 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
         if failure == "cross_resolved":
             assert payload["transcript_resolution"]["source"] == "ocr"
             assert payload["transcript_resolution_repair_audit"]["faithful"] is True
+        assert payload["transcript_repair_audit"]["faithful"] is True
         assert payload["transcript_status"] == "usable"
         assert payload["source_inputs"] == ["transcript"] + ([] if independent == "none" else [independent])
         assert payload["transcript_repair_confidence"] == 0.9
@@ -1332,3 +1349,85 @@ def test_source_age_rejection_stops_before_mapping_and_retries(tmp_path, monkeyp
     result, _ = p._run_reimport_attempts(candidate.source_id, config=cfg, force_transcript=False)
     assert result["action"] == "reject" and result["attempts"] == 1
     assert "age_incompatible_core" in result["reason"] and extracted == [True]
+
+
+@pytest.mark.parametrize('manual', [True, False])
+def test_long_collection_route_is_manual_only(monkeypatch, manual):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    candidate = VideoCandidate(source='bili', source_id='BV1TEST00001', url='', title='姐弟日常合集',
+                               description='', view_count=200000, reply_count=100, keyword='', duration_sec=793)
+    monkeypatch.setattr(p, '_existing_source', lambda *a: False)
+    calls = []
+    monkeypatch.setattr(p, '_process_collection', lambda *a, **kw: calls.append(kw) or {'action': 'selected'})
+    cfg = Config(); cfg.gold_story_max_duration_sec = 600
+    result = p.process_candidate(candidate, config=cfg, allow_collection=manual)
+    assert result['action'] == ('selected' if manual else 'reject')
+    assert len(calls) == int(manual)
+    if not manual:
+        assert result['reason'] == 'too_long'
+
+
+def test_collection_attempts_next_clip_without_persisting_failed_candidate(monkeypatch, tmp_path):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    from app.services.gold_story.transcript import transcript as tr
+    candidate = VideoCandidate(source='bili', source_id='BV1TEST00001', url='', title='合集',
+                               description='', view_count=200000, reply_count=100, keyword='', duration_sec=793)
+    cfg = Config(); cfg.gold_story_media_workspace = tmp_path
+    cfg.gold_story_collection_max_duration_sec = 1800
+    clips = [{'start_sec': s, 'end_sec': s + 20, 'eligible': True} for s in (10, 50)]
+    monkeypatch.setattr(tr, 'collection_source', lambda *a: {'segments': [], 'duration_sec': 793})
+    monkeypatch.setattr(p.llm_steps, 'select_collection_clips', lambda *a, **kw: clips)
+    monkeypatch.setattr(tr, 'transcribe_collection_clip', lambda sid, media, clip, cfg: {'source_clip': clip})
+    calls = []
+    def process(*a, **kw):
+        calls.append(kw)
+        return {'action': 'reject', 'stage': 'H4a'} if len(calls) == 1 else {'action': 'ok'}
+    monkeypatch.setattr(p, 'process_candidate', process)
+    result = p._process_collection(candidate, config=cfg, existing_row=None, overwrite_existing=False)
+    assert result['action'] == 'ok'
+    assert result['source_clip']['start_sec'] == 50
+    assert len(result['clip_attempts']) == 2
+    assert (tmp_path / 'collection_clips' / candidate.source_id / 'attempts.json').exists()
+
+
+def test_collection_resource_limit_does_not_claim_content_failure(monkeypatch):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    candidate = VideoCandidate(source='bili', source_id='BV1TEST00001', url='', title='合集',
+                               description='', view_count=1, reply_count=1, keyword='', duration_sec=3600)
+    cfg = Config(); cfg.gold_story_collection_max_duration_sec = 1800
+    result = p._process_collection(candidate, config=cfg, existing_row=None, overwrite_existing=False)
+    assert result['reason'] == 'collection_resource_limit'
+    assert result['action'] == 'error' and result['retryable'] is False
+
+
+def test_collection_model_retry_reuses_clip_and_stops_at_budget(monkeypatch, tmp_path):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    from app.services.gold_story.transcript import transcript as tr
+    candidate = VideoCandidate(source='bili', source_id='BV1TEST00001', url='', title='合集',
+                               description='', view_count=1, reply_count=1, keyword='', duration_sec=800)
+    cfg = Config(); cfg.gold_story_media_workspace = tmp_path; cfg.gold_story_collection_max_duration_sec = 1800
+    clip = {'start_sec': 10, 'end_sec': 40, 'eligible': True}
+    monkeypatch.setattr(tr, 'collection_source', lambda *a: {'segments': [], 'duration_sec': 800})
+    monkeypatch.setattr(p.llm_steps, 'select_collection_clips', lambda *a, **kw: [clip])
+    transcribed = []
+    def transcribe(*a):
+        transcribed.append(1)
+        return {'source_clip': clip}
+    monkeypatch.setattr(tr, 'transcribe_collection_clip', transcribe)
+    monkeypatch.setattr(p.time, 'sleep', lambda *a: None)
+    calls = []
+    def process(*a, **kw):
+        calls.append(kw)
+        return {'action': 'error', 'stage': 'LLM', 'error': 'invalid evidence', 'retryable': True}
+    monkeypatch.setattr(p, 'process_candidate', process)
+    result = p._process_collection(candidate, config=cfg, existing_row=None, overwrite_existing=False)
+    assert len(calls) == 3 and len(transcribed) == 1
+    assert result['action'] == 'error' and result['retryable'] is False

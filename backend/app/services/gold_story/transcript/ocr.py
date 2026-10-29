@@ -216,27 +216,10 @@ def filter_repeat_watermark_hits(
     *,
     min_repeat: int = 4,
 ) -> list[dict[str, Any]]:
-    """同色后的二次过滤：短且反复出现的水印/来源字当噪点删。"""
-    from collections import Counter
-
-    counts = Counter(
-        str(h.get("text") or "").strip()
-        for h in hits
-        if str(h.get("text") or "").strip()
-    )
-    out: list[dict[str, Any]] = []
-    for hit in hits:
-        text = str(hit.get("text") or "").strip()
-        if not text:
-            continue
-        if _WATERMARK_RE.search(text):
-            continue
-        if len(text) <= 8 and counts[text] >= max(2, int(min_repeat) - 2):
-            continue
-        if len(text) <= 6 and counts[text] >= int(min_repeat):
-            continue
-        out.append(hit)
-    return out
+    """只过滤已知水印；短句重复可能是字幕停留或重复对白，不能据此删除。"""
+    return [hit for hit in hits
+            if str(hit.get("text") or "").strip()
+            and not _WATERMARK_RE.search(str(hit["text"]))]
 
 
 def infer_video_subtitle_fill_style(
@@ -383,31 +366,13 @@ def materialize_ocr_rows(
     min_height_ratio: float,
     min_dialogue_box_px: float,
 ) -> list[dict[str, Any]]:
-    """片级多数派字色 + 水印二次过滤后，压成 merge 可用行。"""
-    all_colored: list[dict[str, Any]] = []
-    for row in raw_rows:
-        all_colored.extend(
-            filter_hits_by_majority_color(
-                list(row.get("hits") or []),
-                color_key=color_key,
-            )
-        )
-    allowed_texts = {
-        str(h.get("text") or "").strip()
-        for h in filter_repeat_watermark_hits(all_colored)
-        if str(h.get("text") or "").strip()
-    }
+    """保留字幕带内各色对白；水印、字号过滤后压成 merge 可用行。
 
+    color_key 保留调用兼容与诊断用途，不作为删字依据。
+    """
     out: list[dict[str, Any]] = []
     for row in raw_rows:
-        hits = [
-            hit
-            for hit in filter_hits_by_majority_color(
-                list(row.get("hits") or []),
-                color_key=color_key,
-            )
-            if str(hit.get("text") or "").strip() in allowed_texts
-        ]
+        hits = filter_repeat_watermark_hits(list(row.get("hits") or []))
         if not hits:
             out.append(
                 {
@@ -695,12 +660,12 @@ def transcribe_video_ocr(
     title: str = "",
     duration_sec: float | None = None,
 ) -> dict[str, Any]:
-    """单视频 OCR 逐字稿（视频只解码一遍）。
+    """单视频 OCR 逐字稿（常规一次解码，窄带质量差时扩大搜索重试一次）。
 
     流程：
     1) ffmpeg 抽底部搜索带帧（一次）
     2) 同批帧定字幕带 → 就地裁切
-    3) OCR → 多数派字色过滤 → merge
+    3) OCR → 水印/字号过滤 → merge
     """
     frame_dir = workspace / "ocr_frames" / source_id
     if duration_sec is None:
@@ -751,7 +716,7 @@ def transcribe_video_ocr(
     for row in raw_rows:
         all_hits.extend(list(row.get("hits") or []))
 
-    # 3) 多数派字色 + 水印二次过滤
+    # 3) 字色只作诊断，不删除另一种颜色的角色字幕
     color_key = infer_majority_ink_color(all_hits)
     ocr_rows = materialize_ocr_rows(
         raw_rows,
@@ -767,7 +732,32 @@ def transcribe_video_ocr(
         duration_sec=float(duration_sec or 0.0),
         avg_confidence=avg_conf,
     )
+    recovery: dict[str, Any] | None = None
+    if quality < float(config.gold_story_ocr_quality_min) and config.gold_story_ocr_region_detect:
+        # 窄带可能命中水印。只扩大到原搜索带，不调低来源审核或针对某个视频改坐标。
+        wide_frames = dedupe_frames(extract_subtitle_frames(
+            video_path, output_dir=frame_dir.with_name(source_id + "_wide"),
+            fps=float(config.gold_story_ocr_fps), crop_bottom_ratio=search_ratio, config=config,
+        ))
+        wide_raw = ocr_frames_parallel(wide_frames, config)
+        wide_hits = [hit for row in wide_raw for hit in row.get("hits", [])]
+        wide_color = infer_majority_ink_color(wide_hits)
+        wide_rows = materialize_ocr_rows(wide_raw, color_key=wide_color,
+            min_height_ratio=float(config.gold_story_ocr_min_box_height_ratio),
+            min_dialogue_box_px=float(config.gold_story_ocr_min_dialogue_box_px))
+        wide_text, wide_lines, wide_conf = merge_ocr_rows(wide_rows)
+        wide_quality = gs_merge.score_transcript_text(wide_text, title=title,
+            duration_sec=float(duration_sec or 0), avg_confidence=wide_conf)
+        recovery = {"narrow_quality": quality, "wide_quality": wide_quality,
+                    "used_wide": wide_quality > quality, "narrow_text": text}
+        if wide_quality > quality:
+            text, line_rows, avg_conf, quality = wide_text, wide_lines, wide_conf, wide_quality
+            all_hits, color_key, frames = wide_hits, wide_color, wide_frames
+            frame_dir = frame_dir.with_name(source_id + "_wide")
+            region = SubtitleRegion(y_ratio=search_band_top, h_ratio=search_ratio,
+                method="wide_search_recovery", samples=len(wide_frames), confidence=0.0)
     return {
+        "region_recovery": recovery,
         "text": text,
         "lines": line_rows,
         "segments": line_rows,

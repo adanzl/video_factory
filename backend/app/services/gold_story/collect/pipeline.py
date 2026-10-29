@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -82,6 +83,73 @@ def _export_collection_result(row: dict[str, Any], config: Config) -> dict[str, 
                 "retryable": False, "persisted": True}
 
 
+def _process_collection(candidate: VideoCandidate, *, config: Config,
+                        existing_row: dict[str, Any] | None, overwrite_existing: bool) -> dict[str, Any]:
+    from app.services.gold_story.transcript.transcript import collection_source, transcribe_collection_clip
+    base = {"source_id": candidate.source_id, "title": candidate.title, "keyword": candidate.keyword}
+    limit = config.gold_story_collection_max_duration_sec
+    if limit <= 0 or candidate.duration_sec > limit:
+        return {**base, "action": "error", "stage": "collection", "reason": "collection_resource_limit",
+                "error": f"素材时长超出手动合集处理上限 {limit}s，不代表内容无可写点", "retryable": False}
+    attempts: list[dict[str, Any]] = []
+    active_clip: dict[str, Any] | None = None
+    report = config.gold_story_media_workspace / "collection_clips" / candidate.source_id / "attempts.json"
+    def record(result: dict[str, Any] | None = None) -> None:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        summary = {key: value for key, value in (result or {}).items() if key != "clip_attempts"}
+        report.write_text(json.dumps({**base, "attempts": attempts, "result": summary},
+                                    ensure_ascii=False, indent=2), encoding="utf-8")
+    def finish(result: dict[str, Any]) -> dict[str, Any]:
+        record(result)
+        return {**result, "clip_attempts": attempts}
+    try:
+        media = collection_source(candidate.source_id, config)
+        clips = llm_steps.select_collection_clips(media["segments"], duration_sec=media["duration_sec"])
+        record()
+        for clip in clips:
+            active_clip = clip
+            if not clip["eligible"]:
+                attempts.append({"clip": clip, "stage": "collection_boundary", "action": "reject",
+                                 "reason": clip["index_review"]["reason"]})
+                record()
+                continue
+            tx = transcribe_collection_clip(candidate.source_id, media, clip, config)
+            feedback = ""
+            resolution = None
+            for retry in range(_COLLECT_MAX_ATTEMPTS):
+                outcome = process_candidate(candidate, config=config, overwrite_existing=overwrite_existing,
+                    existing_row=existing_row, repair_feedback=feedback, resolution_cache=resolution,
+                    clip_transcript=tx)
+                attempts.append({"clip": tx["source_clip"], "attempt": retry + 1, **outcome})
+                record()
+                if (outcome.get("action") != "error" or not outcome.get("retryable")
+                        or outcome.get("stage") not in {"H0c", "LLM", "H4a", "H0b reconciliation"}):
+                    break
+                feedback = str(outcome.get("error") or "") if outcome.get("stage") == "H0c" else ""
+                resolution = outcome.get("transcript_resolution")
+                if retry + 1 == _COLLECT_MAX_ATTEMPTS:
+                    outcome = {**outcome, "retryable": False}
+                else:
+                    time.sleep(min(2 ** retry, 4))
+            if outcome.get("action") == "ok" or outcome.get("persisted"):
+                return finish({**outcome, "source_clip": tx["source_clip"]})
+            # 接口/程序故障不能当成素材不合格继续消耗后续候选。
+            if outcome.get("action") == "error" and outcome.get("stage") != "H0c" and outcome.get("reason") != "transcript_conflict":
+                return finish(outcome)
+        return finish({**base, "action": "error", "stage": "collection", "reason": "collection_no_verified_clip",
+                "error": "本轮未选出审核合格的完整片段，请查看候选记录；不代表素材没有笑点", "retryable": False,
+                "clip_attempts": attempts})
+    except VideoTooLongError as exc:
+        return {**base, "action": "error", "stage": "collection", "reason": "collection_resource_limit",
+                "error": str(exc), "retryable": False, "clip_attempts": attempts}
+    except Exception as exc:
+        failure = _execution_failure(exc, "collection")
+        if active_clip is not None:
+            attempts.append({"clip": active_clip, **failure})
+            record()
+        return finish({**base, **failure})
+
+
 def process_candidate(
     candidate: VideoCandidate,
     *,
@@ -93,6 +161,8 @@ def process_candidate(
     existing_row: dict[str, Any] | None = None,
     repair_feedback: str = "",
     resolution_cache: dict[str, Any] | None = None,
+    allow_collection: bool = False,
+    clip_transcript: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """单条 BV：H0b → H0c → H2 → H3 → H3a → H3b → H4a → H4。
 
@@ -137,11 +207,13 @@ def process_candidate(
             "reason": title_reason,
         }
 
-    # H1 时长门控：合集/直播回放（如 7 小时)转写要几小时，且抽不出单条故事。
-    # 放在 H0b 之前，避免白下载、白抽帧、白跑 ASR。
+    # 自动搜索保留资源门控；手动长素材先选连续片段再识别，不以时长判断内容价值。
     max_duration = int(getattr(cfg, "gold_story_max_duration_sec", 0) or 0)
     duration_sec = int(candidate.duration_sec or 0)
-    if max_duration > 0 and duration_sec > max_duration:
+    if clip_transcript is None and max_duration > 0 and duration_sec > max_duration:
+        if allow_collection:
+            return _process_collection(candidate, config=cfg, existing_row=existing_row,
+                                       overwrite_existing=overwrite_existing)
         logger.info(
             "gold_story h1 skip bvid=%s reason=too_long duration=%ss max=%ss title=%r",
             candidate.source_id,
@@ -159,9 +231,12 @@ def process_candidate(
 
     transcript_path = cfg.gold_story_transcript_dir / f"{candidate.source_id}.txt"
     transcript_text = _read_transcript(transcript_path)
-    tx: dict[str, Any] | None = None
+    tx: dict[str, Any] | None = clip_transcript
+    if tx is not None:
+        transcript_path = Path(str(tx["transcript_path"]))
+        transcript_text = _read_transcript(transcript_path)
 
-    need_transcript = force_transcript or (not transcript_text and not skip_transcript)
+    need_transcript = tx is None and (force_transcript or (not transcript_text and not skip_transcript))
     if need_transcript:
         try:
             tx = transcribe_bilibili(
@@ -175,6 +250,9 @@ def process_candidate(
             else:
                 return {**base, "action": "error", "stage": "H0b", "error": tx, "retryable": False}
         except VideoTooLongError as exc:
+            if allow_collection:
+                return _process_collection(candidate, config=cfg, existing_row=existing_row,
+                                           overwrite_existing=overwrite_existing)
             logger.info(
                 "gold_story h0b skip bvid=%s reason=too_long: %s",
                 candidate.source_id,
@@ -205,11 +283,14 @@ def process_candidate(
         "transcript_repair_confidence": None,
         "transcript_speakers": [],
         "transcript_repair_notes": "",
+        "transcript_repair_lines": [],
+        "transcript_repair_audit": None,
         "transcript_unusable_lines": None,
         "transcript_scene_line_indices": None,
         "transcript_scene_evidence": None,
         "transcript_resolution": None,
         "transcript_resolution_repair_audit": None,
+        "source_clip": (tx or {}).get("source_clip"),
     }
     cross_check = (tx or {}).get("cross_check")
     if tx is None:
@@ -250,11 +331,14 @@ def process_candidate(
                 require_complete_scene=True,
                 feedback=repair_feedback,
             )
+            repair_audit = llm_steps.review_transcript_repair(
+                transcript=transcript_text, repaired=format_dialogue_transcript(h0c["lines"]),
+            )
+            h0c_meta["transcript_repair_audit"] = repair_audit
             if resolution is not None:
-                h0c_meta["transcript_resolution_repair_audit"] = llm_steps.review_transcript_repair(
-                    transcript=transcript_text, repaired=format_dialogue_transcript(h0c["lines"]),
-                )
-            rep_path = repaired_transcript_path(cfg, candidate.source_id)
+                h0c_meta["transcript_resolution_repair_audit"] = repair_audit
+            rep_path = (transcript_path.with_suffix(".repaired.txt") if clip_transcript is not None
+                        else repaired_transcript_path(cfg, candidate.source_id))
             transcript_for_h2 = save_repaired_transcript(rep_path, h0c["lines"])
             h0c_meta.update({
                 "transcript_repaired_path": str(rep_path),
@@ -264,6 +348,7 @@ def process_candidate(
                 "transcript_unusable_lines": h0c.get("unusable_lines") or 0,
                 "transcript_scene_line_indices": h0c.get("scene_line_indices"),
                 "transcript_scene_evidence": h0c.get("scene_evidence"),
+                "transcript_repair_lines": h0c["lines"],
             })
         except Exception as exc:
             logger.warning(
@@ -433,6 +518,10 @@ def process_candidate(
         audit = audit_with_funny_rejection(audit, funny_reason)
         payload["audit"] = audit
 
+    if clip_transcript is not None and insert_status != "active":
+        return {**base, "action": "reject", "stage": "H4a", "reason": "audit_failed",
+                "audit_reasons": audit.get("reject_reasons") or [], "source_clip": clip_transcript.get("source_clip")}
+
     transcript_backend = "faster-whisper"
     if tx:
         transcript_backend = str(
@@ -581,7 +670,7 @@ def _run_reimport_attempts(
             outcome = process_candidate(
                 candidate, config=config, overwrite_existing=existing_row is not None,
                 force_transcript=refresh_transcript, existing_row=existing_row,
-                repair_feedback=repair_feedback, resolution_cache=resolution_cache,
+                repair_feedback=repair_feedback, resolution_cache=resolution_cache, allow_collection=True,
             )
         except Exception as exc:
             from app.repositories import sql_exec as sql

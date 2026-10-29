@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import copy
+import math
 import json
 import re
 import shutil
@@ -16,6 +18,7 @@ from . import ocr as gs_subtitle_ocr
 from . import whisper as gs_whisper
 from .download import (
     MediaRef,
+    DownloadResult,
     VideoTooLongError,
     download_media,
     extract_audio_wav,
@@ -234,15 +237,91 @@ def _resolve_transcription(
 
 def read_transcript_metadata(config: Config, source_id: str, path: Path) -> dict[str, Any]:
     """只读取与当前逐字稿路径绑定的转写诊断，缓存命中也不能丢失失败状态。"""
-    metadata_path = config.gold_story_media_workspace / "metadata" / f"{source_id}.json"
-    if metadata_path.is_file():
-        try:
-            loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict) and loaded.get("transcript_path") == str(path):
-                return loaded
-        except (OSError, ValueError):
-            logger.warning("gold_story transcript metadata unreadable: %s", metadata_path)
+    paths = [path.parent / "metadata" / f"{source_id}.json",
+             config.gold_story_media_workspace / "metadata" / f"{source_id}.json"]
+    for metadata_path in paths:
+        if metadata_path.is_file():
+            try:
+                loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict) and loaded.get("transcript_path") == str(path):
+                    return loaded
+            except (OSError, ValueError):
+                logger.warning("gold_story transcript metadata unreadable: %s", metadata_path)
     return {}
+
+
+def collection_source(source: str, config: Config) -> dict[str, Any]:
+    """手动长视频的粗索引：缓存只作定位，不作最终台词证据。"""
+    ref = parse_media_ref(source)
+    cfg = copy.copy(config)
+    cfg.gold_story_max_duration_sec = config.gold_story_collection_max_duration_sec
+    if cfg.gold_story_max_duration_sec <= 0:
+        raise VideoTooLongError("collection resource limit disabled")
+    metadata = read_transcript_metadata(config, ref.source_id, _transcript_path(config, ref))
+    video = config.gold_story_media_workspace / "downloads" / f"{ref.source_id}.mp4"
+    if video.is_file() and metadata.get("download"):
+        from .detect import probe_duration
+        downloaded = DownloadResult(ref, video, {**metadata["download"], "duration": probe_duration(video)})
+    else:
+        # 下载器会清理同名旧产物，必须隔离目录以保留全片原始证据。
+        cfg.gold_story_media_workspace = config.gold_story_media_workspace / "collection_index"
+        downloaded = download_media(ref, cfg)
+    duration = float(downloaded.metadata.get("duration") or 0)
+    if not math.isfinite(duration) or not 0 < duration <= cfg.gold_story_max_duration_sec:
+        raise VideoTooLongError("collection resource limit or missing duration")
+    candidates = metadata.get("transcript_candidates") or []
+    # 带时间戳的旧转写仅定位。最终必须重新识别实际片段。
+    for candidate in candidates:
+        if candidate.get("segments") and float(candidate.get("quality_score") or 0) >= 0.5:
+            return {"video_path": str(downloaded.video_path), "duration_sec": duration,
+                    "segments": candidate["segments"], "index_source": candidate.get("source"),
+                    "metadata": downloaded.metadata}
+    index = gs_subtitle_ocr.transcribe_video_ocr_subprocess(
+        downloaded.video_path, config=cfg, workspace=cfg.gold_story_media_workspace / "collection_index",
+        source_id=ref.source_id, title="", duration_sec=duration,
+    )
+    return {"video_path": str(downloaded.video_path), "duration_sec": duration,
+            "segments": index.get("segments") or [], "index_source": "ocr",
+            "metadata": downloaded.metadata}
+
+
+def transcribe_collection_clip(source: str, media: dict[str, Any], clip: dict[str, Any],
+                               config: Config) -> dict[str, Any]:
+    """精确切片后重新识别，原片和全片转写保持原样。"""
+    from app.utils.async_util import run_subprocess_cmd
+    ref = parse_media_ref(source)
+    duration = float(media["duration_sec"])
+    start, end = float(clip["start_sec"]), float(clip["end_sec"])
+    if not all(math.isfinite(v) for v in (start, end, duration)) or not 0 <= start < end <= duration or end - start > 120:
+        raise ValueError("invalid collection clip range")
+    # 相邻上下文仅用于独立边界审核；事实转写精确限定本段，避免把相邻段落纳入全文裁决。
+    cut_start, cut_end = start, end
+    workspace = config.gold_story_media_workspace / "collection_clips" / ref.source_id / f"{start:.3f}-{end:.3f}"
+    workspace.mkdir(parents=True, exist_ok=True)
+    video = workspace / "clip.mp4"
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is required")
+    run_subprocess_cmd([ffmpeg, "-y", "-ss", str(cut_start), "-i", str(media["video_path"]),
+                        "-t", str(cut_end - cut_start), "-map", "0:v:0", "-map", "0:a:0?",
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-c:a", "aac", str(video)], check=True)
+    audio = extract_audio_wav(video, audio_dir=workspace / "audio", stem=ref.source_id)
+    transcription = _resolve_transcription(video_path=video, audio_path=audio, ref=ref, cfg=config,
+        workspace=workspace, prompt=None, title="", duration_sec=cut_end - cut_start)
+    out_path = workspace / "transcript.txt"
+    out_path.write_text(transcription["text"] + "\n", encoding="utf-8")
+    provenance = {"source_id": ref.source_id, "source_url": ref.url,
+                  "start_sec": cut_start, "end_sec": cut_end, "duration_sec": cut_end - cut_start,
+                  "time_basis": "original_video_seconds", "segment_time_origin_sec": cut_start,
+                  "localization": {"use": "boundary_only_not_story_evidence",
+                                   "index_source": media.get("index_source"), **clip}}
+    result = {"action": "ok", "stage": "transcription", "transcript_path": str(out_path), "source_clip": provenance,
+              "transcript_backend": transcription.get("source"),
+              "cross_check": transcription.get("cross_check"),
+              "transcript_candidates": transcription.get("candidates") or []}
+    write_metadata(ref=ref, metadata_dir=workspace / "metadata", payload={**result,
+        "video_path": str(video), "audio_path": str(audio), "download": media.get("metadata")})
+    return result
 
 
 def transcribe_media(

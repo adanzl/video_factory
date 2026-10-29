@@ -499,10 +499,13 @@ class Config:
         )))
         self.gold_story_min_view: int = int(os.getenv("GOLD_STORY_MIN_VIEW", "100000"))
         self.gold_story_min_reply: int = int(os.getenv("GOLD_STORY_MIN_REPLY", "50"))
-        # 单条站外视频最长时长（秒）：超时长的合集/直播回放直接丢，
-        # 转写一条 7 小时视频要跑几小时且抽不出单条故事；<=0 关闭该门控
+        # 自动搜索/普通转写时长门槛；手动长素材走合集选段，<=0 关闭门控
         self.gold_story_max_duration_sec: int = int(
             os.getenv("GOLD_STORY_MAX_DURATION_SEC", "600")
+        )
+        # 仅手动 BV 导入允许按片段采集长素材；不改变自动搜索上限。
+        self.gold_story_collection_max_duration_sec: int = int(
+            os.getenv("GOLD_STORY_COLLECTION_MAX_DURATION_SEC", "1800")
         )
         self.gold_story_candidates_file: Path = _path(
             "GOLD_STORY_CANDIDATES_FILE",

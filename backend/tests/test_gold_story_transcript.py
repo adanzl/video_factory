@@ -168,3 +168,31 @@ def test_export_respects_current_transcript_state_without_deleting_evidence(tmp_
             assert result["source_inputs"] == ["replies"]
             assert result["transcript_failure_reason"] == "交叉验证未通过"
     assert repaired.read_text() == "上一轮修复稿"
+
+
+def test_collection_clip_transcribes_new_media_without_overwriting_original(monkeypatch, tmp_path):
+    from pathlib import Path
+    from app.config import Config
+    from app.services.gold_story.transcript import transcript as tr
+    from app.utils import async_util
+    cfg = Config(); cfg.gold_story_media_workspace = tmp_path
+    original = tmp_path / 'original.txt'; original.write_text('完整原文')
+    commands = []
+    monkeypatch.setattr(tr.shutil, 'which', lambda _: 'ffmpeg')
+    monkeypatch.setattr(async_util, 'run_subprocess_cmd', lambda cmd, **kw: commands.append(cmd))
+    monkeypatch.setattr(tr, 'extract_audio_wav', lambda *a, **kw: tmp_path / 'new-audio.wav')
+    seen = []
+    def transcribe(**kw):
+        seen.append(kw)
+        return {'text': '新识别的片段', 'source': 'ocr', 'candidates': [], 'cross_check': {'passed': True}}
+    monkeypatch.setattr(tr, '_resolve_transcription', transcribe)
+    result = tr.transcribe_collection_clip('BV1TEST00001',
+        {'video_path': str(tmp_path / 'full.mp4'), 'duration_sec': 800, 'index_source': 'asr'},
+        {'start_sec': 100, 'end_sec': 140}, cfg)
+    assert commands[0][commands[0].index('-ss') + 1] == '100.0'
+    assert commands[0][commands[0].index('-t') + 1] == '40.0'
+    assert seen[0]['duration_sec'] == 40
+    assert result['source_clip']['segment_time_origin_sec'] == 100
+    assert original.read_text() == '完整原文'
+    assert 'collection_clips' in result['transcript_path']
+    assert tr.read_transcript_metadata(cfg, 'BV1TEST00001', Path(result['transcript_path']))['source_clip'] == result['source_clip']

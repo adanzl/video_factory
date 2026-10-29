@@ -143,24 +143,16 @@ _QUOTED_UNINTELLIGIBLE_RE = re.compile(
 )
 
 _H0C_SYSTEM = (
-    "你是短视频口播逐字稿修复师。输入为 faster-whisper 自动转写："
-    "有错字、断句乱、分不清说话人。\n"
-    "结合标题/简介推断角色，修正同音错字，按对话拆行并标注说话人。\n"
-    "**不要假设说话人严格交替**：ASR 没有可靠说话人标签，须按语义归属判定，"
-    "同一角色可以连说多行；判不定就写「未知」，不得为凑交替硬拆。\n"
-    "不要编造视频中未出现的情节；听不清处用 [听不清]。\n"
-    "判断完整事件时，起因可以由当前提问/请求体现，收束可以是原文旁白或字幕明确交代的结果。"
-    "可判定的旁白/字幕同样是有效来源，speaker写旁白、status写ok；不得因为不是角色对白就丢弃结果或判事件不完整。\n"
-    "不许把听不懂的碎片改写成通顺台词：无法在不编造信息的前提下恢复语义时，"
-    "保留 [听不清] 标记；整行都不可恢复时只输出「角色：[听不清]」。\n"
-    "每句还要做指称自洽：当前说话人不得自称对方身份；"
-    "复述/回旋镖他人原话时须按当前说话人重算「我/你」。\n"
-    "只输出 JSON。"
+    "你是逐字稿整理员，不是故事改编者。输入是已选定的 OCR 或 ASR 原文。\n"
+    "只整理断句、标记无法理解处，保留原文事实、顺序和我/你等人称，禁止根据标题补全角色或台词。\n"
+    "不要假设说话人严格交替；同一角色可以连说多行。原文没有明确说话人标签就写「未知」。\n"
+    "未知身份不等于听不清：台词可理解时保留台词；无法理解处标 [听不清]，不得猜测缺失信息。\n"
+    "可判定的旁白/字幕同样是有效来源，不得因为不是角色对白就丢弃事件结果。只输出 JSON。"
 )
 
-_H0C_USER = """视频标题：{title}
+_H0C_USER = """视频标题（仅供理解主题，不能作为对白或身份依据）：{title}
 
-【简介】
+【简介（不是逐字稿证据）】
 {description}
 
 【已选定的逐字稿原文（OCR 或 ASR，可能有错）】
@@ -168,49 +160,29 @@ _H0C_USER = """视频标题：{title}
 
 输出 JSON：
 {{
-  "speakers": ["妈妈", "宝宝"],
   "lines": [
-    {{"speaker": "妈妈", "text": "修正后的这一句", "status": "ok"}},
-    {{"speaker": "宝宝", "text": "…", "status": "ok"}}
+    {{"speaker": "未知", "text": "原文中的这一句", "source_quote": "原文中的这一句", "status": "ok"}}
   ],
   "repair_confidence": 0.0,
-  "repair_notes": "一句说明推断依据",
+  "repair_notes": "说明断句依据及任何纠错的原文、修正和证据；不确定身份保持未知",
   "has_complete_scene": false,
   "scene_line_indices": [],
   "scene_evidence": "说明选中行如何构成同一事件的起因、回应和收束；不完整就说明缺失"
 }}
 
 规则：
-- speaker 用简短称谓：妈妈、爸爸、宝宝、女孩、男孩、哥哥、妹妹等；
-  判不定时写「未知」（并照常标注 status），在 repair_notes 说明
-- **归属按语义，不按行序**，判据优先级：
-  ①身份自称/关系自称（「我是你妈/我是你爸」等）只能归对应家长，
-  除非处于引述、反问回声、扮演框架；
-  ②第一人称承认/辩解/自曝自己做过某事的句子，归做过那件事的人，
-  但引述、反问、回旋镖句除外；判「谁做过」以标题/简介与上下文为准
-  （标题点明是谁的糗事就按标题），不要只按句式猜；
-  ③指认、质问、要求、命令句看对象与冲突推进方向；
-  ④**标题抱怨方向优先**：标题写明某人抱怨/揭发另一方「背着我/瞒着我/不告诉我」时，
-  该事的承认、自曝、辩解句归**被揭发方**，抱怨方只说指认、追问、讨要；
-  不得把被揭发方的自曝或辩解写成抱怨方的话
-- **允许同一 speaker 连说多行**：相邻句语义/语气接续像同一人（如把话补完、
-  连说两句压人）时写成同一 speaker 的连续行，禁止为凑交替硬拆成两人
-- 合并 ASR 误切的碎句；修正明显同音错字（结合语境，勿脑补新剧情）
-- **每行必须带 status**：`ok`（语义可判）| `vague`（部分可判）| `unusable`（整行不可判）
-- **不可恢复判据**：①只剩语气词/拟声/重复音节；②同音碎片拼起来仍无稳定交际意图；
-  ③要靠视频里没有的信息才讲得通；④只能猜大意，定不了说话对象或目的
-- 整行不可恢复时：`text` 写 `[听不清]`，`status` 写 `unusable`；
-  **禁止把听不懂的 ASR 原文抄进 text**，也禁止补词改写成通顺台词
-- 只有局部不可恢复时：保留可确定部分，碎片处写 `[听不清]`，`status` 写 `vague`
-- **人称自洽**：当前说话人不得自称对方身份；**指认、揭发、翻旧账句**要以对方
-  为主语写成第二人称（「你晚上偷吃烤串」），不得用第一人称把自己写成做过那件事的人；
-  复述对方原话时，原话里的「我」指原说话人的要改成「你」，
-  「你」指当前说话人的要改成「我」；转换后不通则改成概括说法，不得照抄错误指称
-- repair_confidence 只表示说话人/断句把握，不表示句子通顺
-- **合并连续重复的同一短语**，只保留 1–2 次
-- lines 至少 2 条；repair_confidence<0.35 视为失败
-- ASR 再差也要尽力修复；confidence 表示角色/断句把握（≥0.5 为佳，≥0.35 可接受）
-- text 字段不要重复 speaker 前缀
+- 每行 source_quote 必须逐字引用原文中的连续片段（含原有错字和说话人标签），不可引用标题或简介。
+- speaker 只在 source_quote 原文已有明确「角色：台词」标签时沿用该标签，否则写「未知」。
+  「妈你怎么还不睡」「爸问你点事」「我是你妈」等称呼、自称、引述均不能作为新增标签的证据。
+- 允许同一 speaker 连说多行；不能靠行序、剧情、语气猜测父母/孩子身份。
+- 保留原文的我/你、否定、数字、量词、姓名与因果；禁止因推测说话人而改人称或概括重写台词。
+  只有明确原文证据才能纠错，repair_notes 必须记录原文→修正→依据；拿不准就保留或标记 [听不清]。
+- 每行必须带 status：ok（语义可判）| vague（部分可判）| unusable（整行不可判）。
+- 只有语气碎片、语义不可恢复或需要猜测缺失内容时，text 写 [听不清]、status 写 unusable。
+  局部不可恢复时保留可确定部分，碎片处写 [听不清]、status 写 vague。禁止把乱码改编成通顺对白。
+- 可合并原文连续碎句、去掉相邻重复识别的同一短语，但 source_quote 必须包含对应完整原文。
+- lines 至少 2 条；repair_confidence 表示原文断句和语义恢复把握，不因 speaker=未知而降低分数。
+  repair_confidence<0.35 视为失败；text 不重复 speaker 前缀。
 - has_complete_scene 默认 false，false 是合法且期望的结果，禁止为通过检查拼剧情。
 - 只从本轮 lines 中选一段真实完整的单一事件：同一组人物围绕同一件事有起因、回应和收束。
   评论区散句、语录合集、互不相干的场景不能通过添加承接动作拼成一件事。
@@ -703,6 +675,16 @@ def _response_evidence(data: dict[str, Any], field: str, source: str, stage: str
     return quote.strip()
 
 
+def _resolve_indexed_evidence(data: dict[str, Any], field: str, lines: list[str], stage: str) -> None:
+    """模型选择证据行号，原文由代码引用，避免自由抄写时改字或跨行拼接。"""
+    if field + "_index" not in data:
+        return
+    index = data[field + "_index"]
+    if type(index) is not int or not 1 <= index <= len(lines):
+        raise ModelOutputError(f"LLM {stage} invalid evidence index: {field}")
+    data[field] = lines[index - 1]
+
+
 def _response_reason(data: dict[str, Any], field: str, stage: str) -> str:
     reason = data.get(field)
     if not isinstance(reason, str) or not reason.strip():
@@ -721,6 +703,76 @@ def _response_score(data: dict[str, Any], field: str, stage: str) -> float:
     if not math.isfinite(score) or not 0 <= score <= 1:
         raise ModelOutputError(f"LLM {stage} invalid score: {field}")
     return score
+
+
+def select_collection_clips(segments: list[dict[str, Any]], *, duration_sec: float) -> list[dict[str, Any]]:
+    """粗转写只用于定位候选；索引决定连续时间范围，不能在此编写故事。"""
+    if not math.isfinite(duration_sec) or duration_sec <= 0:
+        raise ModelOutputError("collection invalid duration")
+    rows: list[dict[str, Any]] = []
+    for segment in segments:
+        start = segment.get("start", segment.get("timestamp_sec"))
+        end = segment.get("end", segment.get("end_sec", start))
+        text = str(segment.get("text") or "").strip()
+        if (isinstance(start, bool) or isinstance(end, bool)
+                or not isinstance(start, (int, float)) or not isinstance(end, (int, float))
+                or not math.isfinite(start) or not math.isfinite(end)
+                or not 0 <= start <= end <= duration_sec or not text):
+            continue
+        rows.append({"start": float(start), "end": float(end), "text": text,
+                     "sampled": "start" not in segment})
+    rows.sort(key=lambda row: row["start"])
+    evidence = [{"index": i + 1, **row} for i, row in enumerate(rows)]
+    raw = json.dumps(evidence, ensure_ascii=False)
+    if len(rows) < 2 or len(raw) > 48000:
+        raise ModelOutputError("collection index missing or exceeds evidence budget")
+    data = _chat_json(
+        "你是合集片段定位员。输入是带时间戳的粗转写，可能有错字，只用于定位，不能改写成稿。"
+        "寻找适合儿童日常改编、有反差或笑点的连续单事件，必须在同一段内已有起因、回应和收束。"
+        "不能把不同人物或不同场景的类似梗拼接，不能把听不清当作可补写。"
+        "按优先级最多给6个不重叠候选，每段不超过120秒；start_index/end_index为原文1-based索引，"
+        "包含两端及中间全部行，不得跳行。reason说明该段的具体反差，不确定就空数组。"
+        '输出JSON：{"clips":[{"start_index":1,"end_index":4,"reason":"原文依据"}]}。', raw,
+    )
+    proposals = data.get("clips")
+    if not isinstance(proposals, list) or len(proposals) > 6:
+        raise ModelOutputError("collection invalid clip list")
+    clips: list[dict[str, Any]] = []
+    occupied: list[tuple[float, float]] = []
+    for proposal in proposals:
+        if not isinstance(proposal, dict):
+            raise ModelOutputError("collection invalid clip")
+        first, last = proposal.get("start_index"), proposal.get("end_index")
+        reason = proposal.get("reason")
+        if (type(first) is not int or type(last) is not int or not 1 <= first <= last <= len(rows)
+                or not isinstance(reason, str) or not reason.strip()):
+            raise ModelOutputError("collection invalid indices or reason")
+        selected = rows[first - 1:last]
+        start = selected[0]["start"]
+        # OCR 行的结束时间可能仅是最后采样点，补一个采样间隔。
+        end = min(duration_sec, max(row["end"] + (1.0 if row["sampled"] else 0.0) for row in selected))
+        if last < len(rows) and rows[last]["start"] >= max(row["end"] for row in selected):
+            end = min(end, rows[last]["start"])
+        if not 0 < end - start <= 120 or any(start < b and end > a for a, b in occupied):
+            raise ModelOutputError("collection overlapping or oversized clip")
+        occupied.append((start, end))
+        context = [row for row in rows if row["end"] >= start - 15 and row["start"] <= end + 15]
+        review = _chat_json(
+            "你是独立片段边界审核员。输入是粗转写及候选时间范围，不是成稿事实。"
+            "检查范围内是否为同一连续事件，有原文可确认的起因、回应和收束，未跨段拼接，"
+            "未丢掉紧邻上下文中的关键开场或结果。不确定就false；允许索引有少量错字，"
+            "但关键情节靠猜不能通过。只输出JSON："
+            '{"single_complete_event":true或false,"reason":"具体原文依据或缺失"}。',
+            json.dumps({"start_sec": start, "end_sec": end, "context": context}, ensure_ascii=False),
+        )
+        reason_review = _response_reason(review, "reason", "collection review")
+        clips.append({"start_sec": start, "end_sec": end, "start_index": first, "end_index": last,
+                      "selection_reason": reason, "index_context": context,
+                      "index_review": {**review, "reason": reason_review},
+                      "eligible": _response_bool(review, "single_complete_event", "collection review")})
+        if sum(bool(item["eligible"]) for item in clips) >= 3:
+            break
+    return clips
 
 
 def reconcile_transcripts(
@@ -782,13 +834,15 @@ def reconcile_transcripts(
 
 
 def review_transcript_repair(*, transcript: str, repaired: str) -> dict[str, Any]:
-    """分歧裁决后核对 H0c 输出，避免角色标注/纠错重新引入无依据的对白。"""
+    """核对 H0c 输出，避免角色标注/纠错重新引入无依据的对白。"""
     if len(transcript) > 12000 or len(repaired) > 12000:
         raise ModelOutputError("transcript repair audit input too large")
     result = _chat_json(
         "你是逐字稿保真审核员。对照唯一原文，核对修复稿中每句对白、说话人关系、否定、数字、因果和结局。"
+        "确认选中内容是同一个连续完整事件，禁止跨场景拼接问答。"
         "允许从原文选取完整单一场景及有明确依据的错字修复，禁止新增事实、颠倒问答关系或猜测缺失台词。"
-        "不能因为读起来通顺而通过。不确定就faithful=false。"
+        "原文未标说话人时，未知标签是忠实保留不确定性，不应仅因此判失败；"
+        "称呼对象不等于说话人身份。不能因为读起来通顺而通过。不确定就faithful=false。"
         '只输出JSON：{"faithful":true或false,"reason":"具体原文依据或不一致点"}。',
         "【唯一原文】\n" + transcript + "\n【修复稿】\n" + repaired,
     )
@@ -833,13 +887,23 @@ def repair_transcript(
         speaker = str(row.get("speaker") or "").strip() or "未知"
         text = str(row.get("text") or "").strip()
         status = str(row.get("status") or "").strip().lower()
+        if status not in {"ok", "vague", "unusable"}:
+            raise ModelOutputError("LLM H0c invalid line status")
+        quote = row.get("source_quote")
+        if not isinstance(quote, str) or not quote.strip() or quote not in transcript_text[:12000]:
+            raise ModelOutputError("LLM H0c source_quote missing or not found in original")
+        # 只沿用原文行首明确标签，不能把称呼对象或模型猜测当作说话人。
+        label = re.match(r"^([^：:\n]{1,12})[：:]", quote.strip())
+        labelled_source = re.search(r"(?:^|\n)\s*" + re.escape(quote.strip()), transcript_text)
+        if not label or not labelled_source or speaker != label.group(1).strip():
+            speaker = "未知"
         if status == "unusable" and text:
             # 整行不可恢复：只留占位标记，禁止把 ASR 乱码留在逐字稿里
             text = UNINTELLIGIBLE_MARKER
             unusable_lines += 1
         if text:
             cleaned.append(
-                {"speaker": speaker, "text": text, "status": status or "ok"}
+                {"speaker": speaker, "text": text, "status": status, "source_quote": quote}
             )
     if len(cleaned) < 2:
         raise ModelOutputError("LLM H0c cleaned lines too short")
@@ -862,19 +926,9 @@ def repair_transcript(
         if any(cleaned[i - 1]["status"] != "unusable" for i in range(indices[0], indices[-1] + 1) if i not in indices):
             raise ModelOutputError("H0c source_unusable: scene jumps across dialogue")
         cleaned = selected
-    speakers = data.get("speakers") or []
-    if not isinstance(speakers, list):
-        speakers = []
-    # 身份自洽兜底：孩子标签的家长身份句归位家长 / 回声句转换人称
-    cleaned, identity_notes = realign_parent_identity_rows(
-        cleaned,
-        parent_labels=PARENT_SPEAKER_LABELS,
-    )
-    if identity_notes:
-        logger.info("H0c parent identity realign=%s", identity_notes[:4])
     return {
         "lines": cleaned,
-        "speakers": [str(s).strip() for s in speakers if str(s).strip()],
+        "speakers": list(dict.fromkeys(row["speaker"] for row in cleaned)),
         "repair_confidence": confidence,
         "repair_notes": str(data.get("repair_notes") or "").strip(),
         "unusable_lines": unusable_lines,
@@ -887,6 +941,8 @@ def review_story_source(*, transcript: str, story_raw: str) -> dict[str, Any]:
     """H2 后独立核对来源，禁止模型把缺失情节补成完整故事。"""
     if len(transcript) + len(story_raw) > 48000:
         raise ModelOutputError("H2 source audit input_budget_exceeded")
+    evidence_lines = [line for line in (transcript + "\n" + story_raw).splitlines() if line.strip()]
+    evidence_index = "\n".join(f"{i + 1}: {line}" for i, line in enumerate(evidence_lines))
     data = _chat_json(
         "你是来源保真审核员，独立对照转写与抽取故事。转写是唯一事实依据。"
         "检查故事中所有关键问答、动作、道具、因果和结局是否在来源中有依据；"
@@ -901,16 +957,20 @@ def review_story_source(*, transcript: str, story_raw: str) -> dict[str, Any]:
         "不能仅因原人物是女儿/儿子、存在父母、能加儿童旁观台词或泛称亲子冲突就放行。"
         "儿童询问自己的出生、听家长回忆且儿童仅承担符合年龄的提问/旁观，不因出现孕产词就否决；"
         "但不得把成人孕产过程本身换个回忆标签，或改名后当成儿童经历。检查具体身份和行为，不能只看关键词。"
-        "child_adaptation_evidence逐字引用来源或故事的一段原文，child_adaptation_reason解释戏核与年龄的关系。"
+        "child_adaptation_evidence_index从证据索引选择支持年龄判断的一条原文行号（整数）；"
+        "系统直接引用该行，不要自己改写、拼接引文。"
+        "child_adaptation_reason解释戏核与年龄的关系。"
         '只输出JSON：{"faithful":true或false,"unsupported_claims":["无来源依据的原文片段"],"summary":"核对理由",'
-        '"child_adaptation_suitable":true或false,"child_adaptation_evidence":"逐字原文","child_adaptation_reason":"具体理由"}。',
-        "【唯一来源转写】\n" + transcript + "\n【待核对故事】\n" + story_raw,
+        '"child_adaptation_suitable":true或false,"child_adaptation_evidence_index":1,"child_adaptation_reason":"具体理由"}。',
+        "【唯一来源转写】\n" + transcript + "\n【待核对故事】\n" + story_raw
+        + "\n【证据索引，仅引用定位；来源与故事的地位仍以上述分区为准】\n" + evidence_index,
     )
     claims = data.get("unsupported_claims")
     faithful = _response_bool(data, "faithful", "H2 source audit")
     if not isinstance(claims, list) or any(not isinstance(item, str) or not item.strip() for item in claims):
         raise ModelOutputError("LLM H2 source audit unsupported_claims must be a list of strings")
     suitable = _response_bool(data, "child_adaptation_suitable", "H2 source audit")
+    _resolve_indexed_evidence(data, "child_adaptation_evidence", evidence_lines, "H2 source audit")
     _response_evidence(data, "child_adaptation_evidence", transcript + "\n" + story_raw, "H2 source audit")
     reason = _response_reason(data, "child_adaptation_reason", "H2 source audit")
     if not suitable:
@@ -1545,7 +1605,8 @@ _H4A_SYSTEM = (
     "儿童承担成人孕产、性关系、婚姻等成人身份/行为必须false，不得把成年女儿自动当儿童。"
     "正常儿童提问出生、听家长回忆且儿童只作符合年龄的提问或旁观可以通过；"
     "不能把成人孕产戏核贴上回忆标签后硬迁成儿童经历。"
-    "source_age_evidence须逐字引用原故事/转写；mapped_age_evidence须完整复制一行所给的角色行为证据，"
+    "source_age_evidence_index选择原故事/转写的证据行号；mapped_age_evidence_index选择角色行为证据行号，"
+    "两个字段必须为对应列表中的整数行号，由程序原样引用原文，不要改字或拼接引文。"
     "age_reason须解释原身份与映射角色行为是否相容，不能只说可迁移。\n"
     "源稿爸爸且妈妈代不了时可保留爸爸；能用妈妈就用妈妈。\n"
     "只输出 JSON。"
@@ -1572,19 +1633,22 @@ beat：
 完整场景契约：
 {scene_contract}
 
-角色行为证据（程序从实际对白和契约提取，选择依据时完整复制一行）：
+角色行为证据（程序从实际对白和契约提取，选择对应整数行号）：
 {role_actions}
 
 逐字稿摘录：
 {transcript}
+
+原故事/转写证据索引：
+{source_evidence_index}
 
 输出 JSON：
 {{
   "pass": true,
   "source_age_compatible": true,
   "mapped_roles_age_compatible": true,
-  "source_age_evidence": "原故事或转写中的逐字原文",
-  "mapped_age_evidence": "角色行为证据中的完整一行",
+  "source_age_evidence_index": 1,
+  "mapped_age_evidence_index": 1,
   "age_reason": "原身份与实际映射行为的核对理由",
   "sibling_fit": 0.0,
   "age_fit": 0.0,
@@ -1676,6 +1740,7 @@ def audit_story_fit(
                     role_actions.append(f"{speaker}：{action}")
     if not role_actions:
         raise ModelOutputError("H4a missing role action evidence")
+    source_lines = [line for line in (story_raw + "\n" + (transcript or description)).splitlines() if line.strip()]
     user = _H4A_USER.format(
         video_title=video_title,
         title=title,
@@ -1687,7 +1752,8 @@ def audit_story_fit(
         dialogue_seed=json.dumps(dialogue_seed, ensure_ascii=False),
         beat=json.dumps(beat, ensure_ascii=False),
         scene_contract=json.dumps(contract, ensure_ascii=False),
-        role_actions="\n".join(role_actions),
+        role_actions="\n".join(f"{i + 1}: {line}" for i, line in enumerate(role_actions)),
+        source_evidence_index="\n".join(f"{i + 1}: {line}" for i, line in enumerate(source_lines)),
         transcript=str(transcript or description or "") or "（无）",
     )
     if len(user) > 48000:
@@ -1700,6 +1766,8 @@ def audit_story_fit(
     llm_pass = _response_bool(data, "pass", "H4a")
     source_age = _response_bool(data, "source_age_compatible", "H4a")
     mapped_age = _response_bool(data, "mapped_roles_age_compatible", "H4a")
+    _resolve_indexed_evidence(data, "source_age_evidence", source_lines, "H4a")
+    _resolve_indexed_evidence(data, "mapped_age_evidence", role_actions, "H4a")
     source_evidence = _response_evidence(data, "source_age_evidence", story_raw + "\n" + (transcript or description), "H4a")
     mapped_evidence = _response_evidence(data, "mapped_age_evidence", "\n".join(role_actions), "H4a")
     if _normalized_evidence(mapped_evidence) not in {_normalized_evidence(row) for row in role_actions}:
