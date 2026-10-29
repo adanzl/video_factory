@@ -1050,8 +1050,12 @@ def insert_pending(
     title: str | None = None,
     engagement_score: float | None = None,
     payload: dict[str, Any] | None = None,
+    outcome: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """H0/H1 后先落库为 pending，OCR/结构化异步排队。"""
+    """采集占位；新 BV 提前驳回时直接落终态，不进入后台队列。"""
+    if outcome is not None and outcome.get("action") != "reject":
+        raise ValueError("insert_pending outcome must be a content rejection")
+    status = "rejected" if outcome is not None else "pending"
     source = str(source or "").strip() or "bili"
     source_id = str(source_id or "").strip()
     if not source_id:
@@ -1071,7 +1075,11 @@ def insert_pending(
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     body = dict(payload or {})
-    body.setdefault("pipeline_stage", "queued")
+    if outcome is not None:
+        body["pipeline_stage"] = outcome.get("stage") or "pipeline"
+        body["audit"] = collection_rejection_audit(outcome)
+    else:
+        body.setdefault("pipeline_stage", "queued")
     c_hash = content_hash(f"pending:{source}:{source_id}")
     result = sql.execute(
         """
@@ -1080,12 +1088,13 @@ def insert_pending(
             theme_family, title, conflict_core, auto_score, engagement_score,
             content_hash, transcript_backend, transcript_path, payload_json,
             created_at, updated_at
-        ) VALUES (?, ?, ?, 'pending', ?, ?, NULL, ?, NULL, 0, ?, ?, NULL, NULL, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, 0, ?, ?, NULL, NULL, ?, ?, ?)
         """,
         (
             source,
             source_id,
             str(url or ""),
+            status,
             PENDING_MECHANISM,
             PENDING_STRUCTURE,
             title,
@@ -1100,7 +1109,7 @@ def insert_pending(
     return {
         "action": "insert",
         "id": int(result.lastrowid),  # type: ignore[arg-type,assignment]
-        "status": "pending",
+        "status": status,
     }
 
 
@@ -1165,14 +1174,22 @@ def begin_collect_attempt(gold_story_id: int, *, max_attempts: int, claim_id: st
     return row
 
 
+def collection_rejection_audit(outcome: dict[str, Any]) -> dict[str, Any]:
+    """统一保留具体驳回说明和可检索的原因码。"""
+    detail = str(outcome.get("error") or outcome.get("reason") or "pipeline_reject")
+    return {
+        "pass": False, "stage": outcome.get("stage") or "pipeline",
+        "reason_code": outcome.get("reason"), "reject_reasons": [detail],
+    }
+
+
 def apply_reimport_gate(
     gold_story_id: int, outcome: dict[str, Any], *, expected_row: dict[str, Any],
 ) -> bool:
     """重新导入早退时写回原行。内容驳回改为 rejected，并清掉旧的采集失败。"""
     rejected = outcome.get("action") in {"reject", "skip"}
     if rejected:
-        detail = str(outcome.get("error") or outcome.get("reason") or "pipeline_reject")
-        value = {"pass": False, "stage": outcome.get("stage") or "pipeline", "reject_reasons": [detail]}
+        value = collection_rejection_audit(outcome)
         status = "rejected"
         payload_sql = (
             "json_remove(json_set(COALESCE(payload_json, '{}'), '$.audit', json(?)), '$.collect_failure')"
@@ -1201,12 +1218,12 @@ def record_collect_failure(
     """仅收口当前认领的快照，不能覆盖归档、人工编辑或其他采集结果。"""
     rejected = outcome.get("action") in {"reject", "skip"}
     key = "$.audit" if rejected else "$.collect_failure"
-    value = ({"pass": False, "stage": outcome.get("stage") or "pipeline",
-              "reject_reasons": [str(outcome.get("reason") or outcome.get("error") or "pipeline_reject")]}
-             if rejected else outcome)
+    value = collection_rejection_audit(outcome) if rejected else outcome
+    payload_sql = "json_set(COALESCE(payload_json, '{}'), ?, json(?))"
+    if rejected:
+        payload_sql = f"json_remove({payload_sql}, '$.collect_failure')"
     status = "rejected" if rejected else ("processing" if retry else "failed")
-    result = sql.execute("""UPDATE gold_story SET status=?, payload_json=json_set(
-            COALESCE(payload_json, '{}'), ?, json(?)),
+    result = sql.execute(f"""UPDATE gold_story SET status=?, payload_json={payload_sql},
             updated_at=datetime('now') WHERE id=? AND status='processing'
               AND payload_json IS ? AND mechanism IS ? AND structure_type IS ?
               AND conflict_core IS ? AND title IS ? AND gold_chat_daily_story_id IS ?""",

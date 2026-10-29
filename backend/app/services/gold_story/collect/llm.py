@@ -662,35 +662,43 @@ def _type_catalog() -> str:
     return "\n".join(lines)
 
 
+class SourceRejected(ValueError):
+    """模型明确判定原素材不可用；不作为生成错误重试。"""
+
+
+class ModelOutputError(ValueError):
+    """模型生成格式或契约不合格；允许在采集重试预算内重建。"""
+
+
 def _chat_json(system: str, user: str) -> dict[str, Any]:
     try:
         raw, _finish = _client()._chat_json(  # type: ignore[attr-defined]
             system, user, thinking_enabled=False, temperature=0.35,
         )
     except ValueError as exc:
-        raise ValueError("LLM JSON response invalid") from exc
+        raise ModelOutputError("LLM JSON response invalid") from exc
     if not isinstance(raw, dict):
-        raise ValueError("LLM JSON must be object")
+        raise ModelOutputError("LLM JSON must be object")
     return raw
 
 
 def _response_bool(data: dict[str, Any], field: str, stage: str) -> bool:
     value = data.get(field)
     if type(value) is not bool:
-        raise ValueError(f"LLM {stage} {field} must be a JSON boolean")
+        raise ModelOutputError(f"LLM {stage} {field} must be a JSON boolean")
     return value
 
 
 def _response_score(data: dict[str, Any], field: str, stage: str) -> float:
     value = data.get(field)
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-        raise ValueError(f"LLM {stage} invalid score: {field}")
+        raise ModelOutputError(f"LLM {stage} invalid score: {field}")
     try:
         score = float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"LLM {stage} invalid score: {field}") from exc
+        raise ModelOutputError(f"LLM {stage} invalid score: {field}") from exc
     if not math.isfinite(score) or not 0 <= score <= 1:
-        raise ValueError(f"LLM {stage} invalid score: {field}")
+        raise ModelOutputError(f"LLM {stage} invalid score: {field}")
     return score
 
 
@@ -712,10 +720,10 @@ def repair_transcript(
     )
     data = _chat_json(_H0C_SYSTEM, user)
     if require_complete_scene and not _response_bool(data, "has_complete_scene", "H0c"):
-        raise ValueError("H0c source_unusable: no complete source scene")
+        raise SourceRejected("H0c source_unusable: no complete source scene")
     lines = data.get("lines") or []
     if not isinstance(lines, list) or len(lines) < 2:
-        raise ValueError("LLM H0c lines must have at least 2 entries")
+        raise ModelOutputError("LLM H0c lines must have at least 2 entries")
     cleaned: list[dict[str, str]] = []
     unusable_lines = 0
     for row in lines:
@@ -733,12 +741,12 @@ def repair_transcript(
                 {"speaker": speaker, "text": text, "status": status or "ok"}
             )
     if len(cleaned) < 2:
-        raise ValueError("LLM H0c cleaned lines too short")
+        raise ModelOutputError("LLM H0c cleaned lines too short")
     if all(row["text"] == UNINTELLIGIBLE_MARKER for row in cleaned):
-        raise ValueError("H0c no usable transcript lines")
+        raise SourceRejected("H0c no usable transcript lines")
     confidence = _response_score(data, "repair_confidence", "H0c")
     if confidence < 0.35:
-        raise ValueError(f"H0c low repair_confidence={confidence:.2f}")
+        raise SourceRejected(f"H0c low repair_confidence={confidence:.2f}")
     indices = data.get("scene_line_indices")
     evidence = str(data.get("scene_evidence") or "").strip()
     if require_complete_scene:
@@ -746,12 +754,12 @@ def repair_transcript(
                 or not isinstance(indices, list) or len(indices) < 2
                 or any(type(i) is not int or i < 1 or i > len(cleaned) for i in indices)
                 or indices != sorted(set(indices))):
-            raise ValueError("LLM H0c invalid scene selection or evidence")
+            raise ModelOutputError("LLM H0c invalid scene selection or evidence")
         selected = [cleaned[i - 1] for i in indices]
         if any(row["status"] not in {"ok", "vague"} or UNINTELLIGIBLE_MARKER in row["text"] for row in selected):
-            raise ValueError("H0c source_unusable: scene contains unintelligible lines")
+            raise ModelOutputError("H0c source_unusable: scene contains unintelligible lines")
         if any(cleaned[i - 1]["status"] != "unusable" for i in range(indices[0], indices[-1] + 1) if i not in indices):
-            raise ValueError("H0c source_unusable: scene jumps across dialogue")
+            raise ModelOutputError("H0c source_unusable: scene jumps across dialogue")
         cleaned = selected
     speakers = data.get("speakers") or []
     if not isinstance(speakers, list):
@@ -791,9 +799,9 @@ def review_story_source(*, transcript: str, story_raw: str) -> dict[str, Any]:
     claims = data.get("unsupported_claims")
     faithful = _response_bool(data, "faithful", "H2 source audit")
     if not isinstance(claims, list) or any(not isinstance(item, str) or not item.strip() for item in claims):
-        raise ValueError("LLM H2 source audit unsupported_claims must be a list of strings")
+        raise ModelOutputError("LLM H2 source audit unsupported_claims must be a list of strings")
     if not faithful or claims:
-        raise ValueError("H2 source_unfaithful: " + str(claims or data.get("summary") or "来源审核未通过"))
+        raise ModelOutputError("H2 source_unfaithful: " + str(claims or data.get("summary") or "来源审核未通过"))
     return data
 
 
@@ -835,7 +843,7 @@ def extract_story_raw(
     data = _chat_json(_H2_SYSTEM, user)
     raw_story = data.get("story_raw")
     if not isinstance(raw_story, str) or not raw_story.strip():
-        raise ValueError("LLM H2 missing story_raw")
+        raise ModelOutputError("LLM H2 missing story_raw")
     story_raw = raw_story.strip()
     story_raw, scrubbed_quotes = scrub_unintelligible_quotes(story_raw)
     if scrubbed_quotes:
@@ -843,11 +851,11 @@ def extract_story_raw(
     confidence = _response_score(data, "extract_confidence", "H2")
     has_arc = _response_bool(data, "has_complete_arc", "H2")
     if not has_arc or confidence < 0.5:
-        raise ValueError(
+        raise SourceRejected(
             f"H2 rejected arc={has_arc} confidence={confidence:.2f}"
         )
     if len(story_raw) < 80:
-        raise ValueError(f"H2 story_raw too short: {len(story_raw)} chars (min 80)")
+        raise ModelOutputError(f"H2 story_raw too short: {len(story_raw)} chars (min 80)")
     if len(story_raw) > 450:
         story_raw = trim_story_raw(story_raw, max_chars=380)
     return {
@@ -874,7 +882,7 @@ def structurize_story(
     data = _chat_json(_H3_SYSTEM, user)
     mechanism = str(data.get("mechanism") or "").strip().upper()
     if mechanism not in GOLD_STORY_MECHANISM_CODES:
-        raise ValueError(f"H3 invalid mechanism: {mechanism!r}")
+        raise ModelOutputError(f"H3 invalid mechanism: {mechanism!r}")
     mech, st, align_note = align_mechanism_structure(
         mechanism,
         str(data.get("structure_type") or ""),
@@ -888,7 +896,7 @@ def structurize_story(
         )
     beat = data.get("beat") or []
     if not isinstance(beat, list) or len(beat) < 4:
-        raise ValueError("H3 beat must have 4–6 steps")
+        raise ModelOutputError("H3 beat must have 4–6 steps")
     data["banned_literals"] = sanitize_banned_literals(
         data.get("banned_literals") if isinstance(data.get("banned_literals"), list) else [],
         beat=data.get("beat") if isinstance(data.get("beat"), list) else [],
@@ -900,7 +908,7 @@ def structurize_story(
         data["structure_mapping_note"] = f"{note};{suffix}".strip(";") if note else suffix
     confidence = _response_score(data, "structure_confidence", "H3")
     if confidence < 0.5:
-        raise ValueError(f"H3 low structure_confidence={confidence:.2f}")
+        raise ModelOutputError(f"H3 low structure_confidence={confidence:.2f}")
     return data
 
 
@@ -1036,7 +1044,7 @@ def build_scene_contract(
         data, _retro_open_notes = normalize_retrospective_n_opening_parent_beats(data)
         errors = validate_scene(data)
         if errors:
-            raise ValueError(
+            raise ModelOutputError(
                 f"H3a scene_contract invalid: {'; '.join(errors[:5])}"
             )
         last_age_errs = age_remap_contract_errors(story_raw, data)
@@ -1070,7 +1078,7 @@ def build_scene_contract(
         data, _ = force_age_score_remap(data, story_raw=story_raw)
         last_age_errs = age_remap_contract_errors(story_raw, data)
     if last_age_errs:
-        raise ValueError(
+        raise ModelOutputError(
             f"H3a age_remap failed: {'; '.join(last_age_errs[:3])}"
         )
     # remap_note 说明里常残留「高考383迁龄」字样，单独洗净
@@ -1082,7 +1090,7 @@ def build_scene_contract(
             data["remap_note"] = scrubbed
     confidence = float(data.get("contract_confidence") or 0.0)
     if confidence < 0.35:
-        raise ValueError(f"H3a low contract_confidence={confidence:.2f}")
+        raise ModelOutputError(f"H3a low contract_confidence={confidence:.2f}")
     return data
 
 
@@ -1121,7 +1129,7 @@ def build_dialogue_seed(
         )
         address_errors = collect_character_address_errors(_seed_rows(data))
         if address_errors:
-            raise ValueError("H3b角色关系不合格：" + "；".join(address_errors))
+            raise ModelOutputError("H3b角色关系不合格：" + "；".join(address_errors))
     seed = _seed_rows(data)
     seed, _silent_seed_notes = trim_terminal_no_reply_rows(seed)
     seed, unintelligible_notes = drop_unintelligible_seed_rows(seed)
@@ -1161,7 +1169,7 @@ def build_dialogue_seed(
         seed = seed_from_beat_chain(contract.get("beat_chain") or [])
         data["dialogue_seed"] = seed
     if len(seed) < SEED_MIN:
-        raise ValueError("H3b dialogue_seed too short")
+        raise ModelOutputError("H3b dialogue_seed too short")
     mom_max = max(0, int(contract.get("mom_lines_max") or 0))
     if sum(isinstance(r, dict) and r.get("speaker") == "妈妈" for r in seed) > mom_max:
         # 静默裁掉最后几句会丢失收束，且让后续填词永远无法忠实覆盖契约。
@@ -1178,10 +1186,10 @@ def build_dialogue_seed(
         if len(revised) < SEED_MIN or not preserved or parent_count > mom_max:
             logger.warning("H3b parent budget repair rejected: rows=%s parent=%s/%s closing_preserved=%s",
                            len(revised), parent_count, mom_max, preserved)
-            raise ValueError("H3b 家长台词超额且无法保留完整收束，须重建契约预算")
+            raise ModelOutputError("H3b 家长台词超额且无法保留完整收束，须重建契约预算")
         revised, conflicts = filter_fact_bound_rows(revised, facts)
         if conflicts:
-            raise ValueError("H3b 家长额度返修改变了素材事实角色")
+            raise ModelOutputError("H3b 家长额度返修改变了素材事实角色")
         seed = revised
     # 单孩+家长稿：补齐同侧第二孩，免得模型自编第二个孩子的立场。
     # 例外：N 类家长当追问方时契约为两人手（家长×单孩），此时补第二孩会与契约
@@ -1227,11 +1235,11 @@ def build_dialogue_seed(
     seed = mark_seed_source_origins(seed, story_raw)
     address_errors = collect_character_address_errors(seed)
     if address_errors:
-        raise ValueError("H3b角色关系不合格：" + "；".join(address_errors))
+        raise ModelOutputError("H3b角色关系不合格：" + "；".join(address_errors))
     data["dialogue_seed"] = seed
     confidence = _response_score(data, "dialogue_confidence", "H3b")
     if confidence < 0.35:
-        raise ValueError(f"H3b low dialogue_confidence={confidence:.2f}")
+        raise ModelOutputError(f"H3b low dialogue_confidence={confidence:.2f}")
     if not str(data.get("closing_intent") or "").strip():
         data["closing_intent"] = str(contract.get("closing_intent") or "")
     if not str(data.get("speaker_map_note") or "").strip():
@@ -1495,9 +1503,9 @@ def trim_story_raw(story_raw: str, *, max_chars: int = 380) -> str:
     data = _chat_json(_TRIM_STORY_RAW_SYSTEM, user)
     trimmed = str(data.get("story_raw") or "").strip()
     if len(trimmed) < 80:
-        raise ValueError(f"trim_story_raw too short: {len(trimmed)}")
+        raise ModelOutputError(f"trim_story_raw too short: {len(trimmed)}")
     if len(trimmed) > max_chars + 40:
-        raise ValueError(f"trim_story_raw still too long: {len(trimmed)}")
+        raise ModelOutputError(f"trim_story_raw still too long: {len(trimmed)}")
     return trimmed
 
 
@@ -1540,7 +1548,7 @@ def audit_story_fit(
     llm_pass = _response_bool(data, "pass", "H4a")
     raw_reasons = data.get("reject_reasons", [])
     if not isinstance(raw_reasons, list) or any(not isinstance(item, str) for item in raw_reasons):
-        raise ValueError("LLM H4a reject_reasons must be a list of strings")
+        raise ModelOutputError("LLM H4a reject_reasons must be a list of strings")
     reasons = [reason.strip() for reason in raw_reasons if reason.strip()]
     thresholds_ok = (
         sibling_fit >= min_sibling_fit

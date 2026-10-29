@@ -14,6 +14,7 @@ from app.repositories import repo_gold_story
 from app.services.gold_story.collect import llm as llm_steps
 from app.services.gold_story.collect import review as gs_review
 from app.services.gold_story.collect.funny import (
+    audit_with_funny_rejection,
     compute_audience_funny_metrics,
     metrics_to_payload,
     passes_funny_gate_from_payload,
@@ -44,8 +45,8 @@ _COLLECT_MAX_ATTEMPTS = 3
 
 
 def _execution_failure(exc: Exception, stage: str) -> dict[str, Any]:
-    """仅明确的网络/服务暂不可用错误重试，不把程序错误当内容驳回。"""
-    retryable = False
+    """网络临时故障和模型输出错误可重试；程序错误不能当内容驳回。"""
+    retryable = isinstance(exc, llm_steps.ModelOutputError)
     cause: BaseException | None = exc
     seen: set[int] = set()
     while cause is not None and id(cause) not in seen:
@@ -243,7 +244,7 @@ def process_candidate(
                 candidate.source_id,
                 exc,
             )
-            if not isinstance(exc, ValueError) or str(exc).startswith("LLM ") or _execution_failure(exc, "H0c")["retryable"]:
+            if not isinstance(exc, llm_steps.SourceRejected):
                 return {**base, **_execution_failure(exc, "H0c")}
             transcript_failure = str(exc)
             transcript_failure_stage = "H0c"
@@ -324,7 +325,7 @@ def process_candidate(
             video_title=candidate.title,
         )
     except ValueError as exc:
-        if _execution_failure(exc, "LLM")["retryable"] or str(exc).startswith("LLM "):
+        if not isinstance(exc, llm_steps.SourceRejected):
             return {**base, **_execution_failure(exc, "LLM")}
         logger.info(
             "gold_story LLM reject bvid=%s reason=%s",
@@ -398,12 +399,7 @@ def process_candidate(
     funny_ok, funny_reason = passes_funny_gate_from_payload(payload, level="l2")
     if not funny_ok:
         insert_status = "rejected"
-        audit = {
-            **audit,
-            "pass": False,
-            "stage": "funny_signal",
-            "reject_reasons": [funny_reason],
-        }
+        audit = audit_with_funny_rejection(audit, funny_reason)
         payload["audit"] = audit
 
     transcript_backend = "faster-whisper"
@@ -621,6 +617,18 @@ def import_or_overwrite_source(
         from app.repositories import sql_exec as sql
         sql.rollback()
         outcome = _execution_failure(exc, "import")
+    # 新 BV 提前结束也保留可查看、可重导的记录；直接写终态，不进入自动队列。
+    if outcome.get("action") == "reject" and not outcome.get("status"):
+        stored = repo_gold_story.insert_pending(
+            source=candidate.source, source_id=bvid, url=candidate.url,
+            title=candidate.title, payload={"source_title": candidate.title},
+            outcome=outcome,
+        )
+        if stored.get("action") == "insert":
+            outcome = {**outcome, "id": stored["id"], "status": stored["status"], "persisted": True}
+        else:
+            # 同一 BV 已被另一请求写入，不能覆盖其结果。
+            outcome = {**stored, "persisted": False}
     return {**base, **outcome}
 
 

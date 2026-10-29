@@ -225,16 +225,30 @@ def _passes_funny_values(
     return True, "ok"
 
 
+def audit_with_funny_rejection(audit: dict[str, Any], reason: str) -> dict[str, Any]:
+    """保留内容审核快照；观众信号只能追加驳回原因。"""
+    content = dict(audit.get("content_audit") or audit)
+    reasons = list(content.get("reject_reasons") or content.get("rule_reasons") or [])
+    return {
+        **content, "content_audit": content, "pass": False, "stage": "funny_signal",
+        "reject_reasons": list(dict.fromkeys([*reasons, reason])),
+    }
+
+
 def is_funny_gate_reject(audit: dict[str, Any] | None) -> bool:
-    """机审是否只因好笑门控被拒（含旧版评论区笑声硬卡）。"""
+    """只因观众信号被拒才可单独恢复；兼容旧数据中被覆盖的审核结果。"""
     if not isinstance(audit, dict):
         return False
-    if str(audit.get("stage") or "") == "funny_signal":
-        return True
-    reasons = [str(x).strip() for x in (audit.get("reject_reasons") or []) if str(x).strip()]
-    if not reasons:
+    content = audit.get("content_audit")
+    if isinstance(content, dict) and content.get("pass") is not True:
         return False
-    return all(_is_funny_reject_reason(item) for item in reasons)
+    if audit.get("rule_pass") is False or audit.get("rule_reasons"):
+        return False
+    llm = audit.get("llm")
+    if isinstance(llm, dict) and (llm.get("pass") is False or llm.get("reject_reasons")):
+        return False
+    reasons = [str(x).strip() for x in (audit.get("reject_reasons") or []) if str(x).strip()]
+    return bool(reasons) and all(_is_funny_reject_reason(item) for item in reasons)
 
 
 def _is_funny_reject_reason(reason: str) -> bool:
@@ -268,18 +282,32 @@ def next_status_after_funny_rescore(
     if current not in _INGEST_STATUSES:
         return current, next_audit
     if l2_ok:
+        content = next_audit.get("content_audit")
+        if current == "rejected" and isinstance(content, dict):
+            # 新数据恢复独立的内容审核结果，不能把内容驳回一起清掉。
+            restored = dict(content)
+            passed = restored.get("pass") is True and restored.get("rule_pass") is not False
+            return ("active" if passed else "rejected"), restored
         if current == "rejected" and is_funny_gate_reject(next_audit):
             next_audit["pass"] = True
             next_audit.pop("stage", None)
             next_audit["reject_reasons"] = []
             return "active", next_audit
+        # 旧数据可能已丢失 reject_reasons，用保留的规则/模型结果恢复原因。
+        if current == "rejected" and next_audit.get("stage") == "funny_signal":
+            reasons = [r for r in next_audit.get("reject_reasons", []) if not _is_funny_reject_reason(str(r))]
+            reasons.extend(next_audit.get("rule_reasons") or [])
+            llm = next_audit.get("llm")
+            if isinstance(llm, dict):
+                reasons.extend(llm.get("reject_reasons") or [])
+            next_audit["reject_reasons"] = list(dict.fromkeys(reasons)) or ["content_review_required"]
         return current, next_audit
-    if current == "active" or is_funny_gate_reject(next_audit) or not next_audit.get("reject_reasons"):
+    if is_funny_gate_reject(next_audit):
         next_audit["pass"] = False
         next_audit["stage"] = "funny_signal"
         next_audit["reject_reasons"] = [l2_reason]
         return "rejected", next_audit
-    return "rejected", next_audit
+    return "rejected", audit_with_funny_rejection(next_audit, l2_reason)
 
 
 def plan_funny_rescore(row: dict[str, Any]) -> dict[str, Any]:
