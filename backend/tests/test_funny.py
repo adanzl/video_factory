@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.repositories import repo_gold_story
 from app.services.gold_story.collect.funny import (
     AudienceFunnyMetrics,
@@ -221,3 +223,28 @@ def test_rescore_all_funny_writes_status(app_ctx):
         comment_laugh=0.0,
         view_reply_norm=0.4,
     )
+
+
+@pytest.mark.parametrize("content_audit", [
+    {"pass": False, "stage": "rules", "rule_pass": False, "rule_reasons": ["dialogue_seed_too_short"], "reject_reasons": ["dialogue_seed_too_short"]},
+    {"pass": False, "stage": "llm", "rule_pass": True, "llm": {"pass": False}, "reject_reasons": ["age_fit_low:0.1"]},
+])
+def test_funny_rescore_never_clears_content_rejection(content_audit):
+    from app.services.gold_story.collect.funny import next_status_after_funny_rescore
+    status, audit = next_status_after_funny_rescore(status="rejected", audit=content_audit,
+                                                   l2_ok=False, l2_reason="low_funny_signal:0.01<0.1")
+    assert set(content_audit["reject_reasons"]).issubset(audit["reject_reasons"])
+    status, audit = next_status_after_funny_rescore(status=status, audit=audit, l2_ok=True, l2_reason="ok")
+    assert status == "rejected" and audit["pass"] is False
+    assert audit["reject_reasons"] == content_audit["reject_reasons"]
+
+
+@pytest.mark.parametrize("extra", [
+    {"rule_pass": False, "rule_reasons": ["dialogue_seed_too_short"]},
+    {"llm": {"pass": False, "reject_reasons": ["age_fit_low:0.1"]}},
+])
+def test_legacy_overwritten_funny_audit_cannot_be_promoted(extra):
+    from app.services.gold_story.collect.funny import next_status_after_funny_rescore
+    audit = {"pass": False, "stage": "funny_signal", "reject_reasons": ["low_funny_signal:0.01<0.1"], **extra}
+    status, result = next_status_after_funny_rescore(status="rejected", audit=audit, l2_ok=True, l2_reason="ok")
+    assert status == "rejected" and result["pass"] is False

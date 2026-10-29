@@ -60,7 +60,7 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
     def repair(**_kw):
         assert failure != "cross_check", "明确不可靠的转写不应再消耗修复调用"
         if failure == "repair":
-            raise ValueError("H0c low repair_confidence=0.20")
+            raise p.llm_steps.SourceRejected("H0c low repair_confidence=0.20")
         return {"lines": [{"speaker": "昭昭", "text": "本轮有效修复稿"}],
                 "repair_confidence": 0.9, "repair_notes": "本轮修复成功"}
     monkeypatch.setattr(p.llm_steps, "repair_transcript", repair)
@@ -699,12 +699,13 @@ def test_unfaithful_extraction_is_repaired_once_then_blocked_before_structure(tm
     def extract(**kwargs):
         attempts.append(kwargs)
         return {"story_raw": "门铃响了，孩子跑出去开门。"}
-    def audit(**kwargs): raise ValueError("H2 source_unfaithful: 门铃响了")
+    def audit(**kwargs): raise p.llm_steps.ModelOutputError("H2 source_unfaithful: 门铃响了")
     monkeypatch.setattr(p.llm_steps, "extract_story_raw", extract)
     monkeypatch.setattr(p.llm_steps, "review_story_source", audit)
     monkeypatch.setattr(p.llm_steps, "structurize_story", lambda **k: pytest.fail("unfaithful source reached H3"))
     result = p.process_candidate(candidate, config=cfg)
-    assert result["action"] == "reject" and "source_unfaithful" in result["reason"]
+    assert result["action"] == "error" and "source_unfaithful" in result["error"]
+    assert result["retryable"] is True
     assert len(attempts) == 2
     assert not attempts[0]["source_feedback"]
     assert "门铃响了" in attempts[1]["source_feedback"]
@@ -986,3 +987,146 @@ def test_invalid_model_response_is_execution_failure_not_rejected_source(app_ctx
     result = p.process_candidate(candidate, config=cfg)
     assert result["action"] == "error" and result["stage"] == "H0c"
     assert result["error"].startswith("LLM ")
+
+
+@pytest.mark.parametrize("title", [
+    "姐姐的英语作业被弟弟写成了菜单", "弟弟问妈妈为什么要生孩子",
+    "姐姐说我的世界里没有弟弟", "姐弟争论谁才是家里的王者",
+    "妈妈怀孕了，姐弟争着给宝宝起名字",
+])
+def test_title_gate_keeps_ambiguous_family_topics(title):
+    from app.services.gold_story.collect.search import title_reject_reason
+    assert title_reject_reason(title) is None
+
+
+@pytest.mark.parametrize("title", ["产房实录", "待产包清单", "生娃全过程", "孕期记录", "英语启蒙教程", "游戏实况"])
+def test_title_gate_still_rejects_explicit_excluded_genres(title):
+    from app.services.gold_story.collect.search import title_reject_reason
+    assert title_reject_reason(title) is not None
+
+
+@pytest.mark.parametrize("stage", ["H1", "H0c", "LLM"])
+def test_new_bv_early_rejection_is_saved(app_ctx, monkeypatch, stage):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    sid = "BV1EARLY0001"
+    candidate = VideoCandidate(source="bili", source_id=sid, url="", title="姐弟日常",
+                               description="", view_count=1, reply_count=1, keyword="")
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: candidate)
+    monkeypatch.setattr(p, "process_candidate", lambda *a, **k: {
+        "action": "reject", "stage": stage, "reason": "source_unusable", "error": "没有完整场景",
+    })
+    result = p.import_or_overwrite_source(sid)
+    row = repo.get_by_source_id(source_id=sid)
+    assert row is not None
+    assert result["id"] == row["id"] and result["status"] == "rejected"
+    assert row["payload"]["audit"]["reject_reasons"] == ["没有完整场景"]
+    assert row["payload"]["audit"]["reason_code"] == "source_unusable"
+    assert repo.claim_next_pending() is None
+
+
+def test_queued_rejection_preserves_detail_and_clears_old_failure(app_ctx):
+    from app.repositories import repo_gold_story as repo
+    gid = _pending_source()
+    row = repo.claim_next_pending()
+    repo.record_collect_failure(gid, {"action": "error", "error": "timeout"}, retry=True, expected_row=row)
+    row = repo.get_story(gid, include_payload_snapshot=True)
+    assert repo.record_collect_failure(gid, {
+        "action": "reject", "stage": "H0c", "reason": "source_unusable", "error": "没有完整场景",
+    }, retry=False, expected_row=row)
+    row = repo.get_story(gid)
+    assert row["payload"]["audit"]["reject_reasons"] == ["没有完整场景"]
+    assert "collect_failure" not in row["payload"]
+
+
+def test_malformed_h3_is_retryable_execution_failure(monkeypatch):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    cfg = Config(); cfg.gold_story_transcript_repair = False
+    candidate = VideoCandidate(source="bili", source_id="BV1SCHEMA002", url="", title="姐弟日常",
+                               description="", view_count=1, reply_count=1, keyword="")
+    monkeypatch.setattr(p, "_read_transcript", lambda *a: "姐姐和弟弟争遥控器")
+    monkeypatch.setattr(p, "transcribe_bilibili", lambda *a, **k: {"action": "ok"})
+    monkeypatch.setattr(p.llm_steps, "extract_story_raw", lambda **k: {"story_raw": "姐弟争遥控器" * 20})
+    monkeypatch.setattr(p.llm_steps, "review_story_source", lambda **k: {"faithful": True})
+    monkeypatch.setattr(p.repo_gold_story, "find_near_duplicate", lambda *a, **k: None)
+    monkeypatch.setattr(p.llm_steps, "_chat_json", lambda *a: {"mechanism": "BAD"})
+    result = p.process_candidate(candidate, config=cfg, existing_row={"id": 1, "payload": {}},
+                                 overwrite_existing=True, force_transcript=True)
+    assert result["action"] == "error" and result["retryable"] is True
+    assert "invalid mechanism" in result["error"]
+
+
+@pytest.mark.parametrize("content_pass", [True, False])
+def test_pipeline_preserves_content_audit_when_funny_gate_fails(monkeypatch, content_pass):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    from app.services.gold_story.collect.funny import next_status_after_funny_rescore
+    cfg = Config(); cfg.gold_story_transcript_repair = False
+    row = {"id": 1, "source_id": "BV1AUDIT0001", "payload": {}}
+    candidate = VideoCandidate(source="bili", source_id=row["source_id"], url="", title="姐弟日常",
+                               description="", view_count=1, reply_count=1, keyword="")
+    monkeypatch.setattr(p, "_read_transcript", lambda *a: "姐姐和弟弟争遥控器")
+    monkeypatch.setattr(p, "transcribe_bilibili", lambda *a, **k: {"action": "ok"})
+    monkeypatch.setattr(p.llm_steps, "extract_story_raw", lambda **k: {"story_raw": "姐弟争遥控器" * 20})
+    monkeypatch.setattr(p.llm_steps, "review_story_source", lambda **k: {"faithful": True})
+    monkeypatch.setattr(p.repo_gold_story, "find_near_duplicate", lambda *a, **k: None)
+    monkeypatch.setattr(p.llm_steps, "structurize_story", lambda **k: {"mechanism": "M6", "structure_type": "N"})
+    monkeypatch.setattr(p.llm_steps, "build_scene_contract", lambda **k: {})
+    monkeypatch.setattr(p, "sync_h3_from_scene_contract", lambda h3, *a, **k: (h3, []))
+    monkeypatch.setattr(p.llm_steps, "build_dialogue_seed", lambda **k: {})
+    reasons = [] if content_pass else ["dialogue_seed_too_short:1<4"]
+    audit = {"pass": content_pass, "rule_pass": content_pass, "stage": "rules", "reject_reasons": reasons}
+    monkeypatch.setattr(p.gs_review, "audit_story", lambda **k: audit)
+    monkeypatch.setattr(p, "passes_funny_gate_from_payload", lambda *a, **k: (False, "low_funny_signal:0.01<0.1"))
+    saved = []
+    def save(*a, **k):
+        saved.append(k["payload"]["audit"])
+        return {"auto_score": 0.5}
+    monkeypatch.setattr(p.repo_gold_story, "update_story_from_pipeline", save)
+    monkeypatch.setattr(p.repo_gold_story, "get_story", lambda *a: row)
+    monkeypatch.setattr(p, "_export_collection_result", lambda *a: {})
+    result = p.process_candidate(candidate, config=cfg, existing_row=row, overwrite_existing=True, force_transcript=True)
+    assert result["status"] == "rejected"
+    assert saved[0]["reject_reasons"] == reasons + ["low_funny_signal:0.01<0.1"]
+    status, restored = next_status_after_funny_rescore(status="rejected", audit=saved[0], l2_ok=True, l2_reason="ok")
+    assert status == ("active" if content_pass else "rejected")
+    assert restored == audit
+
+
+def test_model_output_retry_budget_ends_as_failed_not_rejected(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    gid = _pending_source()
+    attempts = []
+    def broken(*a, **k):
+        attempts.append(1)
+        raise p.llm_steps.ModelOutputError("H3 invalid mechanism")
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", broken)
+    monkeypatch.setattr(p.time, "sleep", lambda *a: None)
+    report = p.drain_pending_stories()
+    row = repo.get_story(gid)
+    assert len(attempts) == 3 and report["failed"] == 1
+    assert row["status"] == "failed" and "audit" not in row["payload"]
+
+
+def test_new_bv_rejection_does_not_overwrite_concurrent_insert(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    sid = "BV1CONCUR001"
+    candidate = VideoCandidate(source="bili", source_id=sid, url="", title="姐弟日常",
+                               description="", view_count=1, reply_count=1, keyword="")
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: candidate)
+    def reject_after_other_insert(*a, **k):
+        repo.insert_pending(source="bili", source_id=sid, url="", title="另一请求写入的标题")
+        return {"action": "reject", "stage": "H0c", "reason": "source_unusable"}
+    monkeypatch.setattr(p, "process_candidate", reject_after_other_insert)
+    result = p.import_or_overwrite_source(sid)
+    row = repo.get_by_source_id(source_id=sid)
+    assert result["persisted"] is False
+    assert row["status"] == "pending" and row["title"] == "另一请求写入的标题"
+    assert "audit" not in row["payload"]
