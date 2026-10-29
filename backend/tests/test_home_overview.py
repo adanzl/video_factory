@@ -158,6 +158,67 @@ def test_overview_counts(app_ctx, monkeypatch):
     _assert_no_label_chinese(data)
 
 
+def test_gold_convert_failed_skips_archived_and_exported(app_ctx, monkeypatch):
+    import app.services.gold_story.gold_chat.export as export
+    import app.services.home.overview as overview
+
+    monkeypatch.setattr(overview, "machine_meters", lambda: [])
+    monkeypatch.setattr(
+        overview,
+        "_checkin_module",
+        lambda: {"key": "checkin", "stats": [], "lines": []},
+    )
+    monkeypatch.setattr(
+        export,
+        "load_gold_chat_for_row",
+        lambda row, config=None: {"ok": True} if row.get("source_id") == "BV-live" else None,
+    )
+    sql.execute(
+        """
+        INSERT INTO gold_story (
+            source, source_id, url, mechanism, structure_type,
+            auto_score, content_hash, payload_json, title, status
+        ) VALUES (
+            'bili', 'BV-arch', 'https://example.com/a', 'm', 'A',
+            1, 'hash-a', ?, '已归档', 'archived'
+        )
+        """,
+        (json.dumps({"gold_chat_last_error": "还留着错误"}),),
+    )
+    sql.execute(
+        """
+        INSERT INTO gold_story (
+            source, source_id, url, mechanism, structure_type,
+            auto_score, content_hash, payload_json, title, status
+        ) VALUES (
+            'bili', 'BV-live', 'https://example.com/b', 'm', 'A',
+            1, 'hash-b', ?, '已有稿', 'active'
+        )
+        """,
+        (json.dumps({"gold_chat_last_error": "旧错误"}),),
+    )
+    sql.execute(
+        """
+        INSERT INTO gold_story (
+            source, source_id, url, mechanism, structure_type,
+            auto_score, content_hash, payload_json, title, status
+        ) VALUES (
+            'bili', 'BV-fail', 'https://example.com/c', 'm', 'A',
+            1, 'hash-c', ?, '真失败', 'active'
+        )
+        """,
+        (json.dumps({"gold_chat_last_error": "转换中断"}),),
+    )
+    sql.commit()
+
+    data = build_overview()
+    gold = next(item for item in data["modules"] if item["key"] == "gold_chat")
+    stats = {item["key"]: item["value"] for item in gold["stats"]}
+    assert stats["convert_failed"] == 1
+    assert [item["title"] for item in gold["lines"] if item["code"] == "convert_failed"] == ["真失败"]
+    assert all(item.get("title") != "已归档" for item in data["alerts"])
+
+
 _CONTENT_KEYS = {"title", "host", "note"}
 _CJK = re.compile(r"[\u4e00-\u9fff]")
 

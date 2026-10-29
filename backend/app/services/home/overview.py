@@ -156,6 +156,27 @@ def _daily_story_module() -> dict[str, Any]:
     }
 
 
+def _gold_error_visible(row: dict[str, Any]) -> bool:
+    """和金牌故事列表一致：已有导出稿且不是待审核/终检候选时，不把旧错误当失败。"""
+    from app.services.gold_story.gold_chat.export import load_gold_chat_for_row
+    from app.services.gold_story.gold_chat.status import gold_chat_error_from_payload
+
+    raw = row.get("payload_json")
+    payload: dict[str, Any] = {}
+    if isinstance(raw, dict):
+        payload = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            payload = parsed
+    chat_row = {"source_id": row.get("source_id"), "payload": payload}
+    has_chat = load_gold_chat_for_row(chat_row) is not None
+    return gold_chat_error_from_payload(payload, has_gold_chat=has_chat) is not None
+
+
 def _gold_chat_module() -> dict[str, Any]:
     base = "status != 'archived'"
     not_imported = _count(
@@ -168,58 +189,54 @@ def _gold_chat_module() -> dict[str, Any]:
           AND json_extract(payload_json, '$.gold_chat_review_status') = 'review_pending'
         """
     )
-    convert_failed = _count(
+    failure_rows = sql.fetchall(
         f"""
-        SELECT COUNT(*) AS n FROM gold_story
+        SELECT id, title, source_id, payload_json,
+               json_extract(payload_json, '$.gold_chat_review_status') AS review_status
+        FROM gold_story
         WHERE {base}
           AND json_extract(payload_json, '$.gold_chat_review_status') IS NOT 'review_pending'
           AND TRIM(COALESCE(json_extract(payload_json, '$.gold_chat_last_error'), '')) != ''
-          AND TRIM(COALESCE(json_extract(payload_json, '$.gold_chat_exported_at'), '')) = ''
+        ORDER BY updated_at DESC, id DESC
         """
     )
-    rows = sql.fetchall(
+    sql.commit()
+    visible_failures = [row for row in failure_rows if _gold_error_visible(row)]
+    convert_failed = len(visible_failures)
+    pending_rows = sql.fetchall(
         f"""
-        SELECT id, title,
-               json_extract(payload_json, '$.gold_chat_review_status') AS review_status,
-               json_extract(payload_json, '$.gold_chat_last_error') AS last_error,
-               json_extract(payload_json, '$.gold_chat_exported_at') AS exported_at
+        SELECT id, title
         FROM gold_story
         WHERE {base}
-          AND (
-            json_extract(payload_json, '$.gold_chat_review_status') = 'review_pending'
-            OR (
-              TRIM(COALESCE(json_extract(payload_json, '$.gold_chat_last_error'), '')) != ''
-              AND TRIM(COALESCE(json_extract(payload_json, '$.gold_chat_exported_at'), '')) = ''
-            )
-          )
+          AND json_extract(payload_json, '$.gold_chat_review_status') = 'review_pending'
         ORDER BY updated_at DESC, id DESC
         LIMIT ?
         """,
         (_LINE_LIMIT,),
     )
     sql.commit()
-    lines: list[dict[str, Any]] = []
-    for row in rows:
-        if str(row.get("review_status") or "") == "review_pending":
-            lines.append(
-                _line(
-                    str(row["title"] or ""),
-                    "review_pending",
-                    tone="warn",
-                    to="/gold-chat",
-                    id=int(row["id"]),
-                )
+    lines: list[dict[str, Any]] = [
+        _line(
+            str(row["title"] or ""),
+            "review_pending",
+            tone="warn",
+            to="/gold-chat",
+            id=int(row["id"]),
+        )
+        for row in pending_rows
+    ]
+    for row in visible_failures:
+        if len(lines) >= _LINE_LIMIT:
+            break
+        lines.append(
+            _line(
+                str(row["title"] or ""),
+                "convert_failed",
+                tone="danger",
+                to="/gold-chat",
+                id=int(row["id"]),
             )
-        else:
-            lines.append(
-                _line(
-                    str(row["title"] or ""),
-                    "convert_failed",
-                    tone="danger",
-                    to="/gold-chat",
-                    id=int(row["id"]),
-                )
-            )
+        )
     if not lines:
         idle = sql.fetchall(
             f"""

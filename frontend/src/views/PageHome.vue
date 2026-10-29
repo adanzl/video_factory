@@ -4,17 +4,11 @@
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h1 class="text-base font-semibold text-gray-800">总览</h1>
-          <el-button size="small" plain title="刷新" :disabled="loading" @click="loadOverview()">
-            <el-icon><Refresh /></el-icon>
+          <el-button size="small" plain title="刷新" :loading="loading" @click="loadOverview()">
+            <el-icon v-if="!loading"><Refresh /></el-icon>
           </el-button>
           <span class="text-xs text-gray-400">{{ todayLabel }}</span>
-          <span v-if="loading" class="text-xs text-gray-400">加载中</span>
         </div>
-        <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
-          <span v-if="dangerCount" class="text-red-600">{{ dangerCount }} 项失败</span>
-          <span v-if="warnCount" class="text-amber-600">{{ warnCount }} 项待处理</span>
-          <span>共 {{ alerts.length }} 项待跟进</span>
-        </p>
       </div>
 
       <dl class="flex flex-wrap items-center gap-y-1 text-xs">
@@ -354,8 +348,6 @@ const alerts = computed<AlertView[]>(() =>
     id: alertRecordId(alert),
   }))
 );
-const dangerCount = computed(() => alerts.value.filter(alert => alert.tone === "danger").length);
-const warnCount = computed(() => alerts.value.filter(alert => alert.tone === "warn").length);
 
 const METER_KEYS = ["cpu", "memory", "disk", "project"] as const;
 
@@ -506,15 +498,16 @@ function meterNote(meter?: HomeMeter): string {
   return meter.note || "—";
 }
 
-const REFRESH_MS = 15000;
-let refreshTimer: ReturnType<typeof setInterval> | null = null;
+const REFRESH_MS = 10000;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let overviewInFlight = false;
+let homeActive = false;
 
 const loadOverview = async (opts?: { quiet?: boolean }) => {
   if (overviewInFlight) return;
   overviewInFlight = true;
   const quiet = opts?.quiet === true;
-  if (!quiet) loading.value = true;
+  loading.value = true;
   try {
     overview.value = await getHomeOverview();
     loaded.value = true;
@@ -526,26 +519,49 @@ const loadOverview = async (opts?: { quiet?: boolean }) => {
   }
 };
 
-function startAutoRefresh() {
-  if (refreshTimer != null) return;
-  refreshTimer = setInterval(() => {
-    void loadOverview({ quiet: true });
-  }, REFRESH_MS);
-}
-
 function stopAutoRefresh() {
   if (refreshTimer == null) return;
-  clearInterval(refreshTimer);
+  clearTimeout(refreshTimer);
   refreshTimer = null;
 }
 
+function scheduleAutoRefresh() {
+  if (!homeActive || document.visibilityState === "hidden") return;
+  stopAutoRefresh();
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    void loadOverview({ quiet: true }).finally(scheduleAutoRefresh);
+  }, REFRESH_MS);
+}
+
+function onPageVisible() {
+  if (!homeActive) return;
+  if (document.visibilityState === "hidden") {
+    stopAutoRefresh();
+    return;
+  }
+  stopAutoRefresh();
+  void loadOverview({ quiet: true }).finally(scheduleAutoRefresh);
+}
+
 onMounted(() => {
-  void loadOverview();
-  startAutoRefresh();
+  homeActive = true;
+  void loadOverview().finally(scheduleAutoRefresh);
+  document.addEventListener("visibilitychange", onPageVisible);
 });
-onActivated(startAutoRefresh);
-onDeactivated(stopAutoRefresh);
-onUnmounted(stopAutoRefresh);
+onActivated(() => {
+  homeActive = true;
+  scheduleAutoRefresh();
+});
+onDeactivated(() => {
+  homeActive = false;
+  stopAutoRefresh();
+});
+onUnmounted(() => {
+  homeActive = false;
+  stopAutoRefresh();
+  document.removeEventListener("visibilitychange", onPageVisible);
+});
 usePageRefresh(() => loadOverview());
 
 const meterTone = (percent: number): Tone | undefined => {
