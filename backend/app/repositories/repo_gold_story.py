@@ -1052,10 +1052,10 @@ def insert_pending(
     payload: dict[str, Any] | None = None,
     outcome: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """采集占位；新 BV 提前驳回时直接落终态，不进入后台队列。"""
-    if outcome is not None and outcome.get("action") != "reject":
-        raise ValueError("insert_pending outcome must be a content rejection")
-    status = "rejected" if outcome is not None else "pending"
+    """采集占位；手动导入提前结束时直接落终态，不进入后台队列。"""
+    if outcome is not None and outcome.get("action") not in {"reject", "error", "skip"}:
+        raise ValueError("insert_pending outcome must be a terminal collection result")
+    status = "pending" if outcome is None else ("failed" if outcome.get("action") == "error" else "rejected")
     source = str(source or "").strip() or "bili"
     source_id = str(source_id or "").strip()
     if not source_id:
@@ -1077,7 +1077,11 @@ def insert_pending(
     body = dict(payload or {})
     if outcome is not None:
         body["pipeline_stage"] = outcome.get("stage") or "pipeline"
-        body["audit"] = collection_rejection_audit(outcome)
+        body["collect_attempts"] = int(outcome.get("attempts") or 1)
+        if status == "failed":
+            body["collect_failure"] = outcome
+        else:
+            body["audit"] = collection_rejection_audit(outcome)
     else:
         body.setdefault("pipeline_stage", "queued")
     c_hash = content_hash(f"pending:{source}:{source_id}")
@@ -1180,6 +1184,7 @@ def collection_rejection_audit(outcome: dict[str, Any]) -> dict[str, Any]:
     return {
         "pass": False, "stage": outcome.get("stage") or "pipeline",
         "reason_code": outcome.get("reason"), "reject_reasons": [detail],
+        **({"duplicate_id": outcome["duplicate_id"]} if outcome.get("duplicate_id") else {}),
     }
 
 
@@ -1198,12 +1203,14 @@ def apply_reimport_gate(
         value = outcome
         status = "failed"
         payload_sql = "json_set(COALESCE(payload_json, '{}'), '$.collect_failure', json(?))"
+    attempts = int(outcome.get("attempts") or (expected_row.get("payload") or {}).get("collect_attempts") or 0)
+    payload_sql = f"json_set({payload_sql}, '$.collect_attempts', ?)"
     result = sql.execute(
         f"""UPDATE gold_story SET status=?, payload_json={payload_sql}, updated_at=datetime('now')
             WHERE id=? AND payload_json IS ? AND status IS ?
               AND mechanism IS ? AND structure_type IS ? AND conflict_core IS ?
               AND title IS ? AND gold_chat_daily_story_id IS ?""",
-        (status, json.dumps(value, ensure_ascii=False), gold_story_id,
+        (status, json.dumps(value, ensure_ascii=False), attempts, gold_story_id,
          expected_row["_payload_json_snapshot"], expected_row.get("status"),
          expected_row.get("mechanism"), expected_row.get("structure_type"),
          expected_row.get("conflict_core"), expected_row.get("title"),

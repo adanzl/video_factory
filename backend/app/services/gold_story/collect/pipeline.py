@@ -290,7 +290,8 @@ def process_candidate(
                 **base,
                 "action": "skip",
                 "reason": "duplicate_similar_story",
-                "id": near["id"],
+                **({"id": self_id} if self_id is not None else {}),
+                "duplicate_id": near["id"],
                 "similar_source_id": near["source_id"],
                 "similar_ratio": near["ratio"],
                 "similar_lcs": near["lcs"],
@@ -479,6 +480,10 @@ def process_candidate(
             else "audit_failed"
         )
         result["audit_reasons"] = audit.get("reject_reasons") or []
+    if action == "skip":
+        if result.get("reason") in {"duplicate_content_hash", "duplicate_similar_story"}:
+            result["duplicate_id"] = result.pop("id", None)
+        return {**base, **result, "audit_pass": audit.get("pass")}
     return {**base, **result, "audit_pass": audit.get("pass"), "status": insert_status}
 
 
@@ -521,6 +526,45 @@ def _build_candidate_from_bvid(
     )
 
 
+def _run_reimport_attempts(
+    source_id: str, *, config: Config, force_transcript: bool,
+    existing_row: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], VideoCandidate | None]:
+    """手动导入共用有限重试；不重复处理已提交结果，不覆盖期间发生的修改。"""
+    candidate: VideoCandidate | None = None
+    refresh_transcript = force_transcript
+    for attempt in range(1, _COLLECT_MAX_ATTEMPTS + 1):
+        if attempt > 1 and existing_row:
+            fresh = repo_gold_story.get_story(int(existing_row["id"]), include_payload_snapshot=True)
+            fields = ("_payload_json_snapshot", "status", "mechanism", "structure_type",
+                      "conflict_core", "title", "gold_chat_daily_story_id")
+            if any(fresh.get(key) != existing_row.get(key) for key in fields):
+                return {"action": "error", "stage": "reimport", "reason": "source_changed",
+                        "error": "采集期间素材已被修改，请刷新后重新导入", "retryable": False,
+                        "attempts": attempt - 1}, candidate
+        stage = "H0"
+        try:
+            candidate = _build_candidate_from_bvid(source_id, config=config, existing_row=existing_row)
+            stage = "reimport" if existing_row else "import"
+            outcome = process_candidate(
+                candidate, config=config, overwrite_existing=existing_row is not None,
+                force_transcript=refresh_transcript, existing_row=existing_row,
+            )
+        except Exception as exc:
+            from app.repositories import sql_exec as sql
+            sql.rollback()
+            outcome = _execution_failure(exc, stage)
+        outcome = {**outcome, "attempts": attempt}
+        if (outcome.get("action") != "error" or not outcome.get("retryable")
+                or outcome.get("persisted") or attempt == _COLLECT_MAX_ATTEMPTS):
+            return outcome, candidate
+        # 已完成转写后的模型失败复用本轮转写，避免重下原视频。
+        if outcome.get("stage") in {"H0c", "LLM", "H4a"}:
+            refresh_transcript = False
+        time.sleep(min(2 ** (attempt - 1), 4))
+    raise RuntimeError("采集重试预算无效")
+
+
 def overwrite_existing_story(
     gold_story_id: int,
     *,
@@ -543,22 +587,10 @@ def overwrite_existing_story(
         return {**base, "action": "error", "stage": "reimport",
                 "error": "对话转换进行中，不能重导素材", "retryable": False}
 
-    try:
-        candidate = _build_candidate_from_bvid(
-            source_id,
-            config=cfg,
-            existing_row=row,
-        )
-        outcome = process_candidate(
-            candidate,
-            config=cfg,
-            overwrite_existing=True,
-            force_transcript=force_transcript,
-            existing_row=row,
-        )
-    except Exception as exc:
-        outcome = _execution_failure(exc, "reimport")
-    merged = {**base, **outcome}
+    outcome, _ = _run_reimport_attempts(
+        source_id, config=cfg, force_transcript=force_transcript, existing_row=row,
+    )
+    merged = {**base, **outcome, "id": gold_story_id, "source_id": source_id}
     # 跑完 H3 的结果已在 process_candidate 里写过 status。早退没有 status，要在这里收口，
     # 否则失败条目会一直停在旧的「采集失败」。
     if merged.get("status") or merged.get("action") not in {"reject", "skip", "error"}:
@@ -600,34 +632,22 @@ def import_or_overwrite_source(
         )
 
     base = {"source_id": bvid}
-    try:
-        candidate = _build_candidate_from_bvid(bvid, config=cfg)
-    except Exception as exc:
-        logger.warning("reimport meta failed bvid=%s: %s", bvid, exc)
-        return {**base, **_execution_failure(exc, "H0")}
-
-    try:
-        outcome = process_candidate(
-            candidate,
-            config=cfg,
-            overwrite_existing=False,
-            force_transcript=force_transcript,
-        )
-    except Exception as exc:
-        from app.repositories import sql_exec as sql
-        sql.rollback()
-        outcome = _execution_failure(exc, "import")
-    # 新 BV 提前结束也保留可查看、可重导的记录；直接写终态，不进入自动队列。
-    if outcome.get("action") == "reject" and not outcome.get("status"):
+    outcome, candidate = _run_reimport_attempts(bvid, config=cfg, force_transcript=force_transcript)
+    terminal = outcome.get("action") in {"reject", "error"} or (
+        outcome.get("action") == "skip"
+        and outcome.get("reason") in {"duplicate_similar_story", "duplicate_content_hash", "auto_score_below_threshold"}
+    )
+    # 先写终态再展示失败/驳回；不把失败请求加入自动队列。
+    if terminal and not outcome.get("status") and not outcome.get("persisted"):
         stored = repo_gold_story.insert_pending(
-            source=candidate.source, source_id=bvid, url=candidate.url,
-            title=candidate.title, payload={"source_title": candidate.title},
-            outcome=outcome,
+            source=candidate.source if candidate else "bili", source_id=bvid,
+            url=candidate.url if candidate else f"https://www.bilibili.com/video/{bvid}",
+            title=candidate.title if candidate else bvid,
+            payload={"source_title": candidate.title if candidate else bvid}, outcome=outcome,
         )
         if stored.get("action") == "insert":
             outcome = {**outcome, "id": stored["id"], "status": stored["status"], "persisted": True}
         else:
-            # 同一 BV 已被另一请求写入，不能覆盖其结果。
             outcome = {**stored, "persisted": False}
     return {**base, **outcome}
 
@@ -740,8 +760,6 @@ def reimport_stories(
                 sql.rollback()
                 outcome = {"id": gid, **_execution_failure(exc, "reimport")}
             sid = str(outcome.get("source_id") or "").strip()
-            if outcome.get("id"):
-                seen_ids.add(int(outcome["id"]))
             if sid:
                 seen_bvs.add(sid)
             results.append(outcome)
@@ -783,15 +801,18 @@ def reimport_stories(
 
     updated = sum(1 for r in results if r.get("action") == "ok")
     inserted = sum(1 for r in results if r.get("action") == "insert")
-    rejected = sum(1 for r in results if r.get("action") == "reject")
+    rejected = sum(1 for r in results if r.get("action") != "error"
+                   and (r.get("action") == "reject" or r.get("status") == "rejected"))
+    skipped = sum(1 for r in results if r.get("action") == "skip" and r.get("status") != "rejected")
     failed = sum(1 for r in results if r.get("action") == "error")
     return {
         "requested": len(results),
         "updated": updated,
         "inserted": inserted,
         "rejected": rejected,
+        "skipped": skipped,
         "failed": failed,
-        "ok": updated + inserted + rejected,
+        "ok": updated + inserted,
         "results": results,
     }
 

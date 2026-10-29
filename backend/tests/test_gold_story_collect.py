@@ -825,11 +825,13 @@ def test_reimport_duplicate_ids_run_once_and_continue_after_item_failure(app_ctx
 
 def test_new_bv_batch_isolates_processing_and_progress_failures(app_ctx, monkeypatch):
     from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
     calls = []
-    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda sid, **k: sid)
-    def process(sid, **kwargs):
-        calls.append(sid)
-        if sid == "BV1BATCH0001":
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda sid, **k: VideoCandidate(
+        source="bili", source_id=sid, url="", title="姐弟日常", description="", view_count=1, reply_count=1, keyword=""))
+    def process(candidate, **kwargs):
+        calls.append(candidate.source_id)
+        if candidate.source_id == "BV1BATCH0001":
             raise OSError("storage unavailable")
         return {"action": "insert", "id": 123}
     def progress(report):
@@ -862,6 +864,7 @@ def test_reimport_dedupe_excludes_self_before_selecting_best_match(app_ctx, tmp_
     result = p.process_candidate(candidate, config=cfg, skip_transcript=True, overwrite_existing=True, existing_row=row)
     assert result["reason"] == "duplicate_similar_story"
     assert result["similar_source_id"] == "BV1BATCH0002"
+    assert result["id"] == first and result["duplicate_id"] == other
 
 
 def test_enqueue_failures_survive_aggregate_report_and_progress(app_ctx, monkeypatch):
@@ -1130,3 +1133,135 @@ def test_new_bv_rejection_does_not_overwrite_concurrent_insert(app_ctx, monkeypa
     assert result["persisted"] is False
     assert row["status"] == "pending" and row["title"] == "另一请求写入的标题"
     assert "audit" not in row["payload"]
+
+
+
+def test_reimport_duplicate_target_does_not_skip_next_selected_row(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    ids = [_pending_source(f"BV1DUPNEXT0{i}") for i in (1, 2)]
+    calls = []
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: k["existing_row"])
+    def process(row, **k):
+        calls.append(row["id"])
+        if row["id"] == ids[0]:
+            return {"action": "skip", "reason": "duplicate_similar_story", "duplicate_id": ids[1]}
+        return {"action": "ok", "status": "active", "id": row["id"]}
+    monkeypatch.setattr(p, "process_candidate", process)
+    report = p.reimport_stories(gold_story_ids=ids)
+    assert calls == ids
+    assert report["results"][0]["id"] == ids[0]
+    assert report["results"][0]["duplicate_id"] == ids[1]
+    assert report["ok"] == 1 and report["rejected"] == 1
+    assert repo.get_story(ids[0])["status"] == "rejected"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("failure_stage", ["metadata", "model"])
+@pytest.mark.parametrize("recover", [False, True])
+def test_manual_bv_import_retries_and_persists_failures(app_ctx, monkeypatch, existing, failure_stage, recover):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    sid = "BV1RETRYMAN1"
+    gid = _pending_source(sid) if existing else None
+    attempts = []
+    refresh_flags = []
+    candidate = VideoCandidate(source="bili", source_id=sid, url="", title="姐弟日常", description="", view_count=1, reply_count=1, keyword="")
+    def meta(*a, **k):
+        if failure_stage == "metadata":
+            attempts.append(1)
+            if not recover or len(attempts) < 2:
+                raise TimeoutError("metadata timeout")
+        return candidate
+    def process(*a, **k):
+        refresh_flags.append(k["force_transcript"])
+        if failure_stage == "model":
+            attempts.append(1)
+            if not recover or len(attempts) < 2:
+                return {"action": "error", "stage": "LLM", "error": "bad model output", "retryable": True}
+        return {"action": "reject", "stage": "H0c", "reason": "source_unusable"}
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", meta)
+    monkeypatch.setattr(p, "process_candidate", process)
+    monkeypatch.setattr(p.time, "sleep", lambda *a: None)
+    result = p.import_or_overwrite_source(sid)
+    row = repo.get_by_source_id(source_id=sid)
+    assert len(attempts) == (2 if recover else 3)
+    assert row is not None and result["id"] == row["id"]
+    if gid:
+        assert row["id"] == gid
+    assert row["status"] == ("rejected" if recover else "failed")
+    assert row["payload"]["collect_attempts"] == len(attempts)
+    if not recover:
+        assert row["payload"]["collect_failure"]["error"] in {"metadata timeout", "bad model output"}
+    if failure_stage == "model":
+        assert refresh_flags == [True] + [False] * (len(attempts) - 1)
+
+
+def test_manual_import_does_not_retry_permanent_or_persisted_failure(app_ctx, monkeypatch):
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    from unittest.mock import Mock
+    candidate = VideoCandidate(source="bili", source_id="BV1PERMAN01", url="", title="姐弟日常", description="", view_count=1, reply_count=1, keyword="")
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: candidate)
+    monkeypatch.setattr(p.time, "sleep", lambda *a: pytest.fail("must not retry"))
+    for index, outcome in enumerate([
+        {"action": "error", "stage": "H0", "error": "unauthorized", "retryable": False},
+        {"action": "error", "stage": "export", "error": "export failed", "retryable": True, "persisted": True},
+    ]):
+        process = Mock(return_value=outcome)
+        monkeypatch.setattr(p, "process_candidate", process)
+        p.import_or_overwrite_source(f"BV1PERMAN00{index}")
+        assert process.call_count == 1
+
+
+def test_reimport_summary_does_not_count_rejections_as_success(app_ctx, monkeypatch):
+    from app.services.gold_story.collect import pipeline as p
+    outcomes = iter([
+        {"action": "insert"}, {"action": "ok"}, {"action": "reject"},
+        {"action": "skip", "status": "rejected"}, {"action": "skip"}, {"action": "error"},
+    ])
+    monkeypatch.setattr(p, "import_or_overwrite_source", lambda *a, **k: next(outcomes))
+    report = p.reimport_stories(source_ids=[f"BV1SUMMARY0{i}" for i in range(6)])
+    assert report["requested"] == 6
+    assert (report["ok"], report["rejected"], report["skipped"], report["failed"]) == (2, 2, 1, 1)
+
+
+
+def test_manual_retry_stops_after_concurrent_source_change(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.repositories import sql_exec as sql
+    from app.services.gold_story.collect import pipeline as p
+    from unittest.mock import Mock
+    gid = _pending_source("BV1CHANGE001")
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: object())
+    process = Mock(return_value={"action": "error", "stage": "LLM", "error": "retry", "retryable": True})
+    monkeypatch.setattr(p, "process_candidate", process)
+    def concurrent_edit(*a):
+        sql.execute("UPDATE gold_story SET title=? WHERE id=?", ("新标题", gid))
+        sql.commit()
+    monkeypatch.setattr(p.time, "sleep", concurrent_edit)
+    result = p.overwrite_existing_story(gid)
+    assert process.call_count == 1
+    assert result["reason"] == "source_changed" and result["persisted"] is False
+    row = repo.get_story(gid)
+    assert row["title"] == "新标题" and row["status"] == "pending"
+    assert "collect_failure" not in row["payload"]
+
+
+def test_new_duplicate_bv_gets_own_record_and_keeps_target_untouched(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    other = _pending_source("BV1DUPEOLD01")
+    sid = "BV1DUPENEW01"
+    candidate = VideoCandidate(source="bili", source_id=sid, url="", title="姐弟日常", description="", view_count=1, reply_count=1, keyword="")
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: candidate)
+    monkeypatch.setattr(p, "process_candidate", lambda *a, **k: {
+        "action": "skip", "reason": "duplicate_similar_story", "duplicate_id": other,
+    })
+    result = p.import_or_overwrite_source(sid)
+    assert result["id"] != other and result["duplicate_id"] == other
+    assert result["status"] == "rejected"
+    assert repo.get_story(other)["status"] == "pending"
+    assert repo.get_story(result["id"])["payload"]["audit"]["duplicate_id"] == other

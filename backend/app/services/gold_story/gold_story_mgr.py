@@ -1082,6 +1082,7 @@ class GoldStoryMgr:
                     "stage": "manual",
                     "archive_reason": "manual_archive",
                     "prev_status": old or None,
+                    "previous_audit": (row.get("payload") or {}).get("audit") or {},
                 },
             )
             ok_ids.append(gid)
@@ -1137,6 +1138,7 @@ class GoldStoryMgr:
                     "stage": "manual",
                     "reject_reasons": ["manual_reject"],
                     "prev_status": old or None,
+                    "previous_audit": (row.get("payload") or {}).get("audit") or {},
                 },
             )
             ok_ids.append(gid)
@@ -1162,7 +1164,7 @@ class GoldStoryMgr:
         *,
         from_status: str,
     ) -> dict[str, Any]:
-        """取消归档/驳回，恢复为 audit.prev_status 或 active。"""
+        """仅撤销人工状态操作；采集未完成的素材须明确重新导入。"""
         _RESTORABLE = frozenset({"archived", "rejected"})
         from_st = str(from_status or "").strip()
         if from_st not in _RESTORABLE:
@@ -1196,8 +1198,26 @@ class GoldStoryMgr:
             payload = cast(dict[str, Any], row.get("payload") or {})
             audit = cast(dict[str, Any], payload.get("audit") or {})
             prev = str(audit.get("prev_status") or "").strip()
-            next_status = prev if prev and prev not in _RESTORABLE else "active"
-            repo_gold_story.set_story_status(gid, status=next_status)
+            manual = audit.get("stage") == "manual"
+            previous_audit = audit.get("previous_audit")
+            restored_audit = dict(previous_audit) if isinstance(previous_audit, dict) else {}
+            incomplete = (
+                row.get("mechanism") == repo_gold_story.PENDING_MECHANISM
+                or not payload.get("story_raw") or not payload.get("dialogue_seed")
+                or not payload.get("beat")
+            )
+            blocked = (
+                not manual or prev not in {"active", "promoted", "retired", "failed", "rejected", "archived"}
+                or (prev in {"active", "promoted"} and (incomplete or restored_audit.get("pass") is False))
+            )
+            if blocked:
+                skipped.append(gid)
+                results.append({"id": gid, "source_id": sid, "action": "error",
+                                "reason": "reimport_required",
+                                "error": "素材尚未完成采集或审核未通过，请从 BV 重新导入，不能直接恢复为正常"})
+                continue
+            next_status = prev
+            repo_gold_story.update_story_status(gid, status=next_status, audit=restored_audit)
             ok_ids.append(gid)
             results.append(
                 {

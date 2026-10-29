@@ -238,6 +238,7 @@ export interface GoldStoryReimportResult {
   updated?: number;
   inserted?: number;
   rejected?: number;
+  skipped?: number;
   failed?: number;
   ok?: number;
   error?: string | null;

@@ -679,13 +679,15 @@ async function onStatusChoiceChange(next: StatusChoice) {
     } else if (detail.value.status === "rejected") {
       const res = await restoreGoldStories([id], "rejected");
       if (res.restored <= 0) {
-        ElMessage.warning("未恢复");
+        ElMessage.warning(res.results.find((result) => result.id === id)?.error || "未恢复");
+        await loadDetail();
         return;
       }
     } else if (detail.value.status === "archived") {
       const res = await restoreGoldStories([id], "archived");
       if (res.restored <= 0) {
-        ElMessage.warning("未恢复");
+        ElMessage.warning(res.results.find((result) => result.id === id)?.error || "未恢复");
+        await loadDetail();
         return;
       }
     }

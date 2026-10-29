@@ -1029,3 +1029,41 @@ def test_collection_failure_reason_is_visible_and_disappears_after_success(app_c
     assert next(row for row in rows if row["id"] == gid)["collect_error"] == expected
     repo_gold_story.set_story_status(gid, status="active")
     assert "collect_error" not in client.get(f"/v_factory/api/gold_chat/get?id={gid}").get_json()
+
+
+
+def test_restore_rejects_incomplete_automatic_rejection(app_ctx):
+    gid = repo_gold_story.insert_pending(source="bili", source_id="BV1RESTORE01", url="", outcome={
+        "action": "reject", "stage": "H0c", "reason": "source_unusable",
+    })["id"]
+    response = app_ctx.test_client().post("/v_factory/api/gold_chat/restore", json={"ids": [gid], "from_status": "rejected"})
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["restored"] == 0
+    assert "重新导入" in body["results"][0]["error"]
+    assert repo_gold_story.get_story(gid)["status"] == "rejected"
+
+
+def test_restore_manual_rejection_restores_original_audit(app_ctx):
+    gid = _insert_sample(app_ctx)["id"]
+    audit = {"pass": True, "stage": "llm", "reject_reasons": []}
+    repo_gold_story.update_story_status(gid, status="active", audit=audit)
+    client = app_ctx.test_client()
+    assert client.post("/v_factory/api/gold_chat/reject", json={"ids": [gid]}).status_code == 200
+    body = client.post("/v_factory/api/gold_chat/restore", json={"ids": [gid], "from_status": "rejected"}).get_json()
+    assert body["restored"] == 1
+    row = repo_gold_story.get_story(gid)
+    assert row["status"] == "active" and row["payload"]["audit"] == audit
+
+
+def test_unarchive_rejected_source_does_not_make_it_active(app_ctx):
+    gid = repo_gold_story.insert_pending(source="bili", source_id="BV1RESTORE02", url="", outcome={
+        "action": "reject", "stage": "H0c", "reason": "source_unusable",
+    })["id"]
+    audit = repo_gold_story.get_story(gid)["payload"]["audit"]
+    client = app_ctx.test_client()
+    assert client.post("/v_factory/api/gold_chat/archive", json={"ids": [gid]}).status_code == 200
+    body = client.post("/v_factory/api/gold_chat/restore", json={"ids": [gid], "from_status": "archived"}).get_json()
+    assert body["restored"] == 1
+    row = repo_gold_story.get_story(gid)
+    assert row["status"] == "rejected" and row["payload"]["audit"] == audit

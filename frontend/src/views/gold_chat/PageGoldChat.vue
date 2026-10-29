@@ -587,8 +587,14 @@ function clearCollectListFiltersReset() {
 function formatReimportDone(res: GoldStoryReimportResult): string {
   return (
     `重新导入完成：成功 ${res.ok ?? 0}，覆盖 ${res.updated ?? 0}，` +
-    `新建 ${res.inserted ?? 0}，驳回 ${res.rejected ?? 0}，失败 ${res.failed ?? 0}`
+    `新建 ${res.inserted ?? 0}，驳回 ${res.rejected ?? 0}，跳过 ${res.skipped ?? 0}，失败 ${res.failed ?? 0}`
   );
+}
+
+function notifyReimportDone(res: GoldStoryReimportResult) {
+  const message = formatReimportDone(res);
+  if ((res.failed ?? 0) > 0 || (res.rejected ?? 0) > 0) ElMessage.warning(message);
+  else ElMessage.success(message);
 }
 
 function startCollectPolling() {
@@ -741,7 +747,7 @@ async function pollReimportStatus() {
       return;
     }
     if (res.status === "done") {
-      ElMessage.success(formatReimportDone(res));
+      notifyReimportDone(res);
     }
   } catch (e) {
     handleError(e, "查询重新导入进度失败");
@@ -1000,7 +1006,7 @@ async function startReimportJob(params: {
     }
     reimporting.value = false;
     clearReimportTargets();
-    ElMessage.success(formatReimportDone(res));
+    notifyReimportDone(res);
     await fetchItems();
   } catch (e) {
     reimporting.value = false;
