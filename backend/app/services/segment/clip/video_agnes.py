@@ -11,6 +11,7 @@ import re
 import time
 from collections.abc import Callable
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from urllib.parse import urlencode
 
 from gevent.lock import Semaphore
@@ -40,7 +41,7 @@ from app.services.llm.llm_agnes import (
     agnes_should_switch_key,
     raise_if_agnes_quota,
 )
-from app.utils.job_cancel import job_cancel
+from app.utils.job_cancel import JobCancelledError, job_cancel
 
 logger = logging.getLogger(__name__)
 
@@ -82,22 +83,22 @@ _ASPECT_PRESETS: tuple[tuple[str, float], ...] = (
 )
 _VALID_ASPECT_RATIOS = frozenset(name for name, _ in _ASPECT_PRESETS)
 _CAST_LR_RE = re.compile(
-    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
+    r"画面左边是\s*(昭昭|灿灿|妈妈|爸爸)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈|爸爸)"
 )
 _CAST_LCR_RE = re.compile(
-    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
-    r"中间是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
-    r"右边是\s*(昭昭|灿灿|妈妈)"
+    r"画面左边是\s*(昭昭|灿灿|妈妈|爸爸)\s*[，,；;]?\s*"
+    r"中间是\s*(昭昭|灿灿|妈妈|爸爸)\s*[，,；;]?\s*"
+    r"右边是\s*(昭昭|灿灿|妈妈|爸爸)"
 )
 _CAST_LTR_RE = re.compile(
-    r"(?:画面)?从左到右是\s*(昭昭|灿灿|妈妈)\s*[、,，]\s*"
-    r"(昭昭|灿灿|妈妈)\s*[、,，]\s*(昭昭|灿灿|妈妈)"
+    r"(?:画面)?从左到右是\s*(昭昭|灿灿|妈妈|爸爸)\s*[、,，]\s*"
+    r"(昭昭|灿灿|妈妈|爸爸)\s*[、,，]\s*(昭昭|灿灿|妈妈|爸爸)"
 )
 _CAST_ONLY_RE = re.compile(
     r"(?:只能是|有且仅有\d+人[：:])"
-    r"((?:昭昭|灿灿|妈妈)(?:、(?:昭昭|灿灿|妈妈))+)"
+    r"((?:昭昭|灿灿|妈妈|爸爸)(?:、(?:昭昭|灿灿|妈妈|爸爸))+)"
 )
-_CAST_SPEAK_RE = re.compile(r"(昭昭|灿灿|妈妈)说话")
+_CAST_SPEAK_RE = re.compile(r"(昭昭|灿灿|妈妈|爸爸)说话")
 # 提交前去掉旧稿里的推近用语，避免 I2V 猛 zoom（勿误伤「不推近」）
 _CAMERA_ZOOM_RE = re.compile(
     r"镜头(?:极缓|缓慢|轻轻|轻微|大幅|强烈)?(?:推近|推进|拉远|变焦)"
@@ -109,15 +110,15 @@ _CAMERA_ZOOM_RE = re.compile(
 # ── 口型后校验：按说话窗口抽帧给 VL 判断是否开口 ──────────────────
 # 兼容侧边身份（左侧男孩）与旧版角色名（昭昭）；三人含中间
 _MOUTH_SPEAK_WINDOW_RE = re.compile(
-    r"(?P<start>\d+(?:\.\d+)?)-(?P<end>\d+(?:\.\d+)?)秒"
+    r"(?<![\d.\-])(?P<start>\d+(?:\.\d+)?)-(?P<end>\d+(?:\.\d+)?)秒"
     r"(?:"
-    r"(?P<side>左侧|中间|右侧)(?P<role>男孩|女孩|妈妈)"
+    r"(?P<side>左侧|中间|右侧)(?P<role>男孩|女孩|妈妈|爸爸)"
     r"|"
-    r"(?P<name>昭昭|灿灿|妈妈)"
+    r"(?P<name>昭昭|灿灿|妈妈|爸爸)"
     r")"
     r"(?:开口说话|张嘴说话|嘴巴持续张合说话)"
 )
-_NAME_TO_SIDE_HINT = {"昭昭": "左侧", "灿灿": "右侧", "妈妈": "中间"}
+_NAME_TO_SIDE_HINT = {"昭昭": "左侧", "灿灿": "右侧", "妈妈": "中间", "爸爸": "中间"}
 # 口型开合有闭合瞬间，单帧易误判，窗口内多点抽帧对比口型变化
 _MOUTH_VERIFY_FRACTIONS = (0.15, 0.35, 0.5, 0.65, 0.85)
 _MOUTH_VERIFY_FRAME_WIDTH = 640
@@ -138,16 +139,13 @@ _SUBTITLE_VERIFY_SYSTEM = (
 )
 
 
-def _extract_speak_windows(prompt: str) -> list[tuple[float, float, str]]:
+def _extract_speak_windows(
+    prompt: str, *, duration: float | None = None,
+) -> list[tuple[float, float, str]]:
     """从注入后的 motion_prompt 提取说话窗口 (start, end, 侧边身份)。"""
     # 站位句优先：名字 → 实际站位侧（三人中间妈妈、二人右灿等）
     name_side: dict[str, str] = {}
-    lcr = re.search(
-        r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
-        r"中间是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
-        r"右边是\s*(昭昭|灿灿|妈妈)",
-        prompt or "",
-    )
+    lcr = _CAST_LCR_RE.search(prompt or "") or _CAST_LTR_RE.search(prompt or "")
     if lcr:
         name_side = {
             lcr.group(1): "左侧",
@@ -155,35 +153,43 @@ def _extract_speak_windows(prompt: str) -> list[tuple[float, float, str]]:
             lcr.group(3): "右侧",
         }
     else:
-        lr = re.search(
-            r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
-            r"右边是\s*(昭昭|灿灿|妈妈)",
-            prompt or "",
-        )
+        lr = _CAST_LR_RE.search(prompt or "")
         if lr:
             name_side = {lr.group(1): "左侧", lr.group(2): "右侧"}
 
+    matches = list(_MOUTH_SPEAK_WINDOW_RE.finditer(prompt or ""))
+    # 有说话指令但未解析成时间窗时停止；不能降级为无对白的环境镜头。
+    for marker in re.finditer(r"开口说话|张嘴说话|嘴巴持续张合说话|说话(?=[，,]同时)", prompt or ""):
+        if not any(m.start() <= marker.start() and marker.end() <= m.end() for m in matches):
+            raise AgnesI2VError("口型质检未完成：说话指令缺少可识别的角色或时间窗口")
     windows: list[tuple[float, float, str]] = []
-    for m in _MOUTH_SPEAK_WINDOW_RE.finditer(prompt or ""):
+    for m in matches:
         start, end = float(m.group("start")), float(m.group("end"))
-        if end <= start:
-            continue
+        if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+            raise AgnesI2VError("口型质检未完成：说话时间窗口必须为正时长")
+        if windows and start < windows[-1][1]:
+            raise AgnesI2VError("口型质检未完成：说话时间窗口重叠或顺序错误")
+        if duration is not None and (not math.isfinite(duration) or end > duration):
+            raise AgnesI2VError("口型质检未完成：说话时间窗口超出视频时长")
         if m.group("side"):
             label = f"{m.group('side')}{m.group('role')}"
         else:
             name = m.group("name")
             side = name_side.get(name) or _NAME_TO_SIDE_HINT.get(name, "左侧")
-            role = {"昭昭": "男孩", "灿灿": "女孩", "妈妈": "妈妈"}.get(name, name)
+            role = {"昭昭": "男孩", "灿灿": "女孩", "妈妈": "妈妈", "爸爸": "爸爸"}.get(name, name)
             label = f"{side}{role}"
         windows.append((start, end, label))
     return windows
 
 
-def _frame_data_uri(video_path: Path, at_sec: float, tmp_path: Path) -> str | None:
-    """抽单帧缩放到 640 宽，返回 JPEG Data URI；失败返回 None。"""
+def _frame_data_uri(video_path: Path, at_sec: float, tmp_path: Path) -> tuple[str, float] | None:
+    """抽单帧，返回 JPEG Data URI 与实际帧时间；证据不完整返回 None。"""
     try:
-        run_ffmpeg([
+        result = run_ffmpeg([
             *ffmpeg_cmd_start(hide_banner=True, hwaccel=False),
+            # 保留 seek 后的源帧时间，归零文件自身起始偏移，不能把每次抽帧都记为 0。
+            "-copyts",
+            "-start_at_zero",
             "-ss",
             f"{max(0.0, at_sec):.2f}",
             "-i",
@@ -191,15 +197,19 @@ def _frame_data_uri(video_path: Path, at_sec: float, tmp_path: Path) -> str | No
             "-frames:v",
             "1",
             "-vf",
-            f"scale={_MOUTH_VERIFY_FRAME_WIDTH}:-2",
+            f"showinfo,scale={_MOUTH_VERIFY_FRAME_WIDTH}:-2",
             "-q:v",
             "5",
             str(tmp_path),
         ])
         if not tmp_path.is_file():
             return None
+        stamp = re.search(r"\bn:\s*0\s+pts:\s*-?\d+\s+pts_time:(\S+)", result.stderr)
+        if not stamp or not math.isfinite(frame_time := float(stamp[1])):
+            logger.warning("mouth verify frame timestamp missing at %.2fs", at_sec)
+            return None
         data = base64.b64encode(tmp_path.read_bytes()).decode("ascii")
-        return f"data:image/jpeg;base64,{data}"
+        return f"data:image/jpeg;base64,{data}", frame_time
     except Exception as exc:
         logger.warning("mouth verify frame extract failed at %.2fs: %s", at_sec, exc)
         return None
@@ -216,21 +226,30 @@ def _sample_window_frames(
     segment_index: int,
     window_index: int,
 ) -> list[str]:
-    """按口型校验同一套比例点抽帧。"""
-    span = max(end - start, 0.0)
+    """按比例抽帧；请求时间与实际源帧时间分别去重，实际帧必须在窗口内。"""
+    if not math.isfinite(duration) or not 0 <= start < end <= duration:
+        raise AgnesI2VError("口型质检未完成：抽帧窗口超出视频时长或时长无效")
+    span = end - start
     frames: list[str] = []
+    sampled_times: set[float] = set()
+    frame_times: set[float] = set()
     for fraction in _MOUTH_VERIFY_FRACTIONS:
-        t = start + span * fraction if span > 0 else start
-        if duration > 0:
-            t = min(t, max(0.0, duration - 0.05))
-        uri = _frame_data_uri(
+        # 与 _frame_data_uri 的 .2f 保持一致；不能把越界窗口钳到最后一帧。
+        t = float(f"{start + span * fraction:.2f}")
+        if not start <= t < end or t in sampled_times:
+            continue
+        sampled_times.add(t)
+        sample = _frame_data_uri(
             video_path,
             t,
             work_dir
             / f"{segment_index}.mouth_{window_index}_{int(fraction * 100)}.jpg",
         )
-        if uri:
-            frames.append(uri)
+        if sample:
+            uri, frame_time = sample
+            if start <= frame_time < end and frame_time not in frame_times:
+                frame_times.add(frame_time)
+                frames.append(uri)
     return frames
 
 
@@ -243,7 +262,7 @@ def _sample_verify_windows(
 ) -> list[tuple[float, float, str, list[str]]]:
     """口型/字幕共用抽帧：有说话窗按窗抽，否则按全片同一套比例点。"""
     duration = probe_duration(video_path)
-    windows = _extract_speak_windows(prompt)
+    windows = _extract_speak_windows(prompt, duration=duration)
     if not windows:
         frames = _sample_window_frames(
             video_path, 0.0, max(duration, 0.0), duration,
@@ -261,38 +280,25 @@ def _sample_verify_windows(
 
 
 def _parse_speaking_sides(content: str) -> set[str] | None:
-    """解析 VL 选边回答 → 在说话的侧集合；无法解析返回 None。"""
-    text = (content or "").strip().strip("。．.")
-    if not text:
-        return None
-    if "无人" in text or "都没" in text or "没有" in text:
+    """只接受完整、明确的选边答案；解释、疑问或矛盾文本均属未知。"""
+    text = (content or "").strip().strip("。．.！! 「」“”\"'")
+    if text in {"无人", "都没有说话", "都没说话"}:
         return set()
-    found: set[str] = set()
-    if "左侧" in text or text.startswith("左"):
-        found.add("左侧")
-    if "中间" in text or text.startswith("中"):
-        found.add("中间")
-    if "右侧" in text or text.startswith("右"):
-        found.add("右侧")
-    if "多人" in text or "两者" in text or "都在" in text:
-        # 旧回答「两者」按左+右；含中间时由字面命中补齐
-        if not found:
-            found.update({"左侧", "右侧"})
-    return found or None
+    if text in {"左侧", "中间", "右侧"}:
+        return {text}
+    if text in {"多人", "两者"}:
+        return {"左侧", "右侧"}
+    if re.fullmatch(r"(?:左侧|中间|右侧)(?:[和与、](?:左侧|中间|右侧))+(?:都在说(?:话)?)?", text):
+        return set(re.findall(r"左侧|中间|右侧", text))
+    return None
 
 
 def _parse_subtitle_hit(content: str) -> bool | None:
     """True=有字幕，False=无字幕，None=无法解析。"""
-    text = (content or "").strip().strip("。．.！! ")
-    if not text:
-        return None
-    if "无字幕" in text or "没有字幕" in text or "未见字幕" in text:
+    text = (content or "").strip().strip("。．.！! 「」“”\"'")
+    if text in {"无字幕", "没有字幕", "未见字幕", "无", "没有", "否"}:
         return False
-    if "有字幕" in text:
-        return True
-    if text in {"无", "没有", "否"}:
-        return False
-    if text in {"有", "是"}:
+    if text in {"有字幕", "有", "是"}:
         return True
     return None
 
@@ -368,12 +374,13 @@ def _cast_names_from_text(text: str) -> list[str]:
     if lr:
         _add(lr.group(1))
         _add(lr.group(2))
-    if "妈妈在中间" in text:
-        if len(ordered) == 2 and "妈妈" not in ordered:
-            ordered = [ordered[0], "妈妈", ordered[1]]
-        else:
-            _add("妈妈")
-    mid = re.search(r"中间是\s*(昭昭|灿灿|妈妈)", text)
+    for parent in ("妈妈", "爸爸"):
+        if f"{parent}在中间" in text:
+            if len(ordered) == 2 and parent not in ordered:
+                ordered = [ordered[0], parent, ordered[1]]
+            else:
+                _add(parent)
+    mid = re.search(r"中间是\s*(昭昭|灿灿|妈妈|爸爸)", text)
     if mid:
         name = mid.group(1)
         if len(ordered) == 2 and name not in ordered:
@@ -390,7 +397,7 @@ def _cast_names_from_text(text: str) -> list[str]:
 
 def _cast_names_from_speakers(speakers: list[str] | None) -> list[str]:
     allowed = {str(s).strip() for s in (speakers or []) if str(s).strip()}
-    return [n for n in ("昭昭", "灿灿", "妈妈") if n in allowed]
+    return [n for n in ("昭昭", "灿灿", "妈妈", "爸爸") if n in allowed]
 
 
 def _cast_names_from_motion(
@@ -408,18 +415,19 @@ def _cast_names_from_motion(
     elif len(image_names) >= 3:
         layout = image_names
 
-    if "妈妈" in speaker_names:
-        if layout and "妈妈" in layout:
+    parents = [name for name in ("妈妈", "爸爸") if name in speaker_names]
+    if parents:
+        if layout and any(name in layout for name in parents):
             ordered = list(layout)
             for name in speaker_names:
                 if name not in ordered:
                     ordered.append(name)
             return ordered
         pair = motion_names if len(motion_names) == 2 else image_names
-        if len(pair) == 2 and "妈妈" not in pair:
-            return [pair[0], "妈妈", pair[1]]
-        if set(speaker_names) >= {"昭昭", "灿灿", "妈妈"}:
-            return ["昭昭", "妈妈", "灿灿"]
+        if len(pair) == 2 and not set(parents).intersection(pair):
+            return [pair[0], *parents, pair[1]]
+        if set(speaker_names) >= {"昭昭", "灿灿"}:
+            return ["昭昭", *parents, "灿灿"]
         return speaker_names
 
     if layout:
@@ -559,13 +567,21 @@ _TIMELINE_WINDOW_RE = re.compile(
 
 def _remap_prompt_timeline(prompt: str, src_sec: float, dst_sec: float) -> str:
     """把口型/动作窗口从语音时长映射到 API 整数秒（再 scale 回语音时对齐）。"""
-    if src_sec <= 0 or dst_sec <= 0 or abs(src_sec - dst_sec) < 0.05:
+    if src_sec <= 0 or dst_sec <= 0 or src_sec == dst_sec:
         return prompt
     factor = dst_sec / src_sec
 
     def _repl(match: re.Match[str]) -> str:
-        start = float(match.group(1)) * factor
-        end = float(match.group(2)) * factor
+        # 注入口型窗口时保留一位小数；末端可能比真实语音长不到 0.05 秒。
+        # 仅恢复这个舍入端点，真正越界的窗口仍交由调用方拒绝。
+        def _map_endpoint(value: str) -> float:
+            seconds = float(value)
+            if seconds == round(src_sec, 1):
+                seconds = src_sec
+            return seconds * factor
+
+        start = _map_endpoint(match.group(1))
+        end = _map_endpoint(match.group(2))
         return f"{start:.1f}-{end:.1f}秒"
 
     return _TIMELINE_WINDOW_RE.sub(_repl, prompt or "")
@@ -1544,6 +1560,7 @@ class AgnesClipProvider(ClipProvider):
             url = f"{agnes_key_base_url(api_key, settings)}/chat/completions"
             host_failover_tried: set[str] = {url}
             for attempt in range(_VL_MAX_ATTEMPTS):
+                self._raise_if_job_cancelled()
                 try:
                     resp = requests.post(
                         url,
@@ -1551,6 +1568,7 @@ class AgnesClipProvider(ClipProvider):
                         json=payload,
                         timeout=(self._connect_timeout, _VL_READ_TIMEOUT_SEC),
                     )
+                    self._raise_if_job_cancelled()
                     if resp.status_code == 503:
                         alt = agnes_apply_host_failover(
                             url,
@@ -1582,16 +1600,21 @@ class AgnesClipProvider(ClipProvider):
                             api_key.label,
                         )
                         break
-                    msg = (
-                        resp.json().get("choices", [{}])[0].get("message", {})
-                    )
+                    choice = resp.json().get("choices", [{}])[0]
+                    if choice.get("finish_reason") not in (None, "stop"):
+                        logger.warning("%s reply did not finish normally: %s", tag, choice.get("finish_reason"))
+                        return None
+                    msg = choice.get("message") or {}
                     reply = (msg.get("content") or "").strip()
                     if not reply:
                         reasoning = (msg.get("reasoning_content") or "").strip()
                         if len(reasoning) <= 20:
                             reply = reasoning
                     return reply or None
+                except JobCancelledError:
+                    raise
                 except requests.Timeout as exc:
+                    self._raise_if_job_cancelled()
                     alt = agnes_apply_host_failover(
                         url,
                         host_failover_tried,
@@ -1626,6 +1649,7 @@ class AgnesClipProvider(ClipProvider):
                         exc,
                     )
                 except Exception as exc:
+                    self._raise_if_job_cancelled()
                     logger.warning(
                         "%s call failed (%s key): %s",
                         tag,
@@ -1638,7 +1662,7 @@ class AgnesClipProvider(ClipProvider):
     def _ask_vl_speaking_sides(
         self, question: str, frames: list[str]
     ) -> set[str] | None:
-        """单次 VL 判定哪侧人物在说话；调用/解析失败返回 None（放行，避免误杀）。"""
+        """单次 VL 判定哪侧人物在说话；调用/解析失败返回 None。"""
         reply = self._ask_vl_content(
             system=_MOUTH_VERIFY_SYSTEM,
             question=question,
@@ -1659,17 +1683,23 @@ class AgnesClipProvider(ClipProvider):
         segment_index: int,
     ) -> bool:
         """用已抽帧问 VL 说话人是否开口；全窗口通过返回 True。"""
+        if not sampled:
+            raise AgnesI2VError(f"clip {segment_index}: 口型质检未完成，未取得抽帧")
         for start, end, label, frames in sampled:
-            if not label or not frames:
+            if not label:
                 continue
+            if len(frames) < 2:
+                raise AgnesI2VError(f"clip {segment_index}: 口型质检未完成，说话窗口抽帧不足")
             question = (
                 f"这{len(frames)}张图按时间顺序取自同一段视频 "
                 f"{start:.1f}-{end:.1f} 秒。对比各帧，画面中谁有张嘴说话迹象？"
                 f"回答「左侧」「中间」「右侧」「多人」或「无人」。"
             )
             sides = self._ask_vl_speaking_sides(question, frames)
+            if sides is None:
+                raise AgnesI2VError(f"clip {segment_index}: 口型质检未完成，接口无有效判断")
             expected_side = label[:2]
-            ok = sides is None or expected_side in sides
+            ok = sides == {expected_side}
             logger.info(
                 "clip %s mouth verify %.1f-%.1fs expect=%s vl=%s: %s",
                 segment_index,
@@ -1677,7 +1707,7 @@ class AgnesClipProvider(ClipProvider):
                 end,
                 label,
                 "/".join(sorted(sides)) if sides else ("?" if sides is None else "无人"),
-                "ok" if ok else "SPEAKER MOUTH NOT MOVING",
+                "ok" if ok else "SPEAKING SIDES MISMATCH",
             )
             if not ok:
                 return False
@@ -1689,10 +1719,9 @@ class AgnesClipProvider(ClipProvider):
         *,
         segment_index: int,
     ) -> bool:
-        """用口型同一批帧问 VL 是否烧了字幕。有字幕返回 False；无帧/VL 失败放行。"""
+        """有字幕返回 False；无帧或 VL 无有效判断时停止，不重抽视频。"""
         if not frames:
-            logger.warning("clip %s subtitle verify: no frames, skip", segment_index)
-            return True
+            raise AgnesI2VError(f"clip {segment_index}: 字幕质检未完成，未取得抽帧")
         question = (
             f"这{len(frames)}张图按时间顺序取自同一段视频。"
             "画面上有没有烧录字幕、汉字、拼音或对白条？"
@@ -1705,6 +1734,8 @@ class AgnesClipProvider(ClipProvider):
             tag="subtitle verify vl",
         )
         hit = _parse_subtitle_hit(reply or "")
+        if hit is None:
+            raise AgnesI2VError(f"clip {segment_index}: 字幕质检未完成，接口无有效判断")
         logger.info(
             "clip %s subtitle verify vl=%s: %s",
             segment_index,
@@ -1775,8 +1806,13 @@ class AgnesClipProvider(ClipProvider):
                 image_prompt=image_prompt,
                 speakers=speakers,
             )
+            _extract_speak_windows(
+                prompt, duration=max(total_duration, round(total_duration, 1)),
+            )
             # 口型窗口按语音轴写；提交前映射到 API 整数秒，scale 回语音后对齐
             prompt = _remap_prompt_timeline(prompt, total_duration, api_sec_f)
+            # 在提交生成前确认每条说话指令都有窗口，避免花完生成成本才发现漏检。
+            expected_windows = _extract_speak_windows(prompt, duration=api_sec_f)
             raw_path = work_dir / f"{segment_index}.agnes_raw.mp4"
             scaled_path = work_dir / f"{segment_index}.agnes_scaled.mp4"
 
@@ -1791,6 +1827,7 @@ class AgnesClipProvider(ClipProvider):
                 prompt,
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            pending_path: Path | None = None
             try:
                 settings = get_settings()
                 verify_attempts = max(1, settings.agnes_video_mouth_verify_attempts)
@@ -1822,6 +1859,8 @@ class AgnesClipProvider(ClipProvider):
                     ]
                     mouth_ok = True
                     if settings.agnes_video_mouth_verify:
+                        if len([window for window in sampled if window[2]]) != len(expected_windows):
+                            raise AgnesI2VError(f"clip {segment_index}: 口型质检未完成，说话窗口抽帧缺失")
                         mouth_ok = self._verify_mouth_motion(
                             sampled,
                             segment_index=segment_index,
@@ -1854,11 +1893,9 @@ class AgnesClipProvider(ClipProvider):
                             verify_attempts,
                         )
                     else:
-                        logger.warning(
-                            "clip %s: mouth verify FAILED after %s attempts, "
-                            "keeping last clip",
-                            segment_index,
-                            verify_attempts,
+                        raise AgnesI2VError(
+                            f"clip {segment_index}: 口型质检失败，"
+                            f"{verify_attempts} 次生成后说话人仍不匹配"
                         )
                 self._raise_if_job_cancelled()
                 logger.info(
@@ -1866,11 +1903,10 @@ class AgnesClipProvider(ClipProvider):
                     segment_index,
                     total_duration,
                 )
-                # >12s 口播：先 loop 铺满，再 setpts scale 贴合语音
-                looped = _loop_video_to_duration(
-                    raw_path,
-                    work_dir=work_dir,
-                    segment_index=segment_index,
+                # 对白必须与提交前的时间映射互逆，循环会重复整段说话顺序。
+                # 无对白的环境镜头继续沿用循环铺满。
+                looped = raw_path if expected_windows else _loop_video_to_duration(
+                    raw_path, work_dir=work_dir, segment_index=segment_index,
                     total_duration=total_duration,
                 )
                 timed = _scale_video_to_duration(
@@ -1879,14 +1915,26 @@ class AgnesClipProvider(ClipProvider):
                     total_duration,
                 )
                 # 字幕改在 merge 阶段 ASS 烧录；此处做画布缩放与残差对齐
+                # 在目标目录编码临时文件，完成且未取消后才原子替换已有成片。
+                with NamedTemporaryFile(
+                    prefix=f".{output_path.stem}.", suffix=".mp4",
+                    dir=output_path.parent, delete=False,
+                ) as pending:
+                    pending_path = Path(pending.name)
                 fit_video_duration(
                     timed,
-                    output_path,
+                    pending_path,
                     total_duration,
                     width=clip_width,
                     height=clip_height,
                 )
+                self._raise_if_job_cancelled()
+                if pending_path.stat().st_size == 0:
+                    raise AgnesI2VError(f"clip {segment_index}: 最终编码未生成有效文件")
+                pending_path.replace(output_path)
             finally:
+                if pending_path is not None:
+                    pending_path.unlink(missing_ok=True)
                 raw_path.unlink(missing_ok=True)
                 scaled_path.unlink(missing_ok=True)
                 loop_path = work_dir / f"{segment_index}.agnes_loop.mp4"

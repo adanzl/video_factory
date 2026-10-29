@@ -360,7 +360,8 @@ def test_parse_item_answer_handles_bu_shi() -> None:
     assert AgnesImageProvider._parse_item_answer("不是") == "no"
     assert AgnesImageProvider._parse_item_answer("否") == "no"
     assert AgnesImageProvider._parse_item_answer("是") == "yes"
-    assert AgnesImageProvider._parse_item_answer("是的，基本一致") == "yes"
+    assert AgnesImageProvider._parse_item_answer("是的") == "yes"
+    assert AgnesImageProvider._parse_item_answer("是的，基本一致") == "unknown"
     assert AgnesImageProvider._parse_item_answer("无昭昭") == "na_zhao"
     assert AgnesImageProvider._parse_item_answer("无灿灿") == "na_can"
     assert AgnesImageProvider._parse_item_answer("无妈妈") == "na_mom"
@@ -866,7 +867,7 @@ def test_verify_hardfail_limbs_fails_on_third_arm(tmp_path: Path) -> None:
     assert ok is False
 
 
-@pytest.mark.parametrize("answer", [None, "", "无法识别图片"])
+@pytest.mark.parametrize("answer", [None, "", "无法识别图片", "项1: 2", "项2: 否", "项1: 无该角色\n项2: 否", "项1: 2或3\n项2: 否", "项1: 3\n项1: 2\n项2: 否"])
 def test_verify_hardfail_limbs_reports_incomplete_on_vl_failure(tmp_path: Path, answer) -> None:
     """VL 网络失败/无法解析不能算作质检完成。"""
     provider = AgnesImageProvider()
@@ -1188,12 +1189,13 @@ def test_verify_checklist_counts_people_without_filtering_wrong_clothes() -> Non
 def test_verify_image_missing_credentials_or_local_image_fails_closed(tmp_path: Path) -> None:
     provider = AgnesImageProvider()
     path = tmp_path / "1.png"
-    assert not provider._verify_image("客厅", path)
+    with pytest.raises(AgnesImageVerificationUnavailable, match="图片不存在"):
+        provider._verify_image("客厅", path)
     PILImage.new("RGB", (64, 64), "white").save(path)
-    with patch("app.services.segment.image.image_agnes.agnes_api_keys", return_value=[]):
-        assert not provider._verify_image("客厅", path)
-    with patch.object(AgnesImageProvider, "_encode_verify_image_data_url", side_effect=ValueError("bad image")):
-        assert not provider._verify_image("客厅", path)
+    with patch("app.services.segment.image.image_agnes.agnes_api_keys", return_value=[]), pytest.raises(AgnesImageVerificationUnavailable):
+        provider._verify_image("客厅", path)
+    with patch.object(AgnesImageProvider, "_encode_verify_image_data_url", side_effect=ValueError("bad image")), pytest.raises(AgnesImageVerificationUnavailable):
+        provider._verify_image("客厅", path)
 
 
 @pytest.mark.parametrize("color,style", [("blue", "short_sleeve"), ("pink", "short_sleeve"), ("other", "hoodie")])
@@ -1470,3 +1472,215 @@ def test_limb_api_failure_preserves_image_without_redrawing(tmp_path):
     generate.assert_called_once()
     plan.assert_not_called()
     assert output.read_bytes() == original
+
+
+def _attribute_feedback(prompt, roles):
+    from app.services.segment.image.image_agnes import _ROLE_CLOTHES
+    items, _, _ = AgnesImageProvider._build_verify_checklist(prompt=prompt, expected_speakers=roles, content_style="daily_story")
+    observed = {}
+    for cid, _ in items:
+        if cid == "people":
+            observed[cid] = [{"position": str(i), "appearance": role, "posture": "站着"} for i, role in enumerate(roles)]
+        elif cid == "cast_count":
+            observed[cid] = len(roles)
+        elif cid.endswith("_count"):
+            observed[cid] = 1
+        elif cid.endswith(("_arms", "_legs")):
+            observed[cid] = 2
+        elif cid.endswith("_clothes"):
+            observed[cid] = {"upper_style": "long_sleeve", "lower_style": "trousers", **_ROLE_CLOTHES[cid]}
+        else:
+            observed[cid] = "yes"
+    return observed
+
+
+@pytest.mark.parametrize("roles", [["昭昭", "灿灿"], ["昭昭", "妈妈", "灿灿"], ["爸爸", "妈妈"]])
+@pytest.mark.parametrize("defect", ["mouth", "clothes"])
+def test_attribute_edit_targets_observed_defect_only(tmp_path, roles, defect):
+    from app.services.segment.image.image_agnes import _ROLE_VERIFY
+    prompt = f"客厅。{roles[0]}嘴唇微张，正在开口说话。"
+    observed = _attribute_feedback(prompt, roles)
+    if defect == "mouth":
+        observed["mouth_first"] = "no"
+    else:
+        observed[_ROLE_VERIFY[roles[0]][0] + "_clothes"]["upper_color"] = "other"
+    path = tmp_path / "source.png"
+    path.write_bytes(b"original current image")
+    plan = AgnesImageProvider._plan_attribute_edit(prompt, path, expected_speakers=roles, feedback=json.dumps({"observations": observed}))
+    assert plan is not None
+    assert plan[1].startswith("data:image/png;base64,")
+    assert roles[0] in plan[0]
+    assert ("上衣颜色改为" in plan[0]) == (defect == "clothes")
+    assert ("嘴唇微张" in plan[0]) == (defect == "mouth")
+
+
+@pytest.mark.parametrize("defect,value", [("scene", "no"), ("height_can", "no"), ("zhao_arms", 3), ("can_legs", 3), ("zhao_count", 2), ("cast_count", 4), ("can_hair", "unknown"), ("zhao_arms", True), ("people", []), ("zhao_clothes", {"upper_color": []})])
+def test_attribute_edit_does_not_hide_other_failures(tmp_path, defect, value):
+    roles = ["昭昭", "灿灿"]
+    prompt = "昭昭嘴唇微张，正在开口说话。"
+    observed = _attribute_feedback(prompt, roles)
+    observed["mouth_first"] = "no"
+    observed[defect] = value
+    path = tmp_path / "source.png"
+    path.write_bytes(b"image")
+    assert AgnesImageProvider._plan_attribute_edit(prompt, path, expected_speakers=roles, feedback=json.dumps({"observations": observed})) is None
+
+
+def test_attribute_edit_missing_observations_does_not_guess(tmp_path):
+    roles = ["昭昭", "灿灿"]
+    prompt = "昭昭嘴唇微张，正在开口说话。"
+    observed = _attribute_feedback(prompt, roles)
+    observed["mouth_first"] = "no"
+    del observed["scene"]
+    assert AgnesImageProvider._plan_attribute_edit(prompt, tmp_path / "missing.png", expected_speakers=roles, feedback=json.dumps({"observations": observed})) is None
+
+
+@pytest.mark.parametrize("repair_passes", [False, True])
+def test_attribute_edit_runs_full_original_qc_within_draw_budget(tmp_path, repair_passes):
+    provider = AgnesImageProvider()
+    roles = ["昭昭", "灿灿"]
+    prompt = "昭昭嘴唇微张，正在开口说话。"
+    observed = _attribute_feedback(prompt, roles)
+    observed["mouth_first"] = "no"
+    generated = []
+    checked = []
+    out = tmp_path / "candidate.png"
+    def draw(key, text, path, **kwargs):
+        generated.append((text, kwargs["ref_images"]))
+        path.write_bytes(b"candidate")
+        return path
+    def verify(text, path, **kwargs):
+        checked.append(text)
+        if len(checked) == 2 and repair_passes:
+            return True
+        kwargs["feedback"].append(json.dumps({"observations": observed}))
+        return False
+    with (
+        patch("app.services.segment.image.image_agnes.agnes_api_keys", return_value=[AgnesApiKey("cn_free", "test-key")]),
+        patch("app.services.segment.image.image_agnes._VERIFY_MAX_ATTEMPTS", 3),
+        patch.object(provider, "_generate_with_key", side_effect=draw),
+        patch.object(provider, "_verify_image", side_effect=verify),
+    ):
+        if repair_passes:
+            assert provider.generate(prompt, out, ref_images=["original reference"], expected_speakers=roles, content_style="daily_story") == out
+        else:
+            with pytest.raises(AgnesImageVerifyFailed):
+                provider.generate(prompt, out, ref_images=["original reference"], expected_speakers=roles, content_style="daily_story")
+    assert len(set(checked)) == 1
+    assert "只修正" in generated[1][0]
+    assert generated[1][1][0].startswith("data:image/png;base64,")
+    if not repair_passes:
+        assert len(generated) == 3
+        assert generated[2] == generated[0]
+
+
+@pytest.mark.parametrize('failure', ['http', 'timeout', 'empty', 'missing', 'unknown', 'duplicate', 'ambiguous_count'])
+def test_main_image_verification_incomplete_preserves_image_without_redraw(tmp_path, failure):
+    provider = AgnesImageProvider()
+    output = tmp_path / 'frame.png'
+    PILImage.new('RGB', (32, 32), 'white').save(output)
+    original = output.read_bytes()
+    answers = {
+        'empty': '', 'missing': '项2: 2', 'unknown': '项1: 看不清\n项2: 2',
+        'duplicate': '项1: 否\n项1: 是\n项2: 2',
+        'ambiguous_count': '项1: 是\n项2: 2或3',
+    }
+    response = MagicMock(status_code=502 if failure == 'http' else 200, ok=failure != 'http')
+    response.json.return_value = {'choices': [{'message': {'content': answers.get(failure, '')}}]}
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('cn_free', 'test-key')]),
+        patch.object(provider, '_generate_with_key', return_value=output) as generate,
+        patch.object(AgnesImageProvider, '_build_verify_checklist', return_value=([('scene', '场景'), ('cast_count', '人数')], '检查图像', 2)),
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch.object(provider, '_sleep_cancellable'),
+        patch('app.services.segment.image.image_agnes.agnes_apply_host_failover', return_value=None),
+        patch('app.services.segment.image.image_agnes.requests.post', side_effect=requests.Timeout('test') if failure == 'timeout' else None, return_value=response) as post,
+        patch.object(provider, '_plan_excess_people_edit') as plan,
+        pytest.raises(AgnesImageVerificationUnavailable, match='图片质检未完成'),
+    ):
+        provider.generate('原场景', output, expected_speakers=['昭昭', '灿灿'], content_style='daily_story')
+    generate.assert_called_once()
+    plan.assert_not_called()
+    assert post.call_count == (3 if failure in {'http', 'timeout'} else 1)
+    assert output.read_bytes() == original
+
+
+@pytest.mark.parametrize('answer', ['2或3', '可能2', '-1', '1.5', '无法确定，通常人有2条手臂'])
+def test_ambiguous_count_is_unknown(answer):
+    assert AgnesImageProvider._parse_person_count(answer) is None
+    assert AgnesImageProvider._evaluate_verify_response(f'项1: {answer}', ['zhao_arms']) is None
+
+
+@pytest.mark.parametrize('answer,expected', [('2',2), ('2条',2), ('两只',2), ('0',0), ('三',3)])
+def test_explicit_count_keeps_supported_formats(answer, expected):
+    assert AgnesImageProvider._parse_person_count(answer) == expected
+
+
+@pytest.mark.parametrize('answer', ['项1: 3', '项2: 是'])
+def test_partial_limb_answer_with_explicit_defect_still_rejects(tmp_path, answer):
+    provider = AgnesImageProvider()
+    output = tmp_path / 'frame.png'
+    PILImage.new('RGB', (32, 32), 'white').save(output)
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('cn_free', 'test-key')]),
+        patch.object(provider, '_allowed_cast_for_verify', return_value=['灿灿']),
+        patch.object(provider, '_ask_hardfail_vl', return_value=answer),
+    ):
+        assert provider._verify_hardfail_limbs(output, expected_speakers=['灿灿'], content_style='daily_story') is False
+
+
+@pytest.mark.parametrize('answer', [
+    '是，但无法确定', '否，但可能有多手', '无法判断，是', '无法判断，否',
+    '不能确认无昭昭', '是或否', '否？', '是的，基本一致',
+])
+def test_boolean_image_answer_must_be_complete(answer):
+    assert AgnesImageProvider._parse_item_answer(answer) == 'unknown'
+    assert AgnesImageProvider._evaluate_verify_response(f'项1: {answer}', ['scene']) is None
+    assert AgnesImageProvider._parse_hardfail_arm_answer(f'项1: 2\n项2: {answer}') == (2, None)
+
+
+@pytest.mark.parametrize('field', ['content', 'reasoning_content'])
+@pytest.mark.parametrize('answer', [
+    '项1: 是\n但无法确定', '无法判断图片\n项1: 是',
+    '项1: 是\n项2: 否', '项1: 是\n项1: 否',
+])
+def test_image_answer_normalization_does_not_discard_disagreement(field, answer):
+    text = AgnesImageProvider._vl_message_text({field: answer})
+    assert AgnesImageProvider._evaluate_verify_response(text, ['scene']) is None
+
+
+def test_nonempty_vl_body_cannot_be_overridden_by_reasoning():
+    text = AgnesImageProvider._vl_message_text({'content':'图片看不清，无法判断', 'reasoning_content':'项1: 是'})
+    assert text == '图片看不清，无法判断'
+    assert AgnesImageProvider._evaluate_verify_response(text, ['scene']) is None
+    assert AgnesImageProvider._vl_message_text({'content':'', 'reasoning_content':'项1: 是'}) == '项1: 是'
+    assert AgnesImageProvider._evaluate_verify_response('项1: 是', ['scene']) is True
+
+
+@pytest.mark.parametrize('answer', ['.2', '.0', '．2'])
+def test_decimal_count_is_not_stripped_into_integer(answer):
+    assert AgnesImageProvider._parse_person_count(answer) is None
+
+
+@pytest.mark.parametrize('finish_reason', ['length', 'content_filter', 'tool_calls'])
+@pytest.mark.parametrize('stage', ['main', 'limbs'])
+def test_unfinished_image_qc_response_is_incomplete(tmp_path, stage, finish_reason):
+    from app.config import get_settings
+    provider = AgnesImageProvider()
+    output = tmp_path / 'frame.png'
+    PILImage.new('RGB',(32,32),'white').save(output)
+    key = AgnesApiKey('cn_free', 'test-key')
+    response = MagicMock(status_code=200,ok=True)
+    response.json.return_value = {'choices':[{'finish_reason':finish_reason,'message':{'content':'项1: 是','reasoning_content':'项1: 是'}}]}
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[key]),
+        patch.object(provider,'_run_blocking_cancellable',side_effect=lambda fn:fn()),
+        patch('app.services.segment.image.image_agnes.requests.post', return_value=response) as post,
+        patch.object(provider,'_build_verify_checklist',return_value=([('scene','场景')],'检查',None)),
+    ):
+        if stage == 'main':
+            with pytest.raises(AgnesImageVerificationUnavailable,match='未正常结束'):
+                provider._verify_image('场景',output)
+        else:
+            assert provider._ask_hardfail_vl(get_settings(),[key],'image','检查','test') is None
+    post.assert_called_once()

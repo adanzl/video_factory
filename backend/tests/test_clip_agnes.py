@@ -704,6 +704,7 @@ def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
         patch.object(provider, "_request", side_effect=[create_resp, poll_resp]) as mock_request,
         patch("app.services.segment.clip.video_agnes.requests.get", return_value=video_resp),
         patch("app.services.segment.clip.video_agnes.probe_duration", return_value=5.0),
+        patch.object(provider, "_verify_no_burned_subtitles", return_value=True),
         patch(
             "app.services.segment.clip.video_agnes.get_settings",
             return_value=SimpleNamespace(
@@ -1587,3 +1588,415 @@ def test_resume_job_does_not_prepare() -> None:
     assert calls["prepare"] is False, "续跑不能清产物"
     assert calls["sync"] is True
     assert calls["resume_after_abort"] is False
+
+
+@pytest.mark.parametrize("sides,expected", [({"左侧"}, True), ({"右侧"}, False), ({"中间"}, False), ({"左侧", "右侧"}, False), (set(), False)])
+def test_mouth_requires_only_expected_speaker(sides, expected):
+    provider = AgnesClipProvider()
+    with patch.object(provider, "_ask_vl_speaking_sides", return_value=sides):
+        assert provider._verify_mouth_motion([(0, 3, "左侧男孩", ["frame1", "frame2"])], segment_index=1) is expected
+
+
+@pytest.mark.parametrize("frames", [[], ["frame1"], ["frame1", "frame2"]])
+def test_mouth_missing_evidence_does_not_pass(frames):
+    provider = AgnesClipProvider()
+    with patch.object(provider, "_ask_vl_speaking_sides", return_value=None), pytest.raises(AgnesI2VError, match="口型质检未完成"):
+        provider._verify_mouth_motion([(0, 3, "右侧女孩", frames)], segment_index=1)
+
+
+@pytest.mark.parametrize("reply,frames", [(None, ["frame"]), ("看不清", ["frame"]), ("无字幕", [])])
+def test_subtitle_missing_evidence_does_not_pass(reply, frames):
+    provider = AgnesClipProvider()
+    with patch.object(provider, "_ask_vl_content", return_value=reply), pytest.raises(AgnesI2VError, match="字幕质检未完成"):
+        provider._verify_no_burned_subtitles(frames, segment_index=1)
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+@pytest.mark.parametrize("existing", [False, True])
+def test_failed_mouth_never_publishes_clip(tmp_path, unavailable, existing):
+    provider = AgnesClipProvider()
+    out = tmp_path / "clip.mp4"
+    if existing:
+        out.write_bytes(b"previous verified clip")
+    settings = SimpleNamespace(video_width=720, video_height=1280, agnes_video_mouth_verify=True, agnes_video_mouth_verify_attempts=2)
+    with (
+        patch("app.services.segment.clip.video_agnes.get_settings", return_value=settings),
+        patch.object(provider, "_generate_raw") as generate,
+        patch("app.services.segment.clip.video_agnes._sample_verify_windows", return_value=[(0, 3, "左侧男孩", ["frame1", "frame2"])]),
+        patch.object(provider, "_ask_vl_speaking_sides", return_value=None if unavailable else {"右侧"}),
+        patch.object(provider, "_verify_no_burned_subtitles", return_value=True),
+        patch("app.services.segment.clip.video_agnes.clip_mgr.cue_total_duration", return_value=3.0),
+        patch("app.services.segment.clip.video_agnes.fit_video_duration") as fit,
+        pytest.raises(AgnesI2VError, match="口型质检"),
+    ):
+        provider.build_segment_clip(image_path=tmp_path / "1.png", subtitle_cues=[("x", 3)], output_path=out, motion_preset="none", work_dir=tmp_path, segment_index=1, motion_prompt="0.0-3.0秒左侧男孩开口说话")
+    assert generate.call_count == (1 if unavailable else 2)
+    fit.assert_not_called()
+    assert out.read_bytes() == b"previous verified clip" if existing else not out.exists()
+
+
+def test_mouth_retry_publishes_only_after_pass(tmp_path):
+    provider = AgnesClipProvider()
+    out = tmp_path / "clip.mp4"
+    settings = SimpleNamespace(video_width=720, video_height=1280, agnes_video_mouth_verify=True, agnes_video_mouth_verify_attempts=2)
+    with (
+        patch("app.services.segment.clip.video_agnes.get_settings", return_value=settings),
+        patch.object(provider, "_generate_raw") as generate,
+        patch("app.services.segment.clip.video_agnes._sample_verify_windows", return_value=[(0, 3, "左侧男孩", ["frame1", "frame2"])]),
+        patch.object(provider, "_ask_vl_speaking_sides", side_effect=[{"右侧"}, {"左侧"}]),
+        patch.object(provider, "_verify_no_burned_subtitles", return_value=True),
+        patch("app.services.segment.clip.video_agnes.clip_mgr.cue_total_duration", return_value=3.0),
+        patch("app.services.segment.clip.video_agnes._loop_video_to_duration", side_effect=lambda path, **kw: path),
+        patch("app.services.segment.clip.video_agnes._scale_video_to_duration", side_effect=lambda path, target, duration: target),
+        patch("app.services.segment.clip.video_agnes.fit_video_duration", side_effect=lambda path, target, *a, **kw: target.write_bytes(b"verified clip")) as fit,
+    ):
+        result = provider.build_segment_clip(image_path=tmp_path / "1.png", subtitle_cues=[("x", 3)], output_path=out, motion_preset="none", work_dir=tmp_path, segment_index=1, motion_prompt="0.0-3.0秒左侧男孩开口说话")
+    assert generate.call_count == 2
+    fit.assert_called_once()
+    assert result.read_bytes() == b"verified clip"
+
+
+@pytest.mark.parametrize('reply', ['无法判断左侧是否在说话', '可能是右侧，但无法确定', '左侧没有说话', '左侧？', '左侧或右侧', '不是左侧，是右侧', '左侧\n无人'])
+def test_ambiguous_mouth_answer_is_unknown(reply):
+    assert _parse_speaking_sides(reply) is None
+    provider = AgnesClipProvider()
+    with patch.object(provider, '_ask_vl_content', return_value=reply), pytest.raises(AgnesI2VError, match='质检未完成'):
+        provider._verify_mouth_motion([(0, 3, '左侧男孩', ['frame1', 'frame2'])], segment_index=1)
+
+
+@pytest.mark.parametrize('reply', ['无法确定有字幕还是无字幕', '第一帧有字幕，第二帧无字幕', '可能无字幕', '无字幕？', '无字幕\n有字幕', '没有字幕吗'])
+def test_ambiguous_subtitle_answer_is_unknown(reply):
+    from app.services.segment.clip.video_agnes import _parse_subtitle_hit
+    assert _parse_subtitle_hit(reply) is None
+    provider = AgnesClipProvider()
+    with patch.object(provider, '_ask_vl_content', return_value=reply), pytest.raises(AgnesI2VError, match='质检未完成'):
+        provider._verify_no_burned_subtitles(['frame1', 'frame2'], segment_index=1)
+
+
+@pytest.mark.parametrize('prompt', [
+    '爸爸说话，同时微微点头。',
+    '0.0-3.0秒爷爷开口说话。',
+    '0.0-2.0秒左侧男孩开口说话；2.0-3.0秒爷爷开口说话。',
+    '3.0-1.0秒右侧女孩开口说话。',
+    '-1.0-3.0秒右侧女孩开口说话。',
+])
+def test_invalid_speaking_window_stops_before_generation(tmp_path, prompt):
+    provider = AgnesClipProvider()
+    settings = SimpleNamespace(video_width=720, video_height=1280, agnes_video_mouth_verify=True)
+    with (
+        patch('app.services.segment.clip.video_agnes.get_settings', return_value=settings),
+        patch.object(provider, '_generate_raw') as generate,
+        pytest.raises(AgnesI2VError, match='口型质检未完成'),
+    ):
+        provider.build_segment_clip(image_path=tmp_path/'1.png', subtitle_cues=[('台词',3)], output_path=tmp_path/'out.mp4', motion_preset='none', work_dir=tmp_path, segment_index=1, motion_prompt=prompt)
+    generate.assert_not_called()
+
+
+def test_missing_sampled_window_does_not_become_ambient(tmp_path):
+    provider = AgnesClipProvider()
+    settings = SimpleNamespace(video_width=720, video_height=1280, agnes_video_mouth_verify=True, agnes_video_mouth_verify_attempts=2)
+    with (
+        patch('app.services.segment.clip.video_agnes.get_settings', return_value=settings),
+        patch.object(provider,'_generate_raw') as generate,
+        patch('app.services.segment.clip.video_agnes._sample_verify_windows',return_value=[(0,3,'',['frame1','frame2'])]),
+        patch.object(provider,'_verify_mouth_motion') as verify,
+        pytest.raises(AgnesI2VError,match='窗口抽帧缺失'),
+    ):
+        provider.build_segment_clip(image_path=tmp_path/'1.png',subtitle_cues=[('台词',3)],output_path=tmp_path/'out.mp4',motion_preset='none',work_dir=tmp_path,segment_index=1,motion_prompt='0.0-3.0秒中间爸爸开口说话')
+    generate.assert_called_once()
+    verify.assert_not_called()
+
+
+def test_ambient_frames_skip_mouth_but_still_require_subtitle_qc():
+    provider = AgnesClipProvider()
+    assert _extract_speak_windows('窗帘随风摆动，人物嘴巴闭合。') == []
+    with patch.object(provider,'_ask_vl_speaking_sides') as mouth, patch.object(provider,'_ask_vl_content',return_value='无字幕') as subtitle:
+        assert provider._verify_mouth_motion([(0,3,'',['frame1','frame2'])],segment_index=1)
+        assert provider._verify_no_burned_subtitles(['frame1','frame2'],segment_index=1)
+    mouth.assert_not_called()
+    subtitle.assert_called_once()
+
+
+@pytest.mark.parametrize("verify", [True, False])
+@pytest.mark.parametrize("prompt", [
+    "0.0-2.0秒左侧男孩开口说话；1.0-3.0秒右侧女孩开口说话。",
+    "2.0-3.0秒左侧男孩开口说话；0.0-1.0秒右侧女孩开口说话。",
+    "7.0-8.0秒左侧男孩开口说话。",
+    "0.0-3.1秒左侧男孩开口说话。",
+    # 时间映射舍入可能把微小重叠隐藏掉，必须先检查原轴。
+    "0.0-1.04秒左侧男孩开口说话；1.03-3.0秒右侧女孩开口说话。",
+])
+def test_invalid_timeline_rejected_before_generation(tmp_path, verify, prompt):
+    provider = AgnesClipProvider()
+    settings = SimpleNamespace(video_width=64, video_height=64, agnes_video_mouth_verify=verify)
+    with (
+        patch("app.services.segment.clip.video_agnes.get_settings", return_value=settings),
+        patch.object(provider, "_generate_raw") as generate,
+        pytest.raises(AgnesI2VError, match="时间窗口"),
+    ):
+        provider.build_segment_clip(
+            image_path=tmp_path / "1.png", subtitle_cues=[("台词", 3.0)],
+            output_path=tmp_path / "clip.mp4", motion_preset="none",
+            work_dir=tmp_path, segment_index=1, motion_prompt=prompt,
+        )
+    generate.assert_not_called()
+
+
+@pytest.mark.parametrize("duration", [4.0, 0.0, float("nan"), float("inf")])
+def test_bad_raw_duration_cannot_clamp_speaking_window(tmp_path, duration):
+    from app.services.segment.clip.video_agnes import _sample_verify_windows
+
+    with (
+        patch("app.services.segment.clip.video_agnes.probe_duration", return_value=duration),
+        patch("app.services.segment.clip.video_agnes._frame_data_uri") as frame,
+        pytest.raises(AgnesI2VError, match="超出视频时长"),
+    ):
+        _sample_verify_windows(
+            tmp_path / "raw.mp4", "7.0-8.0秒左侧男孩开口说话",
+            work_dir=tmp_path, segment_index=1,
+        )
+    frame.assert_not_called()
+
+
+def test_sample_times_deduplicate_at_ffmpeg_seek_precision(tmp_path):
+    from app.services.segment.clip.video_agnes import _sample_window_frames
+
+    with patch("app.services.segment.clip.video_agnes._frame_data_uri", return_value=("frame", 0.0)) as frame:
+        frames = _sample_window_frames(tmp_path / "raw.mp4", 0.0, 0.01, 4.0, tmp_path, 1, 0)
+    assert [call.args[1] for call in frame.call_args_list] == [0.0]
+    provider = AgnesClipProvider()
+    with patch.object(provider, "_ask_vl_speaking_sides") as vl, pytest.raises(AgnesI2VError, match="未完成"):
+        provider._verify_mouth_motion([(0.0, 0.01, "左侧男孩", frames)], segment_index=1)
+    vl.assert_not_called()
+
+
+def test_valid_sampling_keeps_order_and_distinct_times(tmp_path):
+    from app.services.segment.clip.video_agnes import _sample_verify_windows
+
+    prompt = "0.0-2.0秒左侧男孩开口说话；2.0-4.0秒右侧女孩开口说话。"
+    with (
+        patch("app.services.segment.clip.video_agnes.probe_duration", return_value=4.0),
+        patch("app.services.segment.clip.video_agnes._frame_data_uri", side_effect=lambda path, t, out: (str(t), t)) as frame,
+    ):
+        sampled = _sample_verify_windows(tmp_path / "raw.mp4", prompt, work_dir=tmp_path, segment_index=1)
+    times = [call.args[1] for call in frame.call_args_list]
+    assert times == [0.3, 0.7, 1.0, 1.3, 1.7, 2.3, 2.7, 3.0, 3.3, 3.7]
+    assert [len(window[3]) for window in sampled] == [5, 5]
+
+
+@pytest.mark.parametrize("duration", [2.451, 3.049, 5.01, 5.051, 12.049, 18.951])
+def test_timeline_mapping_respects_rounded_speech_endpoint(duration):
+    api_duration = float(_pick_seconds(duration))
+    prompt = f"0.0-{duration:.1f}秒左侧男孩开口说话。"
+    _extract_speak_windows(prompt, duration=max(duration, round(duration, 1)))
+    mapped = _remap_prompt_timeline(prompt, duration, api_duration)
+    assert _extract_speak_windows(mapped, duration=api_duration) == [(0.0, api_duration, "左侧男孩")]
+
+
+@pytest.mark.parametrize("target,verify", [(3.0, True), (5.3, True), (18.0, True), (30.0, False)])
+def test_dialogue_final_video_preserves_timeline_with_real_ffmpeg(tmp_path, target, verify):
+    """只替代上游生成/VL；实际抽帧、拉伸及最终编码验证 A→B 的时间顺序。"""
+    import json
+    import shutil
+    import subprocess
+
+    from app.services.media.ffmpeg_utils import probe_duration
+
+    api_duration = float(_pick_seconds(target))
+    source = tmp_path / "source.mp4"
+    subprocess.run([
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-f", "lavfi", "-i", f"color=c=red:s=64x64:r=25:d={api_duration / 2}",
+        "-f", "lavfi", "-i", f"color=c=blue:s=64x64:r=25:d={api_duration / 2}",
+        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+        "-map", "[v]", "-c:v", "libx264", str(source),
+    ], check=True, capture_output=True)
+    provider = AgnesClipProvider()
+    settings = SimpleNamespace(
+        video_width=64, video_height=64, ffmpeg_crf=23,
+        agnes_video_mouth_verify=verify, agnes_video_mouth_verify_attempts=1,
+    )
+    prompt = f"0.0-{target / 2}秒左侧男孩开口说话；{target / 2}-{target}秒右侧女孩开口说话。"
+    out = tmp_path / "clip.mp4"
+    with (
+        patch("app.services.segment.clip.video_agnes.get_settings", return_value=settings),
+        patch.object(provider, "_generate_raw", side_effect=lambda image, prompt, path, **kw: shutil.copyfile(source, path)) as generate,
+        patch.object(provider, "_ask_vl_speaking_sides", side_effect=[{"左侧"}, {"右侧"}]),
+        patch.object(provider, "_verify_no_burned_subtitles", return_value=True),
+        patch("app.services.segment.clip.video_agnes._loop_video_to_duration", side_effect=AssertionError("对白不得循环")),
+    ):
+        result = provider.build_segment_clip(
+            image_path=tmp_path / "1.png", subtitle_cues=[("甲", target / 2), ("乙", target / 2)],
+            output_path=out, motion_preset="none", work_dir=tmp_path,
+            segment_index=1, motion_prompt=prompt,
+        )
+    generate.assert_called_once()
+    assert result == out
+    assert probe_duration(out) == pytest.approx(target, abs=0.08)
+    observed = []
+    sample_times = [target * fraction for fraction in (0.1, 0.4, 0.6, 0.9)]
+    for t in sample_times:
+        rgb = subprocess.check_output([
+            "ffmpeg", "-loglevel", "error", "-ss", str(t), "-i", str(out),
+            "-frames:v", "1", "-vf", "scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+        ])
+        assert len(rgb) == 3
+        observed.append("A" if rgb[0] > rgb[2] else "B")
+    assert observed == ["A", "A", "B", "B"]
+    (tmp_path / "timeline-result.json").write_text(json.dumps({
+        "target_seconds": target, "api_seconds": api_duration,
+        "output_seconds": probe_duration(out), "sample_seconds": sample_times,
+        "observed": observed, "mouth_verify_enabled": verify,
+        "generation_and_vl_mocked": True, "real_ffmpeg": True,
+    }, indent=2))
+
+
+def test_actual_frame_timestamps_deduplicate_and_exclude_next_window(tmp_path):
+    import subprocess
+    from app.services.segment.clip.video_agnes import _sample_window_frames
+
+    source = tmp_path / "frames.mp4"
+    subprocess.run([
+        "ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+        "testsrc2=size=64x64:rate=25:duration=1", "-c:v", "libx264", str(source),
+    ], check=True, capture_output=True)
+    # 三个不同 seek 都返回 0.04 秒帧，属于下一窗口，不得冒充本窗口的三帧。
+    assert _sample_window_frames(source, 0, 0.04, 1, tmp_path, 1, 0) == []
+    # 此窗口能取得多个请求，但只有一张有效源帧（0.04 秒）。
+    frames = _sample_window_frames(source, 0, 0.08, 1, tmp_path, 1, 1)
+    assert len(frames) == 1
+    provider = AgnesClipProvider()
+    with patch.object(provider, "_ask_vl_speaking_sides") as vl, pytest.raises(AgnesI2VError, match="抽帧不足"):
+        provider._verify_mouth_motion([(0, 0.08, "左侧男孩", frames)], segment_index=1)
+    vl.assert_not_called()
+
+
+def test_identical_pixels_at_distinct_frame_times_are_kept(tmp_path):
+    import subprocess
+    from app.services.segment.clip.video_agnes import _sample_window_frames
+
+    source = tmp_path / "still.mp4"
+    subprocess.run([
+        "ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+        "color=c=red:s=64x64:r=25:d=1", "-c:v", "libx264", str(source),
+    ], check=True, capture_output=True)
+    # 画面不动也是真实时间证据；不能按图片内容去重。
+    frames = _sample_window_frames(source, 0, 1, 1, tmp_path, 1, 0)
+    assert len(frames) == 5
+    assert len(set(frames)) == 1
+
+
+@pytest.mark.parametrize("stderr", ["", "n: 0 pts: 12 pts_time:N/A", "n: 0 pts: 12 pts_time:nan"])
+def test_missing_actual_frame_timestamp_is_not_evidence(tmp_path, stderr):
+    from app.services.segment.clip.video_agnes import _frame_data_uri
+
+    frame = tmp_path / "frame.jpg"
+    def fake_extract(args):
+        frame.write_bytes(b"jpeg")
+        return SimpleNamespace(stderr=stderr)
+
+    with patch("app.services.segment.clip.video_agnes.run_ffmpeg", side_effect=fake_extract):
+        assert _frame_data_uri(tmp_path / "raw.mp4", 0.2, frame) is None
+    assert not frame.exists()
+
+
+@pytest.mark.parametrize("existing", [True, False])
+@pytest.mark.parametrize("outcome", ["error", "cancel", "empty", "success"])
+def test_final_encoding_publishes_atomically_and_cleans_own_temp(tmp_path, existing, outcome):
+    from app.utils.job_cancel import JobCancelledError
+
+    provider = AgnesClipProvider()
+    out = tmp_path / "clip.mp4"
+    unrelated = tmp_path / ".another-task.mp4"
+    unrelated.write_bytes(b"other task")
+    if existing:
+        out.write_bytes(b"old verified clip")
+    settings = SimpleNamespace(video_width=64, video_height=64, agnes_video_mouth_verify=True, agnes_video_mouth_verify_attempts=1)
+    pending_files = []
+
+    def fake_fit(src, target, *args, **kwargs):
+        assert target != out and target.parent == out.parent
+        assert out.read_bytes() == b"old verified clip" if existing else not out.exists()
+        pending_files.append(target)
+        if outcome != "empty":
+            target.write_bytes(b"new verified clip" if outcome == "success" else b"partial bytes")
+        if outcome == "error":
+            raise RuntimeError("encoder failed")
+
+    with (
+        patch("app.services.segment.clip.video_agnes.get_settings", return_value=settings),
+        patch.object(provider, "_generate_raw"),
+        patch("app.services.segment.clip.video_agnes._sample_verify_windows", return_value=[(0, 4, "左侧男孩", ["frame1", "frame2"])]),
+        patch.object(provider, "_ask_vl_speaking_sides", return_value={"左侧"}),
+        patch.object(provider, "_verify_no_burned_subtitles", return_value=True),
+        patch("app.services.segment.clip.video_agnes._scale_video_to_duration", side_effect=lambda path, *args: path),
+        patch("app.services.segment.clip.video_agnes.fit_video_duration", side_effect=fake_fit),
+        patch.object(provider, "_raise_if_job_cancelled", side_effect=[None, None, JobCancelledError("cancel") if outcome == "cancel" else None]),
+    ):
+        def build():
+            return provider.build_segment_clip(
+                image_path=tmp_path / "1.png", subtitle_cues=[("台词", 4.0)],
+                output_path=out, motion_preset="none", work_dir=tmp_path,
+                segment_index=1, motion_prompt="0.0-4.0秒左侧男孩开口说话。",
+            )
+        if outcome == "success":
+            assert build() == out
+        else:
+            error = {"error": RuntimeError, "cancel": JobCancelledError, "empty": AgnesI2VError}[outcome]
+            with pytest.raises(error):
+                build()
+    assert len(pending_files) == 1
+    assert not pending_files[0].exists()
+    assert unrelated.read_bytes() == b"other task"
+    if outcome == "success":
+        assert out.read_bytes() == b"new verified clip"
+    else:
+        assert out.read_bytes() == b"old verified clip" if existing else not out.exists()
+
+
+@pytest.mark.parametrize('cancel_before', [True, False])
+@pytest.mark.parametrize('timeout', [True, False])
+def test_video_vl_cancel_stops_retry_and_key_switch(cancel_before, timeout):
+    import requests
+    from app.utils.job_cancel import JobCancelledError, job_cancel
+
+    provider = AgnesClipProvider()
+    job_id = 9143
+    provider._active_job_id = job_id
+    job_cancel.clear(job_id)
+    if cancel_before:
+        job_cancel.request(job_id)
+
+    def respond(*args, **kwargs):
+        job_cancel.request(job_id)
+        if timeout:
+            raise requests.Timeout('cancelled during request')
+        return MagicMock(status_code=503, ok=False)
+
+    try:
+        with (
+            patch('app.services.segment.clip.video_agnes.agnes_api_keys', return_value=[AgnesApiKey('cn_free','first'), AgnesApiKey('cn_paid','second')]),
+            patch('app.services.segment.clip.video_agnes.requests.post', side_effect=respond) as post,
+            patch('app.services.segment.clip.video_agnes.time.sleep') as sleep,
+            pytest.raises(JobCancelledError),
+        ):
+            provider._ask_vl_content(system='质检', question='检查', frames=['frame'], tag='test')
+        assert post.call_count == (0 if cancel_before else 1)
+        sleep.assert_not_called()
+    finally:
+        job_cancel.clear(job_id)
+
+
+@pytest.mark.parametrize('finish_reason', ['length', 'content_filter', 'tool_calls', 'stop', None])
+@pytest.mark.parametrize('field', ['content', 'reasoning_content'])
+def test_video_qc_requires_completed_response(finish_reason, field):
+    provider = AgnesClipProvider()
+    response = MagicMock(status_code=200,ok=True)
+    response.json.return_value = {'choices':[{'finish_reason':finish_reason,'message':{field:'左侧'}}]}
+    with (
+        patch('app.services.segment.clip.video_agnes.agnes_api_keys',return_value=[AgnesApiKey('cn_free','test-key')]),
+        patch('app.services.segment.clip.video_agnes.requests.post',return_value=response) as post,
+    ):
+        result = provider._ask_vl_content(system='质检',question='检查',frames=['frame'],tag='test')
+    assert result == ('左侧' if finish_reason in {None,'stop'} else None)
+    post.assert_called_once()

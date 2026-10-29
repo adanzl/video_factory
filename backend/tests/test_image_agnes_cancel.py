@@ -35,3 +35,28 @@ def test_agnes_request_cancellable_stops_on_job_abort() -> None:
         provider._active_job_id = None  # noqa: SLF001
 
     assert started.is_set()
+
+
+@pytest.mark.parametrize('stage', ['main', 'limbs'])
+def test_image_verification_does_not_swallow_cancellation(tmp_path, stage):
+    from unittest.mock import patch
+    from PIL import Image
+    from app.config import get_settings
+    from app.services.llm.llm_agnes import AgnesApiKey
+
+    provider = AgnesImageProvider()
+    output = tmp_path / 'frame.png'
+    Image.new('RGB', (32, 32), 'white').save(output)
+    keys = [AgnesApiKey('cn_free', 'first'), AgnesApiKey('cn_paid', 'second')]
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=keys),
+        patch.object(provider, '_run_blocking_cancellable', side_effect=JobCancelledError('cancel')) as request,
+        patch.object(provider, '_sleep_cancellable') as sleep,
+        pytest.raises(JobCancelledError),
+    ):
+        if stage == 'main':
+            provider._verify_image('场景', output)
+        else:
+            provider._ask_hardfail_vl(get_settings(), keys, 'test-image', '检查', 'test')
+    request.assert_called_once()
+    sleep.assert_not_called()

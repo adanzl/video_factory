@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import copy
+import itertools
 
 import pytest
 
@@ -2036,3 +2037,39 @@ def test_script_stage_rejects_zero_usable_segments_before_writing(app_ctx, monke
         DailyScriptStage().run(ctx)
     assert repo_job.get_job(job["id"])["script_json"] == {"previous": True}
     assert repo_segment.list_segments(job["id"]) == []
+
+
+@pytest.mark.parametrize('roles', [
+    roles for size in (2, 3)
+    for roles in itertools.permutations(('昭昭', '灿灿', '妈妈', '爸爸'), size)
+])
+def test_parent_timeline_round_trip_uses_real_layout(roles):
+    from app.services.segment.clip.video_agnes import _extract_speak_windows
+    sides = ['左侧','右侧'] if len(roles)==2 else ['左侧','中间','右侧']
+    if len(roles)==2:
+        head=f'画面左边是{roles[0]}，右边是{roles[1]}。'
+    else:
+        head=f'画面左边是{roles[0]}，中间是{roles[1]}，右边是{roles[2]}。'
+    actions='；'.join(f'{name}说话，同时右手轻轻抬起后停止' for name in roles)+'。镜头固定。'
+    seg={'dialogue':[{'speaker':name,'text':'收拾好了么'} for name in roles]}
+    cues=[('收拾好了么',1.5)]*len(roles)
+    motion=_inject_mouth_motion(head+actions,seg,cues)
+    assert _inject_mouth_motion(motion,seg,cues)==motion
+    stable=_stabilize_motion_prompt(motion,speakers=list(roles))
+    windows=_extract_speak_windows(stable)
+    labels={'昭昭':'男孩','灿灿':'女孩','妈妈':'妈妈','爸爸':'爸爸'}
+    assert windows==[(i*1.5,(i+1)*1.5,side+labels[name]) for i,(side,name) in enumerate(zip(sides,roles))]
+    assert f'{len(roles)}人同框' in stable
+    assert all(name in stable.split('人数与静图')[0] for name in roles)
+    assert all(name not in stable.split('人数与静图')[0] for name in {'昭昭', '灿灿', '妈妈', '爸爸'} - set(roles))
+    assert motion.count('右手轻轻抬起')==len(roles)
+
+
+@pytest.mark.parametrize('parent',['妈妈','爸爸'])
+def test_parent_suffixed_layout_preserved(parent):
+    from app.services.segment.clip.video_agnes import _extract_speak_windows
+    head=f'画面左边是灿灿，右边是昭昭，{parent}在中间。'
+    seg={'dialogue':[{'speaker':parent,'text':'慢点'}]}
+    motion=_inject_mouth_motion(head+f'{parent}说话，同时微微点头。镜头固定。',seg,[('慢点',2.0)])
+    assert _extract_speak_windows(_stabilize_motion_prompt(motion,speakers=['灿灿',parent,'昭昭']))==[(0,2,'中间'+parent)]
+    assert f'此时左侧女孩嘴巴闭合不动、右侧男孩嘴巴闭合不动' in motion
