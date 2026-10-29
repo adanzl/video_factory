@@ -89,8 +89,10 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
     result = p.process_candidate(candidate, config=cfg, overwrite_existing=True,
                                  force_transcript=not cached, existing_row=existing)
     if is_failure:
-        assert result["action"] == "reject"
-        assert result["reason"] == "source_unusable"
+        assert result["action"] == ("error" if failure == "cross_check" else "reject")
+        assert result["reason"] == ("transcript_conflict" if failure == "cross_check" else "source_unusable")
+        if failure == "cross_check":
+            assert result["retryable"] is False
         assert result["stage"] == ("H0b" if failure == "cross_check" else "H0c")
         assert extracted == saved == []
         assert existing["payload"]["transcript_repair_confidence"] == 0.8

@@ -76,19 +76,44 @@ def test_transcribe_preserves_cross_check_in_result_metadata_and_cache(tmp_path,
     cfg.gold_story_transcript_dir = tmp_path / "transcripts"
     cfg.gold_story_media_workspace = tmp_path / "media"
     cross = {"available": True, "passed": False, "agreement": 0.043}
+    candidates = [{"source": "ocr", "text": "评论文字拼接", "segments": [{"start": 0, "end": 1, "text": "评论文字拼接"}]},
+                  {"source": "asr", "text": "音频对白", "segments": [{"start": 0, "end": 1, "text": "音频对白"}]}]
     monkeypatch.setattr(tx, "download_media", lambda *_a: SimpleNamespace(
         video_path=tmp_path / "video.mp4", metadata={"duration": 60, "title": "字幕测试"}))
     monkeypatch.setattr(tx, "extract_audio_wav", lambda *_a, **_kw: tmp_path / "audio.wav")
     monkeypatch.setattr(tx, "_resolve_transcription", lambda **_kw: {
         "text": "评论文字拼接", "engine": "rapidocr", "model": "test", "source": "ocr", "cross_check": cross,
+        "candidates": candidates,
     })
     result = tx.transcribe_media("BV1pA4m1378V", config=cfg, skip_existing=False)
     assert result["cross_check"] == cross
     assert json.loads(Path(result["metadata_path"]).read_text())["cross_check"] == cross
+    assert json.loads(Path(result["metadata_path"]).read_text())["transcript_candidates"] == candidates
     monkeypatch.setattr(tx, "download_media", lambda *_a: pytest.fail("缓存命中不得重下视频"))
     cached = tx.transcribe_media("BV1pA4m1378V", config=cfg)
     assert cached["action"] == "skip"
     assert cached["cross_check"] == cross
+
+
+def test_resolve_transcription_retains_both_sources_and_segments(tmp_path, monkeypatch):
+    from app.config import Config
+    from app.services.gold_story.transcript import transcript as tx
+
+    cfg = Config()
+    cfg.gold_story_transcript_cross_check = True
+    text = "姐姐让我洗碗，弟弟说他要写作业。"
+    segments = [{"start": 0, "end": 3, "text": text}]
+    monkeypatch.setattr(tx.gs_subtitle_ocr, "should_try_ocr", lambda *_a, **_kw: True)
+    monkeypatch.setattr(tx.gs_subtitle_ocr, "transcribe_video_ocr_subprocess", lambda *_a, **_kw: {
+        "source": "ocr", "text": text, "segments": segments, "avg_confidence": 0.9})
+    monkeypatch.setattr(tx.gs_whisper, "transcribe_audio", lambda *_a, **_kw: {
+        "text": text, "segments": segments, "engine": "faster-whisper", "model": "test"})
+    result = tx._resolve_transcription(video_path=tmp_path / "video.mp4", audio_path=tmp_path / "audio.wav",
+        ref=parse_media_ref("BV1pA4m1378V"), cfg=cfg, workspace=tmp_path, prompt=None)
+    assert result["cross_check"]["b_source"] == "asr"
+    assert result["cross_check"]["passed"] is True
+    assert {row["source"] for row in result["candidates"]} == {"ocr", "asr"}
+    assert all(row["text"] == text and row["segments"] == segments for row in result["candidates"])
 
 
 def test_transcript_metadata_does_not_apply_to_different_output(tmp_path):

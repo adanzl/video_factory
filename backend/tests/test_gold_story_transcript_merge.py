@@ -158,6 +158,36 @@ def test_cross_check_unavailable_with_single_source():
     assert res["agreement"] is None
 
 
+def test_cross_check_ignores_punctuation_and_width_but_not_dialogue_changes():
+    res = tm.cross_check_transcripts(
+        {"source": "ocr", "text": "妈妈：给我２个！\n弟弟：好，ＡＢＣ。"},
+        {"source": "asr", "text": "妈妈给我2个弟弟好abc"},
+    )
+    assert res["agreement"] == 1.0
+    assert res["passed"] is True
+    assert tm.cross_check_transcripts({"text": "？！"}, {"text": "……"})["available"] is False
+
+
+def test_cross_check_does_not_discard_frequent_characters_in_long_chinese():
+    from difflib import SequenceMatcher
+    a = "姐姐让我洗碗弟弟说他要写作业妈妈问到底谁做家务" * 12
+    b = "今天" + a.replace("洗碗", "刷碗")
+    # 默认 autojunk 把超过 200 字文本里的常用字过滤，几乎整段相同却零分。
+    assert SequenceMatcher(None, a, b).ratio() < 0.55
+    res = tm.cross_check_transcripts({"text": a}, {"text": b})
+    reverse = tm.cross_check_transcripts({"text": b}, {"text": a})
+    assert res["passed"] is True
+    assert res["agreement"] > 0.9
+    assert res["agreement"] == reverse["agreement"]
+
+
+def test_cross_check_does_not_accept_short_fragment_or_unrelated_chinese():
+    short = "妈妈你什么时候回来"
+    other = "姐姐和弟弟在讨论今天的作业应该怎么完成" * 20
+    assert tm.cross_check_transcripts({"text": short}, {"text": short + other})["passed"] is False
+    assert tm.cross_check_transcripts({"text": short * 30}, {"text": other})["passed"] is False
+
+
 def test_should_skip_asr_after_ocr_when_quality_high():
     cfg = Config()
     cfg.gold_story_ocr_skip_asr_min = 0.55

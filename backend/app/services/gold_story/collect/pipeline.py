@@ -217,8 +217,11 @@ def process_candidate(
     transcript_failure = ""
     transcript_failure_stage = "H0b"
     if isinstance(cross_check, dict) and cross_check.get("available") and cross_check.get("passed") is False:
-        transcript_failure = f"OCR/ASR 交叉验证未通过（agreement={cross_check.get('agreement')}）"
-        transcript_for_h2 = ""
+        # 识别分歧不等于内容不合格；也不能把不可靠文本交给 LLM 猜剧情。
+        # 相同引擎原样重跑不会修复分歧，保留证据并报告需要修复转写。
+        return {**base, "action": "error", "stage": "H0b", "reason": "transcript_conflict",
+                "error": f"转写待修复：OCR/ASR 存在分歧（agreement={cross_check.get('agreement')}），尚不能确认对白",
+                "retryable": False, "transcript_cross_check": cross_check}
     if transcript_for_h2 and cfg.gold_story_transcript_repair:
         try:
             h0c = llm_steps.repair_transcript(

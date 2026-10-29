@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -183,10 +184,9 @@ def cross_check_transcripts(
     当成台词写进对白，下游怎么修稿都救不回来。
 
     两路互相印证才能发现：OCR 与 ASR 各自独立出错的方向不同，
-    若两路内容高度一致，说明这段对白基本可信；若一致度很低，
-    说明至少一路在乱认，这条素材不该用于生成。
-
-    判据只用「两路文本的整体相似度」这一抽象量，不比对具体词表。
+    若一致度很低，需要修复转写，不能据此认定原素材不合格。
+    统一全半角并忽略标点、空白；保留文字差异和原始证据。
+    禁用长文本高频字符过滤，避免中文常用字被当成噪声。
     """
     a_text = str((primary or {}).get("text") or "").strip()
     b_text = str((secondary or {}).get("text") or "").strip()
@@ -199,8 +199,11 @@ def cross_check_transcripts(
             "a_source": (primary or {}).get("source"),
             "b_source": (secondary or {}).get("source"),
         }
-    na = normalize_transcript_line(a_text)
-    nb = normalize_transcript_line(b_text)
+    def comparable(text: str) -> str:
+        return "".join(c for c in unicodedata.normalize("NFKC", text).casefold() if c.isalnum())
+
+    na = comparable(a_text)
+    nb = comparable(b_text)
     if not na or not nb:
         return {
             "available": False,
@@ -209,7 +212,9 @@ def cross_check_transcripts(
             "a_source": (primary or {}).get("source"),
             "b_source": (secondary or {}).get("source"),
         }
-    ratio = SequenceMatcher(None, na, nb).ratio()
+    # difflib 的匹配方向可能影响结果；取较低分，避免交换来源就被放行。
+    ratio = min(SequenceMatcher(None, na, nb, autojunk=False).ratio(),
+                SequenceMatcher(None, nb, na, autojunk=False).ratio())
     return {
         "available": True,
         "agreement": round(ratio, 4),
@@ -219,6 +224,7 @@ def cross_check_transcripts(
         "b_source": (secondary or {}).get("source"),
         "a_chars": len(na),
         "b_chars": len(nb),
+        "method": "normalized_symmetric_sequence_v2",
     }
 
 

@@ -165,6 +165,7 @@ def _resolve_transcription(
                         duration_sec=float(duration_sec or 0.0),
                     ),
                 }
+                asr_result = asr_row
                 candidates.append(asr_row)
         except Exception as exc:
             if not candidates:
@@ -197,7 +198,7 @@ def _resolve_transcription(
     if cross_check.get("available") and cross_check.get("passed") is False:
         logger.warning(
             "gold_story transcript cross-check FAILED bvid=%s agreement=%.3f "
-            "(ocr vs asr)；两路差异过大，至少一路在乱认，该稿不宜用于抽 seed",
+            "(ocr vs asr)；转写存在未解决分歧，保留两路证据并等待修复",
             ref.source_id,
             float(cross_check.get("agreement") or 0.0),
         )
@@ -220,6 +221,10 @@ def _resolve_transcription(
                 "source": row.get("source"),
                 "quality_score": row.get("quality_score"),
                 "chars": len(str(row.get("text") or "")),
+                "text": row.get("text"),
+                "segments": row.get("segments") or [],
+                "engine": row.get("engine"),
+                "model": row.get("model"),
             }
             for row in candidates
         ],
@@ -310,6 +315,7 @@ def transcribe_media(
             "transcript_backend": transcription.get("source"),
             "transcript_quality_score": transcription.get("quality_score"),
             "cross_check": transcription.get("cross_check"),
+            "transcript_candidates": transcription.get("candidates") or [],
             "transcript_path": str(out_path),
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
