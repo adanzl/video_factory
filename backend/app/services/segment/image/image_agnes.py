@@ -181,7 +181,7 @@ _PROP_HOLDER_RE = re.compile(
 _PROP_SUBJECT_RE = re.compile(
     r"(?:^|[，,])\s*"
     r"(?:(?:画面)?(?:左边|右边|左侧|右侧|中间|中央)(?:站着|站的是|是)?)?"
-    r"(?P<role>昭昭|灿灿|妈妈|爸爸)(?!的|和|与|、)"
+    r"(?P<role>昭昭|灿灿|妈妈|爸爸)(?!和|与|、|的(?![左右双两]?手))"
 )
 
 
@@ -1314,7 +1314,10 @@ class AgnesImageProvider(ImageProvider):
             if not m:
                 continue
             # 只认明确主语；比较、看向、相对位置中的角色名是宾语。
-            subjects = list(_PROP_SUBJECT_RE.finditer(clause[: m.start()]))
+            subjects = [
+                subject for subject in _PROP_SUBJECT_RE.finditer(clause)
+                if subject.start() < m.start()
+            ]
             if subjects:
                 prop_match = (
                     subjects[-1].group("role"),

@@ -34,6 +34,7 @@ def test_prop_holder_uses_subject_not_referenced_character(holder, other, relati
 @pytest.mark.parametrize("prefix", [
     "昭昭看向灿灿，灿灿", "画面左边是昭昭，右边是灿灿，", "灿灿站在昭昭旁边，",
     "灿灿比昭昭高，灿灿", "灿灿，比昭昭高一点，",
+    "灿灿的", "灿灿看向昭昭，昭昭的旁边有桌子，",
 ])
 def test_prop_holder_tracks_explicit_subject_change(prefix):
     items, _, _ = AgnesImageProvider._build_verify_checklist(
