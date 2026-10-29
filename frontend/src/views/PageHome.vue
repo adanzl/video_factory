@@ -4,7 +4,7 @@
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h1 class="text-base font-semibold text-gray-800">总览</h1>
-          <el-button size="small" plain title="刷新" :disabled="loading" @click="loadOverview">
+          <el-button size="small" plain title="刷新" :disabled="loading" @click="loadOverview()">
             <el-icon><Refresh /></el-icon>
           </el-button>
           <span class="text-xs text-gray-400">{{ todayLabel }}</span>
@@ -75,12 +75,12 @@
         <span class="rounded-full bg-gray-100 px-1.5 py-0.5 text-xs tabular-nums text-gray-500">
           {{ alerts.length }}
         </span>
-        <span class="ml-auto text-xs text-gray-400">按严重程度排序</span>
+        <span v-if="alerts.length" class="ml-auto text-xs text-gray-400">按严重程度排序</span>
       </div>
 
       <ul class="mt-1 grid grid-cols-1 gap-x-6 sm:grid-cols-2">
-        <li v-if="loaded && !alerts.length" class="px-1.5 py-4 text-sm text-gray-400 sm:col-span-2">
-          没有要处理的
+        <li v-if="!alerts.length" class="col-span-full px-1.5 py-3 text-sm text-gray-400">
+          {{ loaded ? "没有要处理的" : "—" }}
         </li>
         <li v-for="alert in alerts" :key="`${alert.to}-${alert.title}-${alert.note}`">
           <button
@@ -91,6 +91,12 @@
             <span class="size-1.5 shrink-0 rounded-full" :class="dotClass(alert.tone)" />
             <span class="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
               {{ alert.module }}
+            </span>
+            <span
+              v-if="alert.id != null"
+              class="shrink-0 font-mono text-xs tabular-nums text-gray-400"
+            >
+              #{{ alert.id }}
             </span>
             <span class="min-w-0 flex-1 truncate text-sm">{{ alert.title }}</span>
             <span class="shrink-0 text-xs" :class="toneText(alert.tone)">{{ alert.note }}</span>
@@ -129,7 +135,7 @@
           </el-icon>
         </div>
 
-        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+        <div class="mt-3 flex min-h-6 flex-wrap items-center gap-1.5">
           <span
             v-for="stat in mod.stats"
             :key="stat.label"
@@ -149,11 +155,13 @@
           </span>
         </div>
 
-        <div class="mt-auto space-y-1.5 border-t border-gray-100 pt-3">
-          <div v-if="loaded && !mod.lines.length" class="text-xs text-gray-400">暂无</div>
+        <div class="mt-3 min-h-11 space-y-1.5 border-t border-gray-100 pt-3">
+          <div v-if="!mod.lines.length" class="truncate text-xs text-gray-400">
+            {{ loaded ? "暂无" : "—" }}
+          </div>
           <div
             v-for="line in mod.lines"
-            :key="line.title"
+            :key="`${line.title}-${line.note}`"
             class="flex items-baseline justify-between gap-2"
           >
             <span class="min-w-0 truncate text-xs text-gray-600">{{ line.title }}</span>
@@ -167,7 +175,7 @@
 
 <script setup lang="ts">
 import type { Component } from "vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
   ArrowRight,
@@ -187,13 +195,13 @@ import {
   VideoCamera,
   Warning,
 } from "@element-plus/icons-vue";
+import { formatDailyStoryType } from "@/api/api-daily-story";
 import {
   getHomeOverview,
   type HomeAlert,
   type HomeLine,
   type HomeMeter,
   type HomeOverview,
-  type HomeProgress,
   type HomeStat,
 } from "@/api/api-home";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -215,9 +223,35 @@ interface ModuleDef {
   accent: Accent;
 }
 
+interface StatView {
+  label: string;
+  value: number | string;
+  tone?: Tone;
+}
+
+interface LineView {
+  title: string;
+  note: string;
+  to: string;
+}
+
 interface ModuleView extends ModuleDef {
-  stats: HomeStat[];
-  lines: HomeLine[];
+  stats: StatView[];
+  lines: LineView[];
+}
+
+interface AlertView {
+  module: string;
+  title: string;
+  note: string;
+  tone: Tone;
+  to: string;
+  id?: number;
+}
+
+interface ProgressView {
+  label: string;
+  value: string;
 }
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -255,46 +289,264 @@ const loading = ref(false);
 const loaded = ref(false);
 const overview = ref<HomeOverview | null>(null);
 
+const PROGRESS_TEXT: Record<string, { label: string; unit: string }> = {
+  stories_today: { label: "今日生成", unit: "篇" },
+  running: { label: "正在跑", unit: "个" },
+  published_today: { label: "今日发布", unit: "条" },
+};
+
+const STAT_LABEL: Record<string, Record<string, string>> = {
+  jobs: {
+    failed: "失败",
+    pending: "待处理",
+    idle: "待处理",
+    queued: "排队中",
+    running: "运行中",
+    done: "已完成",
+  },
+  daily_story: { today: "今天生成", no_job: "无任务", has_job: "有任务" },
+  gold_chat: {
+    not_imported: "未导入",
+    review_pending: "待审核",
+    convert_failed: "转换失败",
+  },
+  topic: { pending: "待打分", queued: "可入队", enqueued: "已入队" },
+  video: { active: "正常", analyzing: "分析中", analyze_failed: "分析失败" },
+  audio: { total: "素材", today: "今天新增" },
+  clips: { available: "可用来源" },
+  checkin: { ok: "今日成功", fail: "今日失败" },
+};
+
+const STAGE_LABEL: Record<string, string> = {
+  prepare: "基底",
+  script: "脚本",
+  tts: "配音",
+  segment: "分镜",
+  intro: "片头",
+  merge: "合成",
+  publish: "发布",
+};
+
+const PROVIDER_LABEL: Record<string, string> = {
+  pexels: "Pexels",
+  pixabay: "Pixabay",
+  nasa: "NASA",
+};
+
 const host = computed(() => overview.value?.host || "");
-const progresses = computed<HomeProgress[]>(() => overview.value?.progress ?? []);
-const alerts = computed<HomeAlert[]>(() => overview.value?.alerts ?? []);
+const progresses = computed<ProgressView[]>(() =>
+  (overview.value?.progress ?? []).map(item => {
+    if (!item.key) return { label: item.label ?? "", value: String(item.value) };
+    const text = PROGRESS_TEXT[item.key];
+    return {
+      label: text?.label ?? item.key,
+      value: text ? `${item.value} ${text.unit}` : String(item.value),
+    };
+  })
+);
+const alerts = computed<AlertView[]>(() =>
+  (overview.value?.alerts ?? []).map(alert => ({
+    module: moduleTitle(alert.module),
+    title: lineTitle(alert.module, alert),
+    note: lineNote(alert.module, alert),
+    tone: alert.tone,
+    to: alert.to,
+    id: alertRecordId(alert),
+  }))
+);
 const dangerCount = computed(() => alerts.value.filter(alert => alert.tone === "danger").length);
 const warnCount = computed(() => alerts.value.filter(alert => alert.tone === "warn").length);
 
+const METER_KEYS = ["cpu", "memory", "disk", "project"] as const;
+
 const meters = computed<MeterView[]>(() =>
-  (overview.value?.meters ?? []).map(meter => {
-    const meta = METER_META[meter.key] ?? { label: meter.key, icon: Monitor };
-    return { ...meter, label: meta.label, icon: meta.icon };
+  METER_KEYS.map(key => {
+    const meta = METER_META[key];
+    const remote = overview.value?.meters.find(item => item.key === key);
+    return {
+      key,
+      label: meta.label,
+      icon: meta.icon,
+      value: remote?.value || "—",
+      percent: remote?.percent ?? 0,
+      note: meterNote(remote),
+    };
   })
 );
+
+const presentStat = (moduleKey: string, stat: HomeStat): StatView => {
+  if (!stat.key) {
+    if (moduleKey === "jobs" && stat.label === "停住") {
+      return { label: "待处理", value: stat.value };
+    }
+    return { label: stat.label ?? "", value: stat.value, tone: stat.tone };
+  }
+  if (moduleKey === "checkin" && stat.key === "disabled") {
+    return { label: "状态", value: "未启用" };
+  }
+  if (moduleKey === "checkin" && stat.key === "unavailable") {
+    return { label: "状态", value: "读不到", tone: "warn" };
+  }
+  const value = typeof stat.value === "number" ? stat.value : Number(stat.value);
+  return {
+    label: STAT_LABEL[moduleKey]?.[stat.key] ?? stat.key,
+    value: stat.value,
+    tone: statTone(moduleKey, stat.key, Number.isFinite(value) ? value : 0),
+  };
+};
 
 const modules = computed<ModuleView[]>(() =>
   MODULE_DEFS.map(def => {
     const remote = overview.value?.modules.find(item => item.key === def.key);
     return {
       ...def,
-      stats: remote?.stats ?? [],
-      lines: remote?.lines ?? [],
+      stats: (remote?.stats ?? []).map(stat => presentStat(def.key, stat)),
+      lines: (remote?.lines ?? []).map(line => ({
+        title: lineTitle(def.key, line),
+        note: lineNote(def.key, line),
+        to: line.to,
+      })),
     };
   })
 );
 
-const loadOverview = async () => {
-  loading.value = true;
+function alertRecordId(alert: HomeAlert): number | undefined {
+  if (typeof alert.id === "number") return alert.id;
+  const matched = /[?&]id=(\d+)/.exec(alert.to);
+  return matched ? Number(matched[1]) : undefined;
+}
+
+function moduleTitle(key: string): string {
+  return MODULE_DEFS.find(item => item.key === key)?.title ?? key;
+}
+
+function statTone(moduleKey: string, statKey: string, value: number): Tone | undefined {
+  if (value <= 0) return undefined;
+  if (moduleKey === "jobs" && statKey === "failed") return "danger";
+  if (moduleKey === "daily_story" && statKey === "no_job") return "warn";
+  if (moduleKey === "gold_chat" && (statKey === "not_imported" || statKey === "review_pending")) {
+    return "warn";
+  }
+  if (moduleKey === "gold_chat" && statKey === "convert_failed") return "danger";
+  if (moduleKey === "video" && statKey === "analyze_failed") return "danger";
+  if (moduleKey === "checkin" && statKey === "fail") return "danger";
+  return undefined;
+}
+
+function stageLabel(stage?: string): string {
+  if (!stage) return "当前阶段";
+  return STAGE_LABEL[stage] ?? stage;
+}
+
+function formatDuration(raw: number | null | undefined): string {
+  if (raw == null || Number.isNaN(Number(raw))) return "—";
+  const sec = Number(raw);
+  return sec < 10 ? `${sec.toFixed(1)} 秒` : `${Math.round(sec)} 秒`;
+}
+
+function lineTitle(moduleKey: string, line: HomeLine): string {
+  if (!line.code) return line.title;
+  if (moduleKey === "clips" && line.code === "configured") {
+    return (line.providers ?? []).map(name => PROVIDER_LABEL[name] ?? name).join(" / ");
+  }
+  if (moduleKey === "clips") return "没有可用的来源";
+  if (moduleKey === "checkin" && line.code === "disabled") return "未配置签到目录";
+  if (moduleKey === "checkin" && line.code === "unavailable") return "签到结果暂时读不到";
+  if (moduleKey === "checkin" && line.code === "all_ok") return "今天";
+  if (moduleKey === "checkin" && line.code === "fail") {
+    const name = line.title || "账号";
+    return line.account_index != null && line.account_index !== ""
+      ? `${name} · 账号 ${line.account_index}`
+      : name;
+  }
+  return line.title;
+}
+
+function lineNote(moduleKey: string, line: HomeLine): string {
+  if (!line.code) {
+    if (line.note?.startsWith("停在")) return line.note.slice(2);
+    return line.note ?? "";
+  }
+  if (moduleKey === "jobs") {
+    const stage = stageLabel(line.stage);
+    return line.code === "failed" ? `${stage}失败` : stage;
+  }
+  if (moduleKey === "daily_story") {
+    return line.story_type ? formatDailyStoryType(line.story_type) : "还没建任务";
+  }
+  if (moduleKey === "gold_chat") {
+    if (line.code === "review_pending") return "待审核";
+    if (line.code === "convert_failed") return "转换失败";
+    return "未导入";
+  }
+  if (moduleKey === "topic") return line.score == null ? "待打分" : `${line.score} 分`;
+  if (moduleKey === "video") {
+    if (line.code === "analyze_failed") return "分析失败";
+    if (line.code === "analyzing") return "分析中";
+    if (line.code === "active") return "正常";
+    return line.code;
+  }
+  if (moduleKey === "audio") return formatDuration(line.duration_sec);
+  if (moduleKey === "clips") return line.code === "configured" ? "已配置" : "未配置密钥";
+  if (moduleKey === "checkin") {
+    if (line.code === "fail") return "签到失败";
+    if (line.code === "all_ok") return "全部成功";
+  }
+  return "";
+}
+
+function meterNote(meter?: HomeMeter): string {
+  if (!meter) return "—";
+  if (meter.key === "memory" && meter.state === "unreadable") return "读不到内存";
+  if (meter.key === "project" && meter.state === "missing") return "data 不存在";
+  if (meter.key === "project" && meter.state === "unreadable") return "data 读不到";
+  if (meter.key === "cpu" && meter.threads) {
+    return meter.note ? `${meter.note} · ${meter.threads} 线程` : `${meter.threads} 线程`;
+  }
+  return meter.note || "—";
+}
+
+const REFRESH_MS = 15000;
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+let overviewInFlight = false;
+
+const loadOverview = async (opts?: { quiet?: boolean }) => {
+  if (overviewInFlight) return;
+  overviewInFlight = true;
+  const quiet = opts?.quiet === true;
+  if (!quiet) loading.value = true;
   try {
     overview.value = await getHomeOverview();
     loaded.value = true;
   } catch (error) {
-    handleError(error, "首页总览加载失败");
+    if (!quiet) handleError(error, "首页总览加载失败");
   } finally {
+    overviewInFlight = false;
     loading.value = false;
   }
 };
 
+function startAutoRefresh() {
+  if (refreshTimer != null) return;
+  refreshTimer = setInterval(() => {
+    void loadOverview({ quiet: true });
+  }, REFRESH_MS);
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer == null) return;
+  clearInterval(refreshTimer);
+  refreshTimer = null;
+}
+
 onMounted(() => {
   void loadOverview();
+  startAutoRefresh();
 });
-usePageRefresh(loadOverview);
+onActivated(startAutoRefresh);
+onDeactivated(stopAutoRefresh);
+onUnmounted(stopAutoRefresh);
+usePageRefresh(() => loadOverview());
 
 const meterTone = (percent: number): Tone | undefined => {
   if (percent >= 90) return "danger";

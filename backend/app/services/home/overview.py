@@ -17,34 +17,6 @@ from typing import Any
 from app.config import config
 from app.repositories import sql_exec as sql
 from app.services.clip_search.aggregator import list_provider_status
-from app.services.daily_story.story_types.model import STORY_TYPE_LABELS
-
-_STAGE_LABELS = {
-    "prepare": "基底",
-    "script": "脚本",
-    "tts": "配音",
-    "segment": "分镜",
-    "intro": "片头",
-    "merge": "合成",
-    "publish": "发布",
-}
-
-_MODULE_NAMES = {
-    "jobs": "任务队列",
-    "daily_story": "日常故事",
-    "gold_chat": "金牌故事",
-    "topic": "选题库",
-    "video": "视频素材",
-    "audio": "音频素材",
-    "clips": "片段搜索",
-    "checkin": "每日签到",
-}
-
-_PROVIDER_LABELS = {
-    "pexels": "Pexels",
-    "pixabay": "Pixabay",
-    "nasa": "NASA",
-}
 
 _ALERT_LIMIT = 10
 _LINE_LIMIT = 2
@@ -73,35 +45,15 @@ def build_overview() -> dict[str, Any]:
 
 
 def machine_meters() -> list[dict[str, Any]]:
-    cpu_percent, cpu_note = _cpu_meter()
-    mem_value, mem_percent, mem_note = _memory_meter()
+    cpu_percent, cpu_model, threads = _cpu_meter()
+    mem_value, mem_percent, mem_note, mem_state = _memory_meter()
     disk_value, disk_percent, disk_note = _disk_meter()
-    project_value, project_percent, project_note = _project_meter()
+    project_value, project_percent, project_note, project_state = _project_meter()
     return [
-        {
-            "key": "cpu",
-            "value": f"{cpu_percent:.0f}%",
-            "percent": _clamp_percent(cpu_percent),
-            "note": cpu_note,
-        },
-        {
-            "key": "memory",
-            "value": mem_value,
-            "percent": mem_percent,
-            "note": mem_note,
-        },
-        {
-            "key": "disk",
-            "value": disk_value,
-            "percent": disk_percent,
-            "note": disk_note,
-        },
-        {
-            "key": "project",
-            "value": project_value,
-            "percent": project_percent,
-            "note": project_note,
-        },
+        _meter("cpu", f"{cpu_percent:.0f}%", _clamp_percent(cpu_percent), cpu_model, threads=threads),
+        _meter("memory", mem_value, mem_percent, mem_note, state=mem_state),
+        _meter("disk", disk_value, disk_percent, disk_note),
+        _meter("project", project_value, project_percent, project_note, state=project_state),
     ]
 
 
@@ -111,22 +63,20 @@ def _jobs_module() -> dict[str, Any]:
     )
     sql.commit()
     counts = {str(row["status"]): int(row["n"]) for row in rows}
-    failed = counts.get("failed", 0)
-    pending = counts.get("pending", 0)
-    running = counts.get("running", 0) + counts.get("queued", 0)
-    lines = _job_lines("failed", "danger") + _job_lines("pending", "warn")
+    lines = _job_lines("failed", "danger") + _job_lines("pending", None)
     return {
         "key": "jobs",
         "stats": [
-            _stat("失败", failed, "danger"),
-            _stat("停住", pending, "warn"),
-            _stat("进行中", running, None),
+            _stat("failed", counts.get("failed", 0)),
+            _stat("pending", counts.get("pending", 0)),
+            _stat("queued", counts.get("queued", 0)),
+            _stat("running", counts.get("running", 0)),
         ],
         "lines": lines[:_LINE_LIMIT],
     }
 
 
-def _job_lines(status: str, tone: str) -> list[dict[str, Any]]:
+def _job_lines(status: str, tone: str | None) -> list[dict[str, Any]]:
     rows = sql.fetchall(
         """
         SELECT id, title, stage, fail_stage
@@ -141,14 +91,14 @@ def _job_lines(status: str, tone: str) -> list[dict[str, Any]]:
     lines: list[dict[str, Any]] = []
     for row in rows:
         stage = str(row["fail_stage"] or row["stage"] or "")
-        label = _STAGE_LABELS.get(stage, stage or "当前阶段")
-        note = f"{label}失败" if status == "failed" else f"停在{label}"
         lines.append(
             _line(
                 str(row["title"] or ""),
-                note,
+                status,
                 tone=tone,
                 to=f"/jobs?id={int(row['id'])}",
+                stage=stage or None,
+                id=int(row["id"]),
             )
         )
     return lines
@@ -173,7 +123,7 @@ def _daily_story_module() -> dict[str, Any]:
     has_job = int((row or {}).get("has_job") or 0)
     stories = sql.fetchall(
         """
-        SELECT theme, story_type
+        SELECT id, theme, story_type
         FROM daily_story
         WHERE status = 'active' AND job_id IS NULL
         ORDER BY id DESC
@@ -182,21 +132,25 @@ def _daily_story_module() -> dict[str, Any]:
         (_LINE_LIMIT,),
     )
     sql.commit()
-    lines = [
-        _line(
-            str(item["theme"] or ""),
-            _story_type_note(item.get("story_type")),
-            tone="warn",
-            to="/daily-story",
+    lines = []
+    for item in stories:
+        story_type = str(item.get("story_type") or "").strip().upper()
+        lines.append(
+            _line(
+                str(item["theme"] or ""),
+                "no_job",
+                tone="warn",
+                to="/daily-story",
+                story_type=story_type or None,
+                id=int(item["id"]),
+            )
         )
-        for item in stories
-    ]
     return {
         "key": "daily_story",
         "stats": [
-            _stat("今天生成", today_n, None),
-            _stat("无任务", no_job, "warn" if no_job else None),
-            _stat("有任务", has_job, None),
+            _stat("today", today_n),
+            _stat("no_job", no_job),
+            _stat("has_job", has_job),
         ],
         "lines": lines,
     }
@@ -225,7 +179,7 @@ def _gold_chat_module() -> dict[str, Any]:
     )
     rows = sql.fetchall(
         f"""
-        SELECT title,
+        SELECT id, title,
                json_extract(payload_json, '$.gold_chat_review_status') AS review_status,
                json_extract(payload_json, '$.gold_chat_last_error') AS last_error,
                json_extract(payload_json, '$.gold_chat_exported_at') AS exported_at
@@ -247,13 +201,29 @@ def _gold_chat_module() -> dict[str, Any]:
     lines: list[dict[str, Any]] = []
     for row in rows:
         if str(row.get("review_status") or "") == "review_pending":
-            lines.append(_line(str(row["title"] or ""), "待审核", tone="warn", to="/gold-chat"))
+            lines.append(
+                _line(
+                    str(row["title"] or ""),
+                    "review_pending",
+                    tone="warn",
+                    to="/gold-chat",
+                    id=int(row["id"]),
+                )
+            )
         else:
-            lines.append(_line(str(row["title"] or ""), "转换失败", tone="danger", to="/gold-chat"))
+            lines.append(
+                _line(
+                    str(row["title"] or ""),
+                    "convert_failed",
+                    tone="danger",
+                    to="/gold-chat",
+                    id=int(row["id"]),
+                )
+            )
     if not lines:
         idle = sql.fetchall(
             f"""
-            SELECT title FROM gold_story
+            SELECT id, title FROM gold_story
             WHERE {base} AND gold_chat_daily_story_id IS NULL
             ORDER BY id DESC
             LIMIT ?
@@ -262,15 +232,21 @@ def _gold_chat_module() -> dict[str, Any]:
         )
         sql.commit()
         lines = [
-            _line(str(row["title"] or ""), "未导入", tone="warn", to="/gold-chat")
+            _line(
+                str(row["title"] or ""),
+                "not_imported",
+                tone="warn",
+                to="/gold-chat",
+                id=int(row["id"]),
+            )
             for row in idle
         ]
     return {
         "key": "gold_chat",
         "stats": [
-            _stat("未导入", not_imported, "warn" if not_imported else None),
-            _stat("待审核", review_pending, "warn" if review_pending else None),
-            _stat("转换失败", convert_failed, "danger" if convert_failed else None),
+            _stat("not_imported", not_imported),
+            _stat("review_pending", review_pending),
+            _stat("convert_failed", convert_failed),
         ],
         "lines": lines,
     }
@@ -294,17 +270,20 @@ def _topic_module() -> dict[str, Any]:
     lines = []
     for row in picked:
         score = row.get("score")
-        if score is None:
-            note = "待打分"
-        else:
-            note = f"{int(score)} 分"
-        lines.append(_line(str(row["title"] or ""), note, to="/topic"))
+        lines.append(
+            _line(
+                str(row["title"] or ""),
+                "pending" if score is None else "scored",
+                to="/topic",
+                score=None if score is None else int(score),
+            )
+        )
     return {
         "key": "topic",
         "stats": [
-            _stat("待打分", counts.get("pending", 0), None),
-            _stat("可入队", counts.get("queued", 0), None),
-            _stat("已入队", counts.get("enqueued", 0), None),
+            _stat("pending", counts.get("pending", 0)),
+            _stat("queued", counts.get("queued", 0)),
+            _stat("enqueued", counts.get("enqueued", 0)),
         ],
         "lines": lines,
     }
@@ -320,7 +299,7 @@ def _video_module() -> dict[str, Any]:
     analyzing = counts.get("analyzing", 0)
     picked = sql.fetchall(
         """
-        SELECT name, status
+        SELECT id, name, status
         FROM material_video
         ORDER BY CASE status
             WHEN 'analyze_failed' THEN 0
@@ -334,21 +313,22 @@ def _video_module() -> dict[str, Any]:
     sql.commit()
     lines = []
     for row in picked:
-        status = str(row["status"] or "")
-        if status == "analyze_failed":
-            lines.append(
-                _line(str(row["name"] or ""), "分析失败", tone="danger", to="/materials/video")
+        status = str(row["status"] or "") or "unknown"
+        lines.append(
+            _line(
+                str(row["name"] or ""),
+                status,
+                tone="danger" if status == "analyze_failed" else None,
+                to="/materials/video",
+                id=int(row["id"]),
             )
-        elif status == "analyzing":
-            lines.append(_line(str(row["name"] or ""), "分析中", to="/materials/video"))
-        else:
-            lines.append(_line(str(row["name"] or ""), "正常", to="/materials/video"))
+        )
     return {
         "key": "video",
         "stats": [
-            _stat("正常", counts.get("active", 0), None),
-            _stat("分析中", analyzing, None),
-            _stat("分析失败", failed, "danger" if failed else None),
+            _stat("active", counts.get("active", 0)),
+            _stat("analyzing", analyzing),
+            _stat("analyze_failed", failed),
         ],
         "lines": lines,
     }
@@ -375,14 +355,19 @@ def _audio_module() -> dict[str, Any]:
     )
     sql.commit()
     lines = [
-        _line(str(row["name"] or ""), _fmt_duration(row.get("duration_sec")), to="/materials/audio")
+        _line(
+            str(row["name"] or ""),
+            "duration",
+            to="/materials/audio",
+            duration_sec=row.get("duration_sec"),
+        )
         for row in rows
     ]
     return {
         "key": "audio",
         "stats": [
-            _stat("素材", total, None),
-            _stat("今天新增", today_n, None),
+            _stat("total", total),
+            _stat("today", today_n),
         ],
         "lines": lines,
     }
@@ -390,18 +375,14 @@ def _audio_module() -> dict[str, Any]:
 
 def _clip_module() -> dict[str, Any]:
     rows = list_provider_status()
-    names = [
-        _PROVIDER_LABELS.get(str(row["provider"]), str(row["provider"]))
-        for row in rows
-        if row.get("available")
-    ]
-    if names:
-        lines = [_line(" / ".join(names), "已配置", to="/clips")]
+    providers = [str(row["provider"]) for row in rows if row.get("available")]
+    if providers:
+        lines = [_line("", "configured", to="/clips", providers=providers)]
     else:
-        lines = [_line("没有可用的来源", "未配置密钥", to="/clips")]
+        lines = [_line("", "unconfigured", to="/clips")]
     return {
         "key": "clips",
-        "stats": [_stat("可用来源", len(names), None)],
+        "stats": [_stat("available", len(providers))],
         "lines": lines,
     }
 
@@ -412,8 +393,8 @@ def _checkin_module() -> dict[str, Any]:
     if not checkin_mgr.is_enabled():
         return {
             "key": "checkin",
-            "stats": [_stat("状态", "未启用", None)],
-            "lines": [_line("未配置签到目录", "", to="/tools")],
+            "stats": [_stat("disabled", 0)],
+            "lines": [_line("", "disabled", to="/tools")],
         }
     try:
         overview = checkin_mgr.overview()
@@ -430,43 +411,51 @@ def _checkin_module() -> dict[str, Any]:
         logger.warning("[HOME] checkin overview failed", exc_info=True)
         return {
             "key": "checkin",
-            "stats": [_stat("状态", "读不到", "warn")],
-            "lines": [_line("签到结果暂时读不到", "", to="/tools")],
+            "stats": [_stat("unavailable", 0)],
+            "lines": [_line("", "unavailable", to="/tools")],
         }
     lines = []
     for row in records.get("items") or []:
-        name = str(row.get("platform_name") or row.get("platform") or "账号")
+        name = str(row.get("platform_name") or row.get("platform") or "")
         index = row.get("account_index")
-        title = f"{name} · 账号 {index}" if index not in (None, "") else name
-        lines.append(_line(title, "签到失败", tone="danger", to="/tools"))
+        lines.append(
+            _line(
+                name,
+                "fail",
+                tone="danger",
+                to="/tools",
+                account_index=None if index in (None, "") else index,
+                id=int(row["id"]) if row.get("id") not in (None, "") else None,
+            )
+        )
     if not lines and ok_n:
-        lines.append(_line("今天", "全部成功", to="/tools"))
+        lines.append(_line("", "all_ok", to="/tools"))
     return {
         "key": "checkin",
         "stats": [
-            _stat("今日成功", ok_n, None),
-            _stat("今日失败", fail_n, "danger" if fail_n else None),
+            _stat("ok", ok_n),
+            _stat("fail", fail_n),
         ],
         "lines": lines,
     }
 
 
-def _progress(modules: list[dict[str, Any]]) -> list[dict[str, str]]:
-    daily = _module_stat(modules, "daily_story", "今天生成")
-    running = _module_stat(modules, "jobs", "进行中")
+def _progress(modules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    daily = _stat_value(modules, "daily_story", "today")
+    running = _stat_value(modules, "jobs", "running") + _stat_value(modules, "jobs", "queued")
     return [
-        {"label": "今日生成", "value": f"{daily} 篇"},
-        {"label": "正在跑", "value": f"{running} 个"},
-        {"label": "今日发布", "value": f"{_published_today()} 条"},
+        {"key": "stories_today", "value": daily},
+        {"key": "running", "value": running},
+        {"key": "published_today", "value": _published_today()},
     ]
 
 
-def _module_stat(modules: list[dict[str, Any]], key: str, label: str) -> int:
+def _stat_value(modules: list[dict[str, Any]], module_key: str, stat_key: str) -> int:
     for module in modules:
-        if module.get("key") != key:
+        if module.get("key") != module_key:
             continue
         for stat in module.get("stats") or []:
-            if stat.get("label") == label:
+            if stat.get("key") == stat_key:
                 value = stat.get("value")
                 return int(value) if isinstance(value, int) else 0
     return 0
@@ -525,18 +514,14 @@ def _alerts(modules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     danger: list[dict[str, Any]] = []
     warn: list[dict[str, Any]] = []
     for module in modules:
-        name = _MODULE_NAMES.get(str(module["key"]), str(module["key"]))
+        module_key = str(module["key"])
         for line in module.get("lines") or []:
             tone = line.get("tone")
             if tone not in {"danger", "warn"}:
                 continue
-            item = {
-                "module": name,
-                "title": line["title"],
-                "note": line["note"],
-                "tone": tone,
-                "to": line["to"],
-            }
+            item = {key: value for key, value in line.items() if key != "tone"}
+            item["module"] = module_key
+            item["tone"] = tone
             if tone == "danger":
                 danger.append(item)
             else:
@@ -552,44 +537,41 @@ def _count(query: str, params: tuple[Any, ...] = ()) -> int:
     return int(row["n"] or 0)
 
 
-def _stat(label: str, value: int | str, tone: str | None) -> dict[str, Any]:
-    item: dict[str, Any] = {"label": label, "value": value}
-    if tone:
-        item["tone"] = tone
+def _stat(key: str, value: int) -> dict[str, Any]:
+    return {"key": key, "value": value}
+
+
+def _meter(
+    key: str,
+    value: str | None,
+    percent: int,
+    note: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {"key": key, "value": value, "percent": percent}
+    if note:
+        item["note"] = note
+    for name, extra_value in extra.items():
+        if extra_value is not None:
+            item[name] = extra_value
     return item
 
 
 def _line(
     title: str,
-    note: str,
+    code: str,
     *,
     tone: str | None = None,
     to: str,
+    **extra: Any,
 ) -> dict[str, Any]:
-    item: dict[str, Any] = {"title": title, "note": note, "to": to}
+    item: dict[str, Any] = {"title": title, "code": code, "to": to}
     if tone:
         item["tone"] = tone
+    for name, extra_value in extra.items():
+        if extra_value is not None:
+            item[name] = extra_value
     return item
-
-
-def _story_type_note(code: Any) -> str:
-    text = str(code or "").strip().upper()
-    label = STORY_TYPE_LABELS.get(text)
-    if not label:
-        return "还没建任务"
-    return f"{text} {label}"
-
-
-def _fmt_duration(raw: Any) -> str:
-    if raw is None:
-        return "-"
-    try:
-        sec = float(raw)
-    except (TypeError, ValueError):
-        return "-"
-    if sec < 10:
-        return f"{sec:.1f} 秒"
-    return f"{sec:.0f} 秒"
 
 
 def _local_day_utc_bounds() -> tuple[str, str]:
@@ -614,12 +596,13 @@ def _fmt_bytes(n: int) -> str:
     return f"{gib:.1f} GiB"
 
 
-def _cpu_meter() -> tuple[float, str]:
-    note = f"{_cpu_model()} · {os.cpu_count() or 1} 线程"
+def _cpu_meter() -> tuple[float, str, int]:
+    threads = os.cpu_count() or 1
+    model = _cpu_model()
     sample = _cpu_percent()
     if sample is None:
-        return 0.0, note
-    return sample, note
+        return 0.0, model, threads
+    return sample, model, threads
 
 
 def _cpu_percent() -> float | None:
@@ -686,18 +669,19 @@ def _cpu_model() -> str:
     return "CPU"
 
 
-def _memory_meter() -> tuple[str, int, str]:
+def _memory_meter() -> tuple[str | None, int, str | None, str | None]:
     mem = _linux_memory()
     if mem is None and sys.platform == "darwin":
         mem = _darwin_memory()
     if mem is None:
-        return "—", 0, "读不到内存"
+        return None, 0, None, "unreadable"
     used, total, swap_used, swap_total = mem
     percent = 0 if total <= 0 else used / total * 100
     return (
         f"{_fmt_bytes(used)} / {_fmt_bytes(total)}",
         _clamp_percent(percent),
         f"Swap {_fmt_bytes(swap_used)} / {_fmt_bytes(swap_total)}",
+        None,
     )
 
 
@@ -780,12 +764,12 @@ def _parse_size_token(token: str) -> int:
     return int(value * scale.get(unit if unit in scale else "", 1))
 
 
-def _disk_meter() -> tuple[str, int, str]:
+def _disk_meter() -> tuple[str | None, int, str]:
     path = _disk_path()
     try:
         usage = shutil.disk_usage(path)
     except OSError:
-        return "—", 0, str(path)
+        return None, 0, str(path)
     percent = 0 if usage.total <= 0 else usage.used / usage.total * 100
     return (
         f"{_fmt_bytes(usage.used)} / {_fmt_bytes(usage.total)}",
@@ -804,20 +788,20 @@ def _disk_path() -> Path:
     return Path("/")
 
 
-def _project_meter() -> tuple[str, int, str]:
+def _project_meter() -> tuple[str | None, int, str | None, str | None]:
     """右侧数字是项目目录占用。进度条是项目内部 data 占项目目录的比例。"""
     project = Path(config.root_dir).resolve()
     data = project / "data"
     project_bytes = _du_bytes(project)
     if project_bytes is None:
-        return "—", 0, str(project)
+        return None, 0, str(project), None
     if not data.is_dir():
-        return _fmt_bytes(project_bytes), 0, "data 不存在"
+        return _fmt_bytes(project_bytes), 0, None, "missing"
     data_bytes = _du_bytes(data)
     if data_bytes is None:
-        return _fmt_bytes(project_bytes), 0, "data 读不到"
+        return _fmt_bytes(project_bytes), 0, None, "unreadable"
     percent = project_share_percent(project_bytes, data_bytes)
-    return _fmt_bytes(project_bytes), percent, f"data {_fmt_bytes(data_bytes)}"
+    return _fmt_bytes(project_bytes), percent, f"data {_fmt_bytes(data_bytes)}", None
 
 
 def project_share_percent(project_bytes: int, data_bytes: int) -> int:

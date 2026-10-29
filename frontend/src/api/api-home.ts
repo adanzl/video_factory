@@ -3,23 +3,34 @@ import { api } from "./config";
 export type HomeTone = "danger" | "warn";
 
 export interface HomeStat {
-  label: string;
+  key?: string;
   value: number | string;
+  /** 旧接口直接给的展示文案 */
+  label?: string;
   tone?: HomeTone;
 }
 
 export interface HomeLine {
   title: string;
-  note: string;
-  tone?: HomeTone;
+  code?: string;
+  note?: string;
   to: string;
+  stage?: string;
+  story_type?: string;
+  score?: number;
+  duration_sec?: number | null;
+  providers?: string[];
+  account_index?: number | string;
+  id?: number;
 }
 
 export interface HomeMeter {
-  key: "cpu" | "memory" | "disk" | string;
-  value: string;
+  key: "cpu" | "memory" | "disk" | "project" | string;
+  value: string | null;
   percent: number;
-  note: string;
+  note?: string;
+  threads?: number;
+  state?: "unreadable" | "missing";
 }
 
 export interface HomeModule {
@@ -28,17 +39,16 @@ export interface HomeModule {
   lines: HomeLine[];
 }
 
-export interface HomeAlert {
+export interface HomeAlert extends HomeLine {
   module: string;
-  title: string;
-  note: string;
   tone: HomeTone;
-  to: string;
 }
 
 export interface HomeProgress {
-  label: string;
-  value: string;
+  key?: string;
+  value: number | string;
+  /** 旧接口直接给的展示文案，value 里已带单位 */
+  label?: string;
 }
 
 export interface HomeOverview {
