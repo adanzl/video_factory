@@ -1165,6 +1165,36 @@ def begin_collect_attempt(gold_story_id: int, *, max_attempts: int, claim_id: st
     return row
 
 
+def apply_reimport_gate(
+    gold_story_id: int, outcome: dict[str, Any], *, expected_row: dict[str, Any],
+) -> bool:
+    """重新导入早退时写回原行。内容驳回改为 rejected，并清掉旧的采集失败。"""
+    rejected = outcome.get("action") in {"reject", "skip"}
+    if rejected:
+        detail = str(outcome.get("error") or outcome.get("reason") or "pipeline_reject")
+        value = {"pass": False, "stage": outcome.get("stage") or "pipeline", "reject_reasons": [detail]}
+        status = "rejected"
+        payload_sql = (
+            "json_remove(json_set(COALESCE(payload_json, '{}'), '$.audit', json(?)), '$.collect_failure')"
+        )
+    else:
+        value = outcome
+        status = "failed"
+        payload_sql = "json_set(COALESCE(payload_json, '{}'), '$.collect_failure', json(?))"
+    result = sql.execute(
+        f"""UPDATE gold_story SET status=?, payload_json={payload_sql}, updated_at=datetime('now')
+            WHERE id=? AND payload_json IS ? AND status IS ?
+              AND mechanism IS ? AND structure_type IS ? AND conflict_core IS ?
+              AND title IS ? AND gold_chat_daily_story_id IS ?""",
+        (status, json.dumps(value, ensure_ascii=False), gold_story_id,
+         expected_row["_payload_json_snapshot"], expected_row.get("status"),
+         expected_row.get("mechanism"), expected_row.get("structure_type"),
+         expected_row.get("conflict_core"), expected_row.get("title"),
+         expected_row.get("gold_chat_daily_story_id")))
+    sql.commit()
+    return result.rowcount == 1
+
+
 def record_collect_failure(
     gold_story_id: int, outcome: dict[str, Any], *, retry: bool, expected_row: dict[str, Any],
 ) -> bool:

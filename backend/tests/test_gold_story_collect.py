@@ -597,6 +597,76 @@ def test_reimport_busy_does_not_fetch_or_change_source(app_ctx, monkeypatch):
     assert repo.get_story(gid) == before
 
 
+def _failed_collect_source(source_id="BV1FAIL00001"):
+    from app.repositories import repo_gold_story as repo
+    gid = _pending_source(source_id)
+    claimed = repo.claim_next_pending()
+    assert claimed is not None and claimed["id"] == gid
+    assert repo.record_collect_failure(
+        gid,
+        {"action": "error", "stage": "H0c", "error": "410 Client Error: Gone", "retryable": False},
+        retry=False,
+        expected_row=claimed,
+    )
+    return gid
+
+
+def test_reimport_content_rejection_replaces_collect_failure(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    gid = _failed_collect_source()
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: object())
+    monkeypatch.setattr(p, "process_candidate", lambda *a, **k: {
+        "action": "reject", "stage": "H0c", "reason": "source_unusable",
+        "error": "H0c source_unusable: no complete source scene",
+    })
+    result = p.overwrite_existing_story(gid)
+    row = repo.get_story(gid)
+    assert result["status"] == "rejected" and result["persisted"] is True
+    assert row["status"] == "rejected"
+    assert "collect_failure" not in row["payload"]
+    assert row["payload"]["audit"]["stage"] == "H0c"
+    assert row["payload"]["audit"]["reject_reasons"] == [
+        "H0c source_unusable: no complete source scene",
+    ]
+
+
+def test_reimport_execution_error_replaces_stale_collect_failure(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    gid = _failed_collect_source("BV1FAIL00002")
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: object())
+    monkeypatch.setattr(p, "process_candidate", lambda *a, **k: {
+        "action": "error", "stage": "H0c", "error": "upstream timeout", "retryable": True,
+    })
+    result = p.overwrite_existing_story(gid)
+    row = repo.get_story(gid)
+    assert result["status"] == "failed" and result["persisted"] is True
+    assert row["status"] == "failed"
+    assert row["payload"]["collect_failure"]["error"] == "upstream timeout"
+
+
+def test_reimport_gate_does_not_overwrite_concurrent_edit(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.repositories import sql_exec as sql
+    from app.services.gold_story.collect import pipeline as p
+    gid = _failed_collect_source("BV1FAIL00003")
+
+    def edit_during_reimport(*_args, **_kwargs):
+        sql.execute("UPDATE gold_story SET title=? WHERE id=?", ("改过的标题", gid))
+        sql.commit()
+        return {"action": "reject", "stage": "H0c", "error": "H0c source_unusable: no complete source scene"}
+
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: object())
+    monkeypatch.setattr(p, "process_candidate", edit_during_reimport)
+    result = p.overwrite_existing_story(gid)
+    row = repo.get_story(gid)
+    assert result["persisted"] is False
+    assert row["status"] == "failed"
+    assert row["title"] == "改过的标题"
+    assert "410" in row["payload"]["collect_failure"]["error"]
+
+
 def test_cli_preview_does_not_recover_jobs_or_migrate_schema(app_ctx, monkeypatch, capsys):
     from app.config import config
     from app.repositories import sql_exec as sql
