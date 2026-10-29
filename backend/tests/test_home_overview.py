@@ -6,7 +6,12 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from app.repositories import sql_exec as sql
-from app.services.home.overview import _fmt_bytes, _parse_size_token, build_overview
+from app.services.home.overview import (
+    _fmt_bytes,
+    _parse_size_token,
+    build_overview,
+    project_share_percent,
+)
 
 
 def test_fmt_bytes_and_swap_token():
@@ -14,6 +19,12 @@ def test_fmt_bytes_and_swap_token():
     assert _fmt_bytes(812 * 1024 ** 3) == "812 GiB"
     assert _fmt_bytes(int(1.8 * 1024 ** 4)) == "1.8 TiB"
     assert _parse_size_token("2048.00M") == 2048 * 1024 ** 2
+
+
+def test_project_share_percent():
+    assert project_share_percent(100, 40) == 40
+    assert project_share_percent(10, 0) == 0
+    assert project_share_percent(0, 10) == 0
 
 
 def test_overview_counts(app_ctx, monkeypatch):
