@@ -35,6 +35,7 @@ from app.services.gold_story.structure_resolve import sync_h3_from_scene_contrac
 from app.services.gold_story.transcript import (
     repaired_transcript_path,
     save_repaired_transcript,
+    format_dialogue_transcript,
     transcribe_bilibili,
 )
 from app.services.gold_story.transcript.download import VideoTooLongError, normalize_bv
@@ -90,6 +91,8 @@ def process_candidate(
     overwrite_existing: bool = False,
     force_transcript: bool = False,
     existing_row: dict[str, Any] | None = None,
+    repair_feedback: str = "",
+    resolution_cache: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """单条 BV：H0b → H0c → H2 → H3 → H3a → H3b → H4a → H4。
 
@@ -205,6 +208,8 @@ def process_candidate(
         "transcript_unusable_lines": None,
         "transcript_scene_line_indices": None,
         "transcript_scene_evidence": None,
+        "transcript_resolution": None,
+        "transcript_resolution_repair_audit": None,
     }
     cross_check = (tx or {}).get("cross_check")
     if tx is None:
@@ -216,12 +221,26 @@ def process_candidate(
             cross_check = (existing_row.get("payload") or {}).get("transcript_cross_check")
     transcript_failure = ""
     transcript_failure_stage = "H0b"
+    resolution: dict[str, Any] | None = None
     if isinstance(cross_check, dict) and cross_check.get("available") and cross_check.get("passed") is False:
-        # 识别分歧不等于内容不合格；也不能把不可靠文本交给 LLM 猜剧情。
-        # 相同引擎原样重跑不会修复分歧，保留证据并报告需要修复转写。
-        return {**base, "action": "error", "stage": "H0b", "reason": "transcript_conflict",
-                "error": f"转写待修复：OCR/ASR 存在分歧（agreement={cross_check.get('agreement')}），尚不能确认对白",
-                "retryable": False, "transcript_cross_check": cross_check}
+        from app.services.gold_story.transcript.transcript import read_transcript_metadata
+
+        candidates = (tx or {}).get("transcript_candidates")
+        if not candidates:
+            candidates = read_transcript_metadata(cfg, candidate.source_id, transcript_path).get("transcript_candidates")
+        old_payload = (existing_row or {}).get("payload") or {}
+        previous = resolution_cache or old_payload.get("transcript_resolution") or (old_payload.get("collect_failure") or {}).get("transcript_resolution")
+        try:
+            resolution = llm_steps.reconcile_transcripts(candidates or [], previous=previous)
+        except Exception as exc:
+            return {**base, **_execution_failure(exc, "H0b reconciliation"), "transcript_cross_check": cross_check}
+        h0c_meta["transcript_resolution"] = resolution
+        if resolution.get("status") != "resolved" or not cfg.gold_story_transcript_repair:
+            return {**base, "action": "error", "stage": "H0b", "reason": "transcript_conflict",
+                    "error": "转写分歧尚未解决：" + str(resolution.get("reason") or "需要启用完整场景审核"),
+                    "retryable": False, "transcript_cross_check": cross_check, "transcript_resolution": resolution}
+        transcript_text = str(resolution["text"])
+        transcript_for_h2 = transcript_text
     if transcript_for_h2 and cfg.gold_story_transcript_repair:
         try:
             h0c = llm_steps.repair_transcript(
@@ -229,10 +248,15 @@ def process_candidate(
                 transcript=transcript_text,
                 description=candidate.description,
                 require_complete_scene=True,
+                feedback=repair_feedback,
             )
+            if resolution is not None:
+                h0c_meta["transcript_resolution_repair_audit"] = llm_steps.review_transcript_repair(
+                    transcript=transcript_text, repaired=format_dialogue_transcript(h0c["lines"]),
+                )
             rep_path = repaired_transcript_path(cfg, candidate.source_id)
             transcript_for_h2 = save_repaired_transcript(rep_path, h0c["lines"])
-            h0c_meta = {
+            h0c_meta.update({
                 "transcript_repaired_path": str(rep_path),
                 "transcript_repair_confidence": h0c.get("repair_confidence"),
                 "transcript_speakers": h0c.get("speakers") or [],
@@ -240,7 +264,7 @@ def process_candidate(
                 "transcript_unusable_lines": h0c.get("unusable_lines") or 0,
                 "transcript_scene_line_indices": h0c.get("scene_line_indices"),
                 "transcript_scene_evidence": h0c.get("scene_evidence"),
-            }
+            })
         except Exception as exc:
             logger.warning(
                 "gold_story H0c failed bvid=%s: %s",
@@ -248,7 +272,8 @@ def process_candidate(
                 exc,
             )
             if not isinstance(exc, llm_steps.SourceRejected):
-                return {**base, **_execution_failure(exc, "H0c")}
+                return {**base, **_execution_failure(exc, "H0c"), "transcript_resolution": resolution,
+                        "transcript_cross_check": cross_check}
             transcript_failure = str(exc)
             transcript_failure_stage = "H0c"
             transcript_for_h2 = ""
@@ -263,7 +288,7 @@ def process_candidate(
     if transcript_failure or not transcript_for_h2.strip():
         return {**base, "action": "reject", "stage": transcript_failure_stage,
                 "reason": "source_unusable", "error": transcript_failure or "empty repaired transcript",
-                "transcript_cross_check": cross_check}
+                "transcript_cross_check": cross_check, "transcript_resolution": resolution}
     h0c_meta.update({
         "transcript_status": "unusable" if transcript_failure else ("usable" if transcript_for_h2 else "missing"),
         "transcript_failure_reason": transcript_failure or None,
@@ -536,6 +561,8 @@ def _run_reimport_attempts(
     """手动导入共用有限重试；不重复处理已提交结果，不覆盖期间发生的修改。"""
     candidate: VideoCandidate | None = None
     refresh_transcript = force_transcript
+    repair_feedback = ""
+    resolution_cache: dict[str, Any] | None = None
     for attempt in range(1, _COLLECT_MAX_ATTEMPTS + 1):
         if attempt > 1 and existing_row:
             fresh = repo_gold_story.get_story(int(existing_row["id"]), include_payload_snapshot=True)
@@ -552,6 +579,7 @@ def _run_reimport_attempts(
             outcome = process_candidate(
                 candidate, config=config, overwrite_existing=existing_row is not None,
                 force_transcript=refresh_transcript, existing_row=existing_row,
+                repair_feedback=repair_feedback, resolution_cache=resolution_cache,
             )
         except Exception as exc:
             from app.repositories import sql_exec as sql
@@ -562,8 +590,11 @@ def _run_reimport_attempts(
                 or outcome.get("persisted") or attempt == _COLLECT_MAX_ATTEMPTS):
             return outcome, candidate
         # 已完成转写后的模型失败复用本轮转写，避免重下原视频。
-        if outcome.get("stage") in {"H0c", "LLM", "H4a"}:
+        if outcome.get("stage") in {"H0b reconciliation", "H0c", "LLM", "H4a"}:
             refresh_transcript = False
+        if outcome.get("stage") == "H0c":
+            repair_feedback = str(outcome.get("error") or "")
+            resolution_cache = outcome.get("transcript_resolution")
         time.sleep(min(2 ** (attempt - 1), 4))
     raise RuntimeError("采集重试预算无效")
 

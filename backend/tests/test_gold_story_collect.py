@@ -15,7 +15,31 @@ def test_engagement_norm():
     assert engagement_norm(0, 0) == 0.0
 
 
-@pytest.mark.parametrize("failure", ["cross_check", "repair", "recovered", "cross_missing", "cross_unavailable"])
+def test_h0c_retry_keeps_resolution_and_returns_validation_feedback(monkeypatch):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    candidate = VideoCandidate(source="bili", source_id="BV1RETRY0001", url="", title="test",
+                               description="", view_count=1, reply_count=1, keyword="")
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *_a, **_kw: candidate)
+    monkeypatch.setattr(p.time, "sleep", lambda *_a: None)
+    resolution = {"status": "resolved", "source": "ocr", "evidence_hash": "same-evidence"}
+    seen = []
+    def process(*_a, **kwargs):
+        seen.append(kwargs)
+        if len(seen) == 1:
+            return {"action": "error", "stage": "H0c", "retryable": True,
+                    "error": "scene jumps across dialogue", "transcript_resolution": resolution}
+        return {"action": "ok", "status": "active"}
+    monkeypatch.setattr(p, "process_candidate", process)
+    result, _ = p._run_reimport_attempts(candidate.source_id, config=Config(), force_transcript=True)
+    assert result["attempts"] == 2
+    assert seen[1]["force_transcript"] is False
+    assert seen[1]["resolution_cache"] == resolution
+    assert seen[1]["repair_feedback"] == "scene jumps across dialogue"
+
+
+@pytest.mark.parametrize("failure", ["cross_check", "cross_resolved", "repair", "recovered", "cross_missing", "cross_unavailable"])
 @pytest.mark.parametrize("independent", ["none", "replies", "description"])
 @pytest.mark.parametrize("cached", [False, True])
 def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
@@ -34,7 +58,7 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
     sid = "BV1pA4m1378V"
     transcript_path = cfg.gold_story_transcript_dir / f"{sid}.txt"
     transcript_path.write_text("时间地区点赞数与听不清碎片", encoding="utf-8")
-    cross = {"available": True, "passed": failure != "cross_check", "agreement": 0.043 if failure == "cross_check" else 0.9}
+    cross = {"available": True, "passed": failure not in {"cross_check", "cross_resolved"}, "agreement": 0.043 if failure in {"cross_check", "cross_resolved"} else 0.9}
     if failure == "cross_missing":
         cross = None
     elif failure == "cross_unavailable":
@@ -57,8 +81,18 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
     monkeypatch.setattr(p, "transcribe_bilibili", lambda *_a, **_kw: {
         "action": "ok", "transcript_path": str(transcript_path), "cross_check": cross, "transcript_backend": "ocr",
     })
+    if failure == "cross_resolved":
+        monkeypatch.setattr(p.llm_steps, "reconcile_transcripts", lambda *_a, **_kw: {
+            "status": "resolved", "source": "ocr", "text": "独立审核确认的OCR原文"})
+        def audit_repair(**kwargs):
+            assert kwargs["transcript"] == "独立审核确认的OCR原文"
+            assert kwargs["repaired"] == "昭昭：本轮有效修复稿"
+            return {"faithful": True, "reason": "原文可核实"}
+        monkeypatch.setattr(p.llm_steps, "review_transcript_repair", audit_repair)
     def repair(**_kw):
         assert failure != "cross_check", "明确不可靠的转写不应再消耗修复调用"
+        if failure == "cross_resolved":
+            assert _kw["transcript"] == "独立审核确认的OCR原文"
         if failure == "repair":
             raise p.llm_steps.SourceRejected("H0c low repair_confidence=0.20")
         return {"lines": [{"speaker": "昭昭", "text": "本轮有效修复稿"}],
@@ -101,6 +135,9 @@ def test_reimport_never_uses_bad_transcript_or_stale_repair_metadata(
         assert len(extracted) == len(saved) == 1
         payload = saved[0]["payload"]
         assert payload["transcript_cross_check"] == cross
+        if failure == "cross_resolved":
+            assert payload["transcript_resolution"]["source"] == "ocr"
+            assert payload["transcript_resolution_repair_audit"]["faithful"] is True
         assert payload["transcript_status"] == "usable"
         assert payload["source_inputs"] == ["transcript"] + ([] if independent == "none" else [independent])
         assert payload["transcript_repair_confidence"] == 0.9

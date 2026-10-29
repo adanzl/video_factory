@@ -23,6 +23,20 @@ def test_score_transcript_prefers_clean_dialogue():
     assert good_score > bad_score
 
 
+def test_repeated_questions_with_high_ocr_confidence_are_not_noise():
+    text = ("你下次还让我陪你去学校吗\n你下次让不让我陪你去学校\n"
+            "不是你想不想让我陪你去学校\n我想自己走\n你真的不用我陪你去学校吗\n"
+            "我想自己走到学校\n那你就自己走吧\n谢谢妈妈")
+    garbled = "你下刺害让喔陪你句学笑吗。你下刺想想让我培泥句学校。窝想纸几奏到学笑。"
+    picked = tm.pick_transcript_candidate([
+        {"source": "ocr", "text": text, "avg_confidence": 0.99},
+        {"source": "asr", "text": garbled},
+    ], title="上学", duration_sec=60)
+    assert picked["source"] == "ocr"
+    # 选稿不意味着两路一致或自动通过来源审核。
+    assert tm.cross_check_transcripts({"text": text}, {"text": garbled})["passed"] is False
+
+
 def test_score_transcript_penalizes_no_subtitle_ocr_noise():
     """无烧录字幕时误 OCR 水印/花字变体簇，不得跳过 ASR。"""
     garbled = (

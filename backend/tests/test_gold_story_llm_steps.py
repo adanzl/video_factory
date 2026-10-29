@@ -8,6 +8,90 @@ from app.services.gold_story.collect import llm as llm_steps
 from app.services.gold_story.transcript import format_dialogue_transcript
 
 
+def _transcript_evidence():
+    return [{"source": "ocr", "text": "妈妈问今晚谁洗碗\n弟弟说轮到姐姐\n姐姐拿出值日表说今天轮到你"},
+            {"source": "asr", "text": "妈妈闻今晚谁洗晚弟弟说轮到节节节节拿出纸日表说今天轮到你"}]
+
+
+def _transcript_review(**changes):
+    return {"content_complete": True, "key_facts_supported": True, "no_critical_conflict": True,
+            "partial_scene_only": False, "reason": "两路可核实问答与值日表结果", **changes}
+
+
+def test_reconcile_uses_only_original_source_and_independent_review(monkeypatch):
+    prompts = []
+    def chat(system, user):
+        prompts.append((system, user))
+        if len(prompts) == 1:
+            return {"source": "ocr", "reason": "首轮独有的选择理由", "text": "模型伪造正文"}
+        assert "首轮独有的选择理由" not in user
+        assert "模型伪造正文" not in user
+        return _transcript_review()
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    evidence = _transcript_evidence()
+    result = llm_steps.reconcile_transcripts(evidence)
+    assert result["status"] == "resolved"
+    assert result["text"] == evidence[0]["text"]
+    assert len(prompts) == 2
+    result["text"] = "被修改的缓存正文"
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: pytest.fail("相同证据应复用裁决"))
+    assert llm_steps.reconcile_transcripts(evidence, previous=result)["text"] == evidence[0]["text"]
+
+
+@pytest.mark.parametrize("change", [
+    {"content_complete": False}, {"key_facts_supported": False},
+    {"no_critical_conflict": False}, {"partial_scene_only": True},
+])
+def test_reconcile_reviewer_can_veto_choice(monkeypatch, change):
+    answers = iter([{"source": "ocr", "reason": "先选择"}, _transcript_review(**change)])
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: next(answers))
+    result = llm_steps.reconcile_transcripts(_transcript_evidence())
+    assert result["status"] == "unresolved"
+    assert "text" not in result
+
+
+@pytest.mark.parametrize("field", ["content_complete", "key_facts_supported", "no_critical_conflict", "partial_scene_only"])
+def test_reconcile_rejects_missing_or_string_review_flags(monkeypatch, field):
+    for value in [None, "true", 1]:
+        answers = iter([{"source": "asr", "reason": "先选择"}, _transcript_review(**{field: value})])
+        monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: next(answers))
+        with pytest.raises(llm_steps.ModelOutputError, match="JSON boolean"):
+            llm_steps.reconcile_transcripts(_transcript_evidence())
+
+
+def test_reconcile_invalid_source_unresolved_and_changed_evidence(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: {"source": "merged", "reason": "混编"})
+    with pytest.raises(llm_steps.ModelOutputError):
+        llm_steps.reconcile_transcripts(_transcript_evidence())
+    calls = []
+    def unresolved(*args):
+        calls.append(args)
+        return {"source": "unresolved", "reason": "两路数字矛盾无法核实"}
+    monkeypatch.setattr(llm_steps, "_chat_json", unresolved)
+    evidence = _transcript_evidence()
+    old = llm_steps.reconcile_transcripts(evidence)
+    assert "text" not in old
+    evidence[0]["text"] += "新证据"
+    new = llm_steps.reconcile_transcripts(evidence, previous=old)
+    assert old["evidence_hash"] != new["evidence_hash"]
+    assert len(calls) == 2
+
+
+def test_reconcile_does_not_truncate_or_invent_missing_evidence(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: pytest.fail("证据不足不得调用模型"))
+    assert llm_steps.reconcile_transcripts([])["status"] == "unresolved"
+    evidence = _transcript_evidence()
+    assert llm_steps.reconcile_transcripts(evidence[:1])["status"] == "unresolved"
+    evidence[0]["text"] = "字" * 12001
+    assert llm_steps.reconcile_transcripts(evidence)["reason"] == "evidence_too_large"
+
+
+def test_repair_source_audit_rejects_unfaithful_output(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: {"faithful": False, "reason": "添加原文没有的动作"})
+    with pytest.raises(llm_steps.ModelOutputError, match="unfaithful"):
+        llm_steps.review_transcript_repair(transcript="妈妈让弟弟洗碗", repaired="弟弟把碗摔了")
+
+
 def test_format_dialogue_transcript():
     lines = [
         {"speaker": "妈妈", "text": "快睡吧"},

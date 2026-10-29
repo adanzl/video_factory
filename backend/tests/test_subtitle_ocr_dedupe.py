@@ -52,3 +52,57 @@ def test_dedupe_subsamples_when_over_max_frames(tmp_path: Path):
     assert len(kept) == 80
     assert kept[0].timestamp_sec == 0.0
     assert kept[-1].timestamp_sec == 119.0
+    # 完整转写默认不能按80帧上限静默丢掉中间字幕。
+    assert len(dedupe_frames(frames)) == 120
+
+
+def test_ocr_batches_process_all_frames_once(tmp_path, monkeypatch):
+    from app.config import Config
+    from app.services.gold_story.transcript import ocr
+    from concurrent.futures import Future
+
+    cfg = Config()
+    cfg.gold_story_ocr_max_frames = 3
+    cfg.gold_story_ocr_frame_workers = 2
+    submitted = []
+    batches = []
+    class Pool:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def submit(self, fn, task):
+            submitted.append(task)
+            future = Future()
+            future.set_result({"timestamp_sec": task[0], "hits": []})
+            return future
+    def wait(futures):
+        batches.append(len(futures))
+        return futures
+    monkeypatch.setattr(ocr, "ProcessPoolExecutor", Pool)
+    monkeypatch.setattr(ocr, "wait_futures_hub", wait)
+    frames = [OcrFrame(timestamp_sec=float(i), image_path=tmp_path / f"{i}.png") for i in range(8)]
+    rows = ocr.ocr_frames_parallel(frames, cfg)
+    assert batches == [3, 3, 2]
+    assert len(rows) == len(submitted) == 8
+    assert [r["timestamp_sec"] for r in rows] == list(range(8))
+
+
+def test_ocr_rejects_incomplete_batch(tmp_path, monkeypatch):
+    from app.config import Config
+    from app.services.gold_story.transcript import ocr
+    import pytest
+    class Pool:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def submit(self, *args): return None
+    cfg = Config()
+    cfg.gold_story_ocr_frame_workers = 2
+    monkeypatch.setattr(ocr, "ProcessPoolExecutor", Pool)
+    monkeypatch.setattr(ocr, "wait_futures_hub", lambda *_a: [])
+    frames = [OcrFrame(timestamp_sec=float(i), image_path=tmp_path / f"{i}.png") for i in range(2)]
+    with pytest.raises(RuntimeError, match="incomplete"):
+        ocr.ocr_frames_parallel(frames, cfg)

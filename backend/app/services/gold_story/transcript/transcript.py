@@ -198,7 +198,7 @@ def _resolve_transcription(
     if cross_check.get("available") and cross_check.get("passed") is False:
         logger.warning(
             "gold_story transcript cross-check FAILED bvid=%s agreement=%.3f "
-            "(ocr vs asr)；转写存在未解决分歧，保留两路证据并等待修复",
+            "(ocr vs asr)；保留两路原文，采集阶段将执行来源裁决与独立审核",
             ref.source_id,
             float(cross_check.get("agreement") or 0.0),
         )
@@ -225,6 +225,7 @@ def _resolve_transcription(
                 "segments": row.get("segments") or [],
                 "engine": row.get("engine"),
                 "model": row.get("model"),
+                "avg_confidence": row.get("avg_confidence"),
             }
             for row in candidates
         ],
@@ -268,6 +269,7 @@ def transcribe_media(
             "transcript_path": str(out_path),
             "cross_check": metadata.get("cross_check"),
             "transcript_backend": metadata.get("transcript_backend"),
+            "transcript_candidates": metadata.get("transcript_candidates") or [],
         }
 
     workspace = cfg.gold_story_media_workspace
@@ -331,6 +333,7 @@ def transcribe_media(
         "transcript_backend": transcription.get("source"),
         "quality_score": transcription.get("quality_score"),
         "cross_check": transcription.get("cross_check"),
+        "transcript_candidates": transcription.get("candidates") or [],
     }
 
 

@@ -93,6 +93,7 @@ def test_transcribe_preserves_cross_check_in_result_metadata_and_cache(tmp_path,
     cached = tx.transcribe_media("BV1pA4m1378V", config=cfg)
     assert cached["action"] == "skip"
     assert cached["cross_check"] == cross
+    assert cached["transcript_candidates"] == result["transcript_candidates"] == candidates
 
 
 def test_resolve_transcription_retains_both_sources_and_segments(tmp_path, monkeypatch):

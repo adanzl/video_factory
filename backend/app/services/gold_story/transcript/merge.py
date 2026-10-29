@@ -136,6 +136,10 @@ def score_transcript_text(
         variant_penalty = 0.25 + min(variant_ratio, 1.0) * 0.35
     elif variant_ratio >= 0.2:
         variant_penalty = variant_ratio * 0.35
+    if avg_confidence is not None:
+        # 反复追问也是近似句；高置信字幕不应被当作低置信 OCR 抖动变体重罚。
+        # 保留其他噪声、形近字检测，质量分本身不用于放行交叉验证。
+        variant_penalty *= max(0.1, min(1.0, (1.0 - float(avg_confidence)) / 0.1))
 
     confusion_ratio = _ocr_confusion_char_ratio(raw)
     confusion_penalty = 0.0

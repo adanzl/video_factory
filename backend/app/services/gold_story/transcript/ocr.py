@@ -571,9 +571,9 @@ def _subsample_uniform(frames: list[OcrFrame], max_frames: int) -> list[OcrFrame
 def dedupe_frames(
     frames: list[OcrFrame],
     *,
-    max_frames: int = 80,
+    max_frames: int = 0,
 ) -> list[OcrFrame]:
-    """字幕静止时合并相邻帧；超长片再均匀抽样至上限。"""
+    """字幕静止时合并相邻帧；默认保留所有变化帧，显式上限仅用于预览。"""
     if not frames:
         return []
     if len(frames) == 1:
@@ -601,7 +601,7 @@ def dedupe_frames(
     if frames[-1] is not kept[-1]:
         kept.append(frames[-1])
 
-    return _subsample_uniform(kept, cap)
+    return _subsample_uniform(kept, cap) if max_frames > 0 else kept
 
 
 def _iter_row_texts(row: dict[str, Any]) -> list[str]:
@@ -675,9 +675,14 @@ def ocr_frames_parallel(
         initializer=_init_ocr_worker,
         initargs=init_args,
     ) as pool:
-        futures = [pool.submit(_ocr_single_frame, task) for task in tasks]
-        for future in wait_futures_hub(futures):
-            rows.append(future.result())
+        batch_size = max(1, int(config.gold_story_ocr_max_frames))
+        for offset in range(0, len(tasks), batch_size):
+            batch = tasks[offset:offset + batch_size]
+            futures = [pool.submit(_ocr_single_frame, task) for task in batch]
+            batch_rows = [future.result() for future in wait_futures_hub(futures)]
+            if len(batch_rows) != len(batch):
+                raise RuntimeError("OCR batch returned incomplete frame results")
+            rows.extend(batch_rows)
     return rows
 
 
@@ -737,9 +742,8 @@ def transcribe_video_ocr(
             config=config,
         )
 
-    # 1.5) 去重相邻静止帧，再按上限均匀抽样
-    max_frames = int(config.gold_story_ocr_max_frames)
-    frames = dedupe_frames(frames, max_frames=max_frames)
+    # 完整转写不能均匀丢弃变化字幕；上限只约束每批任务数。
+    frames = dedupe_frames(frames)
 
     # 2) 全片 OCR 候选（先不过滤）
     raw_rows = ocr_frames_parallel(frames, config)
@@ -803,6 +807,8 @@ def _run_ocr_worker(input_path: Path, output_path: Path) -> None:
         cfg.gold_story_ocr_fps = float(payload["gold_story_ocr_fps"])
     if payload.get("gold_story_ocr_frame_workers") is not None:
         cfg.gold_story_ocr_frame_workers = int(payload["gold_story_ocr_frame_workers"])
+    if payload.get("gold_story_ocr_max_frames") is not None:
+        cfg.gold_story_ocr_max_frames = int(payload["gold_story_ocr_max_frames"])
 
     result = transcribe_video_ocr(
         Path(str(payload["video_path"])),
@@ -839,6 +845,7 @@ def transcribe_video_ocr_subprocess(
         "ocr_model_dir": str(config.ocr_model_dir),
         "gold_story_ocr_fps": config.gold_story_ocr_fps,
         "gold_story_ocr_frame_workers": config.gold_story_ocr_frame_workers,
+        "gold_story_ocr_max_frames": config.gold_story_ocr_max_frames,
     }
     module = "app.services.gold_story.transcript.ocr"
     with tempfile.TemporaryDirectory(prefix="gold_story_ocr_") as tmp:

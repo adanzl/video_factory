@@ -397,6 +397,7 @@ class Config:
         self.gold_story_ocr_fps: float = float(
             os.getenv("GOLD_STORY_OCR_FPS", "1")
         )
+        # 保留旧环境变量名：现在是每批任务数，不再丢弃整片变化字幕。
         self.gold_story_ocr_max_frames: int = int(
             os.getenv("GOLD_STORY_OCR_MAX_FRAMES", "80")
         )
