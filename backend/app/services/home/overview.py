@@ -76,6 +76,7 @@ def machine_meters() -> list[dict[str, Any]]:
     cpu_percent, cpu_note = _cpu_meter()
     mem_value, mem_percent, mem_note = _memory_meter()
     disk_value, disk_percent, disk_note = _disk_meter()
+    project_value, project_percent, project_note = _project_meter()
     return [
         {
             "key": "cpu",
@@ -94,6 +95,12 @@ def machine_meters() -> list[dict[str, Any]]:
             "value": disk_value,
             "percent": disk_percent,
             "note": disk_note,
+        },
+        {
+            "key": "project",
+            "value": project_value,
+            "percent": project_percent,
+            "note": project_note,
         },
     ]
 
@@ -795,3 +802,48 @@ def _disk_path() -> Path:
     if sqlite_dir.is_dir():
         return sqlite_dir
     return Path("/")
+
+
+def _project_meter() -> tuple[str, int, str]:
+    """右侧数字是项目目录占用。进度条是项目内部 data 占项目目录的比例。"""
+    project = Path(config.root_dir).resolve()
+    data = project / "data"
+    project_bytes = _du_bytes(project)
+    if project_bytes is None:
+        return "—", 0, str(project)
+    if not data.is_dir():
+        return _fmt_bytes(project_bytes), 0, "data 不存在"
+    data_bytes = _du_bytes(data)
+    if data_bytes is None:
+        return _fmt_bytes(project_bytes), 0, "data 读不到"
+    percent = project_share_percent(project_bytes, data_bytes)
+    return _fmt_bytes(project_bytes), percent, f"data {_fmt_bytes(data_bytes)}"
+
+
+def project_share_percent(project_bytes: int, data_bytes: int) -> int:
+    """项目内部 data 占项目目录的比例。"""
+    if project_bytes <= 0:
+        return 0
+    return _clamp_percent(data_bytes / project_bytes * 100)
+
+
+def _du_bytes(path: Path) -> int | None:
+    if not path.is_dir():
+        return None
+    from app.utils.async_util import run_subprocess_cmd
+
+    try:
+        code, stdout, _stderr = run_subprocess_cmd(
+            ["du", "-skx", str(path)],
+            timeout=25,
+        )
+    except (OSError, RuntimeError):
+        logger.warning("[HOME] du failed path=%s", path, exc_info=True)
+        return None
+    if code != 0:
+        logger.warning("[HOME] du exit %s path=%s", code, path)
+        return None
+    token = (stdout or "").split()
+    if not token or not token[0].isdigit():
+        return None
+    return int(token[0]) * 1024

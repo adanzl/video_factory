@@ -4,13 +4,7 @@
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h1 class="text-base font-semibold text-gray-800">总览</h1>
-          <el-button
-            type="plain"
-            size="small"
-            title="刷新"
-            :disabled="loading"
-            @click="loadOverview"
-          >
+          <el-button size="small" plain title="刷新" :disabled="loading" @click="loadOverview">
             <el-icon><Refresh /></el-icon>
           </el-button>
           <span class="text-xs text-gray-400">{{ todayLabel }}</span>
@@ -44,15 +38,17 @@
         <span class="text-xs text-gray-400">{{ host }}</span>
       </div>
 
-      <div class="mt-3 grid gap-x-8 gap-y-3 md:grid-cols-3">
+      <div class="mt-3 grid gap-x-8 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
         <div v-for="meter in meters" :key="meter.label" class="min-w-0">
           <div class="flex items-baseline justify-between gap-2">
-            <span class="flex items-center gap-1.5 text-xs text-gray-500">
+            <span
+              class="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-gray-500"
+            >
               <el-icon :size="13"><component :is="meter.icon" /></el-icon>
               {{ meter.label }}
             </span>
             <span
-              class="text-sm font-medium tabular-nums"
+              class="min-w-0 truncate text-right text-sm font-medium tabular-nums"
               :class="toneText(meterTone(meter.percent)) || 'text-gray-700'"
             >
               {{ meter.value }}
@@ -179,6 +175,7 @@ import {
   ChatDotRound,
   Cpu,
   Document,
+  Files,
   FolderOpened,
   Headset,
   Histogram,
@@ -228,6 +225,7 @@ const METER_META: Record<string, { label: string; icon: Component }> = {
   cpu: { label: "CPU", icon: Cpu },
   memory: { label: "内存", icon: Histogram },
   disk: { label: "硬盘", icon: FolderOpened },
+  project: { label: "项目", icon: Files },
 };
 
 const MODULE_DEFS: ModuleDef[] = [
