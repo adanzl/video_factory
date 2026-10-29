@@ -562,7 +562,20 @@ def overwrite_existing_story(
         )
     except Exception as exc:
         outcome = _execution_failure(exc, "reimport")
-    return {**base, **outcome}
+    merged = {**base, **outcome}
+    # 跑完 H3 的结果已在 process_candidate 里写过 status。早退没有 status，要在这里收口，
+    # 否则失败条目会一直停在旧的「采集失败」。
+    if merged.get("status") or merged.get("action") not in {"reject", "skip", "error"}:
+        return merged
+    if repo_gold_story.apply_reimport_gate(gold_story_id, merged, expected_row=row):
+        status = "rejected" if merged.get("action") in {"reject", "skip"} else "failed"
+        return {**merged, "status": status, "persisted": True}
+    logger.warning(
+        "gold_story reimport gate not saved id=%s action=%s",
+        gold_story_id,
+        merged.get("action"),
+    )
+    return {**merged, "persisted": False}
 
 
 def import_or_overwrite_source(
