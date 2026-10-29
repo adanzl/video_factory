@@ -307,6 +307,8 @@ def process_candidate(
             try:
                 source_audit = llm_steps.review_story_source(transcript=transcript_for_h2, story_raw=story_raw_text)
                 break
+            except llm_steps.SourceRejected:
+                raise
             except ValueError as exc:
                 if source_attempt or not str(exc).startswith("H2 source_unfaithful:"):
                     raise

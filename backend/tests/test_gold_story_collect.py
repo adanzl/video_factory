@@ -1304,3 +1304,31 @@ def test_new_duplicate_bv_gets_own_record_and_keeps_target_untouched(app_ctx, mo
     assert result["status"] == "rejected"
     assert repo.get_story(other)["status"] == "pending"
     assert repo.get_story(result["id"])["payload"]["audit"]["duplicate_id"] == other
+
+
+def test_source_age_rejection_stops_before_mapping_and_retries(tmp_path, monkeypatch):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    cfg = Config()
+    cfg.gold_story_transcript_dir = tmp_path
+    cfg.gold_story_media_workspace = tmp_path / "media"
+    cfg.gold_story_transcript_repair = False
+    candidate = VideoCandidate(source="bili", source_id="BV1AGECHECK1", url="", title="家庭趣事",
+                               description="", view_count=1, reply_count=1, keyword="")
+    (tmp_path / f"{candidate.source_id}.txt").write_text("成年女儿临产，父亲先拖地。")
+    monkeypatch.setattr(p, "_existing_source", lambda *_a: False)
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *_a, **_kw: candidate)
+    extracted = []
+    def extract(**_kwargs):
+        extracted.append(True)
+        return {"story_raw": "成年女儿临产，父亲先拖地。"}
+    monkeypatch.setattr(p.llm_steps, "extract_story_raw", extract)
+    def reject(**_kwargs):
+        raise p.llm_steps.SourceRejected("H2 age_incompatible_core: 成年生育戏核不适用儿童")
+    monkeypatch.setattr(p.llm_steps, "review_story_source", reject)
+    monkeypatch.setattr(p.llm_steps, "structurize_story", lambda **_kw: pytest.fail("拒绝的来源不能映射"))
+    monkeypatch.setattr(p.time, "sleep", lambda *_a: pytest.fail("不应重试素材拒绝"))
+    result, _ = p._run_reimport_attempts(candidate.source_id, config=cfg, force_transcript=False)
+    assert result["action"] == "reject" and result["attempts"] == 1
+    assert "age_incompatible_core" in result["reason"] and extracted == [True]

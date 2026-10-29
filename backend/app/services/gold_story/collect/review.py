@@ -171,6 +171,7 @@ def audit_story(
     h3 = h3 or {}
     h3a = h3a or {}
     h3b = h3b or {}
+    source_story_raw = story_raw
     story_raw, story_raw_trimmed = _maybe_trim_story_raw(story_raw)
     dialogue_seed = h3b.get("dialogue_seed") or []
     beat = h3.get("beat") or []
@@ -189,6 +190,7 @@ def audit_story(
     )
     base: dict[str, Any] = {
         "pass": False,
+        "age_audit_version": "role_age_v1",
         "stage": "rules",
         "rule_pass": rule_pass,
         "rule_reasons": rule_reasons,
@@ -199,14 +201,10 @@ def audit_story(
         base["reject_reasons"] = list(rule_reasons)
         return base
 
-    if not cfg.gold_story_audit_enabled:
-        base.update({"pass": True, "stage": "disabled", "reject_reasons": []})
-        return base
-
     llm = llm_steps.audit_story_fit(
         video_title=video_title or title,
         title=str(h3.get("title") or title),
-        story_raw=story_raw,
+        story_raw=source_story_raw,
         conflict_core=conflict_core,
         mechanism=str(h3.get("mechanism") or ""),
         structure_type=str(h3.get("structure_type") or ""),
@@ -215,6 +213,8 @@ def audit_story(
         beat=beat,
         transcript=transcript,
         description=description,
+        scene_contract=h3a,
+        age_only=not cfg.gold_story_audit_enabled,
         min_sibling_fit=cfg.gold_story_audit_min_sibling_fit,
         min_age_fit=cfg.gold_story_audit_min_age_fit,
         min_conflict_usable=cfg.gold_story_audit_min_conflict_usable,
@@ -222,7 +222,7 @@ def audit_story(
     )
 
     base["llm"] = llm
-    base["stage"] = "llm"
+    base["stage"] = "llm" if cfg.gold_story_audit_enabled else "age"
     if llm.get("pass"):
         base["pass"] = True
         base["reject_reasons"] = []

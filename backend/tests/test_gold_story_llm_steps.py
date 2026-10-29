@@ -571,7 +571,8 @@ def test_repair_selects_one_scene_skipping_only_noise(monkeypatch):
 def test_source_audit_rejects_invented_events_or_incomplete_review(monkeypatch, response):
     def review(system, user):
         assert "唯一事实依据" in system and "关灯睡觉" in user and "门铃响了" in user
-        return response
+        return {"child_adaptation_suitable": True, "child_adaptation_evidence": "妈妈：关灯睡觉",
+                "child_adaptation_reason": "儿童日常", **response}
     monkeypatch.setattr(llm_steps, "_chat_json", review)
     with pytest.raises(ValueError, match="source_unfaithful" if "unsupported_claims" in response else "LLM "):
         llm_steps.review_story_source(transcript="妈妈：关灯睡觉", story_raw="门铃响了，孩子跑出去开门。")
@@ -580,14 +581,23 @@ def test_source_audit_rejects_invented_events_or_incomplete_review(monkeypatch, 
 def test_source_audit_accepts_faithful_role_mapping(monkeypatch):
     monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {
         "faithful": True, "unsupported_claims": [], "summary": "仅等价转述和角色改名",
+        "child_adaptation_suitable": True, "child_adaptation_evidence": "昭昭答应了妈妈。",
+        "child_adaptation_reason": "符合儿童年龄的回应",
     })
     assert llm_steps.review_story_source(transcript="宝宝：知道了", story_raw="昭昭答应了妈妈。")['faithful']
 
 
-def _audit_response(response, monkeypatch):
+def _audit_response(response, monkeypatch, *, default_age=True, **overrides):
+    if default_age:
+        response = {"source_age_compatible": True, "mapped_roles_age_compatible": True,
+                    "source_age_evidence": "姐弟一起整理书桌。", "mapped_age_evidence": "昭昭：擦桌子",
+                    "age_reason": "姐弟整理书桌，儿童负责擦桌子符合年龄", **response}
     monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: response)
-    return llm_steps.audit_story_fit(video_title="姐弟日常", title="整理书桌", story_raw="姐弟一起整理书桌。",
-        conflict_core="分工", mechanism="M6", structure_type="A", speaker_map_note="", dialogue_seed=[], beat=[])
+    kwargs = dict(video_title="姐弟日常", title="整理书桌", story_raw="姐弟一起整理书桌。",
+        conflict_core="分工", mechanism="M6", structure_type="A", speaker_map_note="",
+        dialogue_seed=[{"speaker": "昭昭", "intent": "擦桌子"}], beat=[])
+    kwargs.update(overrides)
+    return llm_steps.audit_story_fit(**kwargs)
 
 
 @pytest.mark.parametrize("flag", ["false", "true", 0, 1, None, [], {}])
@@ -623,3 +633,83 @@ def test_source_audit_schema_failure_does_not_become_source_rejection(monkeypatc
     monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {"error": "incomplete response"})
     with pytest.raises(ValueError, match="LLM "):
         llm_steps.review_story_source(transcript="完整来源", story_raw="来源中的完整故事")
+
+
+def _high_fit_scores(**changes):
+    return {"pass": True, "sibling_fit": 0.95, "age_fit": 0.95,
+            "conflict_usable": 0.95, "mapping_fit": 0.95, "reject_reasons": [], **changes}
+
+
+@pytest.mark.parametrize("field", ["source_age_compatible", "mapped_roles_age_compatible"])
+@pytest.mark.parametrize("age_only", [False, True])
+def test_age_veto_cannot_be_overridden_by_high_scores_or_disabled_scoring(monkeypatch, field, age_only):
+    result = _audit_response(_high_fit_scores(**{field: False}), monkeypatch, age_only=age_only)
+    assert result["pass"] is False
+    assert any("age_incompatible" in reason for reason in result["reject_reasons"])
+
+
+@pytest.mark.parametrize("field", ["source_age_compatible", "mapped_roles_age_compatible"])
+@pytest.mark.parametrize("value", [None, "true", 1])
+def test_age_audit_requires_explicit_boolean(monkeypatch, field, value):
+    with pytest.raises(llm_steps.ModelOutputError, match="JSON boolean"):
+        _audit_response(_high_fit_scores(**{field: value}), monkeypatch)
+
+
+@pytest.mark.parametrize("changes", [
+    {"source_age_evidence": "原文不存在的故事"},
+    {"mapped_age_evidence": "妈妈：擦桌子"},
+    {"mapped_age_evidence": "擦桌子"},
+    {"age_reason": ""},
+])
+def test_age_audit_requires_traceable_source_and_role_action(monkeypatch, changes):
+    with pytest.raises(llm_steps.ModelOutputError):
+        _audit_response(_high_fit_scores(**changes), monkeypatch)
+
+
+def test_age_evidence_accepts_whitespace_and_punctuation_variants(monkeypatch):
+    result = _audit_response(_high_fit_scores(mapped_age_evidence="昭昭: 擦桌子。"), monkeypatch)
+    assert result["pass"] is True
+
+
+def test_source_age_rejection_precedes_fidelity_repair(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: {
+        "faithful": False, "unsupported_claims": ["添写动作"],
+        "child_adaptation_suitable": False, "child_adaptation_evidence": "成年女儿临产",
+        "child_adaptation_reason": "戏核依赖成年人的生育行为，不能改成儿童亲历",
+    })
+    with pytest.raises(llm_steps.SourceRejected, match="age_incompatible_core"):
+        llm_steps.review_story_source(transcript="成年女儿临产，父亲先拖地。", story_raw="成年女儿临产。")
+
+
+@pytest.mark.parametrize("value", [None, "true", 1])
+def test_source_age_missing_or_invalid_verdict_is_execution_failure(monkeypatch, value):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: {
+        "faithful": True, "unsupported_claims": [], "child_adaptation_suitable": value,
+        "child_adaptation_evidence": "孩子提问", "child_adaptation_reason": "符合年龄",
+    })
+    with pytest.raises(llm_steps.ModelOutputError, match="JSON boolean"):
+        llm_steps.review_story_source(transcript="孩子提问", story_raw="孩子提问")
+
+
+def test_age_audit_receives_full_seed_contract_and_original_source(monkeypatch):
+    marker = "灿灿：妈，我好像要生了"
+    seen = []
+    def chat(_system, user):
+        seen.append(user)
+        assert marker in user and "尾部原始事实" in user and "尾部契约事实" in user
+        return _high_fit_scores(source_age_compatible=False, mapped_roles_age_compatible=False,
+            source_age_evidence="尾部原始事实", mapped_age_evidence=marker, age_reason="儿童承担成人生育行为")
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    result = llm_steps.audit_story_fit(video_title="家庭趣事", title="趣事", story_raw="叙事" * 2100 + "尾部原始事实",
+        conflict_core="亲子", mechanism="M6", structure_type="N", speaker_map_note="能迁成亲子冲突",
+        dialogue_seed=[{"speaker": "昭昭", "intent": "旁观" * 2100}, {"speaker": "灿灿", "intent": "妈，我好像要生了"}],
+        beat=[], scene_contract={"description": "背景" * 2100 + "尾部契约事实"})
+    assert not result["pass"] and len(seen) == 1
+
+
+def test_oversize_age_audit_fails_before_model_call(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: pytest.fail("不能截断后放行"))
+    with pytest.raises(llm_steps.ModelOutputError, match="input_budget_exceeded"):
+        llm_steps.audit_story_fit(video_title="日常", title="日常", story_raw="字" * 48001,
+            conflict_core="争抢", mechanism="M6", structure_type="N", speaker_map_note="",
+            dialogue_seed=[{"speaker": "昭昭", "intent": "我先来"}], beat=[])

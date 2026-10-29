@@ -7,6 +7,7 @@ import hashlib
 import logging
 import math
 import re
+import unicodedata
 from typing import Any
 from app.services.daily_story.speaker import (
     DAILY_STORY_RELATION_RULE,
@@ -690,6 +691,25 @@ def _response_bool(data: dict[str, Any], field: str, stage: str) -> bool:
     return value
 
 
+def _normalized_evidence(text: str) -> str:
+    return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", text)).casefold()
+
+
+def _response_evidence(data: dict[str, Any], field: str, source: str, stage: str) -> str:
+    quote = data.get(field)
+    if (not isinstance(quote, str) or len(_normalized_evidence(quote)) < 2
+            or _normalized_evidence(quote) not in _normalized_evidence(source)):
+        raise ModelOutputError(f"LLM {stage} {field} must quote input evidence")
+    return quote.strip()
+
+
+def _response_reason(data: dict[str, Any], field: str, stage: str) -> str:
+    reason = data.get(field)
+    if not isinstance(reason, str) or not reason.strip():
+        raise ModelOutputError(f"LLM {stage} {field} missing reason")
+    return reason.strip()
+
+
 def _response_score(data: dict[str, Any], field: str, stage: str) -> float:
     value = data.get(field)
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
@@ -865,6 +885,8 @@ def repair_transcript(
 
 def review_story_source(*, transcript: str, story_raw: str) -> dict[str, Any]:
     """H2 后独立核对来源，禁止模型把缺失情节补成完整故事。"""
+    if len(transcript) + len(story_raw) > 48000:
+        raise ModelOutputError("H2 source audit input_budget_exceeded")
     data = _chat_json(
         "你是来源保真审核员，独立对照转写与抽取故事。转写是唯一事实依据。"
         "检查故事中所有关键问答、动作、道具、因果和结局是否在来源中有依据；"
@@ -874,15 +896,28 @@ def review_story_source(*, transcript: str, story_raw: str) -> dict[str, Any]:
         "只要没有断言对方实际完成，不得误判成虚构动作。角色改名与等价转述也不要求原句出现相同字面词。"
         "允许角色改名、家庭称谓映射及等价转述，不允许增补事件、动机或用虚构场景桥接碎片。"
         "来源不足以确定任何关键事实则 faithful=false。不要因为故事通顺或有笑点放行。"
-        '只输出JSON：{"faithful":true或false,"unsupported_claims":["故事中无来源依据的原文片段"],"summary":"核对理由"}。',
-        "【唯一来源转写】\n" + transcript[:12000] + "\n【待核对故事】\n" + story_raw[:4000],
+        "另独立判断child_adaptation_suitable：保留事件核心和事实后，是否适合昭昭7岁、灿灿10岁的日常故事。"
+        "成年人的孕产、性关系、婚姻等身份或行为若是戏核，必须由儿童执行/承受才能迁移，必须false；"
+        "不能仅因原人物是女儿/儿子、存在父母、能加儿童旁观台词或泛称亲子冲突就放行。"
+        "儿童询问自己的出生、听家长回忆且儿童仅承担符合年龄的提问/旁观，不因出现孕产词就否决；"
+        "但不得把成人孕产过程本身换个回忆标签，或改名后当成儿童经历。检查具体身份和行为，不能只看关键词。"
+        "child_adaptation_evidence逐字引用来源或故事的一段原文，child_adaptation_reason解释戏核与年龄的关系。"
+        '只输出JSON：{"faithful":true或false,"unsupported_claims":["无来源依据的原文片段"],"summary":"核对理由",'
+        '"child_adaptation_suitable":true或false,"child_adaptation_evidence":"逐字原文","child_adaptation_reason":"具体理由"}。',
+        "【唯一来源转写】\n" + transcript + "\n【待核对故事】\n" + story_raw,
     )
     claims = data.get("unsupported_claims")
     faithful = _response_bool(data, "faithful", "H2 source audit")
     if not isinstance(claims, list) or any(not isinstance(item, str) or not item.strip() for item in claims):
         raise ModelOutputError("LLM H2 source audit unsupported_claims must be a list of strings")
+    suitable = _response_bool(data, "child_adaptation_suitable", "H2 source audit")
+    _response_evidence(data, "child_adaptation_evidence", transcript + "\n" + story_raw, "H2 source audit")
+    reason = _response_reason(data, "child_adaptation_reason", "H2 source audit")
+    if not suitable:
+        raise SourceRejected("H2 age_incompatible_core: " + reason)
     if not faithful or claims:
         raise ModelOutputError("H2 source_unfaithful: " + str(claims or data.get("summary") or "来源审核未通过"))
+    data["age_audit_version"] = "role_age_v1"
     return data
 
 
@@ -1504,6 +1539,14 @@ _H4A_SYSTEM = (
     "须卡掉：婴儿婴语/纯温馨无冲突、冲突太短无可拍链、"
     "家长当唯一主角且孩子无戏、映射把戏核家长硬改成孩子导致失真、"
     "成人恋爱/夫妻决策无孩子对手戏。\n"
+    "年龄兼容是独立硬门槛，不得由四维高分、增加孩子台词或亲子冲突标签补偿。"
+    "source_age_compatible只根据原素材戏核判断能否保留事实并适用于7–10岁；"
+    "mapped_roles_age_compatible逐项检查实际契约与对白里的角色、身份、执行或承受的行为。"
+    "儿童承担成人孕产、性关系、婚姻等成人身份/行为必须false，不得把成年女儿自动当儿童。"
+    "正常儿童提问出生、听家长回忆且儿童只作符合年龄的提问或旁观可以通过；"
+    "不能把成人孕产戏核贴上回忆标签后硬迁成儿童经历。"
+    "source_age_evidence须逐字引用原故事/转写；mapped_age_evidence须完整复制一行所给的角色行为证据，"
+    "age_reason须解释原身份与映射角色行为是否相容，不能只说可迁移。\n"
     "源稿爸爸且妈妈代不了时可保留爸爸；能用妈妈就用妈妈。\n"
     "只输出 JSON。"
 )
@@ -1526,12 +1569,23 @@ dialogue_seed：
 beat：
 {beat}
 
+完整场景契约：
+{scene_contract}
+
+角色行为证据（程序从实际对白和契约提取，选择依据时完整复制一行）：
+{role_actions}
+
 逐字稿摘录：
 {transcript}
 
 输出 JSON：
 {{
   "pass": true,
+  "source_age_compatible": true,
+  "mapped_roles_age_compatible": true,
+  "source_age_evidence": "原故事或转写中的逐字原文",
+  "mapped_age_evidence": "角色行为证据中的完整一行",
+  "age_reason": "原身份与实际映射行为的核对理由",
   "sibling_fit": 0.0,
   "age_fit": 0.0,
   "conflict_usable": 0.0,
@@ -1552,7 +1606,7 @@ beat：
   把必须出场的家长硬映成昭昭/灿灿应降分；家长唯一主角且孩子无戏应降分；
   能用妈不用爸；**禁止**因「压成两人」抹掉戏核家长。
 
-pass=true 仅当四维均 ≥0.55 且无硬伤；否则 pass=false 并列出 reject_reasons。
+pass=true 仅当两个年龄兼容布尔均true、四维均 ≥0.55 且无硬伤；否则 pass=false 并列出 reject_reasons。
 **reject_reasons 禁止写「非姐弟冲突」「无昭昭/须拆双孩」来挡孩子与家长的趣事。**
 """
 
@@ -1603,42 +1657,70 @@ def audit_story_fit(
     beat: list[Any],
     transcript: str = "",
     description: str = "",
+    scene_contract: dict[str, Any] | None = None,
+    age_only: bool = False,
     min_sibling_fit: float = 0.55,
     min_age_fit: float = 0.55,
     min_conflict_usable: float = 0.55,
     min_mapping_fit: float = 0.55,
 ) -> dict[str, Any]:
     """H4a LLM 机审。"""
+    contract = scene_contract or {}
+    role_actions = []
+    for rows in (dialogue_seed, contract.get("beat_chain") or []):
+        for row in rows:
+            if isinstance(row, dict):
+                speaker = str(row.get("speaker") or "").strip()
+                action = str(row.get("intent") or row.get("text") or "").strip()
+                if speaker and action:
+                    role_actions.append(f"{speaker}：{action}")
+    if not role_actions:
+        raise ModelOutputError("H4a missing role action evidence")
     user = _H4A_USER.format(
         video_title=video_title,
         title=title,
         mechanism=mechanism,
         structure_type=structure_type,
-        conflict_core=conflict_core[:500],
-        story_raw=story_raw[:4000],
-        speaker_map_note=speaker_map_note[:800] or "（无）",
-        dialogue_seed=json.dumps(dialogue_seed, ensure_ascii=False, indent=2)[:4000],
-        beat=json.dumps(beat, ensure_ascii=False)[:2000],
-        transcript=str(transcript or description or "")[:4000] or "（无）",
+        conflict_core=conflict_core,
+        story_raw=story_raw,
+        speaker_map_note=speaker_map_note or "（无）",
+        dialogue_seed=json.dumps(dialogue_seed, ensure_ascii=False),
+        beat=json.dumps(beat, ensure_ascii=False),
+        scene_contract=json.dumps(contract, ensure_ascii=False),
+        role_actions="\n".join(role_actions),
+        transcript=str(transcript or description or "") or "（无）",
     )
+    if len(user) > 48000:
+        raise ModelOutputError("H4a input_budget_exceeded")
     data = _chat_json(_H4A_SYSTEM, user)
     sibling_fit = _response_score(data, "sibling_fit", "H4a")
     age_fit = _response_score(data, "age_fit", "H4a")
     conflict_usable = _response_score(data, "conflict_usable", "H4a")
     mapping_fit = _response_score(data, "mapping_fit", "H4a")
     llm_pass = _response_bool(data, "pass", "H4a")
+    source_age = _response_bool(data, "source_age_compatible", "H4a")
+    mapped_age = _response_bool(data, "mapped_roles_age_compatible", "H4a")
+    source_evidence = _response_evidence(data, "source_age_evidence", story_raw + "\n" + (transcript or description), "H4a")
+    mapped_evidence = _response_evidence(data, "mapped_age_evidence", "\n".join(role_actions), "H4a")
+    if _normalized_evidence(mapped_evidence) not in {_normalized_evidence(row) for row in role_actions}:
+        raise ModelOutputError("LLM H4a mapped_age_evidence must quote a complete role action")
+    age_reason = _response_reason(data, "age_reason", "H4a")
     raw_reasons = data.get("reject_reasons", [])
     if not isinstance(raw_reasons, list) or any(not isinstance(item, str) for item in raw_reasons):
         raise ModelOutputError("LLM H4a reject_reasons must be a list of strings")
-    reasons = [reason.strip() for reason in raw_reasons if reason.strip()]
+    reasons = [] if age_only else [reason.strip() for reason in raw_reasons if reason.strip()]
+    if not source_age:
+        reasons.append("age_incompatible_core: " + age_reason)
+    if not mapped_age:
+        reasons.append("mapped_roles_age_incompatible: " + age_reason)
     thresholds_ok = (
         sibling_fit >= min_sibling_fit
         and age_fit >= min_age_fit
         and conflict_usable >= min_conflict_usable
         and mapping_fit >= min_mapping_fit
     )
-    passed = llm_pass and thresholds_ok and not reasons
-    if not thresholds_ok:
+    passed = source_age and mapped_age and (age_only or (llm_pass and thresholds_ok)) and not reasons
+    if not age_only and not thresholds_ok:
         if sibling_fit < min_sibling_fit:
             reasons.append(f"sibling_fit_low:{sibling_fit:.2f}")
         if age_fit < min_age_fit:
@@ -1649,6 +1731,12 @@ def audit_story_fit(
             reasons.append(f"mapping_fit_low:{mapping_fit:.2f}")
     return {
         "pass": passed,
+        "age_audit_version": "role_age_v1",
+        "source_age_compatible": source_age,
+        "mapped_roles_age_compatible": mapped_age,
+        "source_age_evidence": source_evidence,
+        "mapped_age_evidence": mapped_evidence,
+        "age_reason": age_reason,
         "sibling_fit": sibling_fit,
         "age_fit": age_fit,
         "conflict_usable": conflict_usable,

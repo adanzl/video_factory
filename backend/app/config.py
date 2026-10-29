@@ -466,6 +466,7 @@ class Config:
         self.gold_story_transcript_repair: bool = _bool(
             "GOLD_STORY_TRANSCRIPT_REPAIR", True
         )
+        # 控制四维适配评分；来源与映射角色的年龄兼容审核始终执行。
         self.gold_story_audit_enabled: bool = _bool("GOLD_STORY_AUDIT_ENABLED", True)
         self.gold_story_audit_min_story_raw_chars: int = int(
             os.getenv("GOLD_STORY_AUDIT_MIN_STORY_RAW_CHARS", "100")
@@ -501,7 +502,7 @@ class Config:
         # 单条站外视频最长时长（秒）：超时长的合集/直播回放直接丢，
         # 转写一条 7 小时视频要跑几小时且抽不出单条故事；<=0 关闭该门控
         self.gold_story_max_duration_sec: int = int(
-            os.getenv("GOLD_STORY_MAX_DURATION_SEC", "1200")
+            os.getenv("GOLD_STORY_MAX_DURATION_SEC", "600")
         )
         self.gold_story_candidates_file: Path = _path(
             "GOLD_STORY_CANDIDATES_FILE",

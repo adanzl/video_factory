@@ -215,3 +215,23 @@ def test_audit_transport_or_invalid_response_is_not_content_rejection(monkeypatc
     with pytest.raises(ValueError, match="invalid JSON"):
         review.audit_story(title="姐弟日常", story_raw="姐弟抢遥控器。" * 20,
                            conflict_core="争抢", config=Config())
+
+
+def test_disabled_fit_scoring_still_runs_age_audit_on_untrimmed_source(monkeypatch):
+    from app.config import Config
+    cfg = Config()
+    cfg.gold_story_audit_enabled = False
+    original = "姐弟日常" * 150 + "成年身份事件在最后"
+    monkeypatch.setattr(review, "_maybe_trim_story_raw", lambda _text: ("姐弟日常" * 30, True))
+    monkeypatch.setattr(review, "run_rule_audit", lambda **_kw: (True, []))
+    def check(**kwargs):
+        assert kwargs["age_only"] is True
+        assert kwargs["story_raw"] == original
+        assert kwargs["scene_contract"] == {"note": "真实契约"}
+        return {"pass": False, "mapped_roles_age_compatible": False,
+                "reject_reasons": ["mapped_roles_age_incompatible"]}
+    monkeypatch.setattr(review.llm_steps, "audit_story_fit", check)
+    result = review.audit_story(title="家庭日常", story_raw=original, conflict_core="冲突",
+                                h3a={"note": "真实契约"}, config=cfg)
+    assert result["pass"] is False and result["stage"] == "age"
+    assert result["llm"]["mapped_roles_age_compatible"] is False
