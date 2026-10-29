@@ -18,6 +18,30 @@ from app.services.segment.image.image_agnes import (
 )
 
 
+@pytest.mark.parametrize("holder,other", [("灿灿", "昭昭"), ("昭昭", "灿灿"), ("妈妈", "爸爸"), ("爸爸", "妈妈")])
+@pytest.mark.parametrize("relation", ["比{other}高一点", "看向{other}", "站在{other}旁边"])
+def test_prop_holder_uses_subject_not_referenced_character(holder, other, relation):
+    prompt = f"画面左边是{other}，右手指向{holder}。画面右边是{holder}，{relation.format(other=other)}，右手在胸前握着遥控器。"
+    items, _, _ = AgnesImageProvider._build_verify_checklist(
+        prompt=prompt, expected_speakers=[holder, other], content_style="daily_story",
+    )
+    question = dict(items)["prop_holder"]
+    assert f"（{holder}）的右手里" in question
+    assert f"（{other}）的右手里" not in question
+    assert "明显在其他人手里时答「否」" in question
+
+
+@pytest.mark.parametrize("prefix", [
+    "昭昭看向灿灿，灿灿", "画面左边是昭昭，右边是灿灿，", "灿灿站在昭昭旁边，",
+    "灿灿比昭昭高，灿灿", "灿灿，比昭昭高一点，",
+])
+def test_prop_holder_tracks_explicit_subject_change(prefix):
+    items, _, _ = AgnesImageProvider._build_verify_checklist(
+        prompt=prefix + "左手握着杯子。", expected_speakers=["昭昭", "灿灿"], content_style="daily_story",
+    )
+    assert "（灿灿）的左手里" in dict(items)["prop_holder"]
+
+
 @pytest.fixture(autouse=True)
 def block_real_http(monkeypatch):
     """单元测试不得读取本机凭据后意外请求真实接口。"""
@@ -164,6 +188,25 @@ def test_request_failover_to_com_on_timeout() -> None:
     assert mock_request.call_args_list[0].args[1] == cn_url
     assert mock_request.call_args_list[1].args[1] == com_url
     assert provider._generation_url == com_url  # noqa: SLF001
+
+
+def test_base64_generation_discards_previous_attempt_source_url(tmp_path: Path) -> None:
+    import base64
+
+    provider = AgnesImageProvider()
+    output = tmp_path / "1.pending.png"
+    sidecar = output.with_name(output.name + ".agnes_source_url")
+    sidecar.write_text("https://example.test/previous-failed-image.png")
+    response = MagicMock()
+    response.json.return_value = {"data": [{"b64_json": base64.b64encode(b"new-image").decode()}]}
+    with (
+        patch.object(provider, "_request", return_value=response),
+        patch.object(provider, "_acquire_submit_slot"),
+        patch.object(provider, "_release_submit_slot"),
+    ):
+        provider._generate_with_key(AgnesApiKey("cn_free", "test-key"), "test", output, size="1K")
+    assert output.read_bytes() == b"new-image"
+    assert not sidecar.exists()
 
 
 def test_generate_downloads_url(tmp_path: Path) -> None:

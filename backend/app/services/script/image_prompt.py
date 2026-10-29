@@ -21,15 +21,26 @@ from app.utils.job_info import (
 # ══════════════════════════════════════════════════════════════════════
 
 # 有角色参考图时置于句首；结尾「孩子气的构图。」供质检剥离前缀
+_DAILY_T2I_WARDROBE = "昭昭保持蓝色短袖T恤、深蓝短裤，灿灿保持粉色连帽卫衣、蓝色裤子。"
 _DAILY_T2I_STYLE = (
     "基于参考图调整人物动作，保持参考图外貌，"
     "保留昭昭与灿灿的外貌、发型、服装与身高比例，"
     "只改本镜动作、表情与道具状态。"
-    "昭昭保持蓝色短袖T恤、深蓝短裤，灿灿保持粉色连帽卫衣、蓝色裤子。"
-    "儿童涂鸦蜡笔画风格，粗黑轮廓线，彩铅蜡笔涂色质感，"
+    + _DAILY_T2I_WARDROBE
+    + "儿童涂鸦蜡笔画风格，粗黑轮廓线，彩铅蜡笔涂色质感，"
     "涂色出界，手绘感，童真插画。"
     "孩子气的构图。"
 )
+
+
+def refresh_saved_daily_t2i_style(prompt: str) -> str:
+    """旧稿补上已发布的服装约束；仅识别系统旧前缀，正文逐字保留。"""
+    legacy = _DAILY_T2I_STYLE.replace(_DAILY_T2I_WARDROBE, "", 1).rstrip("。")
+    if prompt.startswith(legacy):
+        return _DAILY_T2I_STYLE.rstrip("。") + prompt[len(legacy):]
+    return prompt
+
+
 # 风格只在末尾钉一次（正面表述，无负向禁词）
 _DAILY_T2I_STYLE_LOCK_TAIL = (
     "儿童涂鸦蜡笔绘本风格，粗黑轮廓线，彩铅涂色出界，手绘童真，与参考图同质。"

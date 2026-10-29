@@ -4,8 +4,42 @@ import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from app.services.segment.image.image_agnes import AgnesImageVerifyFailed
+import pytest
+
+from app.services.segment.image.image_agnes import AgnesImageVerifyFailed, AgnesImageVerificationUnavailable
 from app.services.segment.image.image_mgr import ImageMgr, ImageProvider
+
+
+@pytest.mark.parametrize("story_setting", [None, "客厅，大家争抱枕", "昭昭手上有伤"])
+def test_existing_daily_prompt_is_corrected_before_first_generation(tmp_path: Path, story_setting) -> None:
+    mgr = ImageMgr()
+    old = "风格保持不变；画面左边是昭昭，左手捂住右手手背，右手手背红肿肿胀，双手接过抱枕。灿灿双手摊开；构图保持不变。"
+    expected = old.replace("左手捂住右手手背，", "")
+    if story_setting == "客厅，大家争抱枕":
+        expected = expected.replace("右手手背红肿肿胀，", "")
+    seg = {"id": 10, "segment_index": 10, "text": "接好了", "speakers": ["昭昭", "灿灿"], "image_prompt": old}
+    provider = MagicMock()
+    provider.describe_params.return_value = "provider=mock"
+
+    def generate(prompt, output_path, **kwargs):
+        assert prompt == expected
+        output_path.write_bytes(b"png")
+        return output_path
+
+    provider.generate.side_effect = generate
+    with (
+        patch.object(mgr, "_get_image_provider", return_value=provider),
+        patch.object(mgr, "_resolve_max_workers", return_value=1),
+        patch.object(mgr, "_persist_segment_prompt") as persist,
+        patch.object(mgr, "_regen_segment_image_prompt") as regen,
+    ):
+        job = {"script_json": {"setting": story_setting, "segments": [dict(seg)]}} if story_setting else None
+        results = mgr.generate_segment_images([seg], tmp_path, job=job, content_style="daily_story", on_image_done=lambda *_: None)
+    assert results == [(10, tmp_path / "10.png")]
+    assert seg["image_prompt"] == expected
+    provider.generate.assert_called_once()
+    persist.assert_called_once_with(seg)
+    regen.assert_not_called()
 
 
 def test_generate_segment_images_regens_prompt_after_verify_fail(tmp_path: Path) -> None:
@@ -75,6 +109,70 @@ def test_generate_segment_images_regens_prompt_after_verify_fail(tmp_path: Path)
     assert mock_regen.call_args.kwargs.get("verify_feedback") == "can_count=2"
     mock_persist.assert_called_once()
     assert "新提示词" in (seg.get("image_prompt") or "")
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_unverified_image_cannot_be_reused_as_cached_success(tmp_path: Path, existing: bool) -> None:
+    from app.services.segment.segment_mgr import SegmentMgr
+
+    mgr = ImageMgr()
+    final = tmp_path / "1.png"
+    if existing:
+        final.write_bytes(b"previous verified image")
+    seg = {"id": 1, "segment_index": 1, "text": "test", "image_prompt": "test"}
+    provider = MagicMock()
+
+    def generate(prompt, output_path, **kwargs):
+        output_path.write_bytes(b"unverified candidate")
+        raise AgnesImageVerificationUnavailable("VL timeout")
+
+    provider.generate.side_effect = generate
+    callback = MagicMock()
+    with (
+        patch.object(mgr, "_get_image_provider", return_value=provider),
+        patch.object(mgr, "_resolve_max_workers", return_value=1),
+        pytest.raises(AgnesImageVerificationUnavailable),
+    ):
+        mgr.generate_segment_images([seg], tmp_path, on_image_done=callback)
+    callback.assert_not_called()
+    assert (tmp_path / "1.pending.png").read_bytes() == b"unverified candidate"
+    if existing:
+        assert final.read_bytes() == b"previous verified image"
+        assert SegmentMgr._existing_image_path(seg, tmp_path) == final
+    else:
+        assert not final.exists()
+        assert SegmentMgr._existing_image_path(seg, tmp_path) is None
+
+
+@pytest.mark.parametrize("new_sidecar", [False, True])
+def test_verified_image_is_published_with_matching_source_url(tmp_path: Path, new_sidecar: bool) -> None:
+    mgr = ImageMgr()
+    final = tmp_path / "1.png"
+    sidecar = tmp_path / "1.png.agnes_source_url"
+    final.write_bytes(b"old")
+    sidecar.write_text("https://example.test/old.png")
+    seg = {"id": 1, "segment_index": 1, "text": "test", "image_prompt": "test"}
+    provider = MagicMock()
+
+    def generate(prompt, output_path, **kwargs):
+        assert final.read_bytes() == b"old"
+        output_path.write_bytes(b"verified")
+        if new_sidecar:
+            output_path.with_name(output_path.name + ".agnes_source_url").write_text("https://example.test/new.png")
+        return output_path
+
+    def completed(seg_id, path, elapsed):
+        assert path == final
+        assert path.read_bytes() == b"verified"
+        if new_sidecar:
+            assert sidecar.read_text() == "https://example.test/new.png"
+        else:
+            assert not sidecar.exists()
+
+    provider.generate.side_effect = generate
+    with patch.object(mgr, "_get_image_provider", return_value=provider), patch.object(mgr, "_resolve_max_workers", return_value=1):
+        assert mgr.generate_segment_images([seg], tmp_path, on_image_done=completed) == [(1, final)]
+    assert not (tmp_path / "1.pending.png").exists()
 
 
 def test_generate_segment_images_regens_prompt_after_content_policy(tmp_path: Path) -> None:
@@ -147,6 +245,33 @@ def test_generate_segment_images_regens_prompt_after_content_policy(tmp_path: Pa
     assert "温和新提示词" in (seg.get("image_prompt") or "")
 
 
+@pytest.mark.parametrize("floor_scene", [False, True])
+def test_exhausted_verification_never_publishes_image(tmp_path: Path, floor_scene: bool) -> None:
+    mgr = ImageMgr()
+    seg = {"id": 1, "segment_index": 1, "text": "test", "image_prompt": "test"}
+    job = {"script_json": {"setting": "test", "segments": [dict(seg)]}}
+    provider = MagicMock()
+
+    def generate(prompt, output_path, **kwargs):
+        output_path.write_bytes(b"failed QC")
+        raise AgnesImageVerifyFailed("failed", output_path=output_path, prompt=prompt)
+
+    provider.generate.side_effect = generate
+    done = MagicMock()
+    with (
+        patch.object(mgr, "_get_image_provider", return_value=provider),
+        patch.object(mgr, "_resolve_max_workers", return_value=1),
+        patch.object(mgr, "_persist_segment_prompt"),
+        patch.object(mgr, "_regen_segment_image_prompt", return_value="test"),
+        patch("app.services.script.image_prompt._daily_setting_floor_shoe_scene", return_value=floor_scene),
+        patch("app.services.script.image_prompt.assemble_daily_image_prompts"),
+    ):
+        assert mgr.generate_segment_images([seg], tmp_path, job=job, content_style="daily_story", on_image_done=done) == []
+    done.assert_not_called()
+    assert provider.generate.call_count == 2
+    assert not (tmp_path / "1.png").exists()
+
+
 def test_generate_segment_images_skips_after_prompt_regen_fail(
     tmp_path: Path,
 ) -> None:
@@ -180,7 +305,7 @@ def test_generate_segment_images_skips_after_prompt_regen_fail(
 
     def _gen(prompt, output_path, **kwargs):
         output_path.write_bytes(b"png")
-        if output_path.name == "4.png":
+        if output_path.name == "4.pending.png":
             raise AgnesImageVerifyFailed(
                 "fail", output_path=output_path, prompt=prompt
             )
@@ -303,7 +428,7 @@ def test_on_image_done_fires_before_all_spawns_finish(tmp_path: Path) -> None:
             return "provider=fake"
 
         def generate(self, prompt, output_path, **kwargs):  # noqa: ANN001, ANN003
-            idx = int(output_path.stem)
+            idx = int(output_path.name.split(".")[0])
             if idx <= 2:
                 gevent.sleep(0.05)
                 output_path.write_bytes(b"png")

@@ -348,6 +348,7 @@ class ImageMgr:
 
         from app.utils.job_info import CONTENT_STYLE_DAILY_STORY, content_style_from_job
         style = content_style or (content_style_from_job(job) if job else None)
+        injury_active = None
         if style == CONTENT_STYLE_DAILY_STORY:
             from app.services.daily_story.speaker import annotate_sticky_stage_speakers
 
@@ -360,6 +361,8 @@ class ImageMgr:
                     raw = sj.get('segments')
                     if isinstance(raw, list) and raw:
                         full_segs = raw
+                        from app.services.script.visual_brief import hand_injury_story_active
+                        injury_active = hand_injury_story_active(setting, full_segs)
             annotate_sticky_stage_speakers(full_segs, setting=setting)
             by_idx = {
                 int(s.get('segment_index') or 0): s
@@ -380,8 +383,17 @@ class ImageMgr:
             else:
                 prompt = seg.get('image_prompt') or seg['text']
             from app.services.intro.cover_layout import _subject_has_map_keyword
-            from app.services.script.image_prompt import strip_verify_regen_leak
+            from app.services.script.image_prompt import strip_verify_regen_leak, refresh_saved_daily_t2i_style
             prompt = strip_verify_regen_leak(str(prompt))
+            if style == CONTENT_STYLE_DAILY_STORY:
+                from app.services.script.visual_brief import normalize_injected_hand_injury
+                corrected = normalize_injected_hand_injury(
+                    refresh_saved_daily_t2i_style(prompt), injury_active=injury_active,
+                )
+                if corrected != prompt:
+                    prompt = corrected
+                    seg['image_prompt'] = prompt
+                    self._persist_segment_prompt(seg)
             raw_ip = str(seg.get('image_prompt') or '').strip()
             if raw_ip and prompt != raw_ip and (
                 '出图质检连续未通过' in raw_ip or '出图被内容策略拦截' in raw_ip
@@ -428,7 +440,10 @@ class ImageMgr:
             seq = started
             index = seg['segment_index']
             t0 = time.time()
-            out = images_dir / f'{index}.png'
+            published = images_dir / f'{index}.png'
+            # 缓存恢复只认正式路径；超时/取消留下的候选图不可绕过质检。
+            out = images_dir / f'{index}.pending.png'
+            out.with_name(out.name + '.agnes_source_url').unlink(missing_ok=True)
             prompt = _build_prompt(seg)
             expected_speakers = _speakers(seg)
             logger.info('image %s/%s generating segment %s | %s | prompt_chars=%s | speakers=%s | out=%s', seq, total, index, params_desc, len(prompt), expected_speakers, out.name)
@@ -545,13 +560,6 @@ class ImageMgr:
                     params_desc,
                     exc,
                 )
-                if kind == 'verify' and _floor_shoe_scene() and out.exists():
-                    logger.warning(
-                        'image segment %s verify failed on floor-shoe scene; keep last png',
-                        index,
-                    )
-                    elapsed = time.time() - t0
-                    return (seg['id'], out, elapsed)
                 if out.exists():
                     try:
                         out.unlink()
@@ -563,9 +571,16 @@ class ImageMgr:
             except Exception as exc:
                 logger.error('image %s/%s FAILED segment %s after %.1fs | %s | err=%s', seq, total, index, time.time() - t0, params_desc, exc)
                 raise
+            out.replace(published)
+            source_url = out.with_name(out.name + '.agnes_source_url')
+            published_url = published.with_name(published.name + '.agnes_source_url')
+            if source_url.exists():
+                source_url.replace(published_url)
+            else:
+                published_url.unlink(missing_ok=True)
             elapsed = time.time() - t0
-            logger.info('image %s/%s done segment %s in %.1fs | %s | bytes=%s', seq, total, index, elapsed, params_desc, out.stat().st_size if out.exists() else 0)
-            return (seg['id'], out, elapsed)
+            logger.info('image %s/%s done segment %s in %.1fs | %s | bytes=%s', seq, total, index, elapsed, params_desc, published.stat().st_size)
+            return (seg['id'], published, elapsed)
         results: list[tuple[int, Path]] = []
         skipped = 0
         from gevent import iwait
