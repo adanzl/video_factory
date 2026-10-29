@@ -26,16 +26,20 @@ class SegmentProduceResult:
     clips: SegmentClipsResult
 
 
-# daily_story / chat：角色定妆合影（左昭昭右灿灿）
-_CHAT_HOSTS_REF_URL = (
-    "https://raw.githubusercontent.com/adanzl/video_factory/main/"
-    "backend/res/host/crayon/hosts.png"
-)
+def _chat_hosts_ref_path() -> Path:
+    """仓库内定妆合影（左昭昭右灿灿）。提交时编成 base64，不把 URL 交给上游。"""
+    return (
+        Path(__file__).resolve().parents[3]
+        / "res"
+        / "host"
+        / "crayon"
+        / "hosts.png"
+    )
 
 
 def _resolve_chat_ref_images() -> list[Path | str]:
-    """chat 流水线角色参考图（GitHub hosts.png）。"""
-    return [_CHAT_HOSTS_REF_URL]
+    """chat 流水线角色参考图（本地 hosts.png）。"""
+    return [_chat_hosts_ref_path()]
 
 
 class SegmentMgr:

@@ -21,6 +21,13 @@ class AgnesI2VError(RuntimeError, JobStageFailureError):
     """图生视频 API 调用失败（重试耗尽、任务失败等），消息即原因。"""
 
 
+class AgnesSourceUnavailable(AgnesI2VError):
+    """上游下载素材 URL 失败（source_unavailable）。
+
+    图片提交已改为本地 Data URI。若仍收到此错误，不要对同一请求空转重试。
+    """
+
+
 class AgnesUpstreamUnavailable(AgnesI2VError):
     """上游 5xx / 连接错误：与密钥、请求内容无关，应冷却等待而非换 key。
 
@@ -273,6 +280,27 @@ def is_agnes_quota_exceeded(*, status_code: int | None=None, body: dict | str | 
         return True
     text = _collect_error_text(status_code=status_code, body=body, message=message)
     return any((keyword in text for keyword in _QUOTA_KEYWORDS))
+
+
+# 国内站拉不到 GitHub / 海外 CDN 时的 400。英文句子是 VL 拉图失败的旧报文。
+_SOURCE_UNAVAILABLE_NEEDLES = (
+    "source_unavailable",
+    "素材 url 下载失败",
+    "timed out while downloading media url",
+    "error while loading data imagedata",
+    "exception occurred while loading image data",
+    "loading image data at index",
+)
+
+
+def is_agnes_source_unavailable(
+    *,
+    body: dict | str | None = None,
+    message: str | None = None,
+) -> bool:
+    """Agnes 自己去拉素材 URL 失败（超时或源站不可达）。"""
+    text = _collect_error_text(body=body, message=message)
+    return any(needle in text for needle in _SOURCE_UNAVAILABLE_NEEDLES)
 
 def agnes_quota_exceeded_from_exception(exc: BaseException) -> bool:
     if isinstance(exc, AgnesQuotaExceeded):

@@ -39,6 +39,14 @@ def _parse_stage_body() -> tuple[int, bool]:
     return parse_id(data), parse_bool(data, "to_end", default=False)
 
 
+def _read_fill_flag() -> bool:
+    data = get_json_body()
+    fill = parse_bool(data, "fill", default=False)
+    if fill and parse_bool(data, "to_end", default=False):
+        raise APIError("to_end 与 fill 不能同时使用", status_code=400)
+    return fill
+
+
 def _accept_stage(job_id: int, submit) -> tuple:
     job_mgr.get_job(job_id)
     try:
@@ -122,6 +130,7 @@ def run_script_route():
         content_style,
         segment_index,
     ) = _parse_script_body()
+    fill = _read_fill_flag()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_script(
@@ -140,6 +149,7 @@ def run_script_route():
             orientation=orientation,
             content_style=content_style,  # type: ignore[arg-type,assignment]
             segment_index=segment_index,
+            fill=fill,
         ),
     )
 
@@ -294,6 +304,7 @@ def run_intro_route():
     job_id, to_end, hold_tail_sec, orientation, orientation_preference, intro_category = (
         _parse_intro_body()
     )
+    fill = _read_fill_flag()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_intro(
@@ -303,6 +314,7 @@ def run_intro_route():
             orientation=orientation,
             orientation_preference=orientation_preference,
             intro_category=intro_category,
+            fill=fill,
         ),
     )
 
@@ -346,6 +358,7 @@ def run_tts_route():
     speaker_configs = data.get("speaker_configs")
     if speaker_configs is not None and not isinstance(speaker_configs, dict):
         speaker_configs = None
+    fill = _read_fill_flag()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_tts(
@@ -354,6 +367,7 @@ def run_tts_route():
             speech_rate=speech_rate,
             voice_id=voice_id,
             speaker_configs=speaker_configs,
+            fill=fill,
         ),
     )
 
@@ -390,6 +404,7 @@ def _parse_segment_body() -> tuple[int, bool, list[int] | None, str | None, str 
 @bp.post("/segment/all")
 def run_segment_all_route():
     job_id, to_end, segment_indices, image_provider, video_provider = _parse_segment_body()
+    fill = _read_fill_flag()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_segment_all(
@@ -398,6 +413,7 @@ def run_segment_all_route():
             segment_indices=segment_indices,
             image_provider=image_provider,
             video_provider=video_provider,
+            fill=fill,
         ),
     )
 
@@ -405,6 +421,7 @@ def run_segment_all_route():
 @bp.post("/segment/images")
 def run_segment_images_route():
     job_id, to_end, segment_indices, image_provider, _video_provider = _parse_segment_body()
+    fill = _read_fill_flag()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_segment_images(
@@ -412,6 +429,7 @@ def run_segment_images_route():
             to_end=to_end,
             segment_indices=segment_indices,
             image_provider=image_provider,
+            fill=fill,
         ),
     )
 
@@ -419,6 +437,7 @@ def run_segment_images_route():
 @bp.post("/segment/clips")
 def run_segment_clips_route():
     job_id, to_end, segment_indices, _image_provider, video_provider = _parse_segment_body()
+    fill = _read_fill_flag()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_segment_clips(
@@ -426,6 +445,7 @@ def run_segment_clips_route():
             to_end=to_end,
             segment_indices=segment_indices,
             video_provider=video_provider,
+            fill=fill,
         ),
     )
 
@@ -433,7 +453,8 @@ def run_segment_clips_route():
 @bp.post("/prepare")
 def run_prepare_route():
     job_id, to_end = _parse_stage_body()
-    return _accept_stage(job_id, lambda: job_mgr.run_prepare(job_id, to_end=to_end))
+    fill = _read_fill_flag()
+    return _accept_stage(job_id, lambda: job_mgr.run_prepare(job_id, to_end=to_end, fill=fill))
 
 
 @bp.post("/resume")
@@ -454,6 +475,9 @@ def run_merge_route():
     data = get_json_body()
     job_id = parse_id(data)
     to_end = parse_bool(data, "to_end", default=False)
+    fill = parse_bool(data, "fill", default=False)
+    if fill and to_end:
+        raise APIError("to_end 与 fill 不能同时使用", status_code=400)
     bgm = data.get("bgm") if "bgm" in data else None
     subtitle = data.get("subtitle") if "subtitle" in data else None
     xfade = data.get("xfade") if "xfade" in data else None
@@ -461,7 +485,7 @@ def run_merge_route():
         return _accept_stage(
             job_id,
             lambda: job_mgr.run_merge(
-                job_id, to_end=to_end, bgm=bgm, subtitle=subtitle, xfade=xfade
+                job_id, to_end=to_end, bgm=bgm, subtitle=subtitle, xfade=xfade, fill=fill
             ),
         )
     except ValueError as exc:

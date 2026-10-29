@@ -29,6 +29,7 @@ export interface StageActionConfig {
 export interface RunStageActionPayload {
   id: number;
   to_end: boolean;
+  fill?: boolean;
   segments?: number[];
   hold_tail_sec?: number;
   orientation?: "portrait" | "landscape" | "auto";

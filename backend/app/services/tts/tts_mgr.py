@@ -74,6 +74,7 @@ class TTSClient:
         *,
         voice: str | None = None,
         speech_rate: float | None = None,
+        reuse_existing: bool = False,
     ) -> TTSResult:
         raise NotImplementedError
 
@@ -149,6 +150,7 @@ class TTSMgr:
         *,
         voice: str | None = None,
         speech_rate: float | None = None,
+        reuse_existing: bool = False,
     ) -> TTSResult:
         return self._get_client().synthesize(
             narration,
@@ -156,6 +158,7 @@ class TTSMgr:
             output_dir,
             voice=voice,
             speech_rate=speech_rate,
+            reuse_existing=reuse_existing,
         )
 
     def synthesize_utterance(

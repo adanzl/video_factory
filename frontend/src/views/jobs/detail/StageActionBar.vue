@@ -15,10 +15,21 @@
       type="success"
       :loading="loading"
       :disabled="disabled"
-      size="small"  
+      size="small"
       @click="$emit('toEnd')"
     >
       {{ toEndLabel }}
+    </el-button>
+    <el-button
+      v-if="showFill"
+      type="warning"
+      :loading="loading"
+      :disabled="disabled"
+      size="small"
+      :title="fillTitle"
+      @click="$emit('fill')"
+    >
+      {{ fillLabel }}
     </el-button>
     <slot name="extra" />
     <span v-if="disabledReason" class="text-sm text-gray-400">{{ disabledReason }}</span>
@@ -36,8 +47,11 @@ withDefaults(
     disabledReason?: string;
     primaryLabel?: string;
     toEndLabel?: string;
+    fillLabel?: string;
+    fillTitle?: string;
     showPrimary?: boolean;
     showToEnd?: boolean;
+    showFill?: boolean;
   }>(),
   {
     loading: false,
@@ -45,13 +59,17 @@ withDefaults(
     disabledReason: "",
     primaryLabel: "生成",
     toEndLabel: "从此成片",
+    fillLabel: "补全成片",
+    fillTitle: "保留已有数据，只补缺失，然后跑完流水线",
     showPrimary: true,
     showToEnd: true,
+    showFill: true,
   }
 );
 
 defineEmits<{
   primary: [];
   toEnd: [];
+  fill: [];
 }>();
 </script>

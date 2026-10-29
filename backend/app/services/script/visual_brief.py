@@ -1122,6 +1122,7 @@ def _format_enriched_subject_clause(
     sub: dict | None,
     *,
     side: str | None = None,
+    compare_height: bool = True,
 ) -> str:
     sub = sub or {}
     posture = str(sub.get("posture") or "").strip()
@@ -1131,10 +1132,11 @@ def _format_enriched_subject_clause(
     if not bits:
         return ""
     if side:
-        tail = bits[1:] if bits[0].startswith(("站", "蹲", "坐")) else bits
+        # 左右站位可替代默认站姿，但不能删掉坐、蹲等实际动作。
+        tail = [b for b in ("" if posture.startswith("站") else posture, action, expr) if b]
         tail_text = "，".join(tail)
         head = f"画面{side}是{name}"
-        if name == "灿灿":
+        if name == "灿灿" and compare_height:
             head += "，比昭昭高一点"
         return head + (f"，{tail_text}" if tail_text else "")
     head = bits[0]
@@ -1142,6 +1144,20 @@ def _format_enriched_subject_clause(
         head = name + head
     tail = "，".join(bits[1:])
     return head + (f"，{tail}" if tail else "")
+
+
+def daily_standing_height_comparable(seg: dict) -> bool:
+    """仅全员明确站立时比较画面高度；无结构化姿态的旧稿沿用原规则。"""
+    subjects = seg.get("visual_subjects")
+    if not subjects:
+        return True
+    if not isinstance(subjects, list):
+        return False
+    return all(
+        isinstance(subject, dict)
+        and bool(re.match(r"^(?:站|立)", str(subject.get("posture") or "").strip()))
+        for subject in subjects
+    )
 
 
 def enrich_thin_daily_visual_brief(seg: dict, setting: str | None = None) -> str:
@@ -1196,7 +1212,8 @@ def enrich_thin_daily_visual_brief(seg: dict, setting: str | None = None) -> str
     for kid, side in (("昭昭", "左边"), ("灿灿", "右边")):
         if kid in speakers:
             line = _format_enriched_subject_clause(
-                kid, subject_map.get(kid), side=side
+                kid, subject_map.get(kid), side=side,
+                compare_height=daily_standing_height_comparable(seg),
             )
             if line:
                 char_lines.append(line)

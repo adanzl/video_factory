@@ -26,7 +26,9 @@ from app.services.llm.llm_agnes import (
     AgnesContentPolicyError,
     AgnesI2VError,
     AgnesQuotaExceeded,
+    AgnesSourceUnavailable,
     AgnesUpstreamUnavailable,
+    is_agnes_source_unavailable,
     agnes_api_base_from_url,
     agnes_api_keys,
     agnes_apply_host_failover,
@@ -621,22 +623,8 @@ def _encode_image_data_uri(path: Path) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
-def _read_agnes_source_url(image_path: Path) -> str | None:
-    """文生图若由 Agnes 返回 CDN URL，侧车文件可直接供图生视频引用。"""
-    sidecar = image_path.with_name(image_path.name + ".agnes_source_url")
-    if not sidecar.is_file():
-        return None
-    url = sidecar.read_text(encoding="utf-8").strip()
-    if url.startswith(("http://", "https://")):
-        return url
-    return None
-
-
 def _resolve_i2v_image(image_path: Path) -> str:
-    source_url = _read_agnes_source_url(image_path)
-    if source_url:
-        logger.info("agnes i2v image: using Agnes CDN URL from sidecar (%s)", source_url[:80])
-        return source_url
+    """首帧一律用本地分镜图的 Data URI。侧车 CDN 交给国内站经常拉不到。"""
     logger.info(
         "agnes i2v image: using Data URI (%s, %s bytes)",
         image_path.name,
@@ -1061,6 +1049,13 @@ class AgnesClipProvider(ClipProvider):
                     wait = _backoff_seconds(attempt)
                     time.sleep(wait)
                     continue
+                if label == "submit" and resp.status_code == 400:
+                    body = _response_body(resp)
+                    if is_agnes_source_unavailable(body=body):
+                        # 400 换 URL 重试没有意义，交给上层换 Key 或失败
+                        raise AgnesSourceUnavailable(
+                            "agnes source_unavailable: " + _body_summary_for_log(body)
+                        )
                 if resp.status_code == 429:
                     body = _response_body(resp)
                     # 429=RPM 窗口：冻结该池并立刻换下一把 key，不在同 key 上睡满窗口
@@ -1082,6 +1077,8 @@ class AgnesClipProvider(ClipProvider):
                 resp.raise_for_status()
                 return resp
             except AgnesQuotaExceeded:
+                raise
+            except AgnesSourceUnavailable:
                 raise
             except requests.Timeout as exc:
                 last_exc = exc
@@ -1346,6 +1343,8 @@ class AgnesClipProvider(ClipProvider):
                     key_label=api_key.label,
                 )
             except AgnesQuotaExceeded:
+                raise
+            except AgnesSourceUnavailable:
                 raise
             except RuntimeError as exc:
                 last_exc = exc

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import copy
 
 import pytest
 
@@ -17,6 +18,57 @@ from app.services.script.image_prompt import (
 )
 from app.services.segment.clip.video_agnes import _stabilize_motion_prompt
 from app.utils.job_info import apply_keyframe_video_providers, is_keyframe_segment
+
+
+@pytest.mark.parametrize("name", ["昭昭", "灿灿", "妈妈", "爸爸"])
+@pytest.mark.parametrize("posture", ["坐在椅子上", "蹲在地垫旁", "跪在地垫上", "趴在地垫上", "躺在沙发上"])
+def test_structured_pose_survives_prompt_assembly_without_height_conflict(name, posture):
+    from app.services.script.visual_brief import render_visual_subjects
+
+    subjects = [{"name": n, "posture": "站在地垫旁", "action": "双手摊开", "expression": "皱眉"}
+                for n in ("昭昭", "灿灿", "妈妈", "爸爸")]
+    next(s for s in subjects if s["name"] == name)["posture"] = posture
+    seg = {"segment_index": 1, "shot_type": "中景", "speakers": [s["name"] for s in subjects],
+           "visual_subjects": subjects, "visual_brief": render_visual_subjects(subjects),
+           "object_states": [{"object": "绘本", "position": "茶几上", "state": "合上"}],
+           "dialogue": [{"speaker": "昭昭", "text": "这是怎么回事？"}]}
+    before = copy.deepcopy(subjects)
+    prompt = assemble_daily_t2i_prompt(seg, setting="客厅")
+    assert posture in prompt
+    assert "比昭昭高一点" not in prompt
+    assert "最高" not in prompt
+    assert "四人同框" in prompt
+    assert "三人" not in prompt
+    assert subjects == before
+
+
+@pytest.mark.parametrize("brief", ["", "画面从左到右是昭昭、妈妈、灿灿。", "画面左边是昭昭，右边是灿灿。"])
+def test_four_roles_are_preserved_in_composition(brief):
+    from app.services.script.image_prompt import _daily_layout_speakers
+
+    seg = {"speakers": ["昭昭", "灿灿", "妈妈", "爸爸"], "shot_type": "中景", "visual_brief": brief}
+    layout = _daily_layout_speakers(seg, brief)
+    assert set(layout) == set(seg["speakers"])
+    prompt = assemble_daily_t2i_prompt(seg)
+    assert "四人同框" in prompt
+    assert "全画面仅有昭昭、妈妈、灿灿、爸爸四人" in prompt
+    assert "三人" not in prompt
+
+
+def test_missing_posture_does_not_drop_action_starting_with_pose():
+    from app.services.script.visual_brief import _format_enriched_subject_clause
+
+    assert "坐下翻绘本" in _format_enriched_subject_clause(
+        "灿灿", {"action": "坐下翻绘本", "expression": "皱眉"}, side="右边"
+    )
+
+
+def test_height_comparison_only_for_known_standing_cast():
+    from app.services.script.visual_brief import daily_standing_height_comparable
+
+    assert daily_standing_height_comparable({})
+    assert daily_standing_height_comparable({"visual_subjects": [{"posture": "站在床边"}, {"posture": "立在墙边"}]})
+    assert not daily_standing_height_comparable({"visual_subjects": [{"posture": "站在床边"}, {}]})
 
 
 def test_assemble_daily_t2i_prompt_structure():
@@ -35,6 +87,7 @@ def test_assemble_daily_t2i_prompt_structure():
     prompt = assemble_daily_t2i_prompt(seg)
     assert prompt.startswith("基于参考图调整人物动作")
     assert "保持参考图外貌" in prompt
+    assert "昭昭保持蓝色短袖T恤、深蓝短裤，灿灿保持粉色连帽卫衣、蓝色裤子。" in prompt
     assert "儿童涂鸦蜡笔画风格" in prompt
     assert "绝不允许" not in prompt
     assert "禁用" not in prompt
@@ -1826,7 +1879,7 @@ def test_script_stage_blocks_stale_source_before_llm(app_ctx, monkeypatch):
     from worker.stages.daily_story.script import DailyScriptStage, llm_mgr
     did = repo_daily_story.insert_story(theme="旧稿", story={"dialogue": [], "quality": {"source_stale": True}}, status="review_pending")
     monkeypatch.setattr(llm_mgr, "generate_daily_script", lambda *a, **k: pytest.fail("stale source must not reach generation"))
-    ctx = SimpleNamespace(job={"id": 1, "info": json.dumps({"daily_story_id": did})}, script_speech_chars_per_sec=4)
+    ctx = SimpleNamespace(fill_missing=False, job={"id": 1, "info": json.dumps({"daily_story_id": did})}, script_speech_chars_per_sec=4)
     with pytest.raises(JobStageFailureError, match="重新转换对话"):
         DailyScriptStage().run(ctx)
 
@@ -1868,7 +1921,7 @@ def test_script_stage_cannot_persist_old_results_after_draft_changes(app_ctx, mo
     monkeypatch.setattr(llm_mgr, "fill_visual_briefs", visual)
     monkeypatch.setattr(llm_mgr, "fill_image_prompts_with_retries", image)
     monkeypatch.setattr(image_prompt, "wrap_image_prompts", lambda *a, **k: None)
-    ctx = SimpleNamespace(job=job, script_speech_chars_per_sec=4, script_skip_title_optimize=True)
+    ctx = SimpleNamespace(fill_missing=False, job=job, script_speech_chars_per_sec=4, script_skip_title_optimize=True)
     if change is None:
         DailyScriptStage().run(ctx)
         assert len(repo_segment.list_segments(jid)) == 1
@@ -1890,7 +1943,7 @@ def test_script_stage_rejects_zero_usable_segments_before_writing(app_ctx, monke
     job = repo_job.create_job("整理", info={"daily_story_id": did}, script_json={"previous": True})
     monkeypatch.setattr(llm_mgr, "generate_daily_script", lambda *a, **k: {"scenes": [{"dialogue": dialogue}]})
     monkeypatch.setattr(llm_mgr, "fill_visual_briefs", lambda *a, **k: pytest.fail("empty storyboard reached visual generation"))
-    ctx = SimpleNamespace(job=job, script_speech_chars_per_sec=4, script_skip_title_optimize=True)
+    ctx = SimpleNamespace(fill_missing=False, job=job, script_speech_chars_per_sec=4, script_skip_title_optimize=True)
     with pytest.raises(JobStageFailureError, match="没有有效对白"):
         DailyScriptStage().run(ctx)
     assert repo_job.get_job(job["id"])["script_json"] == {"previous": True}

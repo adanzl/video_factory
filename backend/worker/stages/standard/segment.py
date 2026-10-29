@@ -33,7 +33,14 @@ class SegmentStage(StageExecutor):
         image_provider = resolve_image_provider(job)
         video_provider = resolve_video_provider(job)
         audio_path = Path(job['audio_path']) if job.get('audio_path') else None
-        produce_scope = ctx.segment_scope or 'all'
+        produce_scope = 'all' if ctx.fill_missing else (ctx.segment_scope or 'all')
+        segment_indices = None if ctx.fill_missing else ctx.segment_indices_set()
+        if ctx.fill_missing:
+            from app.services.job.job_fill import segment_media_ready
+            if segment_media_ready(segments, ctx.media_dir):
+                with atomic():
+                    repo_job_log.append_log(ctx.job['id'], self.name, 'segment media already complete, skip')
+                return
 
         def _merge_info(info_raw: str | None, key: str, value: float) -> str | None:
             info: dict = {}
@@ -66,7 +73,9 @@ class SegmentStage(StageExecutor):
             logger.info('segment clip persisted: seg_id=%s path=%s gen_sec=%.1f', seg_id, path.name, gen_sec)
         on_image_done = persist_segment_image if produce_scope in {'all', 'images'} else None
         on_clip_done = persist_segment_clip if produce_scope in {'all', 'clips'} else None
-        result = segment_mgr.produce_segments(segments=segments, media_dir=ctx.media_dir, audio_path=audio_path, only_segment_indices=ctx.segment_indices_set(), scope=produce_scope, job=job, on_image_done=on_image_done, on_clip_done=on_clip_done)
+        result = segment_mgr.produce_segments(segments=segments, media_dir=ctx.media_dir, audio_path=audio_path, only_segment_indices=segment_indices, scope=produce_scope, job=job, on_image_done=on_image_done, on_clip_done=on_clip_done)
+        if ctx.fill_missing:
+            ctx.note_filled()
         image_by_id = dict(result.image_paths)
         clip_by_id = dict(result.clips.segment_clip_paths)
         segments_for_qc = []

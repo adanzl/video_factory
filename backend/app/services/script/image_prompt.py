@@ -25,6 +25,7 @@ _DAILY_T2I_STYLE = (
     "基于参考图调整人物动作，保持参考图外貌，"
     "保留昭昭与灿灿的外貌、发型、服装与身高比例，"
     "只改本镜动作、表情与道具状态。"
+    "昭昭保持蓝色短袖T恤、深蓝短裤，灿灿保持粉色连帽卫衣、蓝色裤子。"
     "儿童涂鸦蜡笔画风格，粗黑轮廓线，彩铅蜡笔涂色质感，"
     "涂色出界，手绘感，童真插画。"
     "孩子气的构图。"
@@ -55,8 +56,8 @@ _FLOOR_SHOE_COUNT_LEAD = (
     "昭昭脚上穿着蓝白运动鞋。"
 )
 _FLOOR_SHOE_CAST_LOCK = "全画面仅有昭昭、灿灿两位儿童。"
-# 三人同框人数硬锁：防止 T2I 在复杂多人镜里额外加路人（cast_count 超员）
-_DAILY_CAST_LOCK_3 = "全画面仅有{}、{}、{}三人，不得出现其他任何人物。"
+# 多人同框人数由完整出场名单决定。
+_DAILY_CAST_LOCK = "全画面仅有{}{}人，不得出现其他任何人物。"
 # form 已含位置词（背在背上/握在手中/挎在腰间…）时，渲染以 form 为准，
 # 避免与 holder 渲染的「在X手中」并存成矛盾句（书包“手中+背上”同屏）
 _FORM_POSITION_RE = re.compile(
@@ -124,6 +125,15 @@ _SCENE_ANCHOR_ORDER = (
 )
 # 台词/setting 出现这些词时，画面必须有一台电视（T2I 场景锚点补「电视」）
 _TV_TRIGGER_WORDS = ("电视", "动画片", "看新闻", "霸占电视", "电视柜")
+
+
+def scene_has_room_door(text: str) -> bool:
+    """房门规则不适用于家电、柜体、车辆或电梯的门。"""
+    without_object_doors = re.sub(
+        r"(?:冰箱|冷柜|烤箱|微波炉|洗衣机|衣柜|橱柜|书柜|柜|车|电梯)门",
+        "", text or "",
+    )
+    return "门" in without_object_doors
 
 
 def _lock_living_room_long_sofa(text: str) -> str:
@@ -1049,7 +1059,7 @@ def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
     if m3:
         names = _keep([g for g in m3.groups() if g])
         if len(names) == 3 and len(set(names)) == 3:
-            return names
+            return names + [n for n in _daily_speakers_of(seg) if n not in names]
     m = _DAILY_LR_RE.search(vb or "")
     if m:
         left, right = m.group(1), m.group(2)
@@ -1076,7 +1086,7 @@ def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
     if set(speakers) >= {"昭昭", "灿灿", "爸爸"} and "妈妈" not in speakers:
         return ["昭昭", "爸爸", "灿灿"]
     if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
-        return ["昭昭", "妈妈", "灿灿"]
+        return ["昭昭", "妈妈", "灿灿", *[s for s in speakers if s not in {"昭昭", "妈妈", "灿灿"}]]
     if "昭昭" in speakers and "灿灿" in speakers:
         rest = [s for s in speakers if s not in ("昭昭", "灿灿")]
         return ["昭昭", "灿灿", *rest]
@@ -1233,16 +1243,18 @@ def _daily_composition(
     )
     has_lcr = bool(_DAILY_LCR_RE.search(vb_text))
     if len(names) >= 3:
-        a, b, c = names[0], names[1], names[2]
-        lr = "" if (has_lcr or has_lr) else f"画面从左到右是{a}、{b}、{c}。"
+        cast = "、".join(names)
+        count = {3: "三", 4: "四"}.get(len(names), str(len(names)))
+        lr = "" if (has_lcr or has_lr) else f"画面从左到右是{cast}。"
+        cast_lock = _DAILY_CAST_LOCK.format(cast, count)
         if shot_type == "特写":
             return (
                 f"{lr}中近景特写，上半身同框。"
-                f"{_DAILY_CAST_LOCK_3.format(a, b, c)}"
+                f"{cast_lock}"
             )
         return (
-            f"{lr}中景三人同框，全身可见。"
-            f"{_DAILY_CAST_LOCK_3.format(a, b, c)}"
+            f"{lr}中景{count}人同框，全身可见。"
+            f"{cast_lock}"
         )
     if shot_type == "特写":
         if len(names) == 2:
@@ -1484,11 +1496,14 @@ def assemble_daily_t2i_prompt(
         s3_parts.append(_DAILY_CHAR_MOM)
     if "爸爸" in speakers:
         s3_parts.append(_DAILY_CHAR_DAD)
-    if "爸爸" in speakers and "妈妈" in speakers:
+    from app.services.script.visual_brief import daily_standing_height_comparable
+
+    compare_height = daily_standing_height_comparable(seg)
+    if compare_height and "爸爸" in speakers and "妈妈" in speakers:
         s3_parts.append(_DAILY_CHAR_HEIGHT_DAD)
-    elif "爸爸" in speakers:
+    elif compare_height and "爸爸" in speakers:
         s3_parts.append(_DAILY_CHAR_HEIGHT_DAD_ONLY)
-    elif "妈妈" in speakers and {"昭昭", "灿灿"} <= set(speakers):
+    elif compare_height and "妈妈" in speakers and {"昭昭", "灿灿"} <= set(speakers):
         s3_parts.append(_DAILY_CHAR_HEIGHT_MOM)
     s3 = "".join(s3_parts)
 
@@ -1496,7 +1511,7 @@ def assemble_daily_t2i_prompt(
     s4_parts: list[str] = []
     if vb:
         s4_parts.append(vb)
-        if "门" in vb and "完整门板" not in vb:
+        if scene_has_room_door(vb) and "完整门板" not in vb:
             s4_parts.append("画面中的门是一扇单开门，一块完整门板")
         if ("风" in vb or "吹" in vb) and ("头发" in vb or "马尾" in vb):
             if "连着头皮" not in vb:

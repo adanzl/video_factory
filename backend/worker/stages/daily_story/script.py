@@ -48,6 +48,11 @@ class DailyScriptStage(StageExecutor):
     name = 'script'
 
     def run(self, ctx: JobContext) -> None:
+        if ctx.fill_missing:
+            from app.services.job.job_fill import fill_existing_script, mark_script_rebuilt
+            if fill_existing_script(ctx, self.name):
+                return
+            mark_script_rebuilt(ctx)
         job_id = ctx.job['id']
         info = parse_job_info(ctx.job.get('info'))
         daily_story_id = info.get('daily_story_id')

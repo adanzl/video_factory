@@ -62,6 +62,7 @@
         "noprint",
         "noprogress",
         "nowebui",
+        "nums",
         "opencode",
         "outtmpl",
         "oversaturated",

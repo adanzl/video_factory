@@ -1,7 +1,7 @@
 <template>
   <div :class="STAGE_ROOT_CLASS">
     <StageActionBar :loading="submitting" :disabled="actionDisabled" :disabled-reason="actionDisabledReason"
-      @primary="handleRun(false)" @to-end="handleRun(true)" />
+      @primary="handleRun(false)" @to-end="handleRun(true)" @fill="handleRun(false, true)" />
 
     <div :class="STAGE_BODY_CLASS">
     <div class="mb-4 rounded-lg border border-gray-200 p-4">
@@ -387,7 +387,7 @@ import {
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "../detail/StageActionBar.vue";
 import StageLogsSection from "../detail/StageLogsSection.vue";
-import { STAGE_BODY_CLASS, STAGE_ROOT_CLASS } from "../detail/stageLayout";
+import { FILL_CONFIRM_MESSAGE, STAGE_BODY_CLASS, STAGE_ROOT_CLASS } from "../detail/stageLayout";
 
 const DESC_LABEL_WIDTH = "80px";
 
@@ -744,9 +744,12 @@ const handleOrientationChange = (value: "portrait" | "landscape") => {
   void persistJobProfile({ orientation: value });
 };
 
-async function handleRun(toEnd: boolean) {
+async function handleRun(toEnd: boolean, fill = false) {
   try {
-    await ElMessageBox.confirm("确认重新生成分镜脚本？已有结果将被覆盖。", "确认", {
+    await ElMessageBox.confirm(
+      fill ? FILL_CONFIRM_MESSAGE : "确认重新生成分镜脚本？已有结果将被覆盖。",
+      "确认",
+      {
       confirmButtonText: "确认",
       cancelButtonText: "取消",
       type: "warning",
@@ -758,7 +761,8 @@ async function handleRun(toEnd: boolean) {
   try {
     const payload: RunStageActionPayload = {
       id: props.job.id,
-      to_end: toEnd,
+      to_end: fill ? false : toEnd,
+      fill: fill || undefined,
       estimated_duration_min: estimatedDurationMin.value,
       speech_chars_per_sec: speechCharsPerSec.value,
     };
@@ -769,7 +773,7 @@ async function handleRun(toEnd: boolean) {
       payload.skip_title_optimize = true;
     }
     await runJobStageAction("script", payload);
-    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : "已提交执行");
+    ElMessage.success(fill || toEnd ? "已加入成片队列，等待执行" : "已提交执行");
     emit("refresh");
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || "提交失败");

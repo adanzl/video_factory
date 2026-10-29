@@ -14,7 +14,6 @@ from app.services.segment.clip.video_agnes import (
     _normalize_submit_ids,
     _parse_speaking_sides,
     _pick_seconds,
-    _read_agnes_source_url,
     _remap_prompt_timeline,
     _resolve_aspect_ratio,
     _resolve_i2v_image,
@@ -24,6 +23,7 @@ from app.services.llm.llm_agnes import (
     AgnesApiKey,
     AgnesI2VError,
     AgnesQuotaExceeded,
+    AgnesSourceUnavailable,
     AgnesUpstreamUnavailable,
 )
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
@@ -376,22 +376,17 @@ def test_encode_image_data_uri(tmp_path: Path) -> None:
     assert uri.startswith("data:image/png;base64,")
 
 
-def test_read_agnes_source_url_sidecar(tmp_path: Path) -> None:
+def test_resolve_i2v_image_ignores_sidecar(tmp_path: Path) -> None:
     image = tmp_path / "1.png"
     image.write_bytes(b"png")
     sidecar = image.with_name(image.name + ".agnes_source_url")
-    cdn = "https://storage.googleapis.com/agnes-aigc/test.png"
-    sidecar.write_text(cdn, encoding="utf-8")
-    assert _read_agnes_source_url(image) == cdn
-
-
-def test_resolve_i2v_image_prefers_sidecar(tmp_path: Path) -> None:
-    image = tmp_path / "1.png"
-    image.write_bytes(b"png")
-    sidecar = image.with_name(image.name + ".agnes_source_url")
-    cdn = "https://storage.googleapis.com/agnes-aigc/aigc/images/test.png"
-    sidecar.write_text(cdn, encoding="utf-8")
-    assert _resolve_i2v_image(image) == cdn
+    sidecar.write_text(
+        "https://storage.googleapis.com/agnes-aigc/aigc/images/test.png",
+        encoding="utf-8",
+    )
+    ref = _resolve_i2v_image(image)
+    assert ref.startswith("data:image/png;base64,")
+    assert "http" not in ref
 
 
 def test_resolve_i2v_image_uses_data_uri(tmp_path: Path) -> None:
@@ -530,6 +525,76 @@ def test_agnes_i2v_submit_retries_http_429() -> None:
     assert mock_req.call_count == 1, "429 不该在原地重试整轮"
     assert not [s for s in sleeps if s >= 60.0]
     assert provider._pool_cooldown_left("free") > 0  # noqa: SLF001
+
+
+def test_agnes_i2v_submit_source_unavailable_does_not_retry_same_url() -> None:
+    """400 source_unavailable 应立刻抛出，不要对同一个 CDN URL 睡满重试。"""
+    provider = AgnesClipProvider()
+    provider._submit_max_retries = 4  # noqa: SLF001
+
+    limited = MagicMock()
+    limited.status_code = 400
+    limited.ok = False
+    limited.json.return_value = {
+        "code": "source_unavailable",
+        "message": "素材 URL 下载失败（超时或源站异常），请确认链接可公开访问后重试",
+        "data": {"param": "first_frame"},
+    }
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.requests.request",
+            return_value=limited,
+        ) as mock_req,
+        patch("app.services.segment.clip.video_agnes.time.sleep") as mock_sleep,
+        pytest.raises(AgnesSourceUnavailable),
+    ):
+        provider._request(  # noqa: SLF001
+            "POST",
+            "https://api.agnes-ai.cn/v1/videos",
+            label="submit",
+            key_label="cn_paid",
+        )
+
+    assert mock_req.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_i2v_submit_uses_local_frame_despite_sidecar(tmp_path: Path) -> None:
+    image = tmp_path / "1.png"
+    image.write_bytes(b"\x89PNG\r\n\x12\n" + b"x" * 8)
+    sidecar = image.with_name(image.name + ".agnes_source_url")
+    sidecar.write_text(
+        "https://platform-outputs.agnes-ai.space/images/i2i/task_x/output.png",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.mp4"
+    out.write_bytes(b"mp4")
+    provider = AgnesClipProvider()
+    frames: list[str] = []
+
+    def _submit(**kwargs: object) -> Path:
+        payload = kwargs["payload"]
+        assert isinstance(payload, dict)
+        frame = payload["first_frame"]
+        assert isinstance(frame, str)
+        frames.append(frame)
+        return out
+
+    with patch.object(provider, "_submit_and_poll", side_effect=_submit):
+        result = provider._generate_raw_with_key(  # noqa: SLF001
+            AgnesApiKey("cn_paid", "k", "https://api.agnes-ai.cn/v1"),
+            image,
+            "prompt",
+            out,
+            seconds="8",
+            aspect_ratio="16:9",
+            segment_index=1,
+        )
+
+    assert result == out
+    assert len(frames) == 1
+    assert frames[0].startswith("data:image/png;base64,")
 
 
 def test_agnes_i2v_retry_gate_respects_pool_interval() -> None:

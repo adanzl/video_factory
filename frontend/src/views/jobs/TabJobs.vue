@@ -172,6 +172,8 @@ const statusTagType = (status: string) => {
       return "warning";
     case "failed":
       return "danger";
+    case "queued":
+      return "primary";
     case "idle":
       return "info";
     default:
@@ -350,7 +352,7 @@ onMounted(() => {
     if (!loading.value && jobs.value.some(job => ["queued", "running"].includes(job.status))) {
       void fetchJobs();
     }
-  }, 3000);
+  }, 5000);
 });
 onUnmounted(() => {
   if (queuePollTimer !== null) clearInterval(queuePollTimer);

@@ -8,6 +8,7 @@
       to-end-label="从此继续"
       @primary="handleRun(false)"
       @to-end="handleRun(true)"
+      @fill="handleRun(false, true)"
     />
 
     <div :class="STAGE_BODY_CLASS">
@@ -93,6 +94,7 @@ import {
   STAGE_PANEL_TITLE_CLASS,
   STAGE_ROOT_CLASS,
   STAGE_TWO_COL_CLASS,
+  FILL_CONFIRM_MESSAGE,
 } from "../detail/stageLayout";
 
 const props = defineProps<{
@@ -164,10 +166,13 @@ const loadDuration = async () => {
   actualDuration.value = await getMediaDuration(props.job.base_path);
 };
 
-const handleRun = async (toEnd: boolean) => {
-  const actionLabel = toEnd ? "从此继续" : "重新复制";
+const handleRun = async (toEnd: boolean, fill = false) => {
+  const actionLabel = fill ? "补全成片" : toEnd ? "从此继续" : "重新复制";
   try {
-    await ElMessageBox.confirm(`确定对「基底准备」执行「${actionLabel}」吗？`, "确认执行", {
+    await ElMessageBox.confirm(
+      fill ? FILL_CONFIRM_MESSAGE : `确定对「基底准备」执行「${actionLabel}」吗？`,
+      "确认执行",
+      {
       type: "warning",
       confirmButtonText: "执行",
       cancelButtonText: "取消",
@@ -178,8 +183,12 @@ const handleRun = async (toEnd: boolean) => {
 
   submitting.value = true;
   try {
-    await runJobStageAction("prepare", { id: props.job.id, to_end: toEnd });
-    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
+    await runJobStageAction("prepare", {
+      id: props.job.id,
+      to_end: fill ? false : toEnd,
+      fill: fill || undefined,
+    });
+    ElMessage.success(fill || toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
     handleError(error, `${actionLabel}失败`);

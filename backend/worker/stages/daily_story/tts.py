@@ -152,6 +152,12 @@ class DailyTtsStage(StageExecutor):
 
     def run(self, ctx: JobContext) -> None:
         settings = get_settings()
+        if ctx.fill_missing:
+            from app.services.job.job_fill import clear_downstream_media, skip_complete_tts, take_script_rebuilt
+            if take_script_rebuilt(ctx):
+                clear_downstream_media(ctx.media_dir)
+            elif skip_complete_tts(ctx, self.name):
+                return
         with atomic():
             job = repo_job.get_job(ctx.job['id'])
             segments = repo_segment.list_segments(ctx.job['id'])
@@ -162,7 +168,9 @@ class DailyTtsStage(StageExecutor):
         persist_configs = {**speaker_configs, 'phrase_gap_sec': phrase_gap_sec}
         self._persist_speaker_configs(job['id'], persist_configs)
         self._job_id = ctx.job['id']
-        result = self._synthesize_multi_speaker(segments, ctx.media_dir / 'audio', speaker_configs, phrase_gap_sec)  # type: ignore[arg-type,assignment]
+        result = self._synthesize_multi_speaker(segments, ctx.media_dir / 'audio', speaker_configs, phrase_gap_sec, reuse_existing=ctx.fill_missing)  # type: ignore[arg-type,assignment]
+        if ctx.fill_missing:
+            ctx.note_filled()
         normalize_loudness(result['audio_path'], target_lufs=settings.audio_target_lufs, true_peak=settings.audio_true_peak)
         final_duration = probe_duration(result['audio_path'])
         cue_total = sum((c.duration_sec for c in result['subtitle_cues']))
@@ -231,7 +239,7 @@ class DailyTtsStage(StageExecutor):
             info.setdefault('tts', {})['speaker_configs'] = configs
             repo_job.update_job(job_id, info=info)
 
-    def _synthesize_multi_speaker(self, segments: list[dict], output_dir: Path, speaker_configs: dict[str, dict], phrase_gap_sec: float=_DEFAULT_PHRASE_GAP_SEC) -> dict:
+    def _synthesize_multi_speaker(self, segments: list[dict], output_dir: Path, speaker_configs: dict[str, dict], phrase_gap_sec: float=_DEFAULT_PHRASE_GAP_SEC, *, reuse_existing: bool=False) -> dict:
         """按角色分别合成每个分镜的对话，分镜间并发，然后拼接。"""
         from app.services.tts.tts_ali import _audio_extension
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -245,7 +253,26 @@ class DailyTtsStage(StageExecutor):
         max_workers = min(len(segments), max(1, settings.tts_max_workers))
         logger.info('tts start: segments=%d phrase_gap=%.2fs speakers=%s max_workers=%d', len(segments), phrase_gap_sec, list(speaker_configs.keys()), max_workers)
 
+        existing_cues: list[SubtitleCue] = []
+        if reuse_existing:
+            cues_path = tts_mgr.subtitle_cues_path_for(output_dir)
+            if cues_path.is_file():
+                existing_cues = tts_mgr.load_subtitle_cues(cues_path)
+
         def _run_seg(seg: dict) -> _SegResult:
+            if reuse_existing:
+                from app.services.job.job_fill import audio_clip_file
+                from app.services.media.ffmpeg_utils import probe_duration
+                kept = audio_clip_file(output_dir, int(seg['segment_index']))
+                if kept is not None:
+                    duration = probe_duration(kept)
+                    index = int(seg['segment_index'])
+                    cues = [cue for cue in existing_cues if cue.segment_index == index]
+                    if not cues:
+                        text = str(seg.get('text') or '').strip()
+                        cues = [SubtitleCue(segment_index=index, text=text, duration_sec=duration)]
+                    logger.info('tts segment %s clip already exists, skipping', index)
+                    return _SegResult(seg_index=index, clip_path=kept, cues=cues, duration=duration, chars=0)
             return _synthesize_segment_dialogue(seg, clips_dir, ext, speaker_configs, phrase_gap_sec, job_id=self._job_id)
         seg_results: list[_SegResult] = []
         pool = gevent.pool.Pool(size=max_workers)

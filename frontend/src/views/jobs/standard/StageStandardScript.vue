@@ -1,7 +1,7 @@
 <template>
   <div :class="STAGE_ROOT_CLASS">
     <StageActionBar :loading="submitting" :disabled="actionDisabled" :disabled-reason="actionDisabledReason"
-      @primary="handleRun(false)" @to-end="handleRun(true)" />
+      @primary="handleRun(false)" @to-end="handleRun(true)" @fill="handleRun(false, true)" />
 
     <div :class="STAGE_BODY_CLASS">
     <div :class="STAGE_BLOCK_CLASS">
@@ -347,7 +347,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 import StageActionBar from "../detail/StageActionBar.vue";
 import StageLogsSection from "../detail/StageLogsSection.vue";
-import { STAGE_BLOCK_CLASS, STAGE_BODY_CLASS, STAGE_EMPTY_CLASS, STAGE_ROOT_CLASS, STAGE_SECTION_TITLE_CLASS, STAGE_SUBSECTION_CLASS } from "../detail/stageLayout";
+import { FILL_CONFIRM_MESSAGE, STAGE_BLOCK_CLASS, STAGE_BODY_CLASS, STAGE_EMPTY_CLASS, STAGE_ROOT_CLASS, STAGE_SECTION_TITLE_CLASS, STAGE_SUBSECTION_CLASS } from "../detail/stageLayout";
 
 const FORM_LABEL_WIDTH = "100px";
 const SCRIPT_CONFIG_LABEL_WIDTH = "120px";
@@ -959,10 +959,11 @@ const loadSupplementaryFields = () => {
 };
 
 
-const buildRunPayload = (toEnd: boolean, trimmedTitle: string, words: number): RunStageActionPayload => {
+const buildRunPayload = (toEnd: boolean, trimmedTitle: string, words: number, fill = false): RunStageActionPayload => {
   const payload: RunStageActionPayload = {
     id: props.job.id,
-    to_end: toEnd,
+    to_end: fill ? false : toEnd,
+    fill: fill || undefined,
     title: trimmedTitle,
     estimated_duration_min: estimatedDurationMin.value,
     narration_target_words: Math.round(words),
@@ -1104,8 +1105,8 @@ const handleGenerateSegmentNarration = async (row: { segment_index: number }) =>
   }
 };
 
-const handleRun = async (toEnd: boolean) => {
-  const actionLabel = toEnd ? "从此成片" : "重新生成";
+const handleRun = async (toEnd: boolean, fill = false) => {
+  const actionLabel = fill ? "补全成片" : toEnd ? "从此成片" : "重新生成";
   const trimmedTitle = sourceTitle.value.trim();
   if (!trimmedTitle) {
     ElMessage.warning("请输入原标题");
@@ -1117,7 +1118,10 @@ const handleRun = async (toEnd: boolean) => {
     return;
   }
   try {
-    await ElMessageBox.confirm(`确定对「脚本」阶段执行「${actionLabel}」吗？`, "确认执行", {
+    await ElMessageBox.confirm(
+      fill ? FILL_CONFIRM_MESSAGE : `确定对「脚本」阶段执行「${actionLabel}」吗？`,
+      "确认执行",
+      {
       type: "warning",
       confirmButtonText: "执行",
       cancelButtonText: "取消",
@@ -1128,8 +1132,8 @@ const handleRun = async (toEnd: boolean) => {
 
   submitting.value = true;
   try {
-    await runJobStageAction("script", buildRunPayload(toEnd, trimmedTitle, words));
-    ElMessage.success(toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
+    await runJobStageAction("script", buildRunPayload(toEnd, trimmedTitle, words, fill));
+    ElMessage.success(fill || toEnd ? "已加入成片队列，等待执行" : `已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
     handleError(error, `${actionLabel}失败`);

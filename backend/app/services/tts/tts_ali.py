@@ -520,6 +520,7 @@ class AliTTSClient(TTSClient):
         *,
         voice: str | None = None,
         speech_rate: float | None = None,
+        reuse_existing: bool = False,
     ) -> TTSResult:
         if not segments:
             raise ValueError("no segments to synthesize")
@@ -543,7 +544,44 @@ class AliTTSClient(TTSClient):
             max_workers,
         )
 
+        existing_cues: list[SubtitleCue] = []
+        if reuse_existing:
+            cues_path = tts_mgr.subtitle_cues_path_for(output_dir)
+            if cues_path.is_file():
+                existing_cues = tts_mgr.load_subtitle_cues(cues_path)
+
+        def _reuse(seg: dict) -> _SegmentSynthResult | None:
+            if not reuse_existing:
+                return None
+            from app.services.job.job_fill import audio_clip_file
+
+            kept = audio_clip_file(output_dir, int(seg["segment_index"]))
+            if kept is None:
+                return None
+            index = int(seg["segment_index"])
+            duration = probe_duration(kept)
+            cues = [cue for cue in existing_cues if cue.segment_index == index]
+            if not cues:
+                cues = [
+                    SubtitleCue(
+                        segment_index=index,
+                        text=str(seg.get("text") or "").strip(),
+                        duration_sec=duration,
+                    )
+                ]
+            logger.info("tts segment %s clip already exists, skipping", index)
+            return _SegmentSynthResult(
+                seg_index=index,
+                clip_path=kept,
+                subtitle_cues=cues,
+                segment_duration=duration,
+                usage_task=None,
+            )
+
         def _run(seg: dict) -> _SegmentSynthResult:
+            reused = _reuse(seg)
+            if reused is not None:
+                return reused
             return _synthesize_segment(
                 seg,
                 clips_dir,

@@ -16,6 +16,10 @@ class MergeStage(StageExecutor):
     name = 'merge'
 
     def run(self, ctx: JobContext) -> None:
+        if ctx.fill_missing:
+            from app.services.job.job_fill import try_skip_merge
+            if try_skip_merge(ctx, self.name):
+                return
         started = time.perf_counter()
         with atomic():
             job = repo_job.get_job(ctx.job['id'])
