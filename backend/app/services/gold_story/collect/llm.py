@@ -174,6 +174,9 @@ _H0C_USER = """视频标题（仅供理解主题，不能作为对白或身份�
 - 允许同一 speaker 连说多行；不能靠行序、剧情、语气猜测父母/孩子身份。
 - 保留原文的我/你、否定、数字、量词、姓名与因果；禁止因推测说话人而改人称或概括重写台词。
   只有明确原文证据才能纠错，repair_notes 必须记录原文→修正→依据；拿不准就保留或标记 [听不清]。
+- 有效对白中夹带的识别杂质，只有能从上下文确认不承载语义时才可从 text 删除；source_quote 必须逐字保留原文，
+  repair_notes 逐项记录原文片段→删除的杂质→上下文依据。不能猜补原字，也不能把有意义的数字、货币符号、否定、姓名、作品名或被讨论的字符当杂质删除；
+  真正缺失的关键内容仍标 vague。已确定是无义杂质的字符应清理，不能以“保留原文”为由继续塞进可用 text。
 - 每行必须带 status：ok（发言意图或叙事事实明确）| vague（有明确发言/事件意图，但部分关键内容仍不确定）| unusable（无法确定发言或事件意图）。
   status 判断事实语义而非逐字正确：不影响人物、否定、数量、动作或因果的字形/标点噪声不必标 vague，拿不准字形可保留原样；
   能确定的应答语气词可标 ok。不得将关键内容不清假称为无关错字，关键事实仍需猜测时必须 vague。
@@ -227,6 +230,10 @@ _H2_USER = """【唯一事实依据：已审核的逐字稿】
   原文不能确定是谁说的就保留不确定性，禁止用标题、简介或常识补造身份。
   对未知标签的直接引语，仅按先后顺序用“随后一句是”等中性串联，不指定“这人/对方”，
   不把问话方、被问方或出借方、借入方对调，不推测“没有回应”。来源杂质不因在转写出现就能引用为对白。
+  引号中的话须可理解，不能照抄残存的无语义识别字串。若句子含义明确但原字不能确认，可用不含乱码的非引语转述表达已确认意思，
+  不补猜原词、不新增断言；关键含义仍不明则不能用于补全故事。有意义的名称、数字、单位与被讨论的字符必须保留。
+  只转述可确定的发言意思，不向 story_raw 添加“识别字串/含义不明”等转写诊断或占位旁白；这些诊断属于取证记录。
+  无法转述任何确定含义时应判来源不足，不能靠诊断句凑完整故事；人物在原文中真实说“没听清”等话不受此限制。
 - 用来源中的问答和叙述直接串联；未提到的地点、肢体动作、心理反应一律省略。
   口头答应/拒绝/反问/反转可以构成问答收束，不要求承诺已经执行；
   必须写成答应/拒绝等言语行为，不得把要求或承诺改写成已完成的动作。
@@ -1034,6 +1041,13 @@ def review_story_source(*, transcript: str, story_raw: str) -> dict[str, Any]:
         "speaker_attribution_supported单独判断说话人归属是否有来源依据；未知标签的直接引语被指定为这人/对方、"
         "或凭空声称某人没有回应/沉默时，该字段false，不能因句子在转写中出现就当成归属已证明。"
         "来源明示叙述主语可以保留，未知直接引语的中性引用可以通过。"
+        "recognition_noise_excluded独立检查供下游使用的故事是否排除了无语义识别杂字："
+        "来源原文包含杂字不等于可以把它作为可念台词照抄进故事，引号外也不能靠转述形式保留乱码。"
+        "把杂字替换成新增的识别诊断或含义不明占位旁白也应false；正文须表达已确认的发言意思，不能夹入转写处理说明。"
+        "人物在原文中真实说没听清等正常对白不属于新增诊断，不得误删。"
+        "可以只转述已确认的含义，不能猜原字、改数字/否定/人物/因果，不能把关键缺失当杂质抹去。"
+        "有意义的名称、数字、货币单位、外语词及正在被讨论的字符不是识别杂质；不要按字形或黑名单判断。"
+        "noise_review_reason引用具体片段说明是否残留无义噪声，不因总体保真就默认排除噪声。"
         "逐条核对叙述框架中的地点、人物到场方式、姿态、心理和动作。"
         "不存在合理框架性描述的豁免：来源未提到也不能凭常识推断补上，即使不改变核心问答也必须记为unsupported_claims。"
         "但要按语义核对而非逐字匹配：将祈使句等价转述为某人要求/让对方做某事是有来源的言语行为，"
@@ -1048,7 +1062,9 @@ def review_story_source(*, transcript: str, story_raw: str) -> dict[str, Any]:
         "child_adaptation_evidence_index从证据索引选择支持年龄判断的一条原文行号（整数）；"
         "系统直接引用该行，不要自己改写、拼接引文。"
         "child_adaptation_reason解释戏核与年龄的关系。"
-        '只输出JSON：{"faithful":true或false,"speaker_attribution_supported":true或false,"unsupported_claims":["无来源依据的原文片段"],"summary":"核对理由",'
+        '只输出JSON：{"faithful":true或false,"speaker_attribution_supported":true或false,'
+        '"recognition_noise_excluded":true或false,"noise_review_reason":"具体片段及语义依据",'
+        '"unsupported_claims":["无来源依据的原文片段"],"summary":"核对理由",'
         '"child_adaptation_suitable":true或false,"child_adaptation_evidence_index":1,"child_adaptation_reason":"具体理由"}。',
         "【唯一来源转写】\n" + transcript + "\n【待核对故事】\n" + story_raw
         + "\n【证据索引，仅引用定位；来源与故事的地位仍以上述分区为准】\n" + evidence_index,
@@ -1068,6 +1084,10 @@ def review_story_source(*, transcript: str, story_raw: str) -> dict[str, Any]:
     if not _response_bool(data, "speaker_attribution_supported", "H2 source audit"):
         raise ModelOutputError("H2 source_unfaithful: unsupported speaker attribution; 未知直接引语须中性串联："
                                + str(data.get("summary") or claims))
+    noise_excluded = _response_bool(data, "recognition_noise_excluded", "H2 source audit")
+    noise_reason = _response_reason(data, "noise_review_reason", "H2 source audit")
+    if not noise_excluded:
+        raise ModelOutputError("H2 source_unfaithful: recognition noise in story: " + noise_reason)
     data["age_audit_version"] = "role_age_v1"
     return data
 

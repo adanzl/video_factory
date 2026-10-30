@@ -621,7 +621,7 @@ def test_source_audit_rejects_invented_events_or_incomplete_review(monkeypatch, 
 
 def test_source_audit_accepts_faithful_role_mapping(monkeypatch):
     monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {
-        "faithful": True, "speaker_attribution_supported": True, "unsupported_claims": [], "summary": "仅等价转述和角色改名",
+        "faithful": True, "speaker_attribution_supported": True, "recognition_noise_excluded": True, "noise_review_reason": "无无义识别杂字", "unsupported_claims": [], "summary": "仅等价转述和角色改名",
         "child_adaptation_suitable": True, "child_adaptation_evidence": "昭昭答应了妈妈。",
         "child_adaptation_reason": "符合儿童年龄的回应",
     })
@@ -727,7 +727,7 @@ def test_source_age_rejection_precedes_fidelity_repair(monkeypatch):
 @pytest.mark.parametrize("value", [None, "true", 1])
 def test_source_age_missing_or_invalid_verdict_is_execution_failure(monkeypatch, value):
     monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: {
-        "faithful": True, "speaker_attribution_supported": True, "unsupported_claims": [], "child_adaptation_suitable": value,
+        "faithful": True, "speaker_attribution_supported": True, "recognition_noise_excluded": True, "noise_review_reason": "无无义识别杂字", "unsupported_claims": [], "child_adaptation_suitable": value,
         "child_adaptation_evidence": "孩子提问", "child_adaptation_reason": "符合年龄",
     })
     with pytest.raises(llm_steps.ModelOutputError, match="JSON boolean"):
@@ -803,7 +803,7 @@ def test_collection_rejects_oversized_or_overlapping_clips(monkeypatch, segments
 @pytest.mark.parametrize('index', [True, 0, -1, 3, '1'])
 def test_source_age_evidence_index_rejects_invalid_ids(monkeypatch, index):
     monkeypatch.setattr(llm_steps, '_chat_json', lambda *a: {
-        'faithful': True, 'speaker_attribution_supported': True, 'unsupported_claims': [], 'child_adaptation_suitable': True,
+        'faithful': True, 'speaker_attribution_supported': True, 'recognition_noise_excluded': True, 'noise_review_reason': '无无义识别杂字', 'unsupported_claims': [], 'child_adaptation_suitable': True,
         'child_adaptation_evidence_index': index, 'child_adaptation_reason': '儿童日常',
     })
     with pytest.raises(ValueError, match='invalid evidence index'):
@@ -812,7 +812,7 @@ def test_source_age_evidence_index_rejects_invalid_ids(monkeypatch, index):
 
 def test_source_age_evidence_index_preserves_exact_original(monkeypatch):
     monkeypatch.setattr(llm_steps, '_chat_json', lambda *a: {
-        'faithful': True, 'speaker_attribution_supported': True, 'unsupported_claims': [], 'child_adaptation_suitable': True,
+        'faithful': True, 'speaker_attribution_supported': True, 'recognition_noise_excluded': True, 'noise_review_reason': '无无义识别杂字', 'unsupported_claims': [], 'child_adaptation_suitable': True,
         'child_adaptation_evidence_index': 1, 'child_adaptation_reason': '同龄人借钱',
     })
     result = llm_steps.review_story_source(transcript='未知：你借我点呗', story_raw='有人借钱')
@@ -1029,3 +1029,24 @@ def test_chat_json_truncation_is_failure_even_with_parseable_json(monkeypatch, t
     monkeypatch.setattr(llm_steps, '_client', lambda: Client())
     with pytest.raises(llm_steps.ModelOutputError, match='truncated'):
         llm_steps._chat_json('system', 'user', thinking_enabled=thinking)
+
+
+@pytest.mark.parametrize('excluded', [False, None, 'true', 1])
+def test_source_noise_gate_cannot_be_overridden_by_fidelity(monkeypatch, excluded):
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a, **k: {
+        'faithful': True, 'speaker_attribution_supported': True, 'unsupported_claims': [],
+        'recognition_noise_excluded': excluded, 'noise_review_reason': '可念对白中混入无义杂字',
+        'child_adaptation_suitable': True, 'child_adaptation_evidence_index': 1,
+        'child_adaptation_reason': '日常对话'})
+    with pytest.raises(llm_steps.ModelOutputError, match='recognition noise|boolean'):
+        llm_steps.review_story_source(transcript='未知：借我本书', story_raw='随后一句是“借我本书杂字”。')
+
+
+def test_source_noise_gate_requires_review_reason(monkeypatch):
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a, **k: {
+        'faithful': True, 'speaker_attribution_supported': True, 'unsupported_claims': [],
+        'recognition_noise_excluded': True, 'noise_review_reason': '',
+        'child_adaptation_suitable': True, 'child_adaptation_evidence_index': 1,
+        'child_adaptation_reason': '日常对话'})
+    with pytest.raises(llm_steps.ModelOutputError):
+        llm_steps.review_story_source(transcript='未知：借我本书', story_raw='随后有人借书。')
