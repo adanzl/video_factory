@@ -4443,6 +4443,19 @@ def looks_like_narration_line(text: str) -> bool:
     line = _SPOKEN_SILENCE_DENIAL.sub("", line)
     # 制止对方嘟囔是现场指令，不是说话人自述动作。
     line = re.sub(r"(?:^|[，,。！？])(?:你)?(?:别|不要|不许)(?:再|在那儿|在那里|小声|一直|老是)*嘟囔(?:了|着)?", "", line)
+    # 明确祈使句中的趋向动词不等于动作旁白；仅遮蔽该词，其他分句仍检查。
+    clauses = re.split(r"([，,。！？!?；;])", line)
+    for i in range(0, len(clauses), 2):
+        clause = clauses[i].strip()
+        command = re.match(
+            r"^(?:(?:请你?|麻烦你|你)(?:先|快|赶紧|倒是|给我)?"
+            r"(?:把[^，。！？!?；;]{1,8})?|把[^，。！？!?；;]{1,8})"
+            r"(?P<verb>缩回)(?:去|来)(?!了|过)", clause,
+        )
+        if command:
+            start, end = command.span("verb")
+            clauses[i] = clause[:start] + clause[end:]
+    line = "".join(clauses)
     return bool(line and _NARRATION_LINE_RE.search(line))
 
 

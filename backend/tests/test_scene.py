@@ -2491,3 +2491,23 @@ def test_source_repeat_collapse_rejects_distinct_units_or_unproven_mapping(mutat
     if mutation == 'mapping': beats.pop()
     if mutation == 'required': beats[1]['required_semantic_points'] = ['额外要求']
     assert _collapse_adjacent_source_repeats(payload) == (payload, [])
+
+
+@pytest.mark.parametrize('line', [
+    '你把脚缩回去自己焐。', '请你把手缩回去。',
+    '把触角缩回去，别伸过来。', '你倒是缩回去啊。',
+])
+def test_narration_detector_preserves_spoken_retraction_commands(line):
+    from app.services.gold_story.scene import looks_like_narration_line
+    assert not looks_like_narration_line(line)
+
+
+@pytest.mark.parametrize('line', [
+    '我把手缩回去了。', '她缩回手，不说话。', '昭昭缩回脚。',
+    '他缩回被子里，闭上眼。', '（缩回手）', '缩回手',
+    '你把手缩回去了。', '你把手缩回去，他缩回手。',
+    '叹气，你把手缩回去。', '你把手缩回去，我拎起行李袋。',
+])
+def test_narration_detector_still_rejects_retraction_descriptions(line):
+    from app.services.gold_story.scene import looks_like_narration_line
+    assert looks_like_narration_line(line)
