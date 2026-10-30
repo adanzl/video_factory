@@ -621,7 +621,7 @@ def test_source_audit_rejects_invented_events_or_incomplete_review(monkeypatch, 
 
 def test_source_audit_accepts_faithful_role_mapping(monkeypatch):
     monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {
-        "faithful": True, "unsupported_claims": [], "summary": "仅等价转述和角色改名",
+        "faithful": True, "speaker_attribution_supported": True, "unsupported_claims": [], "summary": "仅等价转述和角色改名",
         "child_adaptation_suitable": True, "child_adaptation_evidence": "昭昭答应了妈妈。",
         "child_adaptation_reason": "符合儿童年龄的回应",
     })
@@ -631,9 +631,10 @@ def test_source_audit_accepts_faithful_role_mapping(monkeypatch):
 def _audit_response(response, monkeypatch, *, default_age=True, **overrides):
     if default_age:
         response = {"source_age_compatible": True, "mapped_roles_age_compatible": True,
+                    "core_event_supported": True, "core_event_reason": "核心事件与来源一致",
                     "source_age_evidence": "姐弟一起整理书桌。", "mapped_age_evidence": "昭昭：擦桌子",
                     "age_reason": "姐弟整理书桌，儿童负责擦桌子符合年龄", **response}
-    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: response)
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a, **kw: response)
     kwargs = dict(video_title="姐弟日常", title="整理书桌", story_raw="姐弟一起整理书桌。",
         conflict_core="分工", mechanism="M6", structure_type="A", speaker_map_note="",
         dialogue_seed=[{"speaker": "昭昭", "intent": "擦桌子"}], beat=[])
@@ -678,6 +679,7 @@ def test_source_audit_schema_failure_does_not_become_source_rejection(monkeypatc
 
 def _high_fit_scores(**changes):
     return {"pass": True, "sibling_fit": 0.95, "age_fit": 0.95,
+            "core_event_supported": True, "core_event_reason": "核心事件与来源一致",
             "conflict_usable": 0.95, "mapping_fit": 0.95, "reject_reasons": [], **changes}
 
 
@@ -725,7 +727,7 @@ def test_source_age_rejection_precedes_fidelity_repair(monkeypatch):
 @pytest.mark.parametrize("value", [None, "true", 1])
 def test_source_age_missing_or_invalid_verdict_is_execution_failure(monkeypatch, value):
     monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: {
-        "faithful": True, "unsupported_claims": [], "child_adaptation_suitable": value,
+        "faithful": True, "speaker_attribution_supported": True, "unsupported_claims": [], "child_adaptation_suitable": value,
         "child_adaptation_evidence": "孩子提问", "child_adaptation_reason": "符合年龄",
     })
     with pytest.raises(llm_steps.ModelOutputError, match="JSON boolean"):
@@ -782,7 +784,7 @@ def test_collection_index_proposes_all_bounded_candidates_without_content_veto(m
     ], duration_sec=800)
     assert len(calls) == 1 and len(result) == 6
     assert all('eligible' not in clip for clip in result)
-    assert result[0]['start_sec'] == 0 and result[-1]['end_sec'] == 110
+    assert result[0]['start_sec'] == 0 and result[-1]['end_sec'] == 111
 
 
 @pytest.mark.parametrize('segments,clips', [
@@ -801,7 +803,7 @@ def test_collection_rejects_oversized_or_overlapping_clips(monkeypatch, segments
 @pytest.mark.parametrize('index', [True, 0, -1, 3, '1'])
 def test_source_age_evidence_index_rejects_invalid_ids(monkeypatch, index):
     monkeypatch.setattr(llm_steps, '_chat_json', lambda *a: {
-        'faithful': True, 'unsupported_claims': [], 'child_adaptation_suitable': True,
+        'faithful': True, 'speaker_attribution_supported': True, 'unsupported_claims': [], 'child_adaptation_suitable': True,
         'child_adaptation_evidence_index': index, 'child_adaptation_reason': '儿童日常',
     })
     with pytest.raises(ValueError, match='invalid evidence index'):
@@ -810,7 +812,7 @@ def test_source_age_evidence_index_rejects_invalid_ids(monkeypatch, index):
 
 def test_source_age_evidence_index_preserves_exact_original(monkeypatch):
     monkeypatch.setattr(llm_steps, '_chat_json', lambda *a: {
-        'faithful': True, 'unsupported_claims': [], 'child_adaptation_suitable': True,
+        'faithful': True, 'speaker_attribution_supported': True, 'unsupported_claims': [], 'child_adaptation_suitable': True,
         'child_adaptation_evidence_index': 1, 'child_adaptation_reason': '同龄人借钱',
     })
     result = llm_steps.review_story_source(transcript='未知：你借我点呗', story_raw='有人借钱')
@@ -869,3 +871,161 @@ def test_repair_retry_feedback_reaches_scene_selector(monkeypatch):
         return {'has_complete_scene': True, 'start_index': 1, 'end_index': 2, 'scene_evidence': '问答完整'}
     monkeypatch.setattr(llm_steps, '_chat_json', chat)
     llm_steps.repair_transcript(title='', transcript='问句\n回答', require_complete_scene=True, feedback='上轮遗漏了后续结果')
+
+
+@pytest.mark.parametrize('text', ['来源叠字待确认', '关键半句[听不清]'])
+def test_complete_scene_cannot_admit_vague_without_marker(monkeypatch, text):
+    answers = iter([
+        {'repair_confidence': .8, 'lines': [
+            {'speaker': '未知', 'text': '提问', 'source_quote': '提问', 'status': 'ok'},
+            {'speaker': '未知', 'text': text, 'source_quote': text, 'status': 'vague'},
+            {'speaker': '未知', 'text': '回答', 'source_quote': '回答', 'status': 'ok'}]},
+        {'has_complete_scene': True, 'start_index': 1, 'end_index': 3, 'scene_evidence': '声称完整但夹有不确定行'},
+    ])
+    def chat(system, user, **kwargs):
+        if '独立的事实不确定性审核员' in system:
+            return {'reviews': [{'index': 2, 'meaning_supported': False, 'uncertain_facts': ['关键事实不明'],
+                                 'reason': '内容仍不能确定', 'evidence_quote': text}]}
+        return next(answers)
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    with pytest.raises(llm_steps.ModelOutputError, match='uncertain lines') as exc:
+        llm_steps.repair_transcript(title='', transcript='提问\n'+text+'\n回答', require_complete_scene=True)
+    assert text in str(exc.value)
+
+
+def test_reconcile_does_not_reuse_old_semantic_policy(monkeypatch):
+    import hashlib
+    import json
+    evidence = _transcript_evidence()
+    raw = json.dumps([{'source': x['source'], 'text': x['text'], 'segments': [],
+                      'avg_confidence': None, 'engine': None} for x in evidence], ensure_ascii=False, sort_keys=True)
+    old = {'version': 'whole_source_v1', 'evidence_hash': hashlib.sha256(('whole_source_v1\n'+raw).encode()).hexdigest(),
+           'selection': {'source': 'unresolved', 'reason': '旧规则按错字判断冲突'}}
+    calls = []
+    def chat(*a):
+        calls.append(a)
+        return {'source': 'ocr', 'reason': '语义可核实'} if len(calls) == 1 else _transcript_review()
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    result = llm_steps.reconcile_transcripts(evidence, previous=old)
+    assert len(calls) == 2 and result['status'] == 'resolved'
+    assert result['version'] == 'whole_source_v2' and result['text'] == evidence[0]['text']
+
+
+@pytest.mark.parametrize('end,next_start,duration,expected', [(20,20.4,800,20.4),(20,25,800,21),(20,19,800,20),(120,125,800,120),(20,None,20.2,20.2)])
+def test_collection_tail_margin_is_bounded_by_gap_duration_and_budget(monkeypatch, end, next_start, duration, expected):
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a: {'clips':[{'start_index':1,'end_index':2 if next_start is None else 1,'reason':'完整事件'}]})
+    segments=[{'start':0,'end':end,'text':'事件'}]
+    if next_start is not None:segments.append({'start':next_start,'end':next_start+1,'text':'下一段'})
+    else:segments=[{'start':0,'end':1,'text':'开头'},{'start':2,'end':end,'text':'结尾'}]
+    clips=llm_steps.select_collection_clips(segments,duration_sec=duration)
+    assert clips[0]['index_end_sec']==end and clips[0]['end_sec']==expected
+
+
+@pytest.mark.parametrize('supported', [False, None, 'true'])
+def test_source_audit_cannot_pass_unsupported_speaker_attribution(monkeypatch, supported):
+    monkeypatch.setattr(llm_steps,'_chat_json',lambda *a:{
+        'faithful':True,'speaker_attribution_supported':supported,'unsupported_claims':[],
+        'summary':'未知被分配给对方','child_adaptation_suitable':True,
+        'child_adaptation_evidence_index':1,'child_adaptation_reason':'普通问答'})
+    with pytest.raises(llm_steps.ModelOutputError):
+        llm_steps.review_story_source(transcript='未知：你先说',story_raw='对方说你先说')
+
+
+def test_structure_input_does_not_leak_collection_title(monkeypatch):
+    story = '弟弟问姐姐借课本。姐姐问上一本还没还，随后答应找一本给弟弟。'
+    def chat(system, user, **kwargs):
+        assert kwargs.get("thinking_enabled") is True
+        assert story in user
+        assert '标题独有的滑板比赛' not in system + user
+        return {'title': '借课本', 'mechanism': 'M4', 'structure_type': 'G',
+                'beat': ['借课本', '追问旧书', '回应追问', '答应找书'], 'structure_confidence': .9}
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    result = llm_steps.structurize_story(title='标题独有的滑板比赛', story_raw=story)
+    assert result['title'] == '借课本'
+
+
+def test_core_event_veto_cannot_be_overridden_by_high_scores(monkeypatch):
+    result = _audit_response(_high_fit_scores(core_event_supported=False,
+        core_event_reason='承诺被写成已经完成'), monkeypatch)
+    assert result['pass'] is False
+    assert any('core_event_unfaithful' in reason for reason in result['reject_reasons'])
+
+
+@pytest.mark.parametrize('supported', [None, 'true', 1])
+def test_core_event_audit_requires_boolean(monkeypatch, supported):
+    with pytest.raises(llm_steps.ModelOutputError, match='boolean'):
+        _audit_response(_high_fit_scores(core_event_supported=supported), monkeypatch)
+
+
+def test_uncertainty_review_changes_only_supported_status_and_keeps_original(monkeypatch):
+    lines = [dict(speaker='未知', text='书在那哩', source_quote='书在那哩', status='vague'),
+             dict(speaker='未知', text='拿了几本不明', source_quote='拿了几本不明', status='vague')]
+    def chat(system, user, **kwargs):
+        assert 'vague' not in user and 'repair_notes' not in user
+        return {'reviews': [
+            dict(index=1, meaning_supported=True, uncertain_facts=[], reason='指的是前文已指出的书包位置', evidence_quote='书在那哩'),
+            dict(index=2, meaning_supported=False, uncertain_facts=['数量未知'], reason='原文不能确认本数', evidence_quote='拿了几本不明')]}
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    note = llm_steps._review_uncertain_lines('指着书包\n书在那哩\n拿了几本不明', lines)
+    assert lines[0] == dict(speaker='未知', text='书在那哩', source_quote='书在那哩', status='ok')
+    assert lines[1]['status'] == 'vague' and '数量未知' in note
+
+
+@pytest.mark.parametrize('change', [
+    {'index': True}, {'index': 2}, {'meaning_supported': 'true'}, {'evidence_quote': '编造的证据'},
+    {'uncertain_facts': None}, {'reason': ''},
+])
+def test_uncertainty_review_invalid_result_cannot_change_status(monkeypatch, change):
+    lines = [dict(speaker='未知', text='原文', source_quote='原文', status='vague')]
+    answer = dict(index=1, meaning_supported=True, uncertain_facts=[], reason='有证据', evidence_quote='原文')
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a, **kw: {'reviews': [{**answer, **change}]})
+    with pytest.raises(llm_steps.ModelOutputError):
+        llm_steps._review_uncertain_lines('原文', lines)
+    assert lines[0]['status'] == 'vague'
+
+
+def test_uncertainty_review_cannot_override_explicit_missing_content(monkeypatch):
+    lines = [dict(speaker='未知', text='拿了[听不清]本', source_quote='拿了[听不清]本', status='vague')]
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a, **kw: pytest.fail('明确缺失不得复核放行'))
+    assert llm_steps._review_uncertain_lines('拿了[听不清]本', lines) == ''
+    assert lines[0]['status'] == 'vague'
+
+
+def test_uncertainty_review_true_with_unknown_fact_cannot_pass(monkeypatch):
+    lines = [dict(speaker='未知', text='拿了几本', source_quote='拿了几本', status='vague')]
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a, **kw: {'reviews': [dict(index=1, meaning_supported=True,
+        uncertain_facts=['数量不确定'], reason='无法核实数量', evidence_quote='拿了几本')]})
+    llm_steps._review_uncertain_lines('拿了几本', lines)
+    assert lines[0]['status'] == 'vague'
+
+
+def test_independent_core_review_overrides_combined_approval(monkeypatch):
+    calls = []
+    def chat(system, user, **kwargs):
+        calls.append(system)
+        if len(calls) == 1:
+            return {**_high_fit_scores(), 'source_age_compatible': True, 'mapped_roles_age_compatible': True,
+                    'source_age_evidence_index': 1, 'mapped_age_evidence_index': 1, 'age_reason': '儿童日常'}
+        assert '独立的改编事实审核员' in system
+        assert kwargs.get('thinking_enabled') is True
+        assert '四维' not in user and '原视频标题' not in user
+        return {'core_event_supported': False, 'core_event_reason': '原文只答应，契约却说已完成'}
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    result = llm_steps.audit_story_fit(video_title='合集标题', title='收书', story_raw='姐姐答应稍后收书。',
+        conflict_core='收书', mechanism='M4', structure_type='G', speaker_map_note='',
+        dialogue_seed=[{'speaker': '灿灿', 'intent': '我待会收书'}], beat=[],
+        scene_contract={'closing_intent': '已经收完书'})
+    assert len(calls) == 2 and not result['pass']
+    assert result['core_event_reason'] == '原文只答应，契约却说已完成'
+
+
+@pytest.mark.parametrize('thinking', [False, True])
+def test_chat_json_truncation_is_failure_even_with_parseable_json(monkeypatch, thinking):
+    class Client:
+        def _chat_json(self, system, user, **kwargs):
+            assert kwargs['thinking_enabled'] is thinking
+            assert kwargs['max_tokens'] == (10000 if thinking else None)
+            return {'pass': True}, 'length'
+    monkeypatch.setattr(llm_steps, '_client', lambda: Client())
+    with pytest.raises(llm_steps.ModelOutputError, match='truncated'):
+        llm_steps._chat_json('system', 'user', thinking_enabled=thinking)

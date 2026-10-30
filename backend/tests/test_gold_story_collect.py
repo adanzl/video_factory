@@ -1111,7 +1111,7 @@ def test_malformed_h3_is_retryable_execution_failure(monkeypatch):
     monkeypatch.setattr(p.llm_steps, "extract_story_raw", lambda **k: {"story_raw": "姐弟争遥控器" * 20})
     monkeypatch.setattr(p.llm_steps, "review_story_source", lambda **k: {"faithful": True})
     monkeypatch.setattr(p.repo_gold_story, "find_near_duplicate", lambda *a, **k: None)
-    monkeypatch.setattr(p.llm_steps, "_chat_json", lambda *a: {"mechanism": "BAD"})
+    monkeypatch.setattr(p.llm_steps, "_chat_json", lambda *a, **k: {"mechanism": "BAD"})
     result = p.process_candidate(candidate, config=cfg, existing_row={"id": 1, "payload": {}},
                                  overwrite_existing=True, force_transcript=True)
     assert result["action"] == "error" and result["retryable"] is True
@@ -1432,3 +1432,50 @@ def test_collection_model_retry_reuses_clip_and_stops_at_budget(monkeypatch, tmp
     result = p._process_collection(candidate, config=cfg, existing_row=None, overwrite_existing=False)
     assert len(calls) == 3 and len(transcribed) == 1
     assert result['action'] == 'error' and result['retryable'] is False
+
+
+@pytest.mark.parametrize('recover,age_ok', [(True, True), (False, True), (True, False)])
+def test_core_fact_failure_rebuilds_once_without_changing_source(app_ctx, tmp_path, monkeypatch, recover, age_ok):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    source = '姐姐让弟弟收书。弟弟说等写完最后一题就收。姐姐答应等一会。' * 4
+    path = tmp_path / 'source.txt'; path.write_text(source)
+    cfg = Config(); cfg.gold_story_transcript_repair = False; cfg.gold_story_transcript_dir = tmp_path
+    candidate = VideoCandidate(source='bili', source_id='BV1CORE00001', url='', title='收书',
+                               description='', view_count=1, reply_count=1, keyword='')
+    monkeypatch.setattr(p.llm_steps, 'extract_story_raw', lambda **k: {'story_raw': source})
+    monkeypatch.setattr(p.llm_steps, 'review_story_source', lambda **k: {'faithful': True})
+    monkeypatch.setattr(p.repo_gold_story, 'find_near_duplicate', lambda *a, **k: None)
+    feedback = []
+    def structure(**kwargs):
+        assert kwargs['story_raw'] == source
+        feedback.append(kwargs['source_feedback'])
+        return {'mechanism': 'M4', 'structure_type': 'G', 'title': '收书', 'conflict_core': '答应稍后收书'}
+    monkeypatch.setattr(p.llm_steps, 'structurize_story', structure)
+    monkeypatch.setattr(p.llm_steps, 'build_scene_contract', lambda **k: {})
+    monkeypatch.setattr(p.llm_steps, 'build_dialogue_seed', lambda **k: {})
+    monkeypatch.setattr(p, 'sync_h3_from_scene_contract', lambda h3, *a, **k: (h3, []))
+    audits = []
+    def audit(**kwargs):
+        assert kwargs['story_raw'] == source
+        audits.append(kwargs)
+        passed = len(audits) == 2 and recover
+        return {'pass': passed, 'llm': {'core_event_supported': passed,
+            'core_event_reason': '把承诺收书写成已经收完', 'source_age_compatible': age_ok,
+            'mapped_roles_age_compatible': age_ok}}
+    monkeypatch.setattr(p.gs_review, 'audit_story', audit)
+    monkeypatch.setattr(p, 'passes_funny_gate_from_payload', lambda *a, **k: (True, 'ok'))
+    saved = []
+    def update(*args, **kwargs):
+        saved.append(kwargs)
+        return {'auto_score': .8}
+    monkeypatch.setattr(p.repo_gold_story, 'update_story_from_pipeline', update)
+    monkeypatch.setattr(p.repo_gold_story, 'get_story', lambda *a: {'id': 123, 'source_id': candidate.source_id})
+    monkeypatch.setattr(p, 'export_story_files', lambda **k: {})
+    result = p.process_candidate(candidate, config=cfg, skip_transcript=True, overwrite_existing=True,
+        existing_row={'id': 123, 'payload': {}}, clip_transcript={'transcript_path': str(path), 'source_clip': {}})
+    assert len(audits) == (2 if age_ok else 1)
+    assert feedback == (['', '把承诺收书写成已经收完'] if age_ok else [''])
+    assert result['action'] == ('ok' if recover and age_ok else 'reject')
+    assert len(saved) == int(recover and age_ok)

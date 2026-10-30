@@ -406,35 +406,40 @@ def process_candidate(
                 "similar_ratio": near["ratio"],
                 "similar_lcs": near["lcs"],
             }
-        h3 = llm_steps.structurize_story(
-            title=candidate.title,
-            story_raw=h2["story_raw"],
-        )
         source_type = str(h2.get("source_type") or "field").strip().lower()
-        h3a = llm_steps.build_scene_contract(
-            story_raw=h2["story_raw"],
-            h3=h3,
-            source_type=source_type,
-            video_title=candidate.title,
-        )
-        h3, sync_notes = sync_h3_from_scene_contract(
-            h3, h3a, story_raw=str(h2.get("story_raw") or "")
-        )
-        if sync_notes:
-            note = str(h3.get("structure_mapping_note") or "").strip()
-            suffix = ";".join(sync_notes)
-            h3["structure_mapping_note"] = (
-                f"{note};{suffix}".strip(";") if note else suffix
+        def build_mapping(source_feedback: str = ""):
+            h3 = llm_steps.structurize_story(
+                title=candidate.title,
+                story_raw=h2["story_raw"],
+                source_feedback=source_feedback,
             )
-            # 契约字母与列对齐
-            h3a = dict(h3a)
-            h3a["story_type"] = str(h3.get("structure_type") or h3a.get("story_type"))
-        h3b = llm_steps.build_dialogue_seed(
-            story_raw=h2["story_raw"],
-            h3=h3,
-            scene_contract=h3a,
-            video_title=candidate.title,
-        )
+            h3a = llm_steps.build_scene_contract(
+                story_raw=h2["story_raw"],
+                h3=h3,
+                source_type=source_type,
+                video_title=candidate.title,
+            )
+            h3, sync_notes = sync_h3_from_scene_contract(
+                h3, h3a, story_raw=str(h2.get("story_raw") or "")
+            )
+            if sync_notes:
+                note = str(h3.get("structure_mapping_note") or "").strip()
+                suffix = ";".join(sync_notes)
+                h3["structure_mapping_note"] = (
+                    f"{note};{suffix}".strip(";") if note else suffix
+                )
+                # 契约字母与列对齐
+                h3a = dict(h3a)
+                h3a["story_type"] = str(h3.get("structure_type") or h3a.get("story_type"))
+            h3b = llm_steps.build_dialogue_seed(
+                story_raw=h2["story_raw"],
+                h3=h3,
+                scene_contract=h3a,
+                video_title=candidate.title,
+            )
+            return h3, h3a, h3b
+
+        h3, h3a, h3b = build_mapping()
     except ValueError as exc:
         if not isinstance(exc, llm_steps.SourceRejected):
             return {**base, **_execution_failure(exc, "LLM")}
@@ -460,6 +465,23 @@ def process_candidate(
             h3b=h3b,
             config=cfg,
         )
+        core_review = audit.get("llm") or {}
+        if (not audit.get("pass") and core_review.get("core_event_supported") is False
+                and core_review.get("source_age_compatible") is True
+                and core_review.get("mapped_roles_age_compatible") is True):
+            h3, h3a, h3b = build_mapping(str(core_review.get("core_event_reason") or "核心事实与来源不符"))
+            audit = gs_review.audit_story(
+                title=str(h3.get("title") or candidate.title),
+                video_title=candidate.title,
+                story_raw=story_raw_text,
+                conflict_core=str(h3.get("conflict_core") or ""),
+                transcript=transcript_for_h2,
+                description=candidate.description,
+                h3=h3,
+                h3a=h3a,
+                h3b=h3b,
+                config=cfg,
+            )
     except Exception as exc:
         return {**base, **_execution_failure(exc, "H4a")}
     insert_status = "active" if audit.get("pass") else "rejected"

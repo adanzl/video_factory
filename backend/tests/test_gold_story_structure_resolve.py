@@ -298,7 +298,7 @@ def test_resolve_gold_chat_structure_row_story_53_to_m13_o():
 
 
 def test_structurize_story_applies_resolve(monkeypatch):
-    def fake_chat(_system: str, _user: str) -> dict:
+    def fake_chat(_system: str, _user: str, **_kwargs) -> dict:
         return {
             "title": "世子之争",
             "conflict_core": "姐姐用武力压制弟弟",
