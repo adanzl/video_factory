@@ -446,9 +446,6 @@ class CheckinMgr:
         script = self._run_script_path(setting)
         if script is None or not script.is_file():
             raise FileNotFoundError(f"找不到签到脚本: {script}")
-        # 超时在起线程前取好：OS 线程里不再碰 Redis（socket 是 gevent 打过补丁的）
-        timeout = float(setting["timeout_sec"])
-
         # 读 Redis、stat 脚本这些会 yield 的 IO 全部放在抢锁之前；
         # 临界区只改内存，连点两次 / 手动撞定时就不会各起一份 run.sh。
         # 锁用 gevent 的 Semaphore（`threading.Lock` 会堵死 hub），且只在
@@ -463,7 +460,7 @@ class CheckinMgr:
 
         logger.info("[CHECKIN] 开始运行 %s（%s）", script, trigger)
         try:
-            run_in_os_thread(lambda: self._run_worker(script, timeout))
+            run_in_os_thread(lambda: self._run_worker(script))
         except BaseException:
             self._running = False
             self._started_at = ""
@@ -471,13 +468,15 @@ class CheckinMgr:
             raise
         return self.run_state()
 
-    def _run_worker(self, script: Path, timeout: float) -> None:
+    def _run_worker(self, script: Path) -> None:
         code: int = -1
         output = ""
         try:
+            # 后台线程里等脚本自己结束。不按 timeout_sec 中断，
+            # 避免长任务被记成失败时进程其实还在跑。
             code, stdout, stderr = run_subprocess_cmd(
                 ["/bin/bash", str(script)],
-                timeout=timeout,
+                timeout=None,
                 check=False,
                 cwd=str(script.parent),
             )

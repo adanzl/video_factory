@@ -134,7 +134,7 @@ def unpatched_subprocess() -> Iterator[None]:
 def run_subprocess_cmd(
     cmd: Sequence[str],
     *,
-    timeout: float = 600.0,
+    timeout: float | None = 600.0,
     check: bool = True,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
@@ -227,12 +227,15 @@ def _wait_worker_thread(
     *,
     result_q: queue.Queue[tuple[int, str, str]],
     error_q: queue.Queue[BaseException],
-    timeout: float,
+    timeout: float | None,
     cmd_label: str,
 ) -> tuple[int, str, str]:
-    """等待工作线程结束；在 gevent hub 上轮询，避免 thread.join 卡死接口。"""
-    wait = timeout + 5.0
-    deadline = time.time() + wait
+    """等待工作线程结束；在 gevent hub 上轮询，避免 thread.join 卡死接口。
+
+    timeout 为 None 时一直等到线程结束，不按秒数中断。
+    """
+    wait = None if timeout is None else timeout + 5.0
+    deadline = None if wait is None else time.time() + wait
 
     def _drain_queues() -> tuple[int, str, str] | None:
         try:
@@ -246,7 +249,7 @@ def _wait_worker_thread(
 
     if _on_gevent_hub():
         while thread.is_alive():
-            if time.time() > deadline:
+            if deadline is not None and time.time() > deadline:
                 raise TimeoutError(f"命令执行超时: {cmd_label}")
             ready = _drain_queues()
             if ready is not None:
@@ -254,7 +257,7 @@ def _wait_worker_thread(
             _hub_sleep(0.01)
     else:
         thread.join(timeout=wait)
-        if thread.is_alive():
+        if wait is not None and thread.is_alive():
             raise TimeoutError(f"命令执行超时: {cmd_label}")
 
     try:
@@ -272,7 +275,7 @@ def _wait_worker_thread(
 def run_subprocess_safe(
     cmd: Sequence[str],
     *,
-    timeout: float = 30.0,
+    timeout: float | None = 30.0,
     env: Optional[dict[str, str]] = None,
     cwd: Optional[str] = None,
 ) -> tuple[int, str, str]:
@@ -304,7 +307,7 @@ def run_subprocess_safe(
 
 def _run_with_os_system(
     cmd_list: list[str],
-    timeout_val: float,
+    timeout_val: float | None,
     env_dict: Optional[dict[str, str]],
     cwd_path: Optional[str],
     result_q: queue.Queue[tuple[int, str, str]],
@@ -429,7 +432,7 @@ def _build_unix_command(
 
 def _execute_with_timeout(
     shell_cmd: str,
-    timeout_val: float,
+    timeout_val: float | None,
     cmd_list: list[str],
     error_q: queue.Queue[BaseException],
 ) -> int | None:
