@@ -552,12 +552,50 @@ def collect_dialogue_meta_label_issues(story: dict) -> list[dict[str, Any]]:
     return issues
 
 
+
+def _source_repeat_needs_semantic_review(story: dict, issue: dict) -> bool:
+    """来源素材自身的复读须全文判定功能；这不是重复审核的通过标记。"""
+    plan, rows, numbers = story.get("gold_source_line_plan"), story.get("dialogue"), issue.get("lines")
+    if (not story.get("source_raw") or not isinstance(plan, list) or not isinstance(rows, list)
+            or len(plan) != len(rows) or not isinstance(numbers, list) or len(numbers) != 2):
+        return False
+    selected = []
+    refs = []
+    for no in numbers:
+        if type(no) is not int or not 1 <= no <= len(plan):
+            return False
+        item = plan[no - 1]
+        ids = item.get("source_seed_ids") if isinstance(item, dict) else None
+        if (not isinstance(item, dict) or item.get("line") != no or item.get("role") != "content"
+                or item.get("speaker") != rows[no - 1].get("speaker")
+                or not isinstance(ids, list) or len(ids) != 1 or type(ids[0]) is not int):
+            return False
+        refs.extend(ids)
+        selected.append(item)
+    if refs[0] == refs[1] or selected[0].get("speaker") != selected[1].get("speaker"):
+        return False
+    if any(sum(ref in (p.get("source_seed_ids") or []) for p in plan if isinstance(p, dict)) != 1 for ref in refs):
+        return False
+    first, second = (str(item.get("intent") or "") for item in selected)
+    if _near_duplicate(first, second):
+        return True
+    # 极短原句未达到近义检测的长度下限；仅接受原文中确实重复出现的逐字短句。
+    shorter, longer = sorted((_norm(first), _norm(second)), key=len)
+    return bool(len(shorter) >= 4 and shorter in longer
+                and _norm(str(story.get("source_raw") or "")).count(shorter) >= 2)
+
+
+def _source_repeat_pairs(story: dict) -> list[list[int]]:
+    return [item["lines"] for item in collect_local_issues(story)
+            if item.get("kind") == "重复" and _source_repeat_needs_semantic_review(story, item)]
+
+
 def collect_export_blocking_local_issues(story: dict) -> list[dict[str, Any]]:
     """终验本地硬拦：明显重复 + 称谓错位 + 结构标签泄漏。"""
     repeats = [
         it
         for it in collect_local_issues(story)
-        if it.get("kind") == "重复"
+        if it.get("kind") == "重复" and not _source_repeat_needs_semantic_review(story, it)
     ]
     address = collect_sibling_address_issues(story)
     meta = collect_dialogue_meta_label_issues(story)
@@ -1505,6 +1543,13 @@ def _validate_source_audit(raw: dict[str, Any], story: dict[str, Any]) -> str:
         error = source_f_audit_error(story, raw.get("f_structure_audit"))
         if error:
             return error
+    if (story.get("source_link_review") and story.get("story_type") == "G"
+            and "gold_g_source_structure" in story and story.get("closing_mode") != "authority_punchline"):
+        from app.services.daily_story.story_types.g.validate import source_g_audit_error
+
+        error = source_g_audit_error(story, raw.get("g_structure_audit"))
+        if error:
+            return error
     plan = story.get("gold_source_line_plan")
     if not isinstance(plan, list) or not plan:
         return ""
@@ -1530,6 +1575,21 @@ def _validate_source_audit(raw: dict[str, Any], story: dict[str, Any]) -> str:
             return f"source_audit 第{no}行缺少布尔判定 pass"
         if str(rows[no - 1].get("speaker") or "") != expected.get("speaker"):
             return f"第{no}行说话人偏离锁定素材计划"
+    pairs = _source_repeat_pairs(story)
+    if pairs:
+        repeated = raw.get("source_repeat_audit")
+        if not isinstance(repeated, list) or len(repeated) != len(pairs):
+            return "source_repeat_audit须逐对独立判断来源复述的功能，不能缺项"
+        for pair, item in zip(pairs, repeated):
+            if (not isinstance(item, dict) or item.get("lines") != pair
+                    or type(item.get("pass")) is not bool or not str(item.get("reason") or "").strip()):
+                return "来源复述审核缺少对应行号、布尔判定或上下文功能依据"
+            quotes = item.get("quotes")
+            if not isinstance(quotes, list) or len(quotes) != 2:
+                return "来源复述审核须引用两行实际台词"
+            if any(not isinstance(q, str) or len(q) < 2 or q not in str(rows[no - 1].get("line") or "")
+                   for no, q in zip(pair, quotes)):
+                return "来源复述审核引文与对应行不匹配"
     declared = story.get("gold_n_expression_contract")
     if declared:
         from app.services.daily_story.story_types.n.validate import source_rhetorical_contract
@@ -1553,11 +1613,16 @@ def _validate_source_audit(raw: dict[str, Any], story: dict[str, Any]) -> str:
 
 def _source_audit_failures(raw: dict[str, Any]) -> list[dict[str, Any]]:
     """明确不合格是内容修稿，不是审核接口失败；此类问题禁止豁免。"""
-    return [{"kind": "接不上", "lines": [item["line"]], "desc": item["reason"],
+    failures = [{"kind": "接不上", "lines": [item["line"]], "desc": item["reason"],
              "evidence": [{"line": item["line"], "quote": item["quote"]}],
              "source_audit_failed": True}
-            for item in [*raw.get("source_audit", []), *raw.get("n_structure_audit", []), *raw.get("f_structure_audit", [])]
+            for item in [*raw.get("source_audit", []), *raw.get("n_structure_audit", []), *raw.get("f_structure_audit", []), *raw.get("g_structure_audit", [])]
             if item.get("pass") is False]
+    failures.extend({"kind": "重复", "lines": item["lines"], "desc": item["reason"],
+                     "evidence": [{"line": no, "quote": q} for no, q in zip(item["lines"], item["quotes"])],
+                     "source_audit_failed": True}
+                    for item in raw.get("source_repeat_audit", []) if item.get("pass") is False)
+    return failures
 
 
 def run_export_semantic_review(
@@ -1663,7 +1728,7 @@ def run_export_semantic_review(
                 if not shape_err:
                     shape_err = _validate_source_audit(raw, story)
                     if not shape_err and (story.get("gold_source_line_plan") or (
-                            story.get("source_link_review") and story.get("story_type") == "F")):
+                            story.get("source_link_review") and story.get("story_type") in {"F", "G"})):
                         source_failures = _source_audit_failures(raw)
                         if source_failures:
                             return ExportSemanticReviewResult(completed=True, issues=source_failures, humor=parse_humor(raw))
@@ -2175,6 +2240,8 @@ def build_review_prompts(
             f"独立素材单元：{json.dumps(source_plan, ensure_ascii=False)}\n"
             "逐个核对这些单元在成稿里是否完整落地、说话人是否正确；"
             "同一拍的两个不同回答不能只保留一个，也不能互相复述。"
+            "若不同来源单元本来就是复述，须结合原文上下文独立判断是否承担追问、误会或递进笑点；"
+            "不能仅凭字面相同判废，也不能仅凭有来源就放过拖沓。新增重复和空转仍须判false。"
             "区分原素材明示的误答/歪解笑点与改编新增的接话断裂；原有笑点可保留，须在判定依据中指明来源，不能据此豁免新增硬伤。"
             "只在计划里出现不算正文已交代，须从正文引用证据。"
             "接话句须承接真实前文，不得抢替后续回答、捏造事实或空转凑句；"
@@ -2224,6 +2291,25 @@ def build_review_prompts(
             "另输出f_structure_audit，依conflict/escalation/standoff/closing顺序四项，line严格递增且closing在末三句。"
             '每项{"aspect":"conflict等","line":行号,"pass":true或false,"quote":"当前句连续引文",'
             '"source_quote":"原始素材连续引文（不改称谓）","reason":"结构依据或不成立原因"}。缺项不能通过。\n'
+        )
+    if (story.get("source_link_review") and story.get("story_type") == "G"
+            and "gold_g_source_structure" in story and story.get("closing_mode") != "authority_punchline"):
+        from app.services.daily_story.story_types.g.validate import G_SOURCE_AUDIT_RULES
+
+        source_block += (
+            "\n【G来源结构独立终审】" + G_SOURCE_AUDIT_RULES
+            + "\n【原始素材原文，source_quote只能逐字取自这里】\n" + str(story.get("source_raw") or "")
+            + "\n角色映射只用于理解，source_quote不得改称谓、同义替换或补字；不是引用当前成稿。\n"
+        )
+    repeat_pairs = _source_repeat_pairs(story)
+    if repeat_pairs:
+        source_block += (
+            "\n【来源复述待审，不是豁免】本地检测发现以下成稿与来源单元均近似的行对："
+            + json.dumps(repeat_pairs) + "。逐对结合原文、相邻句和实际成稿，判断复述是否承担明确的追问/强调/误会笑点。"
+            "没有具体功能的车轱辘、添出的空转、无法判断均pass=false，有来源本身不能当通过理由。"
+            '必须输出source_repeat_audit数组，按上面顺序每对一项：'
+            '{"lines":[行号1,行号2],"pass":true或false,"quotes":[第一行实际引文,第二行实际引文],'
+            '"reason":"说明上下文功能成立或不成立的具体依据"}。不能用source_audit或issues=[]替代。\n'
         )
     if story.get("source_adaptation"):
         source_block += (

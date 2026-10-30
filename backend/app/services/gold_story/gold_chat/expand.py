@@ -1761,7 +1761,12 @@ def _validate_line_plan(
         if not validate_intents:
             continue
         intent = str(row.get("intent") or "")
-        if len(intent) < 4:
+        # 来源计划保存的是直接台词（含原句及接话），不是抽象意图。
+        # 短应答不能按意图长度拒绝；纯标点仍不是可发声内容。
+        if row.get("source_plan"):
+            if not any(char.isalnum() for char in intent):
+                errors.append(f"第{idx}句缺可发声台词")
+        elif len(intent) < 4:
             errors.append(f"第{idx}句缺 intent 或太短")
         if row.get("from_beat"):
             # 拍主行的 intent 就是拍意图原文，动作/神态本来就在里面
@@ -4969,6 +4974,37 @@ def _audit_source_f_structure(story: dict[str, Any]) -> None:
                 [] if error else [item["aspect"] for item in (items or []) if item["pass"]])
 
 
+
+def _audit_source_g_structure(story: dict[str, Any]) -> None:
+    from app.services.daily_story.story_types.g.validate import (
+        G_SOURCE_AUDIT_RULES, source_g_audit_error, source_g_binding,
+    )
+
+    if not (story.get("story_type") == "G" and story.get("source_link_review") and story.get("source_raw")):
+        return
+    if story.get("closing_mode") == "authority_punchline":
+        return
+    binding = source_g_binding(story)
+    old = story.get("gold_g_source_structure")
+    if isinstance(old, dict) and old.get("binding") == binding:
+        return
+    user = json.dumps({"source_text": story["source_raw"],
+        "role_mapping": story.get("source_role_mapping"),
+        "dialogue": [{"line": i, "speaker": r.get("speaker"), "text": r.get("line")}
+                     for i, r in enumerate(story.get("dialogue") or [], 1)]}, ensure_ascii=False)
+    feedback = ""
+    for _ in range(2):
+        data = _chat_json(G_SOURCE_AUDIT_RULES + "只输出JSON，不改稿。", user + feedback,
+                          temperature=0.0, max_tokens=2200)
+        items = data.get("g_structure_audit") if isinstance(data, dict) else None
+        error = source_g_audit_error(story, items)
+        if not error:
+            story["gold_g_source_structure"] = {"binding": binding, "items": items}
+            return
+        feedback = "\n证据格式无效：" + error + "。保持语义判定标准，重新逐字引用并输出完整审核。"
+    raise ValueError("G来源结构审核证据无法核验：" + error)
+
+
 def _perbeat_fill_slots(
     slots: list[dict[str, Any]],
     *,
@@ -5683,13 +5719,14 @@ def _generate_perbeat_candidate(
         or str(scene_contract.get("conflict") or ""),
         "gold_beat_chain": beat_chain,
         "gold_source_line_plan": source_plan,
-        "source_link_review": bool(story_raw and (not source_plan or structure_type == "F")),
+        "source_link_review": bool(story_raw and (not source_plan or structure_type in {"F", "G"})),
         "gold_n_expression_contract": n_expression,
         # 源故事原文带上：终检判「语病」时要用它区分「作者原句」与「模型硬编」。
         "source_raw": story_raw,
         "source_role_mapping": str(scene_contract.get("remap_note") or ""),
     }
     _audit_source_f_structure(data)
+    _audit_source_g_structure(data)
     logger.info(
         "[GOLD_CHAT] perbeat assembled lines=%s chars=%s",
         len(lines),

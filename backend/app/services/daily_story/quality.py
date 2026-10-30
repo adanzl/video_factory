@@ -236,6 +236,8 @@ def story_review_content_hash(
         payload["source_role_mapping"] = str(story.get("source_role_mapping") or "")
         if story.get("gold_f_source_structure"):
             payload["f_source_structure"] = _stable_review_value(story["gold_f_source_structure"])
+        if story.get("gold_g_source_structure"):
+            payload["g_source_structure"] = _stable_review_value(story["gold_g_source_structure"])
     if story.get("source_adaptation"):
         payload["source_adaptation"] = _stable_review_value(story["source_adaptation"])
     raw = json.dumps(
@@ -1331,6 +1333,11 @@ def score_daily_story(
 
         if source_f_structure_valid(story):
             declared_hits = ("互呛", "升级", "僵持", "中止收束")
+    elif (profile.code == "G" and story.get("source_link_review") and story.get("source_raw")
+          and "gold_g_source_structure" in story and story.get("closing_mode") != "authority_punchline"):
+        from app.services.daily_story.story_types.g.validate import source_g_structure_valid
+
+        declared_hits = ("数落拒绝", "态度转折", "暖收") if source_g_structure_valid(story) else ()
     esc_bonus, esc_details = _score_escalation(
         lines, layer_patterns=layer_patterns, declared_hits=declared_hits,
     )

@@ -51,8 +51,14 @@ def authority_punchline_slots_hit(lines: list[str]) -> bool:
 def collect_g_humor_issues(
     lines: list[str],
     speakers: list[str] | None = None,
+    *, story: dict | None = None,
 ) -> list[str]:
     del speakers
+    if (story and story.get("source_link_review") and story.get("source_raw")
+            and "gold_g_source_structure" in story and story.get("closing_mode") != "authority_punchline"):
+        from app.services.daily_story.story_types.g.validate import source_g_structure_valid
+
+        return [] if source_g_structure_valid(story) else ["G来源结构缺少有效证据"]
     issues: list[str] = []
     body = "".join(lines)
     if authority_punchline_slots_hit(lines):

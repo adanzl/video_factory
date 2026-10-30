@@ -138,6 +138,10 @@ def append_g_body_errors(story: dict, errors: list[str]) -> None:
     if _is_authority_punchline_mode(story):
         _append_g_authority_punchline_errors(story, errors, lines=lines)
         return
+    if story.get("source_link_review") and "gold_g_source_structure" in story:
+        if not source_g_structure_valid(story):
+            errors.append("G来源结构证据缺失、失效或未通过，须重新审核")
+        return
 
     body = "".join(lines)
     tail3 = "".join(lines[-3:])
@@ -165,3 +169,65 @@ def append_g_body_errors(story: dict, errors: list[str]) -> None:
     # 末段已有暖收信号时，不把残余互呛词当 F 僵持
     if RE_F_STALE.search(tail3) and not soft_close_ok:
         errors.append("G类：末段勿 F 式威胁僵持")
+
+
+G_SOURCE_ASPECTS = ('resistance', 'pivot', 'closing')
+G_SOURCE_AUDIT_RULES = (
+    '独立审核G嘴硬心软结构，不以既有分数或前序审核作证据。'
+    '按resistance/pivot/closing三项核验：先数落或拒绝；同一人随后改变姿态愿意帮助；'
+    '末段以具体示好或明确承诺收束。转折可由询问如何帮助表现，最终承诺才完成暖收。'
+    '每项须有原文及当前成稿连续引文和语义支持，三项用不同句，按行号严格递增，closing在末三句。'
+    '冷嘲贯穿、交易要挟、被迫屈服、没有前后态度反差、仅口头停止争吵均不算，pass=false。'
+    '原文仅承诺时不能说已执行；不要求惊讶、护短或特定词汇。'
+    '三项须分别说明语义依据，不能把同一句同一承诺重复算成转折和收束。'
+    '输出g_structure_audit数组，每项含aspect、line(从1起整数)、pass(布尔)、'
+    'quote(该行连续引文)、source_quote(原始素材逐字引文，不改称谓)、reason。缺阶段须明确判false。'
+)
+
+
+def source_g_binding(story: dict) -> str:
+    import hashlib
+    import json
+
+    dialogue = [{'speaker': r.get('speaker'), 'line': r.get('line')} for r in story.get('dialogue') or []]
+    payload = [story.get('source_raw'), story.get('source_role_mapping'), dialogue]
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def source_g_audit_error(story: dict, items: object) -> str:
+    rows = story.get('dialogue') or []
+    source = str(story.get('source_raw') or '')
+    if not isinstance(items, list) or len(items) != len(G_SOURCE_ASPECTS):
+        return 'G来源结构审核须完整给出数落拒绝、态度转折、暖收三项'
+    previous = 0
+    for aspect, item in zip(G_SOURCE_ASPECTS, items):
+        if not isinstance(item, dict):
+            return 'G来源结构审核项须为对象'
+        no = item.get('line')
+        if (item.get('aspect') != aspect or type(no) is not int
+                or not previous < no <= len(rows) or type(item.get('pass')) is not bool):
+            return 'G来源结构审核须给出顺序递增的不同合法行号和布尔判定'
+        if aspect == 'closing' and no < len(rows) - 2:
+            return 'G暖收须发生在末三句'
+        quote, source_quote = str(item.get('quote') or ''), str(item.get('source_quote') or '')
+        if len(quote) < 2 or quote not in str(rows[no - 1].get('line') or ''):
+            return f'G来源结构审核{aspect}引文不在第{no}句'
+        if len(source_quote) < 4 or source_quote not in source:
+            return f'G来源结构审核{aspect}的source_quote={source_quote!r}不在原文中；须逐字复制source_raw，不得用成稿台词或改写称谓'
+        if not str(item.get('reason') or '').strip():
+            return 'G来源结构审核缺少语义依据'
+        previous = no
+    if all(item['pass'] for item in items):
+        speakers = [rows[item['line'] - 1].get('speaker') for item in items]
+        if not speakers[0] or len(set(speakers)) != 1:
+            return 'G拒绝到示好必须由同一个人完成，不能将对方屈服算成心软'
+    return ''
+
+
+def source_g_structure_valid(story: dict) -> bool:
+    proof = story.get('gold_g_source_structure')
+    return bool(story.get('source_link_review') and story.get('story_type') == 'G'
+                and story.get('source_raw') and isinstance(proof, dict)
+                and proof.get('binding') == source_g_binding(story)
+                and not source_g_audit_error(story, proof.get('items'))
+                and all(item['pass'] for item in proof['items']))

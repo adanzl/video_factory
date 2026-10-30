@@ -739,7 +739,7 @@ def scene_contract_reuse_issues(
         or str(r.get("speaker") or "").strip() != witness
     ]
     for prev, cur in zip(ordered, ordered[1:]):
-        if prev and prev == cur and prev not in _PARENT_SPEAKER_SET:
+        if witness and prev and prev == cur and prev not in _PARENT_SPEAKER_SET:
             issues.append(f"去见证位后孩子连续拍:{cur}")
             break
 
@@ -1755,6 +1755,10 @@ def spread_kid_beats(contract: dict[str, Any]) -> tuple[dict[str, Any], list[str
     """
     if not isinstance(contract, dict):
         return contract, []
+    # 这里是 N 类的机械交替修复；其他类型的连续原句有真实事件顺序，
+    # 不能为了排台词把它们搬到别的拍。分句规划负责接话与说话人交替。
+    if str(contract.get("story_type") or "").strip().upper() != "N":
+        return contract, []
     chain = contract.get("beat_chain")
     if not isinstance(chain, list) or len(chain) < 4:
         return contract, []
@@ -2460,6 +2464,53 @@ def enrich_seed_from_story_raw(
     return rows, [f"从story_raw补seed引语:{added}条"]
 
 
+
+def _collapse_adjacent_source_repeats(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """只合并一一对应的相邻同人逐字重复；原文和重复次数保留。"""
+    contract = payload.get("scene_contract")
+    seed = payload.get("dialogue_seed")
+    if not isinstance(contract, dict) or not isinstance(seed, list):
+        return payload, []
+    beats = contract.get("beat_chain")
+    if (not isinstance(beats, list) or len(beats) != len(seed) or not seed
+            or any(not isinstance(a, dict) or not isinstance(b, dict)
+                   or not a.get("speaker") or a.get("speaker") != b.get("speaker")
+                   for a, b in zip(seed, beats))):
+        return payload, []
+    def compact(value: Any) -> str:
+        return "".join(c for c in str(value or "") if c.isalnum())
+    source = compact(payload.get("story_raw"))
+    rows: list[dict[str, Any]] = []
+    chain: list[dict[str, Any]] = []
+    merged = 0
+    def metadata(row: dict[str, Any], *, is_beat: bool = False) -> dict[str, Any]:
+        ignored = {"intent", "source_repeat_count"}
+        if is_beat:
+            ignored.add("beat")
+        return {k: v for k, v in row.items() if k not in ignored}
+
+    for item, beat in zip(seed, beats):
+        text = compact(item.get("intent"))
+        if (rows and len(text) >= 4 and text == compact(rows[-1].get("intent"))
+                and source.count(text) >= int(rows[-1].get("source_repeat_count") or 1) + int(item.get("source_repeat_count") or 1)
+                and item.get("source_origin") != "synthetic"
+                and metadata(item) == metadata(rows[-1])
+                and metadata(beat, is_beat=True) == metadata(chain[-1], is_beat=True)
+                and not any(b.get("required_semantic_points") or b.get("witness_only") for b in (beat, chain[-1]))):
+            count = int(rows[-1].get("source_repeat_count") or 1) + int(item.get("source_repeat_count") or 1)
+            rows[-1]["source_repeat_count"] = count
+            chain[-1]["source_repeat_count"] = count
+            merged += 1
+            continue
+        rows.append(dict(item))
+        chain.append(dict(beat))
+    if not merged:
+        return payload, []
+    for i, beat in enumerate(chain, 1):
+        beat["beat"] = i
+    return {**payload, "dialogue_seed": rows, "scene_contract": {**contract, "beat_chain": chain}}, [f"相邻同人原句重复合拍:{merged}处"]
+
+
 def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """把**契约与 seed 一起**做词槽归一化（唯一入口）。
 
@@ -2469,8 +2520,7 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
     """
     if not isinstance(payload, dict):
         return payload, []
-    out = dict(payload)
-    notes: list[str] = []
+    out, notes = _collapse_adjacent_source_repeats(dict(payload))
     contract = out.get("scene_contract")
     if isinstance(contract, dict):
         new_contract, c_notes = neutralize_mechanism_token(contract)

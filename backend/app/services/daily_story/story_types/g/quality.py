@@ -52,8 +52,14 @@ def score_punchline(
     speakers: list[str],
     prev2: str,
     last: str,
+    *, story: dict | None = None,
 ) -> tuple[int, list[str]]:
     del speakers
+    if (story and story.get("source_link_review") and story.get("source_raw")
+            and "gold_g_source_structure" in story and story.get("closing_mode") != "authority_punchline"):
+        from app.services.daily_story.story_types.g.validate import source_g_structure_valid
+
+        return (6, ["有来源证据的态度转折与暖收"]) if source_g_structure_valid(story) else (0, ["G来源结构未通过"])
     if g_humor.authority_punchline_slots_hit(lines):
         tail = prev2 + last
         if g_humor.RE_AUTH_PUNCH.search(last) or g_humor.RE_AUTH_PUNCH.search(tail):

@@ -1610,6 +1610,11 @@ def _attach_gold_chat_structure_score(
 
         out["source_role_mapping"] = str(scene_contract.get("remap_note") or "")
         _audit_source_f_structure(out)
+    if out.get("source_link_review") and st == "G":
+        from app.services.gold_story.gold_chat.expand import _audit_source_g_structure
+
+        out["source_role_mapping"] = str(scene_contract.get("remap_note") or "")
+        _audit_source_g_structure(out)
     # 按正文一体计分：勿把前 2 句 sync 成 discovery_opening 再扣开场分
     out.pop("discovery_opening", None)
     attach_daily_story_quality(out, theme=theme, finalize=True, skip_relevancy=True)
@@ -2195,6 +2200,7 @@ def _try_revise_draft(
         user += ("\n【来源分句计划】content行保留原素材含义；reaction行是生成的接话，不是原始素材。"
                  "审稿点名reaction说错人或添事实时，必须纠正它的原intent，不能坚持保留错误意图。"
                  "说话人固定，不能替其他人回答或保证，也不能新增事实。\n"
+                 "新版本不得引入来源未给出的数额、期限、履约承诺或既成动作；保留问题的对象和言语功能。\n"
                  + json.dumps(source_plan, ensure_ascii=False)
                  + "\n【只读原始素材】\n" + str(chat.get("source_raw") or "")
                  + "\n【类型表达契约】" + json.dumps(chat.get("gold_n_expression_contract"), ensure_ascii=False))

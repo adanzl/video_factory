@@ -1947,6 +1947,7 @@ def format_perbeat_batch_user(
             row += "｜reaction直接台词：保留意思及一二人称，仅校正口语、指代和8–24字长度，不改写成第三人称解说"
         elif source_mode:
             row += f"｜本句目标{line_target}–{CHAT_MAX_LINE_CHARS}字（含标点，补清角色/对象/回忆指代，不添加新事实）"
+            row += "｜保留原句问的对象和言语功能：要求重复不能改成询问原因或具体宾语；不要替听者先说出后面的答案。补长度不得新增时间、数额、承诺或已完成动作"
         beat_intent = str(slot.get("beat_intent") or "").strip()
         if beat_intent and slot.get("split_role"):
             row += f"｜本拍内容：{_perbeat_clean_intent(beat_intent)}"
@@ -1966,6 +1967,7 @@ def format_perbeat_batch_user(
         f"场景：{scene_contract.get('location') or '家里'}；在场角色：{cast}\n"
         f"故事核：{scene_contract.get('conflict') or ''}\n"
         f"角色映射：{scene_contract.get('remap_note') or ''}\n"
+        f"事实归属（不能反转参与者或把指认方当行为人）：{json.dumps(scene_contract.get('facts') or [], ensure_ascii=False)}\n"
         f"关键包袱（全篇只说一次，只能由指定角色说）：{punchline or '（无）'}\n"
         f"篇幅：共 {len(slots)} 句，每句 8–24 字，全篇按序号顺序发生\n"
         f"类型：{scene_contract.get('story_type') or ''}；表达契约：{json.dumps(scene_contract.get('gold_n_expression_contract'), ensure_ascii=False)}\n"
@@ -2189,6 +2191,7 @@ SOURCE_LINE_PLAN_SYSTEM = DAILY_STORY_RELATION_RULE + "\n" + """你为家庭对�
 接话可指出已出说法或行为之间的反差，但不要发明新的常识判断、替原稿纠错或补一个无人提过的前提。
 接话是现在听完后的评价，不续演过去现场，不猜当时另一个人怎样想/怎样回应。不要为迎合整体故事核，硬把一条本来正确的回答说成无效；每句只评已说出的具体内容。
 原素材孩子的误答已由content承担；reaction要按前文真实含义接话，不能另造错误判断并把它当新的歪理笑点。
+接话不得凭空否认已经建立的事实，也不得新加履约承诺、期限或数额。承接追问时只使用已知内容或回应当下请求，不替原文补一个具体答案。
 不要写‘我不信/越听越玄乎/你继续说/我就在旁边听着’等通用空话，也不写动作或神态。
 昭昭7岁、灿灿10岁；说孩子当面对家人说的话，不做成人评论员，不分析论证过程或台词的修辞作用。
 旁观陈述不必推进争执或被下一句回答，但不能只复述加害怕/紧张。优先从heard_content里两条说法的具体反差作儿童口吻的表态，不编新事实，同篇各次接话不能雷同。
@@ -2207,7 +2210,7 @@ def format_source_line_plan_user(
               "heard_content": [r for r in table[:i - 1] if r["role"] == "content"],
               "next_content": next((r for r in table[i:] if r["role"] == "content"), None)}
              for i in picks]
-    scene = {k: scene_contract.get(k) for k in ("location", "characters", "conflict", "closing_intent", "story_type", "remap_note")}
+    scene = {k: scene_contract.get(k) for k in ("location", "characters", "conflict", "closing_intent", "story_type", "remap_note", "facts")}
     return (
         f"【接话任务】{json.dumps(tasks, ensure_ascii=False)}\n"
         "每句接话只可使用该任务heard_content里已经说出的事实；next_content只用来检查衔接，不能提前代说。"
@@ -2219,7 +2222,7 @@ def format_source_line_plan_user(
         "每个接话位最终需要8–24字，须接住前一句具体内容且不抢后一句的事实。"
         "同一拍里原说话人的两段回答已各占一行，不要让另一个孩子代说后半段。"
         f"\n上一版错误：{feedback or '无'}\n"
-        '输出 {"lines":[{"i":行号,"intent":"具体接话内容"}]}。'
+        '输出 {"lines":[{"i":行号,"line":"直接说出口的完整台词"}]}。'
     )
 
 

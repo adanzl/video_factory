@@ -2432,3 +2432,62 @@ def test_adjacent_parent_questions_merge_in_source_order():
         {"beat": 2, "speaker": "妈妈", "intent": "追问杯子现在在哪里"}]}
     out, _ = normalize_parent_beat_ownership(contract)
     assert [r["intent"] for r in out["beat_chain"]] == ["追问谁拿走了杯子、追问杯子现在在哪里"]
+
+
+def test_non_n_source_beats_keep_order_and_allow_consecutive_owner():
+    from copy import deepcopy
+    from app.services.gold_story.scene import spread_kid_beats
+
+    contract = {
+        'story_type': 'G', 'characters': ['灿灿', '昭昭'],
+        'beat_chain': [
+            {'beat': 1, 'speaker': '灿灿', 'intent': '问对方想说什么'},
+            {'beat': 2, 'speaker': '昭昭', 'intent': '先讲自己的困难'},
+            {'beat': 3, 'speaker': '昭昭', 'intent': '再说明具体请求'},
+            {'beat': 4, 'speaker': '灿灿', 'intent': '回答这个请求'},
+            {'beat': 5, 'speaker': '昭昭', 'intent': '回应对方的回答'},
+        ],
+    }
+    before = deepcopy(contract)
+    normalized, notes = spread_kid_beats(contract)
+    assert normalized == before
+    assert notes == []
+    assert scene_contract_reuse_issues(contract) == []
+
+
+def test_adjacent_literal_source_repeat_collapses_without_changing_raw_or_nonadjacent_echo():
+    from copy import deepcopy
+    from app.services.gold_story.scene import _collapse_adjacent_source_repeats
+    seed = [{'speaker': '灿灿', 'intent': '你把杯子放哪了？'},
+            {'speaker': '灿灿', 'intent': '你把杯子放哪了？'},
+            {'speaker': '昭昭', 'intent': '就在桌子上面。'},
+            {'speaker': '灿灿', 'intent': '你把杯子放哪了？'}]
+    beats = [{**s, 'beat': i} for i, s in enumerate(seed, 1)]
+    payload = {'story_raw': ''.join(s['intent'] for s in seed), 'dialogue_seed': seed,
+               'scene_contract': {'story_type': 'G', 'beat_chain': beats}}
+    original = deepcopy(payload)
+    out, notes = _collapse_adjacent_source_repeats(payload)
+    assert notes and payload == original
+    assert out['story_raw'] == original['story_raw']
+    assert len(out['dialogue_seed']) == 3
+    assert out['dialogue_seed'][0]['source_repeat_count'] == 2
+    assert out['dialogue_seed'][-1]['intent'] == seed[-1]['intent']
+    assert [b['beat'] for b in out['scene_contract']['beat_chain']] == [1, 2, 3]
+    assert _collapse_adjacent_source_repeats(out) == (out, [])
+
+
+@pytest.mark.parametrize('mutation', ['speaker', 'meaning', 'fact', 'act', 'source', 'mapping', 'required'])
+def test_source_repeat_collapse_rejects_distinct_units_or_unproven_mapping(mutation):
+    from app.services.gold_story.scene import _collapse_adjacent_source_repeats
+    seed = [{'speaker': '灿灿', 'intent': '先把那本书拿来。'} for _ in range(2)]
+    beats = [{**s, 'beat': i} for i, s in enumerate(seed, 1)]
+    payload = {'story_raw': ''.join(s['intent'] for s in seed), 'dialogue_seed': seed,
+               'scene_contract': {'beat_chain': beats}}
+    if mutation == 'speaker': seed[1]['speaker'] = beats[1]['speaker'] = '昭昭'
+    if mutation == 'meaning': seed[1]['intent'] = '先把那支笔拿来。'
+    if mutation == 'fact': seed[1]['fact_ref'] = 'F2'
+    if mutation == 'act': beats[1]['speech_act'] = 'retort'
+    if mutation == 'source': payload['story_raw'] = seed[0]['intent']
+    if mutation == 'mapping': beats.pop()
+    if mutation == 'required': beats[1]['required_semantic_points'] = ['额外要求']
+    assert _collapse_adjacent_source_repeats(payload) == (payload, [])

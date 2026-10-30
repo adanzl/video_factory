@@ -6348,3 +6348,155 @@ def test_reimport_invalidates_old_export_and_daily_atomically(app_ctx, tmp_path,
         assert not restored["daily_story"]["quality"].get("source_stale")
     for key, path in paths.items():
         assert Path(path).read_bytes() == old_bytes[key]
+
+
+@pytest.mark.parametrize('text,valid', [('啥？', True), ('好', True), ('7', True), ('……？！', False), ('  ', False)])
+@pytest.mark.parametrize('role', ['content', 'reaction'])
+def test_source_plan_validates_spoken_text_instead_of_abstract_intent_length(text, valid, role):
+    beat = {'speaker': '昭昭', 'intent': '回应当前具体请求'}
+    contract = {'characters': ['昭昭'], 'mom_lines_max': 0}
+    row = {'beat': 1, 'speaker': '昭昭', 'intent': text,
+           'source_plan': True, 'from_beat': role == 'content', 'role': role}
+    errors = gex._validate_line_plan([row], scene_contract=contract, beat_chain=[beat], target_lines=1)
+    assert (not errors) is valid
+    row.pop('source_plan')
+    errors = gex._validate_line_plan([row], scene_contract=contract, beat_chain=[beat], target_lines=1)
+    assert any('太短' in error for error in errors) == (len(text) < 4)
+
+
+def _source_g_structure_fixture():
+    from app.services.daily_story.story_types.g.validate import source_g_binding, G_SOURCE_ASPECTS
+    lines = ['你每次弄不明白就让我来收拾。', '这回我真的不知道该从哪儿开始。',
+             '先让我看看你到底卡在哪一步。', '就是中间这块，我怎么也拼不上。',
+             '这块交给我，你在旁边慢慢看。']
+    story = {'story_type': 'G', 'source_link_review': True, 'source_raw': ''.join(lines),
+             'source_role_mapping': '姐弟', 'punchline_explain': 'G嘴硬心软',
+             'dialogue': [{'speaker': '灿灿' if i % 2 == 0 else '昭昭', 'line': line}
+                          for i, line in enumerate(lines)]}
+    items = [{'aspect': aspect, 'line': no, 'pass': True, 'quote': lines[no - 1],
+              'source_quote': lines[no - 1], 'reason': '数落者态度改变并主动帮助，来源与成稿一致'}
+             for aspect, no in zip(G_SOURCE_ASPECTS, [1, 3, 5])]
+    story['gold_g_source_structure'] = {'binding': source_g_binding(story), 'items': items}
+    return story
+
+
+@pytest.mark.parametrize('mutation', ['line', 'speaker', 'source', 'mapping', 'quote', 'negative', 'order', 'missing', 'different_helper'])
+def test_source_g_requires_current_ordered_evidence_from_same_helper(mutation):
+    from app.services.daily_story.story_types.g.validate import source_g_binding, source_g_structure_valid
+    story = _source_g_structure_fixture()
+    assert source_g_structure_valid(story)
+    if mutation == 'line': story['dialogue'][0]['line'] += '真的。'
+    if mutation == 'speaker': story['dialogue'][0]['speaker'] = '昭昭'
+    if mutation == 'source': story['source_raw'] += '新事实'
+    if mutation == 'mapping': story['source_role_mapping'] = '家长和孩子'
+    if mutation == 'quote': story['gold_g_source_structure']['items'][0]['source_quote'] = '不在素材里的依据'
+    if mutation == 'negative': story['gold_g_source_structure']['items'][1]['pass'] = False
+    if mutation == 'order': story['gold_g_source_structure']['items'][2]['line'] = 3
+    if mutation == 'missing': story['gold_g_source_structure']['items'].pop()
+    if mutation == 'different_helper':
+        story['dialogue'][2]['speaker'] = '昭昭'
+        story['gold_g_source_structure']['binding'] = source_g_binding(story)
+    assert not source_g_structure_valid(story)
+
+
+def test_source_g_final_review_must_reaudit_and_blocks_negative_evidence():
+    from copy import deepcopy
+    from app.services.daily_story.review import _validate_source_audit, _source_audit_failures, build_review_prompts
+    from app.services.daily_story.quality import story_review_content_hash
+    from app.services.daily_story.story_types.g.quality import score_punchline
+    story = _source_g_structure_fixture()
+    assert _validate_source_audit({'issues': []}, story)
+    raw = {'g_structure_audit': deepcopy(story['gold_g_source_structure']['items'])}
+    assert _validate_source_audit(raw, story) == ''
+    raw['g_structure_audit'][1]['pass'] = False
+    assert _source_audit_failures(raw)[0]['source_audit_failed'] is True
+    _, user = build_review_prompts('拼图求助', story)
+    assert 'G来源结构独立终审' in user
+    before = story_review_content_hash(story)
+    story['gold_g_source_structure']['items'][1]['pass'] = False
+    assert story_review_content_hash(story) != before
+    # Even if all the old keyword detectors fire, failed evidence cannot score a warm close.
+    assert score_punchline(['心疼', '护短'], [], '你先说', '说好了我给你擦药', story=story)[0] == 0
+
+
+def test_source_g_audit_recovers_quote_format_without_changing_dialogue(monkeypatch):
+    from copy import deepcopy
+    story = _source_g_structure_fixture()
+    expected = deepcopy(story['dialogue'])
+    items = story.pop('gold_g_source_structure')['items']
+    calls = []
+    def chat(system, user, **kwargs):
+        calls.append(user)
+        answer = deepcopy(items)
+        if len(calls) == 1:
+            answer[0]['source_quote'] = '不存在的连续引文'
+        return {'g_structure_audit': answer}
+    monkeypatch.setattr(gex, '_chat_json', chat)
+    gex._audit_source_g_structure(story)
+    assert len(calls) == 2
+    assert story['dialogue'] == expected
+    gex._audit_source_g_structure(story)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('mutation,delegated', [('', True), ('reaction', False), ('same_id', False), ('different_intent', False), ('speaker', False), ('missing_source', False)])
+def test_only_distinct_repeated_source_content_defers_to_semantic_review(mutation, delegated):
+    from app.services.daily_story.review import _source_repeat_needs_semantic_review
+    line = '我那盒彩色铅笔现在不够用了。'
+    story = {'source_raw': '原文重复：' + line + line,
+             'dialogue': [{'speaker': '昭昭', 'line': line}, {'speaker': '昭昭', 'line': line}],
+             'gold_source_line_plan': [{'line': i, 'role': 'content', 'speaker': '昭昭',
+                                       'intent': line, 'source_seed_ids': [i]} for i in [1, 2]]}
+    if mutation == 'reaction': story['gold_source_line_plan'][1]['role'] = 'reaction'
+    if mutation == 'same_id': story['gold_source_line_plan'][1]['source_seed_ids'] = [1]
+    if mutation == 'different_intent': story['gold_source_line_plan'][1]['intent'] = '询问学校运动会的时间'
+    if mutation == 'speaker': story['dialogue'][1]['speaker'] = '灿灿'
+    if mutation == 'missing_source': story['source_raw'] = ''
+    assert _source_repeat_needs_semantic_review(story, {'lines': [1, 2]}) is delegated
+
+
+def test_source_repetition_requires_explicit_pair_review(monkeypatch):
+    from app.services.daily_story import review
+    story = {'dialogue': [{'speaker': '昭昭', 'line': '还得再确认一下。'}, {'speaker': '昭昭', 'line': '还得再确认一下。'}],
+             'gold_source_line_plan': [{'line': i, 'speaker': '昭昭', 'role': 'content', 'source_seed_ids': [i]} for i in [1, 2]]}
+    raw = {'source_audit': [{**p, 'pass': True, 'quote': '还得再确认一下', 'reason': '依据来源'} for p in story['gold_source_line_plan']]}
+    monkeypatch.setattr(review, '_source_repeat_pairs', lambda _: [[1, 2]])
+    assert 'source_repeat_audit' in review._validate_source_audit(raw, story)
+    raw['source_repeat_audit'] = [{'lines': [1, 2], 'pass': False,
+                                  'quotes': ['还得再确认一下', '还得再确认一下'], 'reason': '没有新回应，属于空转'}]
+    assert review._validate_source_audit(raw, story) == ''
+    assert review._source_audit_failures(raw)[0]['kind'] == '重复'
+    raw['source_repeat_audit'][0]['quotes'][1] = '不存在的证据'
+    assert review._validate_source_audit(raw, story)
+
+
+def test_short_source_repeat_requires_two_literal_occurrences():
+    from app.services.daily_story.review import _source_repeat_needs_semantic_review
+    story = {'source_raw': '一人说“等一下嘛”，随后又说“那个等一下嘛”。',
+             'dialogue': [{'speaker': '昭昭', 'line': '姐姐等一下嘛。'}, {'speaker': '昭昭', 'line': '姐姐你等一下嘛。'}],
+             'gold_source_line_plan': [{'line': i, 'role': 'content', 'speaker': '昭昭', 'intent': intent,
+                                       'source_seed_ids': [i]} for i, intent in [(1, '等一下嘛'), (2, '那个等一下嘛')]]}
+    assert _source_repeat_needs_semantic_review(story, {'lines': [1, 2]})
+    story['source_raw'] = '只说一次等一下嘛'
+    assert not _source_repeat_needs_semantic_review(story, {'lines': [1, 2]})
+
+
+def test_legacy_source_g_exports_keep_existing_review_contract():
+    from app.services.daily_story.review import _validate_source_audit, build_review_prompts
+    from app.services.daily_story.story_types.g.quality import score_punchline
+    story = _source_g_structure_fixture()
+    story.pop('gold_g_source_structure')
+    assert _validate_source_audit({'issues': []}, story) == ''
+    _, user = build_review_prompts('旧稿', story)
+    assert 'G来源结构独立终审' not in user
+    assert score_punchline(['心疼', '护短'], [], '你先说', '说好了我给你擦药', story=story)[0] > 0
+
+
+def test_source_fact_roles_reach_planning_and_filling_prompts():
+    from app.services.gold_story.gold_chat.prompts import format_source_line_plan_user, format_perbeat_batch_user
+    facts = [{'fact_id': 'F1', 'event': '弄坏了拼图', 'secret_holder': '昭昭', 'accuser': '灿灿'}]
+    contract = {'characters': ['昭昭', '灿灿'], 'facts': facts}
+    plan = format_source_line_plan_user(scene_contract=contract, seed=[], story_raw='原始素材', rows=[])
+    fill = format_perbeat_batch_user(scene_contract=contract, punchline='', slots=[])
+    for text in [plan, fill]:
+        assert '弄坏了拼图' in text and 'secret_holder' in text and 'accuser' in text
