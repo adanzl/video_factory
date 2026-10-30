@@ -1378,7 +1378,8 @@ def test_collection_attempts_next_clip_without_persisting_failed_candidate(monke
                                description='', view_count=200000, reply_count=100, keyword='', duration_sec=793)
     cfg = Config(); cfg.gold_story_media_workspace = tmp_path
     cfg.gold_story_collection_max_duration_sec = 1800
-    clips = [{'start_sec': s, 'end_sec': s + 20, 'eligible': True} for s in (10, 50)]
+    clips = [{'start_sec': s, 'end_sec': s + 20, 'eligible': False,
+              'index_review': {'reason': '旧粗索引误判'}} for s in (10, 50)]
     monkeypatch.setattr(tr, 'collection_source', lambda *a: {'segments': [], 'duration_sec': 793})
     monkeypatch.setattr(p.llm_steps, 'select_collection_clips', lambda *a, **kw: clips)
     monkeypatch.setattr(tr, 'transcribe_collection_clip', lambda sid, media, clip, cfg: {'source_clip': clip})

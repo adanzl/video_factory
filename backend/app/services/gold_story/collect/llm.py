@@ -164,10 +164,7 @@ _H0C_USER = """视频标题（仅供理解主题，不能作为对白或身份�
     {{"speaker": "未知", "text": "原文中的这一句", "source_quote": "原文中的这一句", "status": "ok"}}
   ],
   "repair_confidence": 0.0,
-  "repair_notes": "说明断句依据及任何纠错的原文、修正和证据；不确定身份保持未知",
-  "has_complete_scene": false,
-  "scene_line_indices": [],
-  "scene_evidence": "说明选中行如何构成同一事件的起因、回应和收束；不完整就说明缺失"
+  "repair_notes": "说明断句依据及任何纠错的原文、修正和证据；不确定身份保持未知"
 }}
 
 规则：
@@ -183,13 +180,8 @@ _H0C_USER = """视频标题（仅供理解主题，不能作为对白或身份�
 - 可合并原文连续碎句、去掉相邻重复识别的同一短语，但 source_quote 必须包含对应完整原文。
 - lines 至少 2 条；repair_confidence 表示原文断句和语义恢复把握，不因 speaker=未知而降低分数。
   repair_confidence<0.35 视为失败；text 不重复 speaker 前缀。
-- has_complete_scene 默认 false，false 是合法且期望的结果，禁止为通过检查拼剧情。
-- 只从本轮 lines 中选一段真实完整的单一事件：同一组人物围绕同一件事有起因、回应和收束。
-  评论区散句、语录合集、互不相干的场景不能通过添加承接动作拼成一件事。
-- scene_line_indices 是本轮 lines 的 1-based 有序不重复索引，至少两行；
-  必须连续，只可跳过 status=unusable 的杂质行；选中行不得含 [听不清]。
-  scene_evidence 必须说明同一人物/事件及收束的原文依据；不确定就 false 和空索引。
-- 选定事件后必须覆盖该事件全部有效对话与明确结果，禁止找到一句笑点就提前截断同一事件的后续回应和结果。
+- 本轮只整理，不选故事。按原文顺序保留全部有效对白和旁白结果，不因为没有笑点或不适合儿童而删行。
+  每行 source_quote 必须对应原文中依次出现、互不重叠的片段；同一段原文不可复制成多句。
 """
 
 _H2_SYSTEM = (
@@ -199,20 +191,12 @@ _H2_SYSTEM = (
     "不得用常识补开场，不得把请求/指令写成已经完成的动作。\n"
     "口播/科普/经验分享必须已有完整具体实例，否则拒绝；禁止为了可拍自行搭建现场。\n"
     "合集多梗时只取来源中实际完整的一条，不得拼接碎片。\n"
-    "逐字稿是事实依据；简介热评只能辅助理解，不能补造逐字稿不存在的角色问答、道具、动作、因果桥梁或结局。\n"
+    "逐字稿是唯一事实依据，不能补造不存在的角色问答、道具、动作、因果桥梁或结局。\n"
     "只输出 JSON。"
 )
 
-_H2_USER = """视频标题：{title}
-
-【逐字稿】
+_H2_USER = """【唯一事实依据：已审核的逐字稿】
 {transcript}
-
-【简介】
-{description}
-
-【热评摘录】
-{replies}
 
 输出 JSON：
 {{
@@ -224,38 +208,19 @@ _H2_USER = """视频标题：{title}
 }}
 
 规则：
-- story_raw **必须 80–400 字**；太短（单句笑话/只有一个梗）一律 has_complete_arc=false
-- 口播/科普/教程：source_type=tutorial，只能映射来源中已有的完整实例；无实例则 has_complete_arc=false，禁止自造现场
-- 角色允许昭昭、灿灿、妈妈、爸爸；陌生小孩须映射或删除。
-  源稿是爸爸且妈妈代不了时保留爸爸；能用妈妈就用妈妈；
-  单孩+家长须拆成昭昭+灿灿双孩戏份，家长仍配角
-  （**例外**：机制是「孩子一本正经胡说 → 家长追问破功」这类**家长当追问方**
-  的 N 型稿，保持**家长 × 单孩两人手**，勿硬拆第二个孩子）
-  不得保留站外真名/小男孩/对方等在 story_raw
-- 仅提炼选中的完整转写情节，热评、简介不得替代或扩写来源事实
-- 用来源中的问答和叙述直接串联；没有提到的现场地点、肢体动作、心理反应一律省略。
-  对方要求做某事不代表已经做了，不得把指令改写成已完成的动作。
-- has_complete_arc=false 或 extract_confidence<0.5 即失败
-- **引号只给有效对白**：语义完整、说话人与目的可判定的才可加引号；
-  逐字稿里 [听不清] 或语义不通、听不明白的碎片 **禁止**写进引号，
-  也禁止补词把它改成台词
-- **归属自洽（硬）**：引号对白必须是「这个角色说得出口」的话——
-  孩子不得自称家长身份（「我是你妈/我是你爸」），
-  也不得承认只有家长做过的事；被指认方与指认方要分清。
-  **指认/揭发/翻旧账句**必须写成第二人称（「你晚上偷吃……」），
-  不得让孩子用第一人称认领那件事（「我晚上偷吃……」）。
-- **标题是事实层的最强线索**：标题/简介写明某人抱怨、揭发另一方做过某事时，
-  该事归 **被抱怨/被揭发那一方**；标题里出现「都背着我」「不告诉我」这类
-  被排除表达时，说这话的人是抱怨方，另一方才是做过那件事的人。
-  含引号对白里凡涉及该事的承认、自曝、辩解句，须归被揭发方；
-  抱怨方只写指认、追问、讨要。逐字稿推断与标题冲突的，以标题为准改正归属。
-  H0c 归错的和句子本身冲突的，按标题/简介/语义重新归属，
-  仍判不定的写成非引语概括（如「有人用把柄反将一军」「家长心虚否认」），
-  不得把错位原话写进引号
-- 结尾碎念只作氛围：写成非引语概括（如「嘟囔了一句听不清的话」），不加引号；
-  若尾部只剩听不清碎片，按已发生的收束事件收尾；
-  删掉后不足 80 字就 has_complete_arc=false，不得补动作/环境/心理来凑字数
-- 不要输出 quote 字段；引号对白保留在 story_raw 内
+- story_raw 必须 80–400 字；事实不足以达到长度时 has_complete_arc=false，不补场景、动作或心理凑字。
+- 仅提炼已选情节，保留原来的角色关系与人数；身份未知时用一人/对方，不猜父母/孩子。
+  本步骤不改名、不做儿童改编、不增加第二个孩子，角色映射由后续步骤负责。
+- 不改对白中的我/你、否定、数字及事实归属；称呼对象不等于说话人身份。
+  原文不能确定是谁说的就保留不确定性，禁止用标题、简介或常识补造身份。
+- 用来源中的问答和叙述直接串联；未提到的地点、肢体动作、心理反应一律省略。
+  口头答应/拒绝/反问/反转可以构成问答收束，不要求承诺已经执行；
+  必须写成答应/拒绝等言语行为，不得把要求或承诺改写成已完成的动作。
+- 口播/科普/教程：source_type=tutorial，只能提炼已有完整实例；无实例则 has_complete_arc=false。
+- has_complete_arc=false 或 extract_confidence<0.5 即失败。
+- 引号只给语义完整的有效对白；[听不清] 或无法理解的碎片不得补词变成台词。
+  若尾部只剩听不清碎片，按已有的收束事件收尾，不能猜测丢失的结局。
+- 不要输出 quote 字段；引号对白保留在 story_raw 内。
 """
 
 
@@ -757,21 +722,9 @@ def select_collection_clips(segments: list[dict[str, Any]], *, duration_sec: flo
             raise ModelOutputError("collection overlapping or oversized clip")
         occupied.append((start, end))
         context = [row for row in rows if row["end"] >= start - 15 and row["start"] <= end + 15]
-        review = _chat_json(
-            "你是独立片段边界审核员。输入是粗转写及候选时间范围，不是成稿事实。"
-            "检查范围内是否为同一连续事件，有原文可确认的起因、回应和收束，未跨段拼接，"
-            "未丢掉紧邻上下文中的关键开场或结果。不确定就false；允许索引有少量错字，"
-            "但关键情节靠猜不能通过。只输出JSON："
-            '{"single_complete_event":true或false,"reason":"具体原文依据或缺失"}。',
-            json.dumps({"start_sec": start, "end_sec": end, "context": context}, ensure_ascii=False),
-        )
-        reason_review = _response_reason(review, "reason", "collection review")
+        # 粗索引会漏字、错位，不能据此否决素材；完整性只在新识别的片段上审核。
         clips.append({"start_sec": start, "end_sec": end, "start_index": first, "end_index": last,
-                      "selection_reason": reason, "index_context": context,
-                      "index_review": {**review, "reason": reason_review},
-                      "eligible": _response_bool(review, "single_complete_event", "collection review")})
-        if sum(bool(item["eligible"]) for item in clips) >= 3:
-            break
+                      "selection_reason": reason, "index_context": context})
     return clips
 
 
@@ -838,18 +791,29 @@ def review_transcript_repair(*, transcript: str, repaired: str) -> dict[str, Any
     if len(transcript) > 12000 or len(repaired) > 12000:
         raise ModelOutputError("transcript repair audit input too large")
     result = _chat_json(
-        "你是逐字稿保真审核员。对照唯一原文，核对修复稿中每句对白、说话人关系、否定、数字、因果和结局。"
-        "确认选中内容是同一个连续完整事件，禁止跨场景拼接问答。"
-        "允许从原文选取完整单一场景及有明确依据的错字修复，禁止新增事实、颠倒问答关系或猜测缺失台词。"
-        "原文未标说话人时，未知标签是忠实保留不确定性，不应仅因此判失败；"
-        "称呼对象不等于说话人身份。不能因为读起来通顺而通过。不确定就faithful=false。"
-        '只输出JSON：{"faithful":true或false,"reason":"具体原文依据或不一致点"}。',
-        "【唯一原文】\n" + transcript + "\n【修复稿】\n" + repaired,
+        "你是单事件来源审核员。原文可能包含多个独立事件、引流口播及杂质；候选只需保留其中一个完整事件，不要求覆盖全文。\n"
+        "分别检查两项：\n"
+        "1 faithful：候选保留的台词/旁白是否忠于原文，有无新增事实、颠倒关系、改变人称/否定/数字，或把请求/承诺写成已执行。"
+        "原文无明确说话人标签时允许未知；保留原错字不等于编造。\n"
+        "2 event_complete：候选所选的那件事是否包含起因、回应、实际已有的收束，且没有跨事件拼接。"
+        "同一件事中的追问、反驳、揭穿、改口仍属该事件，不能截成不同场景删掉；口头回应可以收束，不要求承诺实际执行。\n"
+        "不属于所选事件的另一完整事件、引流评论、识别杂质、已覆盖事实的重复总结，省略它们合法，不得列为遗漏或因此判失败。"
+        "同一人物说话也可能转入新的独立主题；按事件事实而非视频是否连续划界。\n"
+        "omitted_event_evidence只列导致所选事件关键新事实丢失的原文，reason说明具体丢失什么新事实。"
+        "不得因为未逐行抄完全文就拒绝，也不能因候选通顺就放行。"
+        '只输出JSON：{"faithful":true或false,"event_complete":true或false,'
+        '"omitted_event_evidence":[],"reason":"核对事实依据"}。',
+        "【来源全文（可能包含多个事件及口播）】\n" + transcript + "\n【待核对的单事件片段】\n" + repaired,
     )
     if not isinstance(result.get("reason"), str) or not result["reason"].strip():
         raise ModelOutputError("LLM transcript repair audit missing evidence")
     if not _response_bool(result, "faithful", "transcript repair audit"):
         raise ModelOutputError("transcript repair unfaithful: " + result["reason"])
+    omitted = result.get("omitted_event_evidence")
+    if not isinstance(omitted, list) or any(not isinstance(item, str) or not item.strip() for item in omitted):
+        raise ModelOutputError("LLM transcript repair audit invalid omitted evidence")
+    if not _response_bool(result, "event_complete", "transcript repair audit") or omitted:
+        raise ModelOutputError("transcript repair unfaithful: incomplete event: " + result["reason"])
     return result
 
 
@@ -865,6 +829,8 @@ def repair_transcript(
     transcript_text = str(transcript or "").strip()
     if not transcript_text:
         raise ValueError("H0c missing transcript")
+    if len(transcript_text) > 12000:
+        raise ModelOutputError("H0c transcript exceeds evidence budget")
     user = _H0C_USER.format(
         title=title,
         description=str(description or "").strip()[:2000] or "（无）",
@@ -872,18 +838,17 @@ def repair_transcript(
     )
     if feedback:
         user += ("\n【上次校验失败】\n" + feedback[:2000]
-                 + "\n重新对照完整原文修正选择与结构；不得为通过校验编造对白，不能形成完整场景则明确返回false。")
+                 + "\n重新对照完整原文整理，不得为通过校验编造对白；选段由后续独立步骤完成。")
     data = _chat_json(_H0C_SYSTEM, user)
-    if require_complete_scene and not _response_bool(data, "has_complete_scene", "H0c"):
-        raise SourceRejected("H0c source_unusable: no complete source scene")
     lines = data.get("lines") or []
     if not isinstance(lines, list) or len(lines) < 2:
         raise ModelOutputError("LLM H0c lines must have at least 2 entries")
     cleaned: list[dict[str, str]] = []
     unusable_lines = 0
+    source_cursor = 0
     for row in lines:
         if not isinstance(row, dict):
-            continue
+            raise ModelOutputError("LLM H0c invalid line")
         speaker = str(row.get("speaker") or "").strip() or "未知"
         text = str(row.get("text") or "").strip()
         status = str(row.get("status") or "").strip().lower()
@@ -892,6 +857,10 @@ def repair_transcript(
         quote = row.get("source_quote")
         if not isinstance(quote, str) or not quote.strip() or quote not in transcript_text[:12000]:
             raise ModelOutputError("LLM H0c source_quote missing or not found in original")
+        quote_start = transcript_text.find(quote, source_cursor)
+        if quote_start < 0:
+            raise ModelOutputError("LLM H0c source_quote out of order or overlapping")
+        source_cursor = quote_start + len(quote)
         # 只沿用原文行首明确标签，不能把称呼对象或模型猜测当作说话人。
         label = re.match(r"^([^：:\n]{1,12})[：:]", quote.strip())
         labelled_source = re.search(r"(?:^|\n)\s*" + re.escape(quote.strip()), transcript_text)
@@ -912,19 +881,37 @@ def repair_transcript(
     confidence = _response_score(data, "repair_confidence", "H0c")
     if confidence < 0.35:
         raise SourceRejected(f"H0c low repair_confidence={confidence:.2f}")
-    indices = data.get("scene_line_indices")
-    evidence = str(data.get("scene_evidence") or "").strip()
+    indices = None
+    evidence = ""
     if require_complete_scene:
-        if (not isinstance(data.get("scene_evidence"), str) or not evidence or len(cleaned) != len(lines)
-                or not isinstance(indices, list) or len(indices) < 2
-                or any(type(i) is not int or i < 1 or i > len(cleaned) for i in indices)
-                or indices != sorted(set(indices))):
-            raise ModelOutputError("LLM H0c invalid scene selection or evidence")
+        # 整理与选段分开：模型只读取代码编号，不可重写或自行删除中间有效行。
+        scene_user = json.dumps([{"index": i + 1, **row} for i, row in enumerate(cleaned)], ensure_ascii=False)
+        if feedback:
+            scene_user += "\n【上一轮校验反馈，仅供重新核对边界，不是来源事实】\n" + feedback[:2000]
+        scene = _chat_json(
+            "你是单一事件选段员。输入是按原文顺序编号的整理行，只能选择一个连续范围，不能改写行。"
+            "选同一组人物围绕同一件事已有起因、回应和收束的完整事件；不要按儿童适配或是否好笑删行。"
+            "有回应的口头承诺、拒绝、反问或反转可以收束问答，不要求承诺实际执行，不能补成已经做了。"
+            "孤立提问、语录拼盘、跨场景问答、缺关键结果不能通过。"
+            "范围须覆盖事件的全部有效对白和明确结果，不能为了找到笑点截断后续。"
+            "引流评论、重复总结不影响事实覆盖；同一人物转入独立主题不等于同一事件。"
+            "一件事可有多轮问答，后续针对同一事的追问、反驳、揭穿、修正承诺仍属同一事件，不能当成新场景删掉。"
+            "start_index/end_index是输入编号，包含两端所有行；仅status=unusable的杂质行由代码剔除。"
+            "vague行若含[听不清]且影响事件关键事实，应返回不完整，禁止靠猜补齐。"
+            "scene_evidence引用原文说明起因、回应、收束；没有完整事件要说明具体缺失。"
+            '只输出JSON：{"has_complete_scene":true或false,"start_index":1,"end_index":3,"scene_evidence":"原文依据或缺失"}。',
+            scene_user,
+        )
+        evidence = _response_reason(scene, "scene_evidence", "H0c scene")
+        if not _response_bool(scene, "has_complete_scene", "H0c scene"):
+            raise SourceRejected("H0c source_unusable: no complete source scene: " + evidence)
+        first, last = scene.get("start_index"), scene.get("end_index")
+        if type(first) is not int or type(last) is not int or not 1 <= first < last <= len(cleaned):
+            raise ModelOutputError("LLM H0c invalid scene range")
+        indices = [i for i in range(first, last + 1) if cleaned[i - 1]["status"] != "unusable"]
         selected = [cleaned[i - 1] for i in indices]
-        if any(row["status"] not in {"ok", "vague"} or UNINTELLIGIBLE_MARKER in row["text"] for row in selected):
+        if len(selected) < 2 or any(UNINTELLIGIBLE_MARKER in row["text"] for row in selected):
             raise ModelOutputError("H0c source_unusable: scene contains unintelligible lines")
-        if any(cleaned[i - 1]["status"] != "unusable" for i in range(indices[0], indices[-1] + 1) if i not in indices):
-            raise ModelOutputError("H0c source_unusable: scene jumps across dialogue")
         cleaned = selected
     return {
         "lines": cleaned,
@@ -1005,15 +992,9 @@ def extract_story_raw(
     replies: list[str] | None = None,
     source_feedback: str = "",
 ) -> dict[str, Any]:
-    """H2：逐字稿 + 热评 → story_raw。"""
-    reply_text = "\n---\n".join(replies or []) or "（无）"
+    """H2：仅从已审核逐字稿抽取事实；其余参数保留调用兼容性。"""
     transcript_text = str(transcript or "").strip() or "（无逐字稿）"
-    user = _H2_USER.format(
-        title=title,
-        transcript=transcript_text[:12000],
-        description=str(description or "").strip()[:2000] or "（无）",
-        replies=reply_text[:6000],
-    )
+    user = _H2_USER.format(transcript=transcript_text[:12000])
     if source_feedback:
         user += "\n【上一轮来源审核未通过，重新从转写提炼，禁止补造这些事实】\n" + source_feedback[:1500]
     data = _chat_json(_H2_SYSTEM, user)

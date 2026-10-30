@@ -115,7 +115,8 @@ def _resolve_transcription(
     asr_result: dict[str, Any] | None = None
     skip_asr = False
 
-    if gs_subtitle_ocr.should_try_ocr(video_path, config=cfg, workspace=workspace):
+    try_ocr = gs_subtitle_ocr.should_try_ocr(video_path, config=cfg, workspace=workspace)
+    if try_ocr:
         try:
             ocr_result = gs_subtitle_ocr.transcribe_video_ocr_subprocess(
                 video_path,
@@ -178,6 +179,21 @@ def _resolve_transcription(
                 ref.source_id,
                 exc,
             )
+
+    # 字幕几何探测会漏掉低位/短暂字幕。低质 ASR 不能据此成为唯一证据，补一次真实 OCR。
+    if (not try_ocr and cfg.gold_story_ocr_enabled and asr_result is not None
+            and float(asr_result.get("quality_score") or 0.0) < float(cfg.gold_story_ocr_quality_min)
+            and gs_subtitle_ocr.ocr_models_ready(cfg)):
+        try:
+            logger.info("gold_story low-quality ASR retries OCR after subtitle detect miss bvid=%s", ref.source_id)
+            ocr_result = gs_subtitle_ocr.transcribe_video_ocr_subprocess(
+                video_path, config=cfg, workspace=workspace, source_id=ref.source_id,
+                title=title, duration_sec=duration_sec,
+            )
+            if str(ocr_result.get("text") or "").strip():
+                candidates.append(ocr_result)
+        except Exception as exc:
+            logger.warning("gold_story recovery OCR failed bvid=%s: %s", ref.source_id, exc)
 
     if not candidates:
         raise RuntimeError("both OCR and ASR returned empty transcript")
@@ -294,7 +310,7 @@ def transcribe_collection_clip(source: str, media: dict[str, Any], clip: dict[st
     start, end = float(clip["start_sec"]), float(clip["end_sec"])
     if not all(math.isfinite(v) for v in (start, end, duration)) or not 0 <= start < end <= duration or end - start > 120:
         raise ValueError("invalid collection clip range")
-    # 相邻上下文仅用于独立边界审核；事实转写精确限定本段，避免把相邻段落纳入全文裁决。
+    # 相邻索引上下文仅用于定位；事实转写精确限定本段，避免把相邻段落纳入全文裁决。
     cut_start, cut_end = start, end
     workspace = config.gold_story_media_workspace / "collection_clips" / ref.source_id / f"{start:.3f}-{end:.3f}"
     workspace.mkdir(parents=True, exist_ok=True)

@@ -196,3 +196,30 @@ def test_collection_clip_transcribes_new_media_without_overwriting_original(monk
     assert original.read_text() == '完整原文'
     assert 'collection_clips' in result['transcript_path']
     assert tr.read_transcript_metadata(cfg, 'BV1TEST00001', Path(result['transcript_path']))['source_clip'] == result['source_clip']
+
+
+@pytest.mark.parametrize('quality,enabled,ready,detected,ocr_fails,expected', [
+    (.2, True, True, False, False, 1), (.9, True, True, False, False, 0),
+    (.2, False, True, False, False, 0), (.2, True, False, False, False, 0),
+    (.2, True, True, True, True, 1), (.2, True, True, False, True, 1),
+])
+def test_low_quality_asr_recovers_missed_subtitles_once(tmp_path, monkeypatch, quality, enabled, ready, detected, ocr_fails, expected):
+    from app.config import Config
+    from app.services.gold_story.transcript import transcript as tx
+    cfg = Config(); cfg.gold_story_ocr_enabled = enabled; cfg.gold_story_ocr_quality_min = .55
+    calls = []
+    monkeypatch.setattr(tx.gs_subtitle_ocr, 'should_try_ocr', lambda *a, **kw: detected)
+    monkeypatch.setattr(tx.gs_subtitle_ocr, 'ocr_models_ready', lambda *a: ready)
+    def ocr(*a, **kw):
+        calls.append(1)
+        if ocr_fails: raise RuntimeError('OCR engine error')
+        return {'source': 'ocr', 'text': '今天轮到你洗碗', 'quality_score': .9, 'segments': []}
+    monkeypatch.setattr(tx.gs_subtitle_ocr, 'transcribe_video_ocr_subprocess', ocr)
+    monkeypatch.setattr(tx.gs_whisper, 'transcribe_audio', lambda *a, **kw: {'text': '今天轮到洗碗'})
+    monkeypatch.setattr(tx.gs_transcript_merge, 'score_transcript_text', lambda *a, **kw: quality)
+    result = tx._resolve_transcription(video_path=tmp_path/'v.mp4', audio_path=tmp_path/'a.wav',
+        ref=parse_media_ref('BV1pA4m1378V'), cfg=cfg, workspace=tmp_path, prompt=None)
+    assert len(calls) == expected
+    assert ('ocr' in {r['source'] for r in result['candidates']}) == (expected == 1 and not ocr_fails)
+    if expected and not ocr_fails:
+        assert result['cross_check']['available'] is True

@@ -108,11 +108,6 @@ def _process_collection(candidate: VideoCandidate, *, config: Config,
         record()
         for clip in clips:
             active_clip = clip
-            if not clip["eligible"]:
-                attempts.append({"clip": clip, "stage": "collection_boundary", "action": "reject",
-                                 "reason": clip["index_review"]["reason"]})
-                record()
-                continue
             tx = transcribe_collection_clip(candidate.source_id, media, clip, config)
             feedback = ""
             resolution = None

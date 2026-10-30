@@ -173,7 +173,7 @@ def test_gold_story_prompts_forbid_speaker_alternation_assumption():
     assert "不要假设说话人严格交替" in llm_steps._H0C_SYSTEM
     assert "不能靠行序、剧情、语气猜测" in llm_steps._H0C_USER
     assert "允许同一 speaker 连说多行" in llm_steps._H0C_USER
-    assert "孩子不得自称家长身份" in llm_steps._H2_USER
+    assert "本步骤不改名、不做儿童改编、不增加第二个孩子" in llm_steps._H2_USER
     assert "孩子不得自称家长身份" in llm_steps._H3B_SYSTEM
     assert "回声/回旋镖人称转换" in llm_steps._H3B_USER
     assert "归属自洽（硬）" in llm_steps._H3A_USER
@@ -538,41 +538,70 @@ def test_repair_transcript_rejects_all_unusable_even_with_high_confidence(monkey
         "repair_confidence": 0.9,
     })
     with pytest.raises(ValueError, match="no usable transcript"):
-        llm_steps.repair_transcript(title="真实素材", transcript="无法理解的原始内容")
+        llm_steps.repair_transcript(title="真实素材", transcript="无法理解的原始内容\n无法理解的原始内容")
 
 
 @pytest.mark.parametrize("field,value", [
     ("has_complete_scene", False), ("has_complete_scene", None),
-    ("scene_line_indices", [0, 1]), ("scene_line_indices", [1, 1]),
-    ("scene_line_indices", [2, 1]), ("scene_line_indices", [1, 4]),
-    ("scene_line_indices", [True, 2]), ("scene_line_indices", [1, 3]),
+    ("start_index", 0), ("start_index", 3), ("start_index", True),
+    ("end_index", 1), ("end_index", 5), ("end_index", "3"),
     ("scene_evidence", ""),
 ])
 def test_repair_requires_grounded_single_scene(monkeypatch, field, value):
-    data = {"repair_confidence": 0.9, "has_complete_scene": True,
-            "scene_line_indices": [1, 2], "scene_evidence": "同一事件的回应和收束",
-            "lines": [{"speaker": "妈妈", "text": "关灯睡觉", "source_quote": "关灯睡觉", "status": "ok"},
-                      {"speaker": "宝宝", "text": "知道了", "source_quote": "知道了", "status": "ok"},
-                      {"speaker": "未知", "text": "另一段故事", "source_quote": "另一段故事", "status": "ok"}]}
-    data[field] = value
-    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: data)
-    content_rejection = (field == "has_complete_scene" and value is False) or (field == "scene_line_indices" and value == [1, 3])
-    with pytest.raises(ValueError, match="source_unusable" if content_rejection else "LLM "):
-        llm_steps.repair_transcript(title="测试", transcript="关灯睡觉\n乱码\n知道了\n另一段故事", require_complete_scene=True)
+    scene = {"has_complete_scene": True, "start_index": 1, "end_index": 3,
+             "scene_evidence": "妈妈让孩子关灯，孩子答应了"}
+    scene[field] = value
+    responses = iter([{"repair_confidence": 0.9, "lines": [
+        {"speaker": "未知", "text": t, "source_quote": t, "status": "ok"}
+        for t in ["关灯睡觉", "今天太晚了", "知道了", "另一段故事"]]}, scene])
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: next(responses))
+    with pytest.raises(ValueError, match="source_unusable" if value is False else "LLM "):
+        llm_steps.repair_transcript(title="测试", transcript="关灯睡觉\n今天太晚了\n知道了\n另一段故事", require_complete_scene=True)
 
 
-def test_repair_selects_one_scene_skipping_only_noise(monkeypatch):
-    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {
-        "repair_confidence": 0.9, "has_complete_scene": True,
-        "scene_line_indices": [1, 3], "scene_evidence": "妈妈让孩子关灯，孩子答应了",
-        "lines": [{"speaker": "妈妈", "text": "关灯睡觉", "source_quote": "关灯睡觉", "status": "ok"},
-                  {"speaker": "未知", "text": "乱码", "source_quote": "乱码", "status": "unusable"},
-                  {"speaker": "宝宝", "text": "知道了", "source_quote": "知道了", "status": "ok"},
-                  {"speaker": "未知", "text": "另一段故事", "source_quote": "另一段故事", "status": "ok"}],
-    })
-    result = llm_steps.repair_transcript(title="测试", transcript="关灯睡觉\n乱码\n知道了\n另一段故事", require_complete_scene=True)
-    assert [row["text"] for row in result["lines"]] == ["关灯睡觉", "知道了"]
-    assert result["scene_line_indices"] == [1, 3]
+def test_repair_selects_range_without_dropping_valid_middle_rows(monkeypatch):
+    calls = []
+    def chat(system, user):
+        calls.append(user)
+        if len(calls) == 1:
+            return {"repair_confidence": 0.9, "lines": [
+                {"speaker": "未知", "text": t, "source_quote": t, "status": status}
+                for t, status in [("关灯睡觉", "ok"), ("乱码", "unusable"),
+                                  ("我不困", "ok"), ("明天要上学", "ok"), ("知道了", "ok"), ("其他事件", "ok")]]}
+        import json
+        rows = json.loads(user)
+        assert [row['index'] for row in rows] == list(range(1, 7))
+        assert rows[1]['text'] == '[听不清]' and rows[2]['text'] == '我不困'
+        return {"has_complete_scene": True, "start_index": 1, "end_index": 5,
+                "scene_evidence": "劝睡后答应", "scene_line_indices": [1, 5], "lines": []}
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    result = llm_steps.repair_transcript(title="测试", transcript="关灯睡觉\n乱码\n我不困\n明天要上学\n知道了\n其他事件", require_complete_scene=True)
+    assert [row["text"] for row in result["lines"]] == ["关灯睡觉", "我不困", "明天要上学", "知道了"]
+    assert result["scene_line_indices"] == [1, 3, 4, 5]
+
+
+@pytest.mark.parametrize('quotes', [['后说', '先说'], ['先说', '先说']])
+def test_repair_rejects_reordered_or_reused_source(monkeypatch, quotes):
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a: {
+        'repair_confidence': .9, 'lines': [
+            {'speaker': '未知', 'text': t, 'source_quote': t, 'status': 'ok'} for t in quotes]})
+    with pytest.raises(llm_steps.ModelOutputError, match='out of order or overlapping'):
+        llm_steps.repair_transcript(title='', transcript='先说\n后说')
+
+
+def test_repair_does_not_truncate_evidence(monkeypatch):
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a: pytest.fail('must not call'))
+    with pytest.raises(llm_steps.ModelOutputError, match='evidence budget'):
+        llm_steps.repair_transcript(title='', transcript='字' * 12001)
+
+
+def test_extract_story_does_not_receive_title_or_adaptation_hints(monkeypatch):
+    def chat(system, user):
+        assert '错误标题' not in user and '简介增加人物' not in user and '热评虚构结局' not in user
+        assert '原始对白' in user
+        return {'story_raw': '原文的问答及明确结果。' * 10, 'has_complete_arc': True, 'extract_confidence': .9}
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    llm_steps.extract_story_raw(title='错误标题', description='简介增加人物', replies=['热评虚构结局'], transcript='原始对白')
 
 
 @pytest.mark.parametrize("response", [
@@ -742,22 +771,18 @@ def test_collection_rejects_fabricated_indices(monkeypatch, proposal):
         ], duration_sec=800)
 
 
-def test_collection_selection_retains_failed_boundary_review_and_isolates_reviewer(monkeypatch):
+def test_collection_index_proposes_all_bounded_candidates_without_content_veto(monkeypatch):
     calls = []
     def chat(system, user):
         calls.append(user)
-        if len(calls) == 1:
-            return {'clips': [{'start_index': 1, 'end_index': 2, 'reason': '不能给审核员的选择理由'}]}
-        assert '不能给审核员' not in user
-        assert '紧接着的结果' in user
-        return {'single_complete_event': False, 'reason': '遗漏紧邻结果'}
+        return {'clips': [{'start_index': i, 'end_index': i, 'reason': '候选事件'} for i in range(1, 7)]}
     monkeypatch.setattr(llm_steps, '_chat_json', chat)
     result = llm_steps.select_collection_clips([
-        {'start': 10, 'end': 12, 'text': '提问'}, {'start': 13, 'end': 15, 'text': '回应'},
-        {'start': 16, 'end': 17, 'text': '紧接着的结果'},
+        {'start': i * 20, 'end': i * 20 + 10, 'text': '粗转写可能有错'} for i in range(6)
     ], duration_sec=800)
-    assert result[0]['eligible'] is False
-    assert result[0]['start_sec'] == 10 and result[0]['end_sec'] == 15
+    assert len(calls) == 1 and len(result) == 6
+    assert all('eligible' not in clip for clip in result)
+    assert result[0]['start_sec'] == 0 and result[-1]['end_sec'] == 110
 
 
 @pytest.mark.parametrize('segments,clips', [
@@ -818,3 +843,29 @@ def test_role_age_audit_selects_original_evidence_without_rewriting(monkeypatch)
     result = _audit_response(_high_fit_scores(source_age_evidence_index=1, mapped_age_evidence_index=1), monkeypatch)
     assert result['source_age_evidence'] == '姐弟一起整理书桌。'
     assert result['mapped_age_evidence'] == '昭昭：擦桌子'
+
+
+@pytest.mark.parametrize('changes', [
+    {'event_complete': False}, {'event_complete': None}, {'event_complete': 'true'},
+    {'omitted_event_evidence': ['后续仍在追问同一承诺']}, {'omitted_event_evidence': None},
+])
+def test_repair_audit_requires_complete_event_even_when_words_are_faithful(monkeypatch, changes):
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a: {
+        'faithful': True, 'event_complete': True, 'omitted_event_evidence': [],
+        'reason': '遗漏了同一事件后续结果', **changes})
+    with pytest.raises(llm_steps.ModelOutputError):
+        llm_steps.review_transcript_repair(transcript='承诺。追问。改口。', repaired='承诺。')
+
+
+def test_repair_retry_feedback_reaches_scene_selector(monkeypatch):
+    calls = []
+    def chat(system, user):
+        calls.append(user)
+        if len(calls) == 1:
+            return {'repair_confidence': .9, 'lines': [
+                {'speaker': '未知', 'text': t, 'source_quote': t, 'status': 'ok'} for t in ['问句', '回答']]}
+        assert '上轮遗漏了后续结果' in user
+        assert '"index": 1' in user and '"index": 2' in user
+        return {'has_complete_scene': True, 'start_index': 1, 'end_index': 2, 'scene_evidence': '问答完整'}
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    llm_steps.repair_transcript(title='', transcript='问句\n回答', require_complete_scene=True, feedback='上轮遗漏了后续结果')
