@@ -328,7 +328,7 @@ _H3A_SYSTEM = (
     "（百分制或两三科合计），保留高低分对比梗，禁止原样保留不可能的总分。\n"
     "普通资源借还可迁为儿童已有物品或可自主支配的零花钱，不虚构数额；"
     "执行方式须符合儿童权限，不能让孩子独立开户、贷款、承担大额债务或操作转账，"
-    "可用等价的当面借给/归还承诺，仍不能写成已完成。"
+    "仅迁移原文已有承诺的执行方式，不新增任何一方的承诺、动机或已执行动作。"
     "原戏核若依赖成人金融资格或债务关系则不可如此迁移，不能洗成儿童零花钱场景。\n"
     "上方金稿正例只供格式参考；**禁止**把正例 object/口号抄进本稿，"
     "除非 story_raw / beat 本身已有该梗。\n"
@@ -1201,6 +1201,7 @@ def build_scene_contract(
     h3: dict[str, Any],
     source_type: str = "field",
     video_title: str = "",
+    source_feedback: str = "",
 ) -> dict[str, Any]:
     """H3a：story_raw → 可拍场景契约。"""
     from app.services.gold_story.scene import remap_story_raw_sibling_roles
@@ -1214,6 +1215,8 @@ def build_scene_contract(
         gold_scene_snippet=GOLD_H3A_SCENE_SNIPPET,
         place_catalog=format_place_catalog_for_prompt(),
     )
+    if source_feedback:
+        base_user += "\n【上轮来源事实审核失败，重建契约须纠正且不得补造事实】\n" + source_feedback[:2000]
     if isinstance(h3.get("generation_constraints"), dict):
         base_user += (
             "\n【本次是失败契约重建，以下要求优先于常规压缩拍数建议】\n"
@@ -1383,6 +1386,7 @@ def build_dialogue_seed(
     h3: dict[str, Any],
     scene_contract: dict[str, Any] | None = None,
     video_title: str = "",
+    source_feedback: str = "",
 ) -> dict[str, Any]:
     """H3b：scene_contract → dialogue_seed。"""
     contract = scene_contract or {}
@@ -1393,6 +1397,8 @@ def build_dialogue_seed(
         story_raw=story_raw[:4000],
         gold_seed_snippet=GOLD_H3B_SEED_SNIPPET,
     )
+    if source_feedback:
+        user += "\n【上轮来源事实审核失败，重建素材单元须纠正且不得补造事实】\n" + source_feedback[:2000]
     if isinstance(h3.get("generation_constraints"), dict):
         user += (
             "\n【重建素材单元】旧seed已因遗漏/错序不可复用。逐一覆盖新契约所有真实拍，"

@@ -1453,8 +1453,15 @@ def test_core_fact_failure_rebuilds_once_without_changing_source(app_ctx, tmp_pa
         feedback.append(kwargs['source_feedback'])
         return {'mechanism': 'M4', 'structure_type': 'G', 'title': '收书', 'conflict_core': '答应稍后收书'}
     monkeypatch.setattr(p.llm_steps, 'structurize_story', structure)
-    monkeypatch.setattr(p.llm_steps, 'build_scene_contract', lambda **k: {})
-    monkeypatch.setattr(p.llm_steps, 'build_dialogue_seed', lambda **k: {})
+    contract_feedback, seed_feedback = [], []
+    def contract(**kwargs):
+        contract_feedback.append(kwargs['source_feedback'])
+        return {}
+    def seed(**kwargs):
+        seed_feedback.append(kwargs['source_feedback'])
+        return {}
+    monkeypatch.setattr(p.llm_steps, 'build_scene_contract', contract)
+    monkeypatch.setattr(p.llm_steps, 'build_dialogue_seed', seed)
     monkeypatch.setattr(p, 'sync_h3_from_scene_contract', lambda h3, *a, **k: (h3, []))
     audits = []
     def audit(**kwargs):
@@ -1477,5 +1484,6 @@ def test_core_fact_failure_rebuilds_once_without_changing_source(app_ctx, tmp_pa
         existing_row={'id': 123, 'payload': {}}, clip_transcript={'transcript_path': str(path), 'source_clip': {}})
     assert len(audits) == (2 if age_ok else 1)
     assert feedback == (['', '把承诺收书写成已经收完'] if age_ok else [''])
+    assert contract_feedback == seed_feedback == feedback
     assert result['action'] == ('ok' if recover and age_ok else 'reject')
     assert len(saved) == int(recover and age_ok)

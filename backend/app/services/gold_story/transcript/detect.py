@@ -850,7 +850,7 @@ def detect_subtitle_region(
 ) -> SubtitleRegion:
     """兼容入口：临时抽多样本全帧再定带（烧录探测等）。
 
-    OCR 主路径请用已抽搜索带帧 + ``detect_subtitle_region_from_images``，
+    此定位供字幕存在性探测使用；OCR 正文识别保留完整搜索带，
     避免视频解码两遍。
     """
     cfg = config or Config()

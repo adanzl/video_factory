@@ -106,3 +106,20 @@ def test_ocr_rejects_incomplete_batch(tmp_path, monkeypatch):
     frames = [OcrFrame(timestamp_sec=float(i), image_path=tmp_path / f"{i}.png") for i in range(2)]
     with pytest.raises(RuntimeError, match="incomplete"):
         ocr.ocr_frames_parallel(frames, cfg)
+
+
+def test_dedupe_preserves_pixel_changes_even_with_identical_small_hash(tmp_path):
+    base = np.tile(np.linspace(0, 200, 800, dtype=np.uint8)[None, :, None], (80, 1, 3))
+    changed = base.copy()
+    changed[40:44, 400:404] = 255
+    # 小字变化在9x8缩略图比较中消失，但仍必须送去OCR。
+    def small_hash(image):
+        small = cv2.resize(image, (9, 8), interpolation=cv2.INTER_AREA)
+        return small[:, 1:] > small[:, :-1]
+    assert np.array_equal(small_hash(base), small_hash(changed))
+    frames = []
+    for i, image in enumerate([base, changed, base]):
+        path = tmp_path / f"{i}.png"
+        cv2.imwrite(str(path), image)
+        frames.append(OcrFrame(float(i), path))
+    assert [f.timestamp_sec for f in dedupe_frames(frames)] == [0, 1, 2]

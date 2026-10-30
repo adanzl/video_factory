@@ -1,7 +1,8 @@
-"""H0b 烧录字幕 OCR：一遍抽搜索带 → 同批定带裁切 → ProcessPool 识别。"""
+"""H0b 烧录字幕 OCR：一遍抽完整搜索带 → ProcessPool 文本检测与识别。"""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -21,7 +22,6 @@ from . import merge as gs_merge
 from .detect import (
     SubtitleRegion,
     detect_burned_subtitles,
-    detect_subtitle_region_from_images,
     ensure_ocr_readable_region,
     fallback_subtitle_region,
     probe_duration,
@@ -497,24 +497,12 @@ def crop_search_band_frames_to_region(
     return kept
 
 
-_DHASH_SIZE = (9, 8)
-_DHASH_THRESHOLD = 0
-
-
-def _frame_dhash(image_path: Path) -> int | None:
-    gray = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if gray is None:
+def _frame_digest(image_path: Path) -> bytes | None:
+    image = cv2.imread(str(image_path))
+    if image is None:
         return None
-    small = cv2.resize(gray, _DHASH_SIZE, interpolation=cv2.INTER_AREA)
-    diff = small[:, 1:] > small[:, :-1]
-    value = 0
-    for bit in diff.flatten():
-        value = (value << 1) | int(bit)
-    return value
-
-
-def _hamming_distance(a: int, b: int) -> int:
-    return int((a ^ b).bit_count())
+    # 感知哈希会把一个字、数字或否定的变化压掉，只合并像素完全相同的帧。
+    return hashlib.sha256(str(image.shape).encode() + image.tobytes()).digest()
 
 
 def _subsample_uniform(frames: list[OcrFrame], max_frames: int) -> list[OcrFrame]:
@@ -546,20 +534,20 @@ def dedupe_frames(
 
     cap = max(2, int(max_frames))
     kept: list[OcrFrame] = [frames[0]]
-    last_hash = _frame_dhash(frames[0].image_path)
+    last_hash = _frame_digest(frames[0].image_path)
     use_hash = last_hash is not None
 
     for frame in frames[1:-1]:
         if not use_hash:
             kept.append(frame)
             continue
-        current = _frame_dhash(frame.image_path)
+        current = _frame_digest(frame.image_path)
         if current is None:
             kept.append(frame)
             last_hash = None
             use_hash = False
             continue
-        if last_hash is None or _hamming_distance(last_hash, current) > _DHASH_THRESHOLD:
+        if last_hash is None or last_hash != current:
             kept.append(frame)
             last_hash = current
 
@@ -578,22 +566,14 @@ def _iter_row_texts(row: dict[str, Any]) -> list[str]:
 def merge_ocr_rows(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]], float]:
     """OCR 原样输出，仅去掉相邻重复行。"""
     merged_lines: list[dict[str, Any]] = []
-    plain_parts: list[str] = []
-    confidences: list[float] = []
 
     for row in sorted(rows, key=lambda r: float(r.get("timestamp_sec") or 0.0)):
         ts = float(row.get("timestamp_sec") or 0.0)
         conf = float(row.get("confidence") or 0.0)
         for text in _iter_row_texts(row):
-            if merged_lines and gs_merge.texts_similar(
-                merged_lines[-1].get("text") or "",
-                text,
-            ):
+            if merged_lines and merged_lines[-1]["text"] == text:
                 merged_lines[-1]["end_sec"] = ts
-                merged_lines[-1]["confidence"] = max(
-                    float(merged_lines[-1].get("confidence") or 0.0),
-                    conf,
-                )
+                merged_lines[-1]["confidence"] = max(float(merged_lines[-1]["confidence"]), conf)
                 continue
             merged_lines.append(
                 {
@@ -604,10 +584,8 @@ def merge_ocr_rows(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]
                     "confidence": conf,
                 }
             )
-            plain_parts.append(text)
-            confidences.append(conf)
-
-    plain = "\n".join(plain_parts).strip()
+    plain = "\n".join(row["text"] for row in merged_lines)
+    confidences = [float(row["confidence"]) for row in merged_lines]
     avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
     return plain, merged_lines, avg_conf
 
@@ -660,12 +638,9 @@ def transcribe_video_ocr(
     title: str = "",
     duration_sec: float | None = None,
 ) -> dict[str, Any]:
-    """单视频 OCR 逐字稿（常规一次解码，窄带质量差时扩大搜索重试一次）。
+    """识别完整底部搜索带，避免密度峰值窄裁切截断字形或漏掉移动字幕。
 
-    流程：
-    1) ffmpeg 抽底部搜索带帧（一次）
-    2) 同批帧定字幕带 → 就地裁切
-    3) OCR → 水印/字号过滤 → merge
+    文本检测器自行确定完整字框；搜索带范围仍由配置控制。
     """
     frame_dir = workspace / "ocr_frames" / source_id
     if duration_sec is None:
@@ -675,7 +650,7 @@ def transcribe_video_ocr(
     search_ratio = max(0.15, min(search_ratio, 0.55))
     search_band_top = 1.0 - search_ratio
 
-    # 1) 一遍抽帧：底部搜索带（比最终字幕带宽，留给定带）
+    # 保留完整搜索带，由 OCR 文本检测框确定字形边界。
     frames = extract_subtitle_frames(
         video_path,
         output_dir=frame_dir,
@@ -684,28 +659,8 @@ def transcribe_video_ocr(
         crop_bottom_ratio=search_ratio,
         config=config,
     )
-    if config.gold_story_ocr_region_detect and frames:
-        region = detect_subtitle_region_from_images(
-            [f.image_path for f in frames],
-            config=config,
-            search_band_top_ratio=search_band_top,
-            max_samples=10,
-            log_tag=source_id,
-        )
-    else:
-        region = fallback_subtitle_region(config)
-    region = ensure_ocr_readable_region(
-        region,
-        min_h_ratio=float(config.gold_story_ocr_region_ocr_floor_h_ratio),
-        max_h_ratio=float(config.gold_story_ocr_region_max_h_ratio),
-    )
-    if frames:
-        frames = crop_search_band_frames_to_region(
-            frames,
-            region,
-            search_band_top_ratio=search_band_top,
-            config=config,
-        )
+    region = SubtitleRegion(y_ratio=search_band_top, h_ratio=search_ratio,
+                            method="full_search_band", samples=len(frames), confidence=0.0)
 
     # 完整转写不能均匀丢弃变化字幕；上限只约束每批任务数。
     frames = dedupe_frames(frames)
@@ -732,32 +687,8 @@ def transcribe_video_ocr(
         duration_sec=float(duration_sec or 0.0),
         avg_confidence=avg_conf,
     )
-    recovery: dict[str, Any] | None = None
-    if quality < float(config.gold_story_ocr_quality_min) and config.gold_story_ocr_region_detect:
-        # 窄带可能命中水印。只扩大到原搜索带，不调低来源审核或针对某个视频改坐标。
-        wide_frames = dedupe_frames(extract_subtitle_frames(
-            video_path, output_dir=frame_dir.with_name(source_id + "_wide"),
-            fps=float(config.gold_story_ocr_fps), crop_bottom_ratio=search_ratio, config=config,
-        ))
-        wide_raw = ocr_frames_parallel(wide_frames, config)
-        wide_hits = [hit for row in wide_raw for hit in row.get("hits", [])]
-        wide_color = infer_majority_ink_color(wide_hits)
-        wide_rows = materialize_ocr_rows(wide_raw, color_key=wide_color,
-            min_height_ratio=float(config.gold_story_ocr_min_box_height_ratio),
-            min_dialogue_box_px=float(config.gold_story_ocr_min_dialogue_box_px))
-        wide_text, wide_lines, wide_conf = merge_ocr_rows(wide_rows)
-        wide_quality = gs_merge.score_transcript_text(wide_text, title=title,
-            duration_sec=float(duration_sec or 0), avg_confidence=wide_conf)
-        recovery = {"narrow_quality": quality, "wide_quality": wide_quality,
-                    "used_wide": wide_quality > quality, "narrow_text": text}
-        if wide_quality > quality:
-            text, line_rows, avg_conf, quality = wide_text, wide_lines, wide_conf, wide_quality
-            all_hits, color_key, frames = wide_hits, wide_color, wide_frames
-            frame_dir = frame_dir.with_name(source_id + "_wide")
-            region = SubtitleRegion(y_ratio=search_band_top, h_ratio=search_ratio,
-                method="wide_search_recovery", samples=len(wide_frames), confidence=0.0)
     return {
-        "region_recovery": recovery,
+        "region_recovery": None,
         "text": text,
         "lines": line_rows,
         "segments": line_rows,

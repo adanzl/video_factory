@@ -3936,8 +3936,8 @@ def _parent_in_contract(contract: dict[str, Any]) -> bool:
             continue
         if str(row.get("speaker") or "").strip() in _PARENT_SPEAKERS:
             return True
-    note = f"{contract.get('remap_note') or ''} {contract.get('mechanism') or ''}"
-    return any(p in note for p in ("妈妈", "爸爸", "家长"))
+    # 改编说明或机制解释中提及家长，不代表家长实际出场（也可能明确说不出场）。
+    return False
 
 
 _K_PARENT_INTERVENTION_RE = re.compile(

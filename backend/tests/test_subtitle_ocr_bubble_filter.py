@@ -155,35 +155,36 @@ def test_repeated_dialogue_is_not_a_watermark():
     assert filter_repeat_watermark_hits(hits) == hits
 
 
-@pytest.mark.parametrize('narrow_score,wide_score,expect_wide,extractions', [
-    (0.2, 0.8, True, 2), (0.2, 0.1, False, 2), (0.8, 0.9, False, 1),
-])
-def test_bad_subtitle_region_retries_wide_search_without_lowering_quality(
-    monkeypatch, tmp_path, narrow_score, wide_score, expect_wide, extractions,
-):
+@pytest.mark.parametrize("quality", [0.2, 0.9])
+def test_ocr_preserves_search_band_even_when_quality_looks_high(monkeypatch, tmp_path, quality):
     from app.config import Config
     from app.services.gold_story.transcript import ocr
-    cfg = Config(); cfg.gold_story_ocr_region_detect = True; cfg.gold_story_ocr_quality_min = 0.55
-    frames = [ocr.OcrFrame(0, tmp_path / 'frame.jpg')]
+    import cv2
+    import numpy as np
+    cfg = Config()
+    cfg.gold_story_ocr_region_detect = True
+    cfg.gold_story_ocr_region_search_ratio = 0.5
+    original = np.full((540, 960, 3), 180, dtype=np.uint8)
+    path = tmp_path / "frame.png"
+    cv2.imwrite(str(path), original)
+    frames = [ocr.OcrFrame(0, path)]
     calls = []
     def extract(*a, **kw):
         calls.append(kw)
         return frames
-    monkeypatch.setattr(ocr, 'extract_subtitle_frames', extract)
-    monkeypatch.setattr(ocr, 'dedupe_frames', lambda frames: frames)
-    monkeypatch.setattr(ocr, 'detect_subtitle_region_from_images', lambda *a, **kw:
-        ocr.SubtitleRegion(y_ratio=0.7, h_ratio=0.07, method='test', samples=1, confidence=1))
-    monkeypatch.setattr(ocr, 'crop_search_band_frames_to_region', lambda frames, *a, **kw: frames)
-    monkeypatch.setattr(ocr, 'ocr_frames_parallel', lambda *a: [{
-        'timestamp_sec': 0, 'hits': [{'text': '水印' if len(calls) == 1 else '完整对白',
-        'score': 0.99, 'color_key': 'white', 'box_h': 40}]}])
-    monkeypatch.setattr(ocr.gs_merge, 'score_transcript_text', lambda text, **kw:
-        narrow_score if text == '水印' else wide_score)
-    result = ocr.transcribe_video_ocr(tmp_path / 'video.mp4', config=cfg, workspace=tmp_path,
-                                      source_id='example', duration_sec=30)
-    assert len(calls) == extractions
-    assert result['text'] == ('完整对白' if expect_wide else '水印')
-    assert result['quality_score'] == (wide_score if expect_wide else narrow_score)
-    if extractions == 2:
-        assert calls[1]['crop_bottom_ratio'] == cfg.gold_story_ocr_region_search_ratio
-        assert result['region_recovery']['used_wide'] is expect_wide
+    def recognize(frames, config):
+        # 窄裁切即使产生高质量分，也不能先破坏送入识别器的字形。
+        assert np.array_equal(cv2.imread(str(frames[0].image_path)), original)
+        return [{"timestamp_sec": 0, "hits": [{"text": "完整对白", "score": .99,
+                "color_key": "white", "box_h": 100}]}]
+    monkeypatch.setattr(ocr, "extract_subtitle_frames", extract)
+    monkeypatch.setattr(ocr, "ocr_frames_parallel", recognize)
+    monkeypatch.setattr(ocr.gs_merge, "score_transcript_text", lambda *a, **kw: quality)
+    result = ocr.transcribe_video_ocr(tmp_path / "video.mp4", config=cfg, workspace=tmp_path,
+                                    source_id="example", duration_sec=30)
+    assert len(calls) == 1
+    assert calls[0]["crop_bottom_ratio"] == .5
+    assert result["text"] == "完整对白"
+    assert result["quality_score"] == quality
+    assert result["subtitle_region"]["y_ratio"] == .5
+    assert result["subtitle_region"]["h_ratio"] == .5

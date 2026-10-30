@@ -730,6 +730,24 @@ def test_apply_parent_role_budget_pure_sibling_stays_zero():
     assert "妈妈" not in out["characters"]
 
 
+@pytest.mark.parametrize("note", ["无家长戏核，不保留妈妈/爸爸", "姐弟自行解决，无需家长", "妈妈与爸爸都不在场"])
+def test_parent_mentions_in_explanation_do_not_add_parent(note):
+    contract = {**_sample_contract(), "story_type": "C", "mom_lines_max": 0,
+                "remap_note": note, "mechanism": note}
+    out = apply_parent_role_budget(contract, h3={"beat": ["争抢", "质问", "回应", "收束"]})
+    assert out["mom_lines_max"] == 0
+    assert not {"妈妈", "爸爸"}.intersection(out["characters"])
+    assert out["remap_note"] == note
+
+
+def test_actual_parent_speaker_keeps_budget_despite_explanation():
+    contract = {**_sample_contract(), "characters": ["灿灿", "昭昭"], "mom_lines_max": 0,
+                "remap_note": "无需家长", "beat_chain": [{"speaker": "妈妈", "intent": "要求收拾玩具"}]}
+    out = apply_parent_role_budget(contract)
+    assert out["mom_lines_max"] >= 2
+    assert "妈妈" in out["characters"]
+
+
 def _long_dialogue(n: int = 14) -> list[dict[str, str]]:
     lines: list[dict[str, str]] = []
     for i in range(n):

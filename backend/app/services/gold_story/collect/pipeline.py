@@ -418,6 +418,7 @@ def process_candidate(
                 h3=h3,
                 source_type=source_type,
                 video_title=candidate.title,
+                source_feedback=source_feedback,
             )
             h3, sync_notes = sync_h3_from_scene_contract(
                 h3, h3a, story_raw=str(h2.get("story_raw") or "")
@@ -436,6 +437,7 @@ def process_candidate(
                 h3=h3,
                 scene_contract=h3a,
                 video_title=candidate.title,
+                source_feedback=source_feedback,
             )
             return h3, h3a, h3b
 
