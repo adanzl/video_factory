@@ -1,5 +1,5 @@
 <template>
-  <div class="checkin-page flex h-full min-h-0 flex-col bg-white">
+  <div class="checkin-page flex h-full min-h-0 flex-col">
     <el-empty
       v-if="!environment.enabled"
       description="未在 .env 配置 DC_DIR，每日签到功能未启用"
@@ -106,7 +106,7 @@
           :data="records"
           :height="tableHeight"
           stripe
-          class="w-full [&_.el-table\_\_body_tr.checkin-row-fail>td]:bg-rose-50!"
+          class="w-full [&_.el-table\_\_body_tr.checkin-row-fail>td]:bg-rose-50! dark:[&_.el-table\_\_body_tr.checkin-row-fail>td]:bg-[#3f2228]!"
           v-loading="loading"
           :row-class-name="recordRowClass"
         >
@@ -134,7 +134,11 @@
           </el-table-column>
           <el-table-column label="状态" width="80" align="center">
             <template #default="{ row }">
-              <el-tag :type="row.status === 'ok' ? 'success' : 'danger'" size="small">
+              <el-tag
+                :type="row.status === 'ok' ? 'success' : 'danger'"
+                size="small"
+                effect="dark"
+              >
                 {{ row.status === "ok" ? "成功" : "失败" }}
               </el-tag>
             </template>
@@ -164,7 +168,7 @@
         v-model:page-size="pageSize"
         :total="total"
         :page-sizes="[15, 20, 50]"
-        layout="total, sizes, prev, pager, next"
+        layout="sizes, prev, pager, next"
         class="shrink-0 justify-start"
         @current-change="fetchRecords"
         @size-change="onPageSizeChange"
