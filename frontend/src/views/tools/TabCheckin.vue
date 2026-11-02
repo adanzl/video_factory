@@ -1,5 +1,5 @@
 <template>
-  <div class="checkin-page flex h-full min-h-0 flex-col bg-white">
+  <div class="checkin-page flex h-full min-h-0 flex-col">
     <el-empty
       v-if="!environment.enabled"
       description="未在 .env 配置 DC_DIR，每日签到功能未启用"

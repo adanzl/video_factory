@@ -1,35 +1,32 @@
 <template>
-  <el-config-provider :locale="zhCn">
-    <el-container class="h-screen">
-      <Sidebar @collapse-change="handleCollapseChange" />
-      <el-container>
-        <el-header class="flex justify-between items-center bg-blue-50 px-6">
-          <div class="flex items-center gap-2">
-            <span class="font-medium">Video Factory</span>
-          </div>
-          <div class="flex items-center gap-2 text-sm">
-            <el-tag type="info" size="small">管理后台</el-tag>
-            <span class="text-gray-500">服务器:</span>
-            <el-tag :type="serverStatusType" size="small">
-              {{ serverStatusText }}
-            </el-tag>
-          </div>
-        </el-header>
-        <el-main>
-          <router-view v-slot="{ Component }">
-            <keep-alive>
-              <component :is="Component" />
-            </keep-alive>
-          </router-view>
-        </el-main>
-      </el-container>
+  <el-container class="h-screen">
+    <Sidebar @collapse-change="handleCollapseChange" />
+    <el-container>
+      <el-header class="flex justify-between items-center bg-blue-50 px-6">
+        <div class="flex items-center gap-2">
+          <span class="font-medium">Video Factory</span>
+        </div>
+        <div class="flex items-center gap-2 text-sm">
+          <el-tag type="info" size="small">管理后台</el-tag>
+          <span class="text-gray-500">服务器:</span>
+          <el-tag :type="serverStatusType" size="small">
+            {{ serverStatusText }}
+          </el-tag>
+        </div>
+      </el-header>
+      <el-main>
+        <router-view v-slot="{ Component }">
+          <keep-alive>
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
+      </el-main>
     </el-container>
-  </el-config-provider>
+  </el-container>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import zhCn from "element-plus/es/locale/lang/zh-cn";
 import Sidebar from "@/views/Sidebar.vue";
 import {
   getCurrentLocalPort,
