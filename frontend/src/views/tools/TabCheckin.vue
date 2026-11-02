@@ -106,7 +106,7 @@
           :data="records"
           :height="tableHeight"
           stripe
-          class="w-full [&_.el-table\_\_body_tr.checkin-row-fail>td]:bg-rose-50!"
+          class="w-full [&_.el-table\_\_body_tr.checkin-row-fail>td]:bg-rose-50! dark:[&_.el-table\_\_body_tr.checkin-row-fail>td]:bg-[#3f2228]!"
           v-loading="loading"
           :row-class-name="recordRowClass"
         >
@@ -134,7 +134,11 @@
           </el-table-column>
           <el-table-column label="状态" width="80" align="center">
             <template #default="{ row }">
-              <el-tag :type="row.status === 'ok' ? 'success' : 'danger'" size="small">
+              <el-tag
+                :type="row.status === 'ok' ? 'success' : 'danger'"
+                size="small"
+                effect="dark"
+              >
                 {{ row.status === "ok" ? "成功" : "失败" }}
               </el-tag>
             </template>
