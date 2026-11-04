@@ -922,6 +922,50 @@ def test_enrich_setting_rejects_pronoun_junk_props():
     assert "面前有笔归我啦" not in speechy
 
 
+@pytest.mark.parametrize("obj,pos,form", [
+    ("衣服", "灿灿身上", "粉色卫衣穿在灿灿身上"),
+    ("外套", "灿灿身上", "蓝色棉布"),
+    ("帽子", "灿灿头上", "红色"),
+    ("书包", "灿灿背上", "蓝色"),
+    ("绘本", "茶几上", "封面合上"),
+    ("手表", "灿灿手腕上", "银色"),
+    ("外套", "灿灿身上，衣角在昭昭左手中", "衣角被拉住"),
+])
+def test_object_owner_does_not_imply_held_in_hand(obj, pos, form):
+    from app.services.script.image_prompt import _render_object_states
+    from app.services.script.visual_brief import normalize_object_states
+
+    seg = {"segment_index": 1,
+           "visual_subjects": [{"name": "灿灿", "action": "双手叉腰"}],
+           "object_states": [{"object": obj, "count": "一件", "holder": "灿灿",
+                              "position": pos, "form": form}]}
+    followup = {"segment_index": 2}
+    assert normalize_object_states([seg, followup]) == []
+    assert seg["object_states"][0]["position"] == pos
+    assert followup["object_states"] == seg["object_states"]
+    rendered = _render_object_states(seg["object_states"])
+    assert "在灿灿手中" not in rendered
+    assert pos in rendered
+    before = copy.deepcopy(seg)
+    assert normalize_object_states([seg]) == []
+    assert seg == before
+
+
+@pytest.mark.parametrize("action,expected", [
+    ("双手叉腰", ""), ("右手指向外套", ""), ("右手拿起外套", "灿灿手中"),
+])
+def test_missing_object_position_requires_holding_evidence(action, expected):
+    from app.services.script.image_prompt import _render_object_states
+    from app.services.script.visual_brief import normalize_object_states
+
+    seg = {"segment_index": 1, "visual_subjects": [{"name": "灿灿", "action": action}],
+           "object_states": [{"object": "外套", "holder": "灿灿", "position": "",
+                              "count": "一件", "form": "蓝色"}]}
+    normalize_object_states([seg])
+    assert seg["object_states"][0]["position"] == expected
+    assert ("灿灿手中" in _render_object_states(seg["object_states"])) == bool(expected)
+
+
 def test_bowl_container_lock_not_forced_into_hands():
     """桌上碗盘：肉在灿灿碗里，昭昭碗里没有肉；不要写成拿在手里。"""
     from app.services.script.image_prompt import assemble_daily_t2i_prompt

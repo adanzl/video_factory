@@ -1034,15 +1034,8 @@ def normalize_object_states(
                         f"position 写 {new_pos}"
                     )
                     st["position"] = new_pos
-            elif holder and holder != "无":
-                if not pos:
-                    st["position"] = f"{holder}手中"
-                elif "手" not in pos and "手" not in holder:
-                    notes.append(
-                        f"segment {idx}: object={obj} holder={holder} 与 position={pos} 矛盾，"
-                        f"position 归入 {holder}手中"
-                    )
-                    st["position"] = f"{holder}手中"
+            # holder 也可能是穿戴者或物品所属人，不足以证明手持。
+            # 没有动作/容器证据时保留具体位置，缺失位置也不凭空补成手中。
         seg["object_states"] = [dict(v, object=k) for k, v in merged.items()]
         for st in body_injury_states:
             migrate_body_part_injury_to_subjects(seg, st)

@@ -460,7 +460,9 @@ def _render_object_states(
         pos = str(st.get("position") or "").strip()
         who = owners.get(obj) or ""
         # 手持优先于碗归属：举起的签筒不能写成「碗里是签筒」
-        if "手" in pos and holder and holder != "无":
+        if holder and holder != "无" and re.fullmatch(
+            rf"{re.escape(holder)}的?(?:双|左|右)?手(?:中|里)", pos,
+        ):
             if form and _FORM_POSITION_RE.search(form):
                 clause = f"{count}{obj}{form}"
             else:
@@ -472,9 +474,7 @@ def _render_object_states(
         if who:
             parts.append(_bowl_clause(who, count, obj, form))
             continue
-        if holder and holder != "无":
-            clause = f"{count}{obj}在{holder}手中"
-        elif pos:
+        if pos:
             clause = f"{count}{obj}在{pos}"
         else:
             clause = f"{count}{obj}"
