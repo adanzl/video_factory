@@ -18,6 +18,7 @@ from app.services.segment.clip.video_agnes import (
     _resolve_aspect_ratio,
     _resolve_i2v_image,
     _stabilize_motion_prompt,
+    _vl_frame_batches,
 )
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
@@ -74,6 +75,50 @@ def test_parse_speaking_sides() -> None:
     assert _parse_speaking_sides("都没有说话") == set()
     assert _parse_speaking_sides("") is None
     assert _parse_speaking_sides("无法判断画面内容") is None
+
+
+@pytest.mark.parametrize("count", range(21))
+def test_vl_batches_cover_all_frames_and_temporal_boundaries(count):
+    frames = [f"frame{i}" for i in range(count)]
+    batches = _vl_frame_batches(frames)
+    assert all(1 <= len(batch) <= 4 for batch in batches)
+    assert {frame for batch in batches for frame in batch} == set(frames)
+    checked_pairs = {pair for batch in batches for pair in zip(batch, batch[1:])}
+    assert set(zip(frames, frames[1:])) <= checked_pairs
+    if count > 1:
+        assert all(len(batch) >= 2 for batch in batches)
+    if count >= 4:
+        assert all(len(batch) == 4 for batch in batches)
+
+
+@pytest.mark.parametrize("replies,expected", [
+    (["左侧", "右侧"], {"左侧", "右侧"}),
+    (["左侧", "无人"], {"左侧"}),
+    (["无人", "左侧"], {"左侧"}),
+    (["左侧", "无法判断"], None),
+])
+def test_mouth_checks_tail_frames_and_keeps_unknown(replies, expected):
+    provider = AgnesClipProvider()
+    with patch.object(provider, "_ask_vl_content", side_effect=replies) as vl:
+        sides = provider._ask_vl_speaking_sides("检查", [f"frame{i}" for i in range(5)])
+    assert sides == expected
+    assert vl.call_count == 2
+    assert all(len(call.kwargs["frames"]) <= 4 for call in vl.call_args_list)
+    assert "frame4" in vl.call_args_list[-1].kwargs["frames"]
+
+
+@pytest.mark.parametrize("last_reply", ["有字幕", "无法判断", "无字幕"])
+def test_subtitle_checks_later_windows(last_reply):
+    provider = AgnesClipProvider()
+    with patch.object(provider, "_ask_vl_content", side_effect=["无字幕", "无字幕", last_reply]) as vl:
+        if last_reply == "无法判断":
+            with pytest.raises(AgnesI2VError, match="字幕质检未完成"):
+                provider._verify_no_burned_subtitles([f"f{i}" for i in range(10)], segment_index=1)
+        else:
+            assert provider._verify_no_burned_subtitles([f"f{i}" for i in range(10)], segment_index=1) is (last_reply == "无字幕")
+    assert vl.call_count == 3
+    assert all(len(call.kwargs["frames"]) <= 4 for call in vl.call_args_list)
+    assert "f9" in vl.call_args_list[-1].kwargs["frames"]
 
 
 def test_parse_subtitle_hit() -> None:
@@ -1656,7 +1701,7 @@ def test_mouth_retry_publishes_only_after_pass(tmp_path):
     assert result.read_bytes() == b"verified clip"
 
 
-@pytest.mark.parametrize('reply', ['无法判断左侧是否在说话', '可能是右侧，但无法确定', '左侧没有说话', '左侧？', '左侧或右侧', '不是左侧，是右侧', '左侧\n无人'])
+@pytest.mark.parametrize('reply', ['无法判断', '无法判断左侧是否在说话', '可能是右侧，但无法确定', '左侧没有说话', '左侧？', '左侧或右侧', '不是左侧，是右侧', '左侧\n无人'])
 def test_ambiguous_mouth_answer_is_unknown(reply):
     assert _parse_speaking_sides(reply) is None
     provider = AgnesClipProvider()

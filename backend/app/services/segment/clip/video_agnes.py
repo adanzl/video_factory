@@ -125,11 +125,18 @@ _MOUTH_VERIFY_FRAME_WIDTH = 640
 # 多帧 VL + 强制思考；对齐 image_agnes 图文校验 300s（120s 实测易 Read timed out）
 _VL_READ_TIMEOUT_SEC = 300.0
 _VL_MAX_ATTEMPTS = 3
-# 强制选边比「他有没有说话」的是非题更有区分度（是非题易偏向答是）
+# 国内 Agnes VL 上游单次最多 4 张图片；保留重叠帧覆盖批次边界的变化。
+_VL_MAX_FRAMES = 4
+# 不给出预期说话人；依据跨帧变化选边，静态张嘴不能证明正在说话。
 _MOUTH_VERIFY_SYSTEM = (
     "你是视频抽帧质检员。用户给出同一段视频某时间段按时间顺序抽取的几帧画面。"
-    "判断画面中哪个人物在说话：任一帧张开嘴巴，或各帧间嘴部有明显开合/口型变化，即算在说话。"
-    "只回答「左侧」「中间」「右侧」「多人」或「无人」，不要输出任何其他内容。"
+    "逐人比较各帧嘴唇与下巴，只有可见的嘴部开合或口型变化才算说话迹象。"
+    "静态张嘴、露齿微笑、嘴部形状不变，以及仅头部或身体移动，都不能据此判为说话。"
+    "按人物之间的左右顺序标记身份，不按画面的三等分区域；两人时只有左侧和右侧，"
+    "三人按左中右标记，单人按其画面位置标记，人物移动时保持同一身份。"
+    "多个人都有口型变化则答多人。"
+    "画面清晰且所有人嘴部均无变化答无人；嘴部遮挡、模糊或证据不足答无法判断，不要猜测。"
+    "只回答「左侧」「中间」「右侧」「多人」「无人」或「无法判断」，不要输出任何其他内容。"
 )
 _SUBTITLE_VERIFY_SYSTEM = (
     "你是视频抽帧质检员。这些图按时间顺序取自同一段图生视频。"
@@ -291,6 +298,21 @@ def _parse_speaking_sides(content: str) -> set[str] | None:
     if re.fullmatch(r"(?:左侧|中间|右侧)(?:[和与、](?:左侧|中间|右侧))+(?:都在说(?:话)?)?", text):
         return set(re.findall(r"左侧|中间|右侧", text))
     return None
+
+
+def _vl_frame_batches(frames: list[str]) -> list[list[str]]:
+    """重叠覆盖所有帧及相邻帧对；尾批向前补齐上下文，避免只看末尾两帧。"""
+    if not frames:
+        return []
+    if len(frames) <= _VL_MAX_FRAMES:
+        return [frames]
+    starts = list(range(0, len(frames) - _VL_MAX_FRAMES + 1, _VL_MAX_FRAMES - 1))
+    if starts[-1] + _VL_MAX_FRAMES < len(frames):
+        starts.append(len(frames) - _VL_MAX_FRAMES)
+    return [
+        frames[start:start + _VL_MAX_FRAMES]
+        for start in starts
+    ]
 
 
 def _parse_subtitle_hit(content: str) -> bool | None:
@@ -1662,18 +1684,22 @@ class AgnesClipProvider(ClipProvider):
     def _ask_vl_speaking_sides(
         self, question: str, frames: list[str]
     ) -> set[str] | None:
-        """单次 VL 判定哪侧人物在说话；调用/解析失败返回 None。"""
-        reply = self._ask_vl_content(
-            system=_MOUTH_VERIFY_SYSTEM,
-            question=question,
-            frames=frames,
-            tag="mouth verify vl",
-        )
-        if reply is None:
+        """分批检查并合并说话人；任一批未知都不能当作完成质检。"""
+        if not frames:
             return None
-        sides = _parse_speaking_sides(reply)
-        if sides is None:
-            logger.warning("mouth verify vl reply unparsable: %s", str(reply)[:80])
+        sides: set[str] = set()
+        for batch in _vl_frame_batches(frames):
+            reply = self._ask_vl_content(
+                system=_MOUTH_VERIFY_SYSTEM,
+                question=question,
+                frames=batch,
+                tag="mouth verify vl",
+            )
+            observed = _parse_speaking_sides(reply or "")
+            if observed is None:
+                logger.warning("mouth verify vl reply unparsable: %s", str(reply)[:80])
+                return None
+            sides.update(observed)
         return sides
 
     def _verify_mouth_motion(
@@ -1691,9 +1717,9 @@ class AgnesClipProvider(ClipProvider):
             if len(frames) < 2:
                 raise AgnesI2VError(f"clip {segment_index}: 口型质检未完成，说话窗口抽帧不足")
             question = (
-                f"这{len(frames)}张图按时间顺序取自同一段视频 "
-                f"{start:.1f}-{end:.1f} 秒。对比各帧，画面中谁有张嘴说话迹象？"
-                f"回答「左侧」「中间」「右侧」「多人」或「无人」。"
+                "这些图按时间顺序取自同一段视频 "
+                f"{start:.1f}-{end:.1f} 秒。逐人对比跨帧嘴部变化，谁有说话口型变化？"
+                f"回答「左侧」「中间」「右侧」「多人」「无人」或「无法判断」。"
             )
             sides = self._ask_vl_speaking_sides(question, frames)
             if sides is None:
@@ -1723,27 +1749,28 @@ class AgnesClipProvider(ClipProvider):
         if not frames:
             raise AgnesI2VError(f"clip {segment_index}: 字幕质检未完成，未取得抽帧")
         question = (
-            f"这{len(frames)}张图按时间顺序取自同一段视频。"
+            "这些图按时间顺序取自同一段视频。"
             "画面上有没有烧录字幕、汉字、拼音或对白条？"
             "回答「有字幕」或「无字幕」。"
         )
-        reply = self._ask_vl_content(
-            system=_SUBTITLE_VERIFY_SYSTEM,
-            question=question,
-            frames=frames,
-            tag="subtitle verify vl",
-        )
-        hit = _parse_subtitle_hit(reply or "")
-        if hit is None:
-            raise AgnesI2VError(f"clip {segment_index}: 字幕质检未完成，接口无有效判断")
-        logger.info(
-            "clip %s subtitle verify vl=%s: %s",
-            segment_index,
-            (reply or "?")[:20],
-            "BURNED SUBTITLES" if hit else ("ok" if hit is False else "skip"),
-        )
-        if hit is True:
-            return False
+        for batch in _vl_frame_batches(frames):
+            reply = self._ask_vl_content(
+                system=_SUBTITLE_VERIFY_SYSTEM,
+                question=question,
+                frames=batch,
+                tag="subtitle verify vl",
+            )
+            hit = _parse_subtitle_hit(reply or "")
+            if hit is None:
+                raise AgnesI2VError(f"clip {segment_index}: 字幕质检未完成，接口无有效判断")
+            logger.info(
+                "clip %s subtitle verify vl=%s: %s",
+                segment_index,
+                (reply or "?")[:20],
+                "BURNED SUBTITLES" if hit else "ok",
+            )
+            if hit:
+                return False
         return True
 
     def _submit_and_poll(
