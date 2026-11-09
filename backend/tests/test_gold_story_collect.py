@@ -474,6 +474,43 @@ def _pending_source(source_id="BV1RETRY0001"):
 
 
 @pytest.mark.parametrize("recover", [False, True])
+def test_collect_h0c_retry_uses_persisted_feedback_without_leaking_to_next_story(app_ctx, monkeypatch, recover):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    first = _pending_source()
+    second = _pending_source("BV1RETRY0002")
+    failure = {"action": "error", "stage": "H0c", "retryable": True,
+               "error": "scene contains uncertain lines: 关键数字不明",
+               "transcript_resolution": {"status": "resolved", "source": "ocr", "evidence_hash": "same"}}
+    if recover:
+        claim = repo.claim_next_pending()
+        assert claim["id"] == first
+        row = repo.begin_collect_attempt(first, max_attempts=3)
+        assert repo.record_collect_failure(first, failure, retry=True, expected_row=row)
+        repo.reset_processing_to_pending()
+    monkeypatch.setattr(p, "_build_candidate_from_bvid", lambda *a, **k: object())
+    monkeypatch.setattr(p.time, "sleep", lambda *_a: None)
+    seen = []
+    def process(*a, **kwargs):
+        row = kwargs["existing_row"]
+        seen.append((row["id"], kwargs["repair_feedback"], kwargs["force_transcript"]))
+        if row["id"] == first and row["payload"]["collect_attempts"] == 1:
+            return failure
+        if row["id"] == first:
+            assert kwargs["repair_feedback"] == failure["error"]
+            assert row["payload"]["collect_failure"]["transcript_resolution"] == failure["transcript_resolution"]
+        else:
+            assert kwargs["repair_feedback"] == ""
+        repo.update_story_status(row["id"], status="active")
+        return {"action": "ok", "status": "active"}
+    monkeypatch.setattr(p, "process_candidate", process)
+    report = p.drain_pending_stories(force_transcript=not recover)
+    assert report["inserted"] == 2 and report["failed"] == 0
+    assert seen == ([(first, failure["error"], False), (second, "", False)] if recover else
+                    [(first, "", True), (first, failure["error"], False), (second, "", True)])
+
+
+@pytest.mark.parametrize("recover", [False, True])
 @pytest.mark.parametrize("succeeds", [False, True])
 def test_collect_retries_transient_errors_with_durable_budget(app_ctx, monkeypatch, recover, succeeds):
     import requests

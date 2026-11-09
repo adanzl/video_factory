@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+import hashlib
+import json
 
 from app.services.gold_story.collect import llm as llm_steps
 from app.services.gold_story.transcript import format_dialogue_transcript
@@ -83,6 +85,57 @@ def test_reconcile_does_not_truncate_or_invent_missing_evidence(monkeypatch):
     evidence = _transcript_evidence()
     assert llm_steps.reconcile_transcripts(evidence[:1])["status"] == "unresolved"
     evidence[0]["text"] = "字" * 12001
+    assert llm_steps.reconcile_transcripts(evidence)["reason"] == "evidence_too_large"
+
+
+def test_reconcile_compacts_long_evidence_without_losing_facts_or_timing(monkeypatch):
+    evidence = _transcript_evidence()
+    segments = [{"timestamp_sec": i * 0.8, "end_sec": (i + 1) * 0.8,
+                 "speaker": "未知", "text": f"第{i}句：不是十元，是十一元。", "confidence": 0.98765}
+                for i in range(500)]
+    evidence[0]["segments"] = segments
+    evidence[0]["text"] = "\n".join(row["text"] for row in segments)
+    original = [{"source": x["source"], "text": x["text"], "segments": x.get("segments", []),
+                 "avg_confidence": None, "engine": None} for x in evidence]
+    raw = json.dumps(original, ensure_ascii=False, sort_keys=True)
+    assert len(raw) > 48000
+    old = {"version": "whole_source_v2", "evidence_hash": hashlib.sha256(("whole_source_v2\n" + raw).encode()).hexdigest(),
+           "status": "unresolved", "reason": "evidence_too_large"}
+    calls = []
+    def chat(system, user):
+        calls.append(user)
+        packed = json.loads(user.split("\n【候选来源】")[0])
+        assert packed[0]["text"] == evidence[0]["text"]
+        table = packed[0]["segments"]
+        assert [dict(zip(table["columns"], row)) for row in table["rows"]] == segments
+        assert len(json.dumps(packed, ensure_ascii=False, separators=(",", ":"))) < 48000
+        return {"source": "ocr", "reason": "完整原文可核实"} if len(calls) % 2 else _transcript_review()
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    result = llm_steps.reconcile_transcripts(evidence, previous=old)
+    assert result["status"] == "resolved" and result["text"] == evidence[0]["text"]
+    assert len(calls) == 2
+    assert llm_steps.reconcile_transcripts(evidence, previous=result) == result
+    assert len(calls) == 2
+    segments[-1]["end_sec"] += 0.2
+    changed = llm_steps.reconcile_transcripts(evidence, previous=result)
+    assert changed["evidence_hash"] != result["evidence_hash"]
+    assert len(calls) == 4
+
+
+def test_reconcile_keeps_heterogeneous_segment_fields(monkeypatch):
+    evidence = _transcript_evidence()
+    evidence[0]["segments"] = [{"text": "别拿", "start": 0}, {"text": "拿两个", "start": 1, "speaker": "妈妈"}]
+    def chat(system, user):
+        assert json.loads(user)[0]["segments"] == evidence[0]["segments"]
+        return {"source": "unresolved", "reason": "不能确认否定"}
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    assert llm_steps.reconcile_transcripts(evidence)["status"] == "unresolved"
+
+
+def test_reconcile_still_rejects_oversized_compact_evidence(monkeypatch):
+    evidence = _transcript_evidence()
+    evidence[0]["segments"] = [{"text": "不可截断的证据" * 8000, "start": 0}]
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *_a: pytest.fail("超预算不得静默截断"))
     assert llm_steps.reconcile_transcripts(evidence)["reason"] == "evidence_too_large"
 
 

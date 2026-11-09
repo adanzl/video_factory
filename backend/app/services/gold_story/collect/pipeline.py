@@ -1121,16 +1121,21 @@ def drain_pending_stories(
         gid = int(row["id"])
         source_id = str(row.get("source_id") or "")
         claim_id = str((row.get("payload") or {}).get("collect_claim_id") or "")
+        refresh_transcript = force_transcript
         while True:
             attempt_row = repo_gold_story.begin_collect_attempt(gid, max_attempts=_COLLECT_MAX_ATTEMPTS, claim_id=claim_id)
             if attempt_row is None:
                 outcome = {"action": "error", "stage": "drain", "error": "采集尝试次数已耗尽", "retryable": False}
             else:
                 row = attempt_row
+                previous_failure = (row.get("payload") or {}).get("collect_failure") or {}
+                repair_feedback = (str(previous_failure.get("error") or "")
+                                   if previous_failure.get("stage") == "H0c" else "")
                 try:
                     candidate = _build_candidate_from_bvid(source_id, config=cfg, existing_row=row)
                     outcome = process_candidate(candidate, config=cfg, skip_transcript=skip_transcript,
-                                                overwrite_existing=True, force_transcript=force_transcript, existing_row=row)
+                                                overwrite_existing=True, force_transcript=refresh_transcript, existing_row=row,
+                                                repair_feedback=repair_feedback)
                 except Exception as exc:
                     outcome = _execution_failure(exc, "drain")
             if outcome.get("action") != "error":
@@ -1148,6 +1153,9 @@ def drain_pending_stories(
                 outcome = {**outcome, "id": gid, "source_id": source_id, "status": "failed"}
                 failed += 1
                 break
+            # 转写后的模型失败复用本轮素材，与手动导入重试一致。
+            if outcome.get("stage") in {"H0b reconciliation", "H0c", "LLM", "H4a"}:
+                refresh_transcript = False
             time.sleep(min(2 ** max(0, attempts - 1), 4))
 
         action = str(outcome.get("action") or "")
