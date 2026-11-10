@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -51,7 +52,7 @@ _RETRYABLE = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 5
 _FAILOVER_HTTP_RETRIES = 1
 # 同一文生图提示词的质检重试次数；耗尽后由上层重生提示词再开一轮
 _VERIFY_MAX_ATTEMPTS = 5
-# 验证接口超时/网络失败时的重试次数（不重生图，只重试验证）
+# 验证接口超时、网络失败或回答不完整时的重试次数（不重生图）。
 _VERIFY_RETRY_COUNT = 2
 _VERIFY_RETRY_DELAY = 10
 _ITEM_LINE_RE = re.compile(r"^项\s*(\d+)\s*[:：]\s*(.*)$")
@@ -348,11 +349,16 @@ class AgnesImageProvider(ImageProvider):
             except Exception as exc:
                 result.set_exception(exc)
 
-        gevent_spawn(_worker)
-        while not result.ready():
+        worker = gevent_spawn(_worker)
+        try:
+            while not result.ready():
+                self._raise_if_job_cancelled()
+                gevent_sleep(0.3)
             self._raise_if_job_cancelled()
-            gevent_sleep(0.3)
-        return result.get()
+            return result.get()
+        finally:
+            if not worker.dead:
+                worker.kill(block=True)
 
     def _sleep_cancellable(self, seconds: float) -> None:
         if seconds <= 0:
@@ -810,6 +816,14 @@ class AgnesImageProvider(ImageProvider):
             and "灿灿" in expected_speakers
         ):
             prompt = "严格保留参考图发色：灿灿头发通体纯黑，头顶到马尾同一黑色。" + prompt
+        # 未完成质检的候选只在重新通过当前要求后复用，不作为已验收缓存。
+        if (output_path.name.endswith(".pending.png") and output_path.is_file()
+                and get_settings().agnes_image_verify):
+            self._raise_if_job_cancelled()
+            if self._verify_image(prompt, output_path, expected_speakers=expected_speakers,
+                                  content_style=content_style):
+                logger.info("%s pending image verified; generation skipped", log_tag)
+                return output_path
         keys = _agnes_image_gen_keys()
         if not keys:
             if get_settings().mock_mode:
@@ -1786,7 +1800,7 @@ class AgnesImageProvider(ImageProvider):
             if cid == "people" or cid in _ROLE_CLOTHES_IDS:
                 parts.append(f"{cid}={raw}")
                 continue
-            if cid == "cast_count" or cid in _ROLE_COUNT_IDS or cid in _ARM_COUNT_IDS or cid in _LEG_COUNT_IDS:
+            if cid in {"cast_count", "arm_count"} or cid in _ROLE_COUNT_IDS or cid in _ARM_COUNT_IDS or cid in _LEG_COUNT_IDS:
                 n = AgnesImageProvider._parse_person_count(raw)
                 parts.append(f"{cid}={n if n is not None else 'unknown'}")
                 continue
@@ -1805,6 +1819,28 @@ class AgnesImageProvider(ImageProvider):
         img.convert("RGB").save(buf, format="JPEG", quality=85)
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         return f"data:image/jpeg;base64,{b64}"
+
+    @staticmethod
+    def _record_verify_failure(
+        image_path: Path, *, reason: str, content: str, check_ids: list[str],
+        finish_reason: Any, retry: int, key_label: str, phase: str,
+        message: Any,
+    ) -> None:
+        """只保存答复和图片指纹，不保存请求、凭据或图片 base64。"""
+        evidence = image_path.with_name(image_path.name + ".verify_failures.jsonl")
+        try:
+            record = {
+                "at": time.time(), "image_sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
+                "reason": reason, "phase": phase, "retry": retry,
+                "key_label": key_label, "finish_reason": finish_reason,
+                "check_ids": check_ids, "answer": content,
+                "response_message": message,
+                "parsed": AgnesImageProvider._format_verify_reply(content, check_ids),
+            }
+            with evidence.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning("[out=%s] cannot save verification evidence: %s", image_path.name, exc)
 
     def _verify_image(
         self,
@@ -1841,10 +1877,15 @@ class AgnesImageProvider(ImageProvider):
                 raise AgnesImageVerificationUnavailable("图片质检未完成：未配置质检接口")
 
             log_tag = f"[out={image_path.name}]"
+            last_incomplete: AgnesImageVerificationUnavailable | None = None
             for retry in range(_VERIFY_RETRY_COUNT + 1):
                 self._raise_if_job_cancelled()
                 for api_key in keys:
                     self._raise_if_job_cancelled()
+                    content = ""
+                    finish_reason = None
+                    phase = "main"
+                    message: Any = None
                     try:
                         headers = agnes_auth_header(api_key.value)
                         verify_url = (  # type: ignore[var-annotated]
@@ -1877,9 +1918,19 @@ class AgnesImageProvider(ImageProvider):
 
                         def _post_verify() -> requests.Response:
                             nonlocal url, verify_url  # type: ignore[var-annotated]
-                            resp = requests.post(
-                                url, headers=headers, json=payload, timeout=300
-                            )
+                            try:
+                                resp = requests.post(
+                                    url, headers=headers, json=payload, timeout=300
+                                )
+                            except requests.Timeout:
+                                alt = agnes_apply_host_failover(
+                                    url, host_failover_tried, reason="timeout", tag=f"{log_tag} verify",
+                                )
+                                if not alt:
+                                    raise
+                                self._raise_if_job_cancelled()
+                                verify_url = url = alt
+                                resp = requests.post(url, headers=headers, json=payload, timeout=300)
                             if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
                                 alt = agnes_apply_host_failover(
                                     url,
@@ -1900,11 +1951,17 @@ class AgnesImageProvider(ImageProvider):
                         if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
                             break
                         if resp.ok:  # type: ignore[attr-defined,assignment]
-                            choice = resp.json().get("choices", [{}])[0]
-                            if choice.get("finish_reason") not in (None, "stop"):
+                            try:
+                                choice = resp.json().get("choices", [{}])[0]
+                                finish_reason = choice.get("finish_reason")
+                                msg = choice.get("message") or {}
+                                message = msg
+                                content = AgnesImageProvider._vl_message_text(msg)
+                            except (ValueError, TypeError, IndexError, AttributeError) as exc:
+                                content = resp.text
+                                raise AgnesImageVerificationUnavailable("图片质检未完成：响应格式无法解析") from exc
+                            if finish_reason not in (None, "stop"):
                                 raise AgnesImageVerificationUnavailable("图片质检未完成：接口回答未正常结束")
-                            msg = choice.get("message") or {}
-                            content = AgnesImageProvider._vl_message_text(msg)
                             ok = AgnesImageProvider._evaluate_verify_response(
                                 content, check_ids, cast_max=cast_max
                             )
@@ -1922,6 +1979,7 @@ class AgnesImageProvider(ImageProvider):
                                 ),
                             )
                             if ok and content_style == CONTENT_STYLE_DAILY_STORY:
+                                phase = "limbs"
                                 ok = self._verify_hardfail_limbs(
                                     image_path,
                                     expected_speakers=expected_speakers,
@@ -1948,19 +2006,22 @@ class AgnesImageProvider(ImageProvider):
                             _resp_body_summary(resp),  # type: ignore[arg-type]
                         )
                         break
-                    except (AgnesImageVerificationUnavailable, JobCancelledError):
+                    except JobCancelledError:
                         raise
+                    except AgnesImageVerificationUnavailable as exc:
+                        last_incomplete = exc
+                        if phase == "main":
+                            self._record_verify_failure(
+                                image_path, reason=str(exc), content=content, check_ids=check_ids,
+                                finish_reason=finish_reason, retry=retry, key_label=api_key.label, phase=phase,
+                                message=message,
+                            )
+                        logger.warning("%s verification incomplete (%s key, retry=%s/%s): %s",
+                                       log_tag, api_key.label, retry, _VERIFY_RETRY_COUNT, exc)
+                        # 答复格式与 Key 无关，保留此图、沿用原 Key 重试，不能当成图片不合格重画。
+                        break
                     except requests.Timeout as exc:
                         self._raise_if_job_cancelled()
-                        alt = agnes_apply_host_failover(
-                            verify_url,  # type: ignore[var-annotated]
-                            host_failover_tried,  # type: ignore[var-annotated]
-                            reason="timeout",
-                            tag=f"{log_tag} verify",
-                        )
-                        if alt:
-                            verify_url = alt  # type: ignore[var-annotated]
-                            continue
                         logger.warning(
                             "%s agnes verify_image timeout (%s key, retry=%s/%s): %s",
                             log_tag,
@@ -1993,7 +2054,8 @@ class AgnesImageProvider(ImageProvider):
                 log_tag,
                 _VERIFY_RETRY_COUNT + 1,
             )
-            raise AgnesImageVerificationUnavailable("图片质检未完成：接口重试后仍不可用")
+            detail = f"；最近一次质检问题：{last_incomplete}" if last_incomplete else ""
+            raise AgnesImageVerificationUnavailable("图片质检未完成：接口重试后仍不可用" + detail)
         except (AgnesImageVerificationUnavailable, JobCancelledError):
             raise
         except Exception as exc:
@@ -2086,7 +2148,8 @@ class AgnesImageProvider(ImageProvider):
                 + "\n"
                 + _HARD_FAIL_ARM_Q2.format(look=look)
             )
-            answer = self._ask_hardfail_vl(settings, keys, data_url, question, log_tag)
+            answer = self._ask_hardfail_vl(settings, keys, data_url, question, log_tag,
+                                           image_path=image_path, role=name)
             if answer is None:
                 raise AgnesImageVerificationUnavailable(f"肢体质检未完成：{name}复核接口不可用，请稍后重试")
             count, extra = AgnesImageProvider._parse_hardfail_arm_answer(answer)
@@ -2114,10 +2177,16 @@ class AgnesImageProvider(ImageProvider):
         data_url: str,
         question: str,
         log_tag: str,
+        *,
+        image_path: Path | None = None,
+        role: str = "",
     ) -> str | None:
         """裁剪图数手 VL 调用；网络失败返回 None，由调用方报告质检未完成。"""
         for api_key in keys:
             self._raise_if_job_cancelled()
+            content = ""
+            message: Any = None
+            finish_reason = None
             try:
                 headers = agnes_auth_header(api_key.value)
                 url = f"{agnes_key_base_url(api_key, settings)}/chat/completions"
@@ -2146,11 +2215,37 @@ class AgnesImageProvider(ImageProvider):
 
                 resp = cast(requests.Response, self._run_blocking_cancellable(_post))
                 if resp.ok:  # type: ignore[attr-defined,assignment]
-                    choice = resp.json().get("choices", [{}])[0]
-                    if choice.get("finish_reason") not in (None, "stop"):
+                    try:
+                        choice = resp.json().get("choices", [{}])[0]
+                        finish_reason = choice.get("finish_reason")
+                        message = choice.get("message") or {}
+                        content = AgnesImageProvider._vl_message_text(message)
+                    except (ValueError, TypeError, IndexError, AttributeError):
+                        content = resp.text
+                        if image_path is not None:
+                            self._record_verify_failure(
+                                image_path, reason="肢体质检响应格式无法解析", content=content,
+                                check_ids=["arm_count", "extra_limbs"], finish_reason=finish_reason,
+                                retry=0, key_label=api_key.label, phase=f"limbs:{role}", message=message,
+                            )
                         return None
-                    msg = choice.get("message") or {}
-                    return AgnesImageProvider._vl_message_text(msg)
+                    if finish_reason not in (None, "stop"):
+                        if image_path is not None:
+                            self._record_verify_failure(
+                                image_path, reason="肢体质检回答未正常结束", content=content,
+                                check_ids=["arm_count", "extra_limbs"], finish_reason=finish_reason,
+                                retry=0, key_label=api_key.label, phase=f"limbs:{role}", message=message,
+                            )
+                        return None
+                    count, extra = self._parse_hardfail_arm_answer(content)
+                    if (image_path is not None and (count is None or extra is None)
+                            and not ((count is not None and count > _MAX_ARMS_PER_PERSON) or extra is True)):
+                        self._record_verify_failure(
+                            image_path, reason="肢体质检结果缺项或无法解析", content=content,
+                            check_ids=["arm_count", "extra_limbs"], finish_reason=finish_reason,
+                            retry=0, key_label=api_key.label, phase=f"limbs:{role}", message=message,
+                        )
+                    return content
                 logger.warning(
                     "%s agnes hardfail http %s (%s key): %s",
                     log_tag,

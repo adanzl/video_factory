@@ -1601,7 +1601,7 @@ def test_main_image_verification_incomplete_preserves_image_without_redraw(tmp_p
         provider.generate('原场景', output, expected_speakers=['昭昭', '灿灿'], content_style='daily_story')
     generate.assert_called_once()
     plan.assert_not_called()
-    assert post.call_count == (3 if failure in {'http', 'timeout'} else 1)
+    assert post.call_count == 3
     assert output.read_bytes() == original
 
 
@@ -1677,10 +1677,151 @@ def test_unfinished_image_qc_response_is_incomplete(tmp_path, stage, finish_reas
         patch.object(provider,'_run_blocking_cancellable',side_effect=lambda fn:fn()),
         patch('app.services.segment.image.image_agnes.requests.post', return_value=response) as post,
         patch.object(provider,'_build_verify_checklist',return_value=([('scene','场景')],'检查',None)),
+        patch.object(provider, '_sleep_cancellable'),
     ):
         if stage == 'main':
             with pytest.raises(AgnesImageVerificationUnavailable,match='未正常结束'):
                 provider._verify_image('场景',output)
         else:
             assert provider._ask_hardfail_vl(get_settings(),[key],'image','检查','test') is None
-    post.assert_called_once()
+    assert post.call_count == (3 if stage == 'main' else 1)
+
+
+@pytest.mark.parametrize('bad_reply', ['missing', 'truncated', 'invalid_json', 'contradictory'])
+def test_incomplete_qc_retries_same_image_and_records_evidence(tmp_path, bad_reply):
+    import hashlib
+    provider = AgnesImageProvider()
+    output = tmp_path / '6.pending.png'
+    PILImage.new('RGB', (32, 32), 'white').save(output)
+    before = output.read_bytes()
+    bad = MagicMock(status_code=200, ok=True, text='invalid-json')
+    answer = '项1: 是\n项1: 否' if bad_reply == 'contradictory' else '未能识别'
+    bad.json.return_value = {'choices': [{'finish_reason': 'length' if bad_reply == 'truncated' else 'stop', 'message': {'content': answer}}]}
+    if bad_reply == 'invalid_json':
+        bad.json.side_effect = ValueError('invalid json')
+    good = MagicMock(status_code=200, ok=True)
+    good.json.return_value = {'choices': [{'finish_reason': 'stop', 'message': {'content': '项1: 是'}}]}
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('primary', 'secret-first'), AgnesApiKey('backup', 'secret-second')]),
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch.object(provider, '_sleep_cancellable') as sleep,
+        patch.object(AgnesImageProvider, '_build_verify_checklist', return_value=([('scene', '场景')], '检查', None)),
+        patch('app.services.segment.image.image_agnes.requests.post', side_effect=[bad, good]) as post,
+    ):
+        assert provider._verify_image('场景', output) is True
+    assert post.call_count == 2
+    first, second = post.call_args_list
+    assert first.kwargs['headers'] == second.kwargs['headers']
+    assert first.kwargs['json'] == second.kwargs['json']
+    assert output.read_bytes() == before
+    sleep.assert_called_once()
+    evidence = output.with_name(output.name + '.verify_failures.jsonl').read_text()
+    record = json.loads(evidence)
+    assert record['image_sha256'] == hashlib.sha256(before).hexdigest()
+    assert record['answer'] == ('invalid-json' if bad_reply == 'invalid_json' else answer)
+    assert record['check_ids'] == ['scene']
+    assert 'secret-first' not in evidence and 'secret-second' not in evidence and 'base64' not in evidence
+
+
+def test_incomplete_qc_exhaustion_preserves_image_without_redrawing(tmp_path):
+    provider = AgnesImageProvider()
+    output = tmp_path / '6.pending.png'
+    response = MagicMock(status_code=200, ok=True)
+    response.json.return_value = {'choices': [{'message': {'content': '项1: 不确定'}}]}
+    def draw(_key, _prompt, path, **kwargs):
+        PILImage.new('RGB', (32, 32), 'white').save(path)
+        return path
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('primary', 'test-key')]),
+        patch.object(provider, '_generate_with_key', side_effect=draw) as generate,
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch.object(provider, '_sleep_cancellable'),
+        patch.object(AgnesImageProvider, '_build_verify_checklist', return_value=([('scene', '场景')], '检查', None)),
+        patch('app.services.segment.image.image_agnes.requests.post', return_value=response) as post,
+        patch('app.services.segment.image.image_agnes.get_settings') as settings,
+    ):
+        settings.return_value.agnes_image_verify = True
+        settings.return_value.mock_mode = False
+        with pytest.raises(AgnesImageVerificationUnavailable, match='检查项漏答或无法解析'):
+            provider.generate('场景', output, size='1K')
+    generate.assert_called_once()
+    assert post.call_count == 3
+    assert output.exists()
+    assert len(output.with_name(output.name + '.verify_failures.jsonl').read_text().splitlines()) == 3
+
+
+@pytest.mark.parametrize('verdict', [True, False, 'unavailable'])
+def test_pending_image_is_rechecked_before_generation(tmp_path, verdict):
+    provider = AgnesImageProvider()
+    output = tmp_path / '6.pending.png'
+    output.write_bytes(b'old candidate')
+    sidecar = output.with_name(output.name + '.agnes_source_url')
+    sidecar.write_text('https://example.test/old')
+    def draw(key, prompt, path, **kwargs):
+        path.write_bytes(b'new candidate')
+        return path
+    responses = [AgnesImageVerificationUnavailable('incomplete')] if verdict == 'unavailable' else [verdict, True]
+    with (
+        patch('app.services.segment.image.image_agnes._agnes_image_gen_keys', return_value=[AgnesApiKey('primary', 'fake')]),
+        patch.object(provider, '_generate_with_key', side_effect=draw) as generate,
+        patch.object(provider, '_verify_image', side_effect=responses) as verify,
+    ):
+        if verdict == 'unavailable':
+            with pytest.raises(AgnesImageVerificationUnavailable):
+                provider.generate('current scene', output, expected_speakers=['爸爸'])
+        else:
+            assert provider.generate('current scene', output, expected_speakers=['爸爸']) == output
+    assert generate.call_count == (1 if verdict is False else 0)
+    assert verify.call_args_list[0].args == ('current scene', output)
+    assert verify.call_args_list[0].kwargs['expected_speakers'] == ['爸爸']
+    assert output.read_bytes() == (b'new candidate' if verdict is False else b'old candidate')
+    if verdict is not False:
+        assert sidecar.read_text() == 'https://example.test/old'
+
+
+def test_verify_timeout_really_requests_alternate_host(tmp_path):
+    provider = AgnesImageProvider()
+    output = tmp_path / 'frame.png'
+    PILImage.new('RGB', (32, 32), 'white').save(output)
+    good = MagicMock(status_code=200, ok=True)
+    good.json.return_value = {'choices': [{'message': {'content': '项1: 是'}}]}
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('primary', 'fake')]),
+        patch('app.services.segment.image.image_agnes.agnes_key_base_url', return_value='https://primary.invalid/v1'),
+        patch('app.services.segment.image.image_agnes.agnes_apply_host_failover', return_value='https://alternate.invalid/v1/chat/completions'),
+        patch.object(AgnesImageProvider, '_build_verify_checklist', return_value=([('scene', '场景')], '检查', None)),
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch.object(provider, '_sleep_cancellable') as sleep,
+        patch('app.services.segment.image.image_agnes.requests.post', side_effect=[requests.Timeout('synthetic'), good]) as post,
+    ):
+        assert provider._verify_image('scene', output) is True
+    assert [call.args[0] for call in post.call_args_list] == ['https://primary.invalid/v1/chat/completions', 'https://alternate.invalid/v1/chat/completions']
+    assert post.call_args_list[0].kwargs == post.call_args_list[1].kwargs
+    sleep.assert_not_called()
+
+
+@pytest.mark.parametrize('failure', ['missing', 'truncated', 'invalid_json'])
+def test_limb_failure_records_actual_reply_not_main_verdict(tmp_path, failure):
+    provider = AgnesImageProvider()
+    output = tmp_path / 'frame.png'
+    PILImage.new('RGB', (32, 32), 'white').save(output)
+    main = MagicMock(status_code=200, ok=True)
+    main.json.return_value = {'choices': [{'message': {'content': '项1: 是'}}]}
+    limb = MagicMock(status_code=200, ok=True, text='broken limb JSON')
+    answer = '项1: 看不清\n项2: 不确定'
+    limb.json.return_value = {'choices': [{'finish_reason': 'length' if failure == 'truncated' else 'stop', 'message': {'content': answer}}]}
+    if failure == 'invalid_json':
+        limb.json.side_effect = ValueError('bad JSON')
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('primary', 'fake')]),
+        patch.object(AgnesImageProvider, '_build_verify_checklist', return_value=([('scene', '场景')], '检查', None)),
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch.object(provider, '_sleep_cancellable'),
+        patch('app.services.segment.image.image_agnes.requests.post', side_effect=[main, limb] * 3),
+        pytest.raises(AgnesImageVerificationUnavailable, match='肢体质检'),
+    ):
+        provider._verify_image('scene', output, expected_speakers=['昭昭'], content_style='daily_story')
+    records = [json.loads(line) for line in output.with_name(output.name + '.verify_failures.jsonl').read_text().splitlines()]
+    assert len(records) == 3
+    assert all(r['phase'] == 'limbs:昭昭' and r['check_ids'] == ['arm_count', 'extra_limbs'] for r in records)
+    assert all(r['answer'] == ('broken limb JSON' if failure == 'invalid_json' else answer) for r in records)

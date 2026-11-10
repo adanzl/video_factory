@@ -430,7 +430,7 @@ class ImageMgr:
 
         def _render_one(seg: dict) -> tuple[int, Path, float] | None:
             from app.services.llm.llm_agnes import AgnesContentPolicyError
-            from app.services.segment.image.image_agnes import AgnesImageVerifyFailed
+            from app.services.segment.image.image_agnes import AgnesImageProvider, AgnesImageVerifyFailed
             from app.utils.job_cancel import JobCancelledError
             _regen_exc = (AgnesImageVerifyFailed, AgnesContentPolicyError)
             nonlocal started
@@ -443,7 +443,8 @@ class ImageMgr:
             published = images_dir / f'{index}.png'
             # 缓存恢复只认正式路径；超时/取消留下的候选图不可绕过质检。
             out = images_dir / f'{index}.pending.png'
-            out.with_name(out.name + '.agnes_source_url').unlink(missing_ok=True)
+            if not isinstance(provider, AgnesImageProvider):
+                out.with_name(out.name + '.agnes_source_url').unlink(missing_ok=True)
             prompt = _build_prompt(seg)
             expected_speakers = _speakers(seg)
             logger.info('image %s/%s generating segment %s | %s | prompt_chars=%s | speakers=%s | out=%s', seq, total, index, params_desc, len(prompt), expected_speakers, out.name)
@@ -586,6 +587,7 @@ class ImageMgr:
         from gevent import iwait
         from gevent.lock import Semaphore
         from gevent.pool import Group
+        from app.services.segment.image.image_agnes import AgnesImageVerificationUnavailable
 
         # Pool.spawn 在池满时会阻塞。若用列表推导一次性 spawn 全部任务，
         # iwait/on_image_done 要等 (n - workers) 张完成后才能开始，DB 长时间不更新。
@@ -593,9 +595,13 @@ class ImageMgr:
         sem = Semaphore(max_workers)
         group = Group()
 
-        def limited_render(seg: dict) -> tuple[int, Path, float] | None:
+        def limited_render(seg: dict) -> tuple[int, Path, float] | AgnesImageVerificationUnavailable | None:
             with sem:
-                return render(seg)
+                try:
+                    return render(seg)
+                except AgnesImageVerificationUnavailable as exc:
+                    # 已记录的可预期质检故障交回主流程，避免 gevent 再打印未捕获堆栈。
+                    return exc
 
         green_lets = [group.spawn(limited_render, seg) for seg in segments]
         try:
@@ -603,6 +609,8 @@ class ImageMgr:
                 if job_id is not None:
                     job_cancel.raise_if_cancelled(job_id)
                 item = g.get()
+                if isinstance(item, AgnesImageVerificationUnavailable):
+                    raise item
                 done += 1
                 if item is None:
                     skipped += 1

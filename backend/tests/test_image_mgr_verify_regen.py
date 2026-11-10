@@ -112,7 +112,7 @@ def test_generate_segment_images_regens_prompt_after_verify_fail(tmp_path: Path)
 
 
 @pytest.mark.parametrize("existing", [False, True])
-def test_unverified_image_cannot_be_reused_as_cached_success(tmp_path: Path, existing: bool) -> None:
+def test_unverified_image_cannot_be_reused_as_cached_success(tmp_path: Path, existing: bool, capsys) -> None:
     from app.services.segment.segment_mgr import SegmentMgr
 
     mgr = ImageMgr()
@@ -135,6 +135,7 @@ def test_unverified_image_cannot_be_reused_as_cached_success(tmp_path: Path, exi
     ):
         mgr.generate_segment_images([seg], tmp_path, on_image_done=callback)
     callback.assert_not_called()
+    assert 'Traceback' not in capsys.readouterr().err
     assert (tmp_path / "1.pending.png").read_bytes() == b"unverified candidate"
     if existing:
         assert final.read_bytes() == b"previous verified image"
@@ -142,6 +143,39 @@ def test_unverified_image_cannot_be_reused_as_cached_success(tmp_path: Path, exi
     else:
         assert not final.exists()
         assert SegmentMgr._existing_image_path(seg, tmp_path) is None
+
+
+@pytest.mark.parametrize('unavailable', [False, True])
+def test_agnes_pending_image_resumes_qc_before_publish(tmp_path, unavailable):
+    from app.services.segment.image.image_agnes import AgnesImageProvider
+    provider = AgnesImageProvider()
+    mgr = ImageMgr()
+    pending = tmp_path / '1.pending.png'
+    pending.write_bytes(b'existing candidate')
+    pending.with_name(pending.name + '.agnes_source_url').write_text('https://example.test/candidate')
+    seg = {'id': 1, 'segment_index': 1, 'text': 'current scene', 'image_prompt': 'current prompt'}
+    callback = MagicMock()
+    with (
+        patch.object(mgr, '_get_image_provider', return_value=provider),
+        patch.object(mgr, '_resolve_max_workers', return_value=1),
+        patch.object(provider, '_generate_with_key') as draw,
+        patch.object(provider, '_verify_image', side_effect=AgnesImageVerificationUnavailable('incomplete') if unavailable else None, return_value=True) as verify,
+    ):
+        if unavailable:
+            with pytest.raises(AgnesImageVerificationUnavailable):
+                mgr.generate_segment_images([seg], tmp_path, on_image_done=callback)
+        else:
+            assert mgr.generate_segment_images([seg], tmp_path, on_image_done=callback) == [(1, tmp_path / '1.png')]
+    draw.assert_not_called()
+    verify.assert_called_once()
+    if unavailable:
+        callback.assert_not_called()
+        assert pending.read_bytes() == b'existing candidate'
+        assert not (tmp_path / '1.png').exists()
+    else:
+        callback.assert_called_once()
+        assert (tmp_path / '1.png').read_bytes() == b'existing candidate'
+        assert (tmp_path / '1.png.agnes_source_url').read_text() == 'https://example.test/candidate'
 
 
 @pytest.mark.parametrize("new_sidecar", [False, True])

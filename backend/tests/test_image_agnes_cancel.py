@@ -60,3 +60,53 @@ def test_image_verification_does_not_swallow_cancellation(tmp_path, stage):
             provider._ask_hardfail_vl(get_settings(), keys, 'test-image', '检查', 'test')
     request.assert_called_once()
     sleep.assert_not_called()
+
+
+@pytest.mark.parametrize('fast_reply', [False, True])
+def test_cancel_cleans_up_request_and_rejects_result_after_abort(fast_reply):
+    provider = AgnesImageProvider()
+    job_id = 99147
+    provider._active_job_id = job_id
+    job_cancel.clear(job_id)
+    started = gevent.event.Event()
+    stopped = gevent.event.Event()
+    completed = []
+    def request():
+        started.set()
+        try:
+            if fast_reply:
+                job_cancel.request(job_id)
+            else:
+                gevent.sleep(5)
+            completed.append(True)
+            return 'reply'
+        finally:
+            stopped.set()
+    def abort():
+        started.wait()
+        job_cancel.request(job_id)
+    canceller = gevent.spawn(abort)
+    try:
+        with pytest.raises(JobCancelledError):
+            provider._run_blocking_cancellable(request)
+        assert stopped.is_set()
+        assert bool(completed) is fast_reply
+    finally:
+        canceller.kill()
+        job_cancel.clear(job_id)
+
+
+def test_parent_greenlet_kill_cleans_up_inflight_request():
+    provider = AgnesImageProvider()
+    started = gevent.event.Event()
+    stopped = gevent.event.Event()
+    def request():
+        started.set()
+        try:
+            gevent.sleep(5)
+        finally:
+            stopped.set()
+    parent = gevent.spawn(provider._run_blocking_cancellable, request)
+    started.wait(timeout=1)
+    parent.kill(block=True)
+    assert stopped.is_set()
