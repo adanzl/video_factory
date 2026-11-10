@@ -194,6 +194,11 @@ export interface GoldStoryCollectResult {
   workflow: string;
   status: GoldStoryCollectStatus;
   max?: number;
+  target?: number;
+  sample_limit?: number;
+  rounds?: number;
+  shortfall?: number;
+  stop_reason?: string;
   /** enqueue | enqueued | process | done */
   phase?: string;
   candidates?: number;

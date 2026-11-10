@@ -62,3 +62,26 @@ def test_identical_subtitle_confidence_matches_selected_observation():
     ])
     assert segments[0]["end_sec"] == 1
     assert segments[0]["confidence"] == confidence == .9
+
+
+def test_separate_background_changes_do_not_duplicate_or_join_dialogue():
+    text, segments, _ = merge_ocr_rows([
+        {"timestamp_sec": 0, "text": "背景字样\n我有十五本", "confidence": .9},
+        {"timestamp_sec": 1, "text": "背景变体\n我有十五本", "confidence": .9},
+        {"timestamp_sec": 2, "text": "背景变体\n不是十五本，是十六本", "confidence": .9},
+        {"timestamp_sec": 3, "text": "背景变体\n我有十五本", "confidence": .9},
+    ])
+    assert text.splitlines() == ["背景字样", "我有十五本", "背景变体", "不是十五本，是十六本", "我有十五本"]
+    assert segments[1]["end_sec"] == 1
+    assert segments[2]["end_sec"] == 3
+    assert segments[-1]["timestamp_sec"] == 3
+
+
+def test_two_identical_blocks_in_one_frame_are_not_collapsed():
+    _, segments, _ = merge_ocr_rows([
+        {"timestamp_sec": 0, "text": "好\n好", "confidence": .9},
+        {"timestamp_sec": 1, "text": "好\n好", "confidence": .9},
+        {"timestamp_sec": 2, "text": "", "confidence": 0},
+        {"timestamp_sec": 3, "text": "好", "confidence": .9},
+    ])
+    assert [(s["timestamp_sec"], s["end_sec"]) for s in segments] == [(0, 1), (0, 1), (3, 3)]

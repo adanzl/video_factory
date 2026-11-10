@@ -49,6 +49,7 @@ _COLLECT_MAX_ATTEMPTS = 3
 def _execution_failure(exc: Exception, stage: str) -> dict[str, Any]:
     """网络临时故障和模型输出错误可重试；程序错误不能当内容驳回。"""
     retryable = isinstance(exc, llm_steps.ModelOutputError)
+    service_failure = False
     cause: BaseException | None = exc
     seen: set[int] = set()
     while cause is not None and id(cause) not in seen:
@@ -57,10 +58,19 @@ def _execution_failure(exc: Exception, stage: str) -> dict[str, Any]:
         response = getattr(cause, "response", None)
         if code is None and response is not None:
             code = getattr(response, "status_code", None)
+        service_failure |= isinstance(cause, (TimeoutError, ConnectionError, requests.RequestException)) or code is not None
         retryable |= isinstance(cause, (TimeoutError, ConnectionError, requests.Timeout, requests.ConnectionError))
         retryable |= isinstance(code, int) and (code == 429 or 500 <= code < 600)
         cause = cause.__cause__
-    return {"action": "error", "stage": stage, "error": str(exc), "retryable": retryable}
+    return {"action": "error", "stage": stage, "error": str(exc), "retryable": retryable,
+            "failure_kind": "model_output" if isinstance(exc, llm_steps.ModelOutputError) and not service_failure else "execution"}
+
+
+def _stops_collection(outcome: dict[str, Any]) -> bool:
+    """内容不可用可以换素材；服务、程序、存储故障不能靠加量掩盖。"""
+    return (outcome.get("action") == "error"
+            and outcome.get("reason") != "transcript_conflict"
+            and outcome.get("failure_kind") != "model_output")
 
 
 def _read_transcript(path: Path) -> str:
@@ -129,7 +139,7 @@ def _process_collection(candidate: VideoCandidate, *, config: Config,
             if outcome.get("action") == "ok" or outcome.get("persisted"):
                 return finish({**outcome, "source_clip": tx["source_clip"]})
             # 接口/程序故障不能当成素材不合格继续消耗后续候选。
-            if outcome.get("action") == "error" and outcome.get("stage") != "H0c" and outcome.get("reason") != "transcript_conflict":
+            if _stops_collection(outcome):
                 return finish(outcome)
         return finish({**base, "action": "error", "stage": "collection", "reason": "collection_no_verified_clip",
                 "error": "本轮未选出审核合格的完整片段，请查看候选记录；不代表素材没有笑点", "retryable": False,
@@ -382,6 +392,7 @@ def process_candidate(
                 title=candidate.title, transcript=transcript_for_h2,
                 description=candidate.description, replies=list(candidate.top_replies),
                 source_feedback=source_feedback,
+                min_story_raw_chars=cfg.gold_story_audit_min_story_raw_chars,
             )
             story_raw_text = str(h2["story_raw"])
             try:
@@ -412,6 +423,7 @@ def process_candidate(
                 title=candidate.title,
                 story_raw=h2["story_raw"],
                 source_feedback=source_feedback,
+                source_transcript=transcript_for_h2,
             )
             h3a = llm_steps.build_scene_contract(
                 story_raw=h2["story_raw"],
@@ -419,6 +431,8 @@ def process_candidate(
                 source_type=source_type,
                 video_title=candidate.title,
                 source_feedback=source_feedback,
+                source_transcript=transcript_for_h2,
+                source_grounded=True,
             )
             h3, sync_notes = sync_h3_from_scene_contract(
                 h3, h3a, story_raw=str(h2.get("story_raw") or "")
@@ -438,6 +452,7 @@ def process_candidate(
                 scene_contract=h3a,
                 video_title=candidate.title,
                 source_feedback=source_feedback,
+                source_transcript=transcript_for_h2,
             )
             return h3, h3a, h3b
 
@@ -468,10 +483,19 @@ def process_candidate(
             config=cfg,
         )
         core_review = audit.get("llm") or {}
-        if (not audit.get("pass") and core_review.get("core_event_supported") is False
-                and core_review.get("source_age_compatible") is True
-                and core_review.get("mapped_roles_age_compatible") is True):
-            h3, h3a, h3b = build_mapping(str(core_review.get("core_event_reason") or "核心事实与来源不符"))
+        if (not audit.get("pass") and core_review.get("source_age_compatible") is True
+                and (core_review.get("core_event_supported") is False
+                     or core_review.get("mapped_roles_age_compatible") is False)):
+            core_feedback = str(core_review.get("core_event_reason") or "核心事实与来源不符")
+            feedback = ""
+            if core_review.get("mapped_roles_age_compatible") is False:
+                # 角色修复放在前面，避免较长事实理由占满下游反馈预算。
+                feedback += "\n错误输出证据：" + str(core_review.get("mapped_age_evidence") or "")
+                feedback += "\n保留来源中的家长/孩子关系和行为所有者，不得把家长训导转给姐弟；未知身份不得凭相邻句猜。"
+                feedback += "\n角色映射失败：" + str(core_review.get("age_reason") or "角色行为不符合年龄身份")
+                feedback += "\n来源证据：" + str(core_review.get("source_age_evidence") or "")
+            feedback += "\n" + core_feedback
+            h3, h3a, h3b = build_mapping(feedback)
             audit = gs_review.audit_story(
                 title=str(h3.get("title") or candidate.title),
                 video_title=candidate.title,
@@ -565,10 +589,13 @@ def process_candidate(
             expected_row=existing_row,
         )
         fresh = repo_gold_story.get_story(gid)
+        insert_status = str(updated.get("status") or insert_status)
+        if updated.get("reason") == "auto_score_below_threshold":
+            audit = (fresh.get("payload") or {}).get("audit") or audit
         export_result = _export_collection_result(fresh, cfg)
         action = "ok" if insert_status == "active" else "reject"
-        reason = None
-        if action == "reject":
+        reason = updated.get("reason")
+        if action == "reject" and reason is None:
             reason = (
                 "low_audience_laugh"
                 if funny_reason.startswith("low_") or funny_reason == "cute_not_funny"
@@ -1019,6 +1046,7 @@ def enqueue_collect_candidates(
             "search_keyword": row.keyword,
             "pipeline_stage": "queued",
             "duration_sec": int(row.duration_sec or 0),
+            "candidate_screening": row.selection_signals,
             **(row.funny_metrics or {}),
         }
         try:
@@ -1075,12 +1103,18 @@ def drain_pending_stories(
     force_transcript: bool = False,
     dry_run: bool = False,
     limit: int | None = None,
+    story_ids: list[int] | None = None,
+    stop_on_error: bool = False,
     on_progress: Any | None = None,
 ) -> dict[str, Any]:
     """异步队列：pending → OCR/H0c/H2–H4 → active|rejected。"""
     cfg = config or Config()
     if dry_run:
-        rows = repo_gold_story.list_stories(status="pending", limit=limit or 100000)
+        rows = repo_gold_story.list_stories(status="pending", limit=100000)
+        if story_ids is not None:
+            rows = [row for row in rows if row["id"] in story_ids]
+        if limit is not None:
+            rows = rows[:max(0, limit)]
         return {"phase": "done", "processed": 0, "inserted": 0, "inserted_rejected": 0,
                 "gate_rejected": 0, "failed": 0,
                 "results": [{"id": row["id"], "source_id": row["source_id"], "action": "dry_run"} for row in rows]}
@@ -1115,7 +1149,8 @@ def drain_pending_stories(
     while True:
         if limit is not None and processed >= max(0, int(limit)):
             break
-        row = repo_gold_story.claim_next_pending()
+        row = (repo_gold_story.claim_next_pending() if story_ids is None
+               else repo_gold_story.claim_next_pending(story_ids=story_ids))
         if row is None:
             break
         gid = int(row["id"])
@@ -1167,7 +1202,7 @@ def drain_pending_stories(
                 gate_rejected += 1
             else:
                 outcome = _source_changed(gid, source_id, claim_id)
-        elif action == "ok" or status == "active":
+        elif action != "error" and (action == "ok" or status == "active"):
             inserted_active += 1
         elif action == "reject" or status == "rejected":
             inserted_rejected += 1
@@ -1179,6 +1214,8 @@ def drain_pending_stories(
                 on_progress(_snapshot())
             except Exception:
                 logger.exception("gold_story drain on_progress failed")
+        if stop_on_error and _stops_collection(outcome):
+            break
 
     return _snapshot()
 
@@ -1211,37 +1248,72 @@ def run_collect_pipeline(
         except Exception:
             logger.exception("gold_story collect on_progress failed")
 
-    enq = enqueue_collect_candidates(
-        config=cfg,
-        max_candidates=max_candidates,
-        keywords=keywords,
-        write_list=write_list,
-        on_progress=on_progress,
-    )
-    _emit({**enq, "phase": "enqueued"})
-
-    def _with_enqueue(partial: dict[str, Any]) -> dict[str, Any]:
-        return {**enq, **partial,
-                "failed": int(enq.get("failed") or 0) + int(partial.get("failed") or 0),
-                "results": list(enq.get("results") or []) + list(partial.get("results") or [])}
-
-    drain = drain_pending_stories(
-        config=cfg,
-        skip_transcript=skip_transcript,
-        force_transcript=False,
-        dry_run=False,
-        on_progress=lambda partial: _emit(_with_enqueue(partial)),
-    )
-    return {
-        "phase": "done",
-        "candidates": enq.get("candidates", 0),
-        "enqueued": enq.get("enqueued", 0),
-        "skipped": enq.get("skipped", 0),
-        "processed": drain.get("processed", 0),
-        "inserted": drain.get("inserted", 0),
-        "inserted_rejected": drain.get("inserted_rejected", 0),
-        "gate_rejected": drain.get("gate_rejected", 0),
-        "failed": int(enq.get("failed") or 0) + int(drain.get("failed") or 0),
-        "results": list(enq.get("results") or []) + list(drain.get("results") or []),
-        "candidates_file": enq.get("candidates_file"),
+    target = max(1, min(int(max_candidates if max_candidates is not None else cfg.gold_story_cron_max), 50))
+    sample_limit = target * 3
+    total: dict[str, Any] = {
+        "phase": "enqueue", "target": target, "sample_limit": sample_limit,
+        "rounds": 0, "shortfall": target, "stop_reason": None,
+        "candidates": 0, "enqueued": 0, "skipped": 0, "processed": 0,
+        "inserted": 0, "inserted_rejected": 0, "gate_rejected": 0, "failed": 0,
+        "results": [], "candidates_file": str(cfg.gold_story_candidates_file),
     }
+    counters = ("candidates", "enqueued", "skipped", "processed", "inserted",
+                "inserted_rejected", "gate_rejected", "failed")
+    empty_rounds = 0
+
+    def _merged(partial: dict[str, Any]) -> dict[str, Any]:
+        merged = {**total, "phase": partial.get("phase", "process")}
+        for key in counters:
+            merged[key] = total[key] + int(partial.get(key) or 0)
+        merged["results"] = total["results"] + list(partial.get("results") or [])
+        merged["shortfall"] = max(0, target - merged["inserted"])
+        return merged
+
+    # 同时限制素材数量和搜索轮数：空搜索也不能无限轮换。
+    while total["inserted"] < target and total["candidates"] < sample_limit and total["rounds"] < sample_limit:
+        total["rounds"] += 1
+        total["phase"] = "enqueue"
+        _emit(dict(total))
+        enq = enqueue_collect_candidates(
+            config=cfg,
+            max_candidates=min(target - total["inserted"], sample_limit - total["candidates"]),
+            keywords=keywords, write_list=False,
+            on_progress=lambda partial: _emit(_merged(partial)),
+        )
+        total = _merged(enq)
+        total["phase"] = "enqueued"
+        # 候选清单保留整次采集，而非只剩最后一轮；所有行均来自真实搜索结果。
+        if write_list:
+            ids = dict.fromkeys(str(item["source_id"]) for item in total["results"]
+                                if item.get("source_id"))
+            cfg.gold_story_candidates_file.parent.mkdir(parents=True, exist_ok=True)
+            cfg.gold_story_candidates_file.write_text(
+                "# gold_story candidates generated\n" + "".join(sid + "\n" for sid in ids), encoding="utf-8")
+        _emit(dict(total))
+        batch_ids = [int(item["id"]) for item in enq["results"]
+                     if item.get("action") == "insert" and item.get("id")]
+        if batch_ids:
+            empty_rounds = 0
+            drain = drain_pending_stories(
+                config=cfg, skip_transcript=skip_transcript, story_ids=batch_ids,
+                stop_on_error=True, on_progress=lambda partial: _emit(_merged(partial)),
+            )
+            total = _merged(drain)
+            if any(_stops_collection(item) for item in drain["results"]):
+                total["stop_reason"] = "execution_error"
+                break
+        else:
+            empty_rounds += 1
+        if enq["failed"]:
+            total["stop_reason"] = "execution_error"
+            break
+        if empty_rounds >= 3:
+            total["stop_reason"] = "no_new_candidates"
+            break
+    if total["stop_reason"] is None:
+        total["stop_reason"] = ("target_reached" if total["inserted"] >= target else
+                                "sample_limit" if total["candidates"] >= sample_limit else "search_limit")
+    total["phase"] = "done"
+    total["shortfall"] = max(0, target - total["inserted"])
+    _emit(dict(total))
+    return total

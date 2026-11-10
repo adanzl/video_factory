@@ -21,7 +21,6 @@ _SIBLING_HINT = re.compile(
     re.I,
 )
 _PARENT_CHILD = re.compile(r"妈妈|爸爸|母亲|父亲|宝妈|宝爸", re.I)
-_STORY_RAW_TRIM_MAX = 380
 _INFANT_SKEW = re.compile(r"婴语|话都说不清楚|小宝贝|人类幼崽|萌娃.*可爱", re.I)
 _MOTHER_BABY_CONFLICT = re.compile(
     r"妈妈.*(?:宝宝|宝贝|睡|醒)|(?:宝宝|宝贝).*(?:妈妈|睡|醒)",
@@ -142,17 +141,6 @@ def run_rule_audit(
     return (len(reasons) == 0, reasons)
 
 
-def _maybe_trim_story_raw(story_raw: str, *, max_chars: int = _STORY_RAW_TRIM_MAX) -> tuple[str, bool]:
-    """过长 story_raw → LLM 精简；失败则原样返回。"""
-    text = str(story_raw or "").strip()
-    if len(text) <= max_chars:
-        return text, False
-    try:
-        return llm_steps.trim_story_raw(text, max_chars=max_chars), True
-    except ValueError:
-        return text, False
-
-
 def audit_story(
     *,
     title: str,
@@ -171,8 +159,6 @@ def audit_story(
     h3 = h3 or {}
     h3a = h3a or {}
     h3b = h3b or {}
-    source_story_raw = story_raw
-    story_raw, story_raw_trimmed = _maybe_trim_story_raw(story_raw)
     dialogue_seed = h3b.get("dialogue_seed") or []
     beat = h3.get("beat") or []
     speaker_map_note = str(h3b.get("speaker_map_note") or h3a.get("remap_note") or "")
@@ -194,7 +180,7 @@ def audit_story(
         "stage": "rules",
         "rule_pass": rule_pass,
         "rule_reasons": rule_reasons,
-        "story_raw_trimmed": story_raw_trimmed,
+        "story_raw_trimmed": False,
         "llm": None,
     }
     if not rule_pass:
@@ -204,7 +190,7 @@ def audit_story(
     llm = llm_steps.audit_story_fit(
         video_title=video_title or title,
         title=str(h3.get("title") or title),
-        story_raw=source_story_raw,
+        story_raw=story_raw,
         conflict_core=conflict_core,
         mechanism=str(h3.get("mechanism") or ""),
         structure_type=str(h3.get("structure_type") or ""),

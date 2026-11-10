@@ -73,7 +73,7 @@ def test_ocr_batches_process_all_frames_once(tmp_path, monkeypatch):
             return self
         def __exit__(self, *args):
             pass
-        def submit(self, fn, task):
+        def submit(self, fn, task, **kwargs):
             submitted.append(task)
             future = Future()
             future.set_result({"timestamp_sec": task[0], "hits": []})
@@ -98,7 +98,7 @@ def test_ocr_rejects_incomplete_batch(tmp_path, monkeypatch):
         def __init__(self, **kwargs): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
-        def submit(self, *args): return None
+        def submit(self, *args, **kwargs): return None
     cfg = Config()
     cfg.gold_story_ocr_frame_workers = 2
     monkeypatch.setattr(ocr, "ProcessPoolExecutor", Pool)

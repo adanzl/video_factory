@@ -222,7 +222,7 @@ def test_disabled_fit_scoring_still_runs_age_audit_on_untrimmed_source(monkeypat
     cfg = Config()
     cfg.gold_story_audit_enabled = False
     original = "姐弟日常" * 150 + "成年身份事件在最后"
-    monkeypatch.setattr(review, "_maybe_trim_story_raw", lambda _text: ("姐弟日常" * 30, True))
+    monkeypatch.setattr(review.llm_steps, "trim_story_raw", lambda *a, **k: pytest.fail("审核不得悄悄改写摘要"))
     monkeypatch.setattr(review, "run_rule_audit", lambda **_kw: (True, []))
     def check(**kwargs):
         assert kwargs["age_only"] is True

@@ -1,4 +1,4 @@
-"""H0b 烧录字幕 OCR：一遍抽完整搜索带 → ProcessPool 文本检测与识别。"""
+"""H0b 烧录字幕 OCR：完整画面识别后按搜索带保留完整字框。"""
 
 from __future__ import annotations
 
@@ -87,8 +87,11 @@ def _init_ocr_worker(
 
 
 def _box_height(box: Any) -> float:
-    ys = [float(point[1]) for point in box]
-    return max(ys) - min(ys)
+    points = np.asarray(box, dtype=float)
+    # RapidOCR 四点按左上、右上、右下、左下排列。外接框的高度会把
+    # 整行文字的倾斜量当成字号，从而误删同帧正常字号的另一行对白。
+    return float((np.linalg.norm(points[3] - points[0])
+                  + np.linalg.norm(points[2] - points[1])) / 2)
 
 
 def _box_white_bg_ratio(
@@ -250,7 +253,7 @@ def compose_frame_text(
     min_height_ratio: float = 0.65,
     min_dialogue_box_px: float = 22.0,
 ) -> tuple[str, float]:
-    """单帧多行 OCR：去掉小字号说明，拼成一行（无换行）。
+    """单帧多块 OCR：去掉小字号说明，保留文字块边界。
 
     注：颜色筛选在片级 materialize_ocr_rows 完成后再 compose。
     """
@@ -287,12 +290,12 @@ def compose_frame_text(
     if not kept:
         return "", 0.0
 
-    text = "".join(line for line, _ in kept)
+    text = "\n".join(line for line, _ in kept)
     confidence = sum(score for _, score in kept) / len(kept)
     return text, confidence
 
 
-def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
+def _ocr_single_frame(args: tuple[float, str], *, search_top_ratio: float = 0.0) -> dict[str, Any]:
     """单帧 OCR：只产出候选 hit（含 white_bg），不做片级颜色过滤。"""
     global _worker_engine
     if _worker_engine is None:
@@ -333,6 +336,12 @@ def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
         if not text:
             continue
         box = boxes[idx] if idx < len(boxes) else None
+        # 先识别完整字形，再按搜索带筛选，避免跨边界的斜字幕被截断。
+        if search_top_ratio > 0.0:
+            if image is None or box is None:
+                continue
+            if float(np.max(np.asarray(box)[:, 1])) <= image.shape[0] * search_top_ratio:
+                continue
         white_bg = 0.0
         box_h = 0.0
         color_key = "other"
@@ -406,7 +415,7 @@ def materialize_ocr_rows(
                 "timestamp_sec": row.get("timestamp_sec"),
                 "text": text,
                 "confidence": confidence,
-                "lines": [text] if text else [],
+                "lines": text.splitlines() if text else [],
                 "hits": hits,
             }
         )
@@ -558,32 +567,40 @@ def dedupe_frames(
 
 
 def _iter_row_texts(row: dict[str, Any]) -> list[str]:
-    """每帧一行（帧内多行 OCR 已在 compose_frame_text 合并）。"""
+    """文字块独立保留，不能把衣服/背景文字拼进对白。"""
     text = str(row.get("text") or "").strip()
-    return [text] if text else []
+    return [line.strip() for line in text.splitlines() if line.strip()]
 
 
 def merge_ocr_rows(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]], float]:
-    """OCR 原样输出，仅去掉相邻重复行。"""
+    """独立文字块仅跨相邻帧去重；其他块变化不能使同一句字幕重复。"""
     merged_lines: list[dict[str, Any]] = []
+    previous: dict[tuple[str, int], dict[str, Any]] = {}
 
     for row in sorted(rows, key=lambda r: float(r.get("timestamp_sec") or 0.0)):
         ts = float(row.get("timestamp_sec") or 0.0)
         conf = float(row.get("confidence") or 0.0)
+        current: dict[tuple[str, int], dict[str, Any]] = {}
+        occurrences: dict[str, int] = {}
         for text in _iter_row_texts(row):
-            if merged_lines and merged_lines[-1]["text"] == text:
-                merged_lines[-1]["end_sec"] = ts
-                merged_lines[-1]["confidence"] = max(float(merged_lines[-1]["confidence"]), conf)
+            occurrences[text] = occurrences.get(text, 0) + 1
+            key = (text, occurrences[text])
+            if key in previous:
+                segment = previous[key]
+                segment["end_sec"] = ts
+                segment["confidence"] = max(float(segment["confidence"]), conf)
+                current[key] = segment
                 continue
-            merged_lines.append(
-                {
-                    "timestamp_sec": ts,
-                    "end_sec": ts,
-                    "speaker": None,
-                    "text": text,
-                    "confidence": conf,
-                }
-            )
+            segment = {
+                "timestamp_sec": ts,
+                "end_sec": ts,
+                "speaker": None,
+                "text": text,
+                "confidence": conf,
+            }
+            merged_lines.append(segment)
+            current[key] = segment
+        previous = current
     plain = "\n".join(row["text"] for row in merged_lines)
     confidences = [float(row["confidence"]) for row in merged_lines]
     avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
@@ -593,6 +610,8 @@ def merge_ocr_rows(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]
 def ocr_frames_parallel(
     frames: list[OcrFrame],
     config: Config,
+    *,
+    search_top_ratio: float = 0.0,
 ) -> list[dict[str, Any]]:
     if not frames:
         return []
@@ -610,7 +629,7 @@ def ocr_frames_parallel(
     )
     if workers <= 1:
         _init_ocr_worker(*init_args)
-        return [_ocr_single_frame(task) for task in tasks]
+        return [_ocr_single_frame(task, search_top_ratio=search_top_ratio) for task in tasks]
 
     rows: list[dict[str, Any]] = []
     with ProcessPoolExecutor(
@@ -621,7 +640,7 @@ def ocr_frames_parallel(
         batch_size = max(1, int(config.gold_story_ocr_max_frames))
         for offset in range(0, len(tasks), batch_size):
             batch = tasks[offset:offset + batch_size]
-            futures = [pool.submit(_ocr_single_frame, task) for task in batch]
+            futures = [pool.submit(_ocr_single_frame, task, search_top_ratio=search_top_ratio) for task in batch]
             batch_rows = [future.result() for future in wait_futures_hub(futures)]
             if len(batch_rows) != len(batch):
                 raise RuntimeError("OCR batch returned incomplete frame results")
@@ -638,7 +657,7 @@ def transcribe_video_ocr(
     title: str = "",
     duration_sec: float | None = None,
 ) -> dict[str, Any]:
-    """识别完整底部搜索带，避免密度峰值窄裁切截断字形或漏掉移动字幕。
+    """识别完整画面，再保留与底部搜索带相交的完整文字框。
 
     文本检测器自行确定完整字框；搜索带范围仍由配置控制。
     """
@@ -650,23 +669,23 @@ def transcribe_video_ocr(
     search_ratio = max(0.15, min(search_ratio, 0.55))
     search_band_top = 1.0 - search_ratio
 
-    # 保留完整搜索带，由 OCR 文本检测框确定字形边界。
+    # 搜索带边界也可能截断斜字幕，必须先识别再按完整字框筛选。
     frames = extract_subtitle_frames(
         video_path,
         output_dir=frame_dir,
         fps=float(config.gold_story_ocr_fps),
         region=None,
-        crop_bottom_ratio=search_ratio,
+        crop_bottom_ratio=1.0,
         config=config,
     )
     region = SubtitleRegion(y_ratio=search_band_top, h_ratio=search_ratio,
-                            method="full_search_band", samples=len(frames), confidence=0.0)
+                            method="full_frame_search_band", samples=len(frames), confidence=0.0)
 
     # 完整转写不能均匀丢弃变化字幕；上限只约束每批任务数。
     frames = dedupe_frames(frames)
 
     # 2) 全片 OCR 候选（先不过滤）
-    raw_rows = ocr_frames_parallel(frames, config)
+    raw_rows = ocr_frames_parallel(frames, config, search_top_ratio=search_band_top)
     all_hits: list[dict[str, Any]] = []
     for row in raw_rows:
         all_hits.extend(list(row.get("hits") or []))

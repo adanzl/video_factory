@@ -1,4 +1,4 @@
-"""单帧 OCR 合成：小字号说明过滤 + 帧内去换行。"""
+"""单帧 OCR 合成：小字号说明过滤 + 保留文字块边界。"""
 
 import numpy as np
 
@@ -31,11 +31,11 @@ def test_compose_skips_frame_with_only_small_font():
     assert conf == 0.0
 
 
-def test_compose_joins_multiline_dialogue_without_break():
+def test_compose_preserves_block_boundaries():
     text, _ = compose_frame_text(
         ("你听不懂我说话我也听不懂", "你说话"),
         (0.9, 0.85),
         [_box(0, 33), _box(34, 66)],
         crop_h=58.0,
     )
-    assert text == "你听不懂我说话我也听不懂你说话"
+    assert text == "你听不懂我说话我也听不懂\n你说话"

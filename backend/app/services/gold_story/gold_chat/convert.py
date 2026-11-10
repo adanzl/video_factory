@@ -1927,10 +1927,11 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
                 row.get("id"),
                 _neutral_notes[:2],
             )
-        existing_contract, _kid_notes = enforce_two_kid_cast(existing_contract)
-        existing_contract, _alt_notes = ensure_n_two_kid_alternation(
-            existing_contract
-        )
+        _kid_notes: list[str] = []
+        _alt_notes: list[str] = []
+        if existing_contract.get("source_grounded") is not True:
+            existing_contract, _kid_notes = enforce_two_kid_cast(existing_contract)
+            existing_contract, _alt_notes = ensure_n_two_kid_alternation(existing_contract)
         if _kid_notes or _alt_notes:
             logger.info(
                 "[GOLD_CHAT] reuse cast normalize id=%s: %s",
@@ -1952,10 +1953,12 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
                 existing_contract.get("mom_lines_max"),
             )
             existing_seed = payload.get("dialogue_seed")
-            existing_seed, _witness_notes = normalize_supplemental_kid_seed(
-                existing_seed if isinstance(existing_seed, list) else [],
-                contract=existing_contract,
-            )
+            _witness_notes: list[str] = []
+            if existing_contract.get("source_grounded") is not True:
+                existing_seed, _witness_notes = normalize_supplemental_kid_seed(
+                    existing_seed if isinstance(existing_seed, list) else [],
+                    contract=existing_contract,
+                )
             if _witness_notes:
                 logger.info(
                     "[GOLD_CHAT] reuse supplemental kid seed id=%s: %s",
@@ -2011,6 +2014,7 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             h3=h3,
             source_type=source_type,
             video_title=source_title,
+            source_grounded=isinstance(existing_contract, dict) and existing_contract.get("source_grounded") is True,
         )
     except Exception as exc:
         if row.get("_gold_chat_rebuild_contract") or role_errors:

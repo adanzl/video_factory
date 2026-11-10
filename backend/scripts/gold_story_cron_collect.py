@@ -86,6 +86,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if args.dry_run:
         return 0 if report.get("candidates") else 1
+    if report.get("target") is not None:
+        if report.get("stop_reason") == "execution_error":
+            return 1
+        return 0 if report.get("shortfall") == 0 else 2
     if report.get("failed"):
         return 1
     # 内容驳回是正常结果；已有队列处理完成也算链路跑通。
@@ -105,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
 
     for name in ("collect", "run"):
         p = sub.add_parser(name, help="collect=仅 H0/H1；run=H0–H4 全流程")
-        p.add_argument("--max", type=int, default=5, help="最多处理 BV 数")
+        p.add_argument("--max", type=int, default=5,
+                       help="目标通过数，最多采样其 3 倍候选" if name == "run" else "最多返回候选 BV 数")
         p.add_argument(
             "--keyword",
             help="只搜一个词（默认轮换 DEFAULT_SEARCH_KEYWORDS）",
@@ -114,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument(
                 "--dry-run",
                 action="store_true",
-                help="只搜索预览，不下载、不调 LLM、不入库、不写候选文件或推进搜索游标",
+                help="只搜索和分类预览，不下载、不生成故事、不入库、不写候选文件或推进搜索游标",
             )
             p.add_argument(
                 "--skip-transcript",

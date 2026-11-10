@@ -172,7 +172,8 @@ def test_ocr_preserves_search_band_even_when_quality_looks_high(monkeypatch, tmp
     def extract(*a, **kw):
         calls.append(kw)
         return frames
-    def recognize(frames, config):
+    def recognize(frames, config, *, search_top_ratio):
+        assert search_top_ratio == .5
         # 窄裁切即使产生高质量分，也不能先破坏送入识别器的字形。
         assert np.array_equal(cv2.imread(str(frames[0].image_path)), original)
         return [{"timestamp_sec": 0, "hits": [{"text": "完整对白", "score": .99,
@@ -183,8 +184,44 @@ def test_ocr_preserves_search_band_even_when_quality_looks_high(monkeypatch, tmp
     result = ocr.transcribe_video_ocr(tmp_path / "video.mp4", config=cfg, workspace=tmp_path,
                                     source_id="example", duration_sec=30)
     assert len(calls) == 1
-    assert calls[0]["crop_bottom_ratio"] == .5
+    assert calls[0]["crop_bottom_ratio"] == 1.0
     assert result["text"] == "完整对白"
     assert result["quality_score"] == quality
     assert result["subtitle_region"]["y_ratio"] == .5
     assert result["subtitle_region"]["h_ratio"] == .5
+
+
+def test_ocr_recognizes_whole_glyphs_before_search_band_filter(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from app.services.gold_story.transcript import ocr
+    import cv2
+    import numpy as np
+
+    image = np.full((720, 1280, 3), 180, dtype=np.uint8)
+    path = tmp_path / "frame.png"
+    cv2.imwrite(str(path), image)
+    def recognize(path, **kwargs):
+        assert cv2.imread(path).shape == image.shape
+        return SimpleNamespace(
+            txts=["上方标题", "跨边界的完整对白", "底部对白"], scores=[.99] * 3,
+            boxes=[[[20, 30], [400, 30], [400, 80], [20, 80]],
+                   [[294, 390], [986, 307], [994, 371], [302, 454]],
+                   [[20, 550], [400, 550], [400, 600], [20, 600]]])
+    monkeypatch.setattr(ocr, "_worker_engine", recognize)
+    row = ocr._ocr_single_frame((0.0, str(path)), search_top_ratio=.5)
+    assert [hit["text"] for hit in row["hits"]] == ["跨边界的完整对白", "底部对白"]
+
+
+@pytest.mark.parametrize("angle", [-30, 0, 30])
+def test_dialogue_font_height_is_invariant_to_line_rotation(angle):
+    from app.services.gold_story.transcript.ocr import _box_height, compose_frame_text
+    import numpy as np
+    radians = np.deg2rad(angle)
+    rotation = np.array([[np.cos(radians), -np.sin(radians)],
+                         [np.sin(radians), np.cos(radians)]])
+    box = np.array([[0, 0], [600, 0], [600, 40], [0, 40]], dtype=float)
+    tilted = box @ rotation.T + [320, 400]
+    assert _box_height(tilted) == pytest.approx(40)
+    text, _ = compose_frame_text(["第一行对白", "第二行对白"], [.99, .99],
+                                  [tilted, box], min_height_ratio=.65, min_dialogue_box_px=22)
+    assert text == "第一行对白\n第二行对白"

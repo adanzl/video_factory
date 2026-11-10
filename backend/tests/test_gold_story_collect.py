@@ -195,6 +195,7 @@ def test_h1_rejects_low_engagement():
 def test_collect_candidates_skips_already_in_db(app_ctx, monkeypatch):
     from app.repositories import repo_gold_story
     from app.services.gold_story.collect import search as search_mod
+    monkeypatch.setattr(search_mod, 'rank_candidates', lambda rows: rows)
     from app.services.gold_story.collect.funny import (
         AudienceFunnyMetrics,
         metrics_to_payload,
@@ -555,6 +556,7 @@ def test_collect_http_errors_are_not_content_rejections(code, retryable):
     wrapped = ValueError("request failed"); wrapped.__cause__ = original
     assert _execution_failure(wrapped, "H0c") == {
         "action": "error", "stage": "H0c", "error": "request failed", "retryable": retryable,
+        "failure_kind": "execution",
     }
 
 
@@ -607,6 +609,126 @@ def test_collect_preview_does_not_write_database_files_or_cursor(app_ctx, tmp_pa
     assert not cfg.gold_story_candidates_file.exists()
 
 
+def test_search_ranks_bounded_pool_without_advancing_preview_cursor(app_ctx, monkeypatch):
+    from app.services.gold_story.collect import search
+    from dataclasses import replace
+    monkeypatch.setattr(search, 'rank_candidates', lambda rows: sorted([
+        replace(r, selection_signals={'child_dialogue': 'yes' if r.source_id.endswith('2') else 'unknown'})
+        for r in rows], key=search.candidate_priority, reverse=True))
+    from app.repositories import sql_exec as sql
+    seen = []
+    def query(word, **kw):
+        return [f'{word}{i}' for i in range(20)]
+    def meta(bv, **kw):
+        seen.append(bv)
+        direct = bv.endswith('2')
+        return dict(title='妈妈和孩子斗嘴' if direct else '萌娃语录合集', description='',
+                    duration=90 if direct else 420, view_count=300000, reply_count=200,
+                    aid=1, cid=1, url=bv)
+    monkeypatch.setattr(search, 'search_bilibili', query)
+    monkeypatch.setattr(search, 'fetch_video_meta', meta)
+    monkeypatch.setattr(search, 'fetch_top_replies', lambda *a, **kw: [])
+    monkeypatch.setattr(search, 'compute_audience_funny_metrics', lambda **kw: None)
+    monkeypatch.setattr(search, 'passes_funny_gate', lambda *a, **kw: (True, 'ok'))
+    monkeypatch.setattr(search, 'metrics_to_payload', lambda *a: {'funny_signal': .4})
+    rows = search.collect_candidates(keywords=['甲', '乙'], max_candidates=2, advance_cursor=False)
+    assert [r.source_id for r in rows] == ['甲2', '乙2']
+    assert len(seen) == 6
+    assert sql.fetchall('select * from gold_story_search_cursor') == []
+    assert search.repo_gold_story.count_stories() == 0
+
+
+def test_candidate_ranking_keeps_parent_dialogue_and_long_sources_available():
+    from dataclasses import replace
+    from app.services.gold_story.collect.search import VideoCandidate, candidate_priority
+    base = VideoCandidate(source='bili', source_id='BVrank', url='', title='姐弟斗嘴', description='',
+                          view_count=300000, reply_count=200, keyword='', duration_sec=80,
+                          selection_signals={'source_kind': 'dialogue', 'child_dialogue': 'yes', 'single_event': 'yes'})
+    parent = replace(base, title='爸爸和孩子斗嘴')
+    assert candidate_priority(base) == candidate_priority(parent)
+    long = replace(base, duration_sec=500)
+    assert candidate_priority(base) > candidate_priority(long)
+    assert candidate_priority(base) > candidate_priority(replace(base, title='亲子对话讲解合集',
+        selection_signals={'source_kind': 'explanation', 'child_dialogue': 'no', 'single_event': 'unknown'}))
+    assert sorted([long], key=candidate_priority) == [long]
+    assert candidate_priority(replace(base, selection_signals={
+        'child_dialogue': 'unknown', 'source_kind': 'unknown', 'single_event': 'unknown'})) > candidate_priority(
+        replace(base, selection_signals={'child_dialogue': 'no', 'source_kind': 'dialogue', 'single_event': 'yes'}))
+
+
+@pytest.mark.parametrize('broken', ['missing', 'duplicate', 'quote', 'semantic', 'signal_type', 'review_missing'])
+def test_candidate_screening_failure_discards_unverified_priority(monkeypatch, broken):
+    from app.services.gold_story.collect import search, llm
+    candidate = search.VideoCandidate(source='bili', source_id='BVrank', url='', title='夫妻吵架',
+        description='', view_count=1, reply_count=1, keyword='', duration_sec=80)
+    calls = []
+    def chat(system, user):
+        calls.append(system)
+        if '独立核对' in system:
+            if broken == 'review_missing': return {'checks': []}
+            return {'checks': [{'index': 1, 'supported': False, 'reason': '夫妻吵架不能作为儿童参与对话的依据'}]}
+        row = dict(index=1, source_kind=[] if broken == 'signal_type' else 'dialogue', child_dialogue='yes', single_event='unknown',
+                   evidence='不存在的孩子' if broken == 'quote' else '夫妻吵架', reason='测试分类')
+        return {'candidates': [] if broken == 'missing' else [row, row] if broken == 'duplicate' else [row]}
+    monkeypatch.setattr(llm, '_chat_json', chat)
+    rows = search.rank_candidates([candidate])
+    assert len(rows) == 1 and rows[0].source_id == candidate.source_id
+    signals = rows[0].selection_signals
+    assert signals['ranking_status'] == 'unavailable'
+    assert all(signals[k] == 'unknown' for k in ('source_kind', 'child_dialogue', 'single_event'))
+    assert candidate.selection_signals is None
+    assert len(calls) == (4 if broken in {'semantic', 'review_missing'} else 2)
+
+
+def test_candidate_screening_service_failure_is_not_unknown_fallback(monkeypatch):
+    from app.services.gold_story.collect import search, llm
+    candidate = search.VideoCandidate(source='bili', source_id='BVrank', url='', title='姐弟争东西',
+        description='', view_count=1, reply_count=1, keyword='')
+    def unavailable(*args, **kwargs): raise TimeoutError('service unavailable')
+    monkeypatch.setattr(llm, '_chat_json', unavailable)
+    with pytest.raises(TimeoutError): search.rank_candidates([candidate])
+
+
+def test_candidate_unknown_with_child_dialogue_ranks_above_music(monkeypatch):
+    from app.services.gold_story.collect import search, llm
+    from dataclasses import replace
+    base = search.VideoCandidate(source='bili', source_id='music', url='', title='歌曲童言', description='',
+        view_count=500000, reply_count=500, keyword='', duration_sec=60)
+    child = replace(base, source_id='child', title='课间', description='孩子说我不服气，同学问为什么', duration_sec=400)
+    def chat(system, user):
+        if '独立核对' in system:
+            return {'checks': [{'index': i, 'supported': True, 'reason': '元数据支持保守分类'} for i in (1, 2)]}
+        return {'candidates': [
+            dict(index=1, source_kind='music', child_dialogue='no', single_event='unknown', evidence='歌曲童言', reason='歌曲'),
+            dict(index=2, source_kind='unknown', child_dialogue='yes', single_event='unknown', evidence='孩子说我不服气', reason='对话明确但整体类型不明')]}
+    monkeypatch.setattr(llm, '_chat_json', chat)
+    rows = search.rank_candidates([base, child])
+    assert [r.source_id for r in rows] == ['child', 'music']
+    assert all(r.selection_signals['metadata_only'] for r in rows)
+
+
+def test_candidate_screening_batches_bounded_input_and_preserves_unknown(monkeypatch):
+    import json
+    from app.services.gold_story.collect import search, llm
+    from dataclasses import replace
+    base = search.VideoCandidate(source='bili', source_id='0', url='', title='日常片段', description='',
+        view_count=1, reply_count=1, keyword='')
+    batch_sizes = []
+    def chat(system, user):
+        data = json.loads(user)
+        if '独立核对' in system:
+            return {'checks': [dict(index=r['index'], supported=False, reason='信息不足，应该全部unknown')
+                               for r in data['evidence']]}
+        batch_sizes.append(len(data))
+        return {'candidates': [dict(index=r['index'], source_kind='unknown', child_dialogue='unknown',
+            single_event='unknown', evidence=r['title'], reason='元数据不足') for r in data]}
+    monkeypatch.setattr(llm, '_chat_json', chat)
+    rows = search.rank_candidates([replace(base, source_id=str(i)) for i in range(23)])
+    assert batch_sizes == [10, 10, 3]
+    assert [r.source_id for r in rows] == [str(i) for i in range(23)]
+    assert all(r.selection_signals['child_dialogue'] == 'unknown' for r in rows)
+
+
 def test_search_paginates_rotates_persistently_and_preview_does_not_advance(app_ctx, monkeypatch):
     from app.config import Config
     from app.repositories import sql_exec as sql
@@ -637,6 +759,7 @@ def test_search_paginates_rotates_persistently_and_preview_does_not_advance(app_
 
 def test_search_finds_later_page_and_deduplicates_across_pages(app_ctx, monkeypatch):
     from app.services.gold_story.collect import search
+    monkeypatch.setattr(search, 'rank_candidates', lambda rows: rows)
     from app.repositories import repo_gold_story as repo
     _pending_source("BV1OLD000001")
     monkeypatch.setattr(search, "search_bilibili", lambda *a, **k: ["BV1OLD000001"] if k["page"] == 1 else ["BV1NEW000001", "BV1OLD000001"])
@@ -826,6 +949,7 @@ def test_reimport_blocks_legacy_flat_export_without_payload_path(app_ctx, tmp_pa
 def test_search_isolates_candidate_outages_without_losing_progress(app_ctx, monkeypatch, stage, partial):
     from app.repositories import sql_exec as sql
     from app.services.gold_story.collect import search
+    monkeypatch.setattr(search, 'rank_candidates', lambda rows: rows)
     monkeypatch.setattr(search, "search_bilibili", lambda *a, **k: ["BV1BROKEN001", "BV1HEALTHY01"] if partial else ["BV1BROKEN001"])
     def meta(bv, **kwargs):
         if stage == "metadata" and bv == "BV1BROKEN001":
@@ -887,6 +1011,9 @@ def test_collect_failure_cannot_overwrite_concurrent_changes(app_ctx, monkeypatc
 
 
 @pytest.mark.parametrize("report,expected", [
+    ({"target": 2, "inserted": 1, "shortfall": 1, "stop_reason": "sample_limit"}, 2),
+    ({"target": 1, "inserted": 1, "shortfall": 0, "failed": 1, "stop_reason": "target_reached"}, 0),
+    ({"target": 1, "inserted": 0, "shortfall": 1, "stop_reason": "execution_error"}, 1),
     ({"candidates": 1, "failed": 1}, 1),
     ({"candidates": 2, "inserted": 1, "failed": 1}, 1),
     ({"candidates": 1, "inserted": 1, "failed": 0}, 0),
@@ -1471,8 +1598,47 @@ def test_collection_model_retry_reuses_clip_and_stops_at_budget(monkeypatch, tmp
     assert result['action'] == 'error' and result['retryable'] is False
 
 
+@pytest.mark.parametrize('stage,kind,continue_next', [
+    ('LLM', 'model_output', True),
+    ('LLM', 'execution', False),
+    ('LLM', None, False),
+    ('H0c', 'execution', False),
+])
+def test_collection_exhausted_retry_distinguishes_content_from_execution(monkeypatch, tmp_path, stage, kind, continue_next):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    from app.services.gold_story.transcript import transcript as tr
+    candidate = VideoCandidate(source='bili', source_id='BV1TEST00001', url='', title='合集',
+                               description='', view_count=1, reply_count=1, keyword='', duration_sec=800)
+    cfg = Config(); cfg.gold_story_media_workspace = tmp_path; cfg.gold_story_collection_max_duration_sec = 1800
+    clips = [{'start_sec': 10, 'end_sec': 30}, {'start_sec': 50, 'end_sec': 70}]
+    monkeypatch.setattr(tr, 'collection_source', lambda *a: {'segments': [], 'duration_sec': 800})
+    monkeypatch.setattr(p.llm_steps, 'select_collection_clips', lambda *a, **kw: clips)
+    transcribed, attempted = [], []
+    def transcribe(sid, media, clip, config):
+        transcribed.append(clip['start_sec'])
+        return {'source_clip': clip}
+    def process(*a, **kw):
+        start = kw['clip_transcript']['source_clip']['start_sec']
+        attempted.append(start)
+        if start == 50:
+            return {'action': 'ok'}
+        return {'action': 'error', 'stage': stage, 'failure_kind': kind,
+                'error': 'H3 low structure_confidence=0.35' if kind == 'model_output' else 'provider or program failure',
+                'retryable': True}
+    monkeypatch.setattr(tr, 'transcribe_collection_clip', transcribe)
+    monkeypatch.setattr(p, 'process_candidate', process)
+    monkeypatch.setattr(p.time, 'sleep', lambda *a: None)
+    result = p._process_collection(candidate, config=cfg, existing_row=None, overwrite_existing=False)
+    assert attempted == ([10, 10, 10, 50] if continue_next else [10, 10, 10])
+    assert transcribed == ([10, 50] if continue_next else [10])
+    assert result['action'] == ('ok' if continue_next else 'error')
+
+
 @pytest.mark.parametrize('recover,age_ok', [(True, True), (False, True), (True, False)])
-def test_core_fact_failure_rebuilds_once_without_changing_source(app_ctx, tmp_path, monkeypatch, recover, age_ok):
+@pytest.mark.parametrize('core_ok,mapped_ok', [(False, True), (True, False), (False, False)])
+def test_core_fact_failure_rebuilds_once_without_changing_source(app_ctx, tmp_path, monkeypatch, recover, age_ok, core_ok, mapped_ok):
     from app.config import Config
     from app.services.gold_story.collect import pipeline as p
     from app.services.gold_story.collect.search import VideoCandidate
@@ -1487,14 +1653,17 @@ def test_core_fact_failure_rebuilds_once_without_changing_source(app_ctx, tmp_pa
     feedback = []
     def structure(**kwargs):
         assert kwargs['story_raw'] == source
+        assert kwargs.get('source_transcript', kwargs.get('transcript')) == source
         feedback.append(kwargs['source_feedback'])
         return {'mechanism': 'M4', 'structure_type': 'G', 'title': '收书', 'conflict_core': '答应稍后收书'}
     monkeypatch.setattr(p.llm_steps, 'structurize_story', structure)
     contract_feedback, seed_feedback = [], []
     def contract(**kwargs):
+        assert kwargs['source_transcript'] == source
         contract_feedback.append(kwargs['source_feedback'])
         return {}
     def seed(**kwargs):
+        assert kwargs['source_transcript'] == source
         seed_feedback.append(kwargs['source_feedback'])
         return {}
     monkeypatch.setattr(p.llm_steps, 'build_scene_contract', contract)
@@ -1503,11 +1672,14 @@ def test_core_fact_failure_rebuilds_once_without_changing_source(app_ctx, tmp_pa
     audits = []
     def audit(**kwargs):
         assert kwargs['story_raw'] == source
+        assert kwargs.get('source_transcript', kwargs.get('transcript')) == source
         audits.append(kwargs)
         passed = len(audits) == 2 and recover
-        return {'pass': passed, 'llm': {'core_event_supported': passed,
-            'core_event_reason': '把承诺收书写成已经收完', 'source_age_compatible': age_ok,
-            'mapped_roles_age_compatible': age_ok}}
+        return {'pass': passed, 'llm': {'core_event_supported': passed or core_ok,
+            'core_event_reason': '把承诺收书写成已经收完' + '长事实说明' * 600, 'source_age_compatible': age_ok,
+            'mapped_roles_age_compatible': passed or mapped_ok,
+            'age_reason': '父母训导不应转给孩子', 'source_age_evidence': '爸爸：先写完题',
+            'mapped_age_evidence': '灿灿：先写完题'}}
     monkeypatch.setattr(p.gs_review, 'audit_story', audit)
     monkeypatch.setattr(p, 'passes_funny_gate_from_payload', lambda *a, **k: (True, 'ok'))
     saved = []
@@ -1520,7 +1692,225 @@ def test_core_fact_failure_rebuilds_once_without_changing_source(app_ctx, tmp_pa
     result = p.process_candidate(candidate, config=cfg, skip_transcript=True, overwrite_existing=True,
         existing_row={'id': 123, 'payload': {}}, clip_transcript={'transcript_path': str(path), 'source_clip': {}})
     assert len(audits) == (2 if age_ok else 1)
-    assert feedback == (['', '把承诺收书写成已经收完'] if age_ok else [''])
+    assert len(feedback) == (2 if age_ok else 1)
+    assert feedback[0] == ''
+    if age_ok:
+        assert '把承诺收书写成已经收完' in feedback[1]
+        if not mapped_ok:
+            assert '爸爸：先写完题' in feedback[1][:2000] and '灿灿：先写完题' in feedback[1][:2000]
     assert contract_feedback == seed_feedback == feedback
     assert result['action'] == ('ok' if recover and age_ok else 'reject')
     assert len(saved) == int(recover and age_ok)
+
+
+@pytest.mark.parametrize('first_failure', [
+    {'action': 'reject', 'reason': 'unsuitable_source'},
+    {'action': 'skip', 'reason': 'auto_score_below_threshold'},
+    {'action': 'error', 'reason': 'transcript_conflict', 'retryable': False},
+    {'action': 'error', 'failure_kind': 'model_output', 'retryable': True},
+])
+def test_collect_refills_rejected_material_until_target_with_real_queue(app_ctx, tmp_path, monkeypatch, first_failure):
+    from app.config import Config
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    cfg = Config(); cfg.gold_story_candidates_file = tmp_path / 'candidates.txt'
+    old_id = _pending_source('BV1OLDER0001')
+    searched = []; processed = []; updates = []
+    def search(**kwargs):
+        searched.append(kwargs['max_candidates'])
+        sid = f'BV1REFILL00{len(searched)}'
+        return [VideoCandidate(source='bili', source_id=sid, url='', title='title', description='',
+                               view_count=1, reply_count=1, keyword='')]
+    monkeypatch.setattr(p, 'collect_candidates', search)
+    monkeypatch.setattr(p, '_build_candidate_from_bvid', lambda sid, **k: sid)
+    monkeypatch.setattr(p.time, 'sleep', lambda *_: None)
+    def process(sid, **kwargs):
+        processed.append(sid)
+        if sid.endswith('1'):
+            return {**first_failure, 'source_id': sid, 'error': 'original evidence retained'}
+        row = kwargs['existing_row']
+        repo.update_story_status(row['id'], status='active')
+        return {'action': 'ok', 'status': 'active', 'source_id': sid, 'id': row['id']}
+    monkeypatch.setattr(p, 'process_candidate', process)
+    result = p.run_collect_pipeline(config=cfg, max_candidates=1, on_progress=updates.append)
+    assert result['inserted'] == 1 and result['processed'] == 2
+    assert result['stop_reason'] == 'target_reached' and result['shortfall'] == 0
+    assert searched == [1, 1]
+    assert repo.get_story(old_id)['status'] == 'pending'
+    assert set(processed) == {'BV1REFILL001', 'BV1REFILL002'}
+    assert processed.count('BV1REFILL001') == (3 if first_failure.get('retryable') else 1)
+    assert cfg.gold_story_candidates_file.read_text().splitlines()[1:] == ['BV1REFILL001', 'BV1REFILL002']
+    assert [u['processed'] for u in updates] == sorted(u['processed'] for u in updates)
+    assert [u['inserted'] for u in updates] == sorted(u['inserted'] for u in updates)
+    assert updates[-1] == result
+
+
+@pytest.mark.parametrize('mode', ['reject', 'empty', 'execution', 'export'])
+def test_collect_refill_limits_and_stops_are_not_reported_as_success(app_ctx, tmp_path, monkeypatch, mode):
+    from app.config import Config
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    cfg = Config(); cfg.gold_story_candidates_file = tmp_path / 'candidates.txt'
+    searches = []; processed = []
+    def search(**kwargs):
+        searches.append(kwargs['max_candidates'])
+        return [] if mode == 'empty' else [VideoCandidate(source='bili', source_id=f'BV1LIMIT{len(searches):04d}',
+            url='', title='title', description='', view_count=1, reply_count=1, keyword='')]
+    monkeypatch.setattr(p, 'collect_candidates', search)
+    monkeypatch.setattr(p, '_build_candidate_from_bvid', lambda sid, **k: sid)
+    monkeypatch.setattr(p.time, 'sleep', lambda *_: None)
+    def process(sid, **kwargs):
+        processed.append(sid)
+        if mode == 'reject': return {'action': 'reject', 'reason': 'source_not_suitable'}
+        if mode == 'export':
+            repo.update_story_status(kwargs['existing_row']['id'], status='active')
+            return {'action': 'error', 'stage': 'export', 'status': 'active', 'persisted': True}
+        return p._execution_failure(TimeoutError('service unavailable'), 'LLM')
+    monkeypatch.setattr(p, 'process_candidate', process)
+    result = p.run_collect_pipeline(config=cfg, max_candidates=2, write_list=False)
+    assert result['inserted'] == 0 and result['shortfall'] == 2
+    expected = {'reject': ('sample_limit', 6), 'empty': ('no_new_candidates', 3),
+                'execution': ('execution_error', 1), 'export': ('execution_error', 1)}
+    assert (result['stop_reason'], len(searches)) == expected[mode]
+    assert result['candidates'] <= 6
+    assert not cfg.gold_story_candidates_file.exists()
+    if mode == 'execution': assert len(processed) == 3
+
+
+def test_collect_scoped_claim_empty_never_claims_unrelated_queue(app_ctx):
+    from app.repositories import repo_gold_story as repo
+    first = _pending_source('BV1SCOPED001')
+    second = _pending_source('BV1SCOPED002')
+    assert repo.claim_next_pending(story_ids=[]) is None
+    assert repo.claim_next_pending(story_ids=[second])['id'] == second
+    assert repo.claim_next_pending(story_ids=[second]) is None
+    assert repo.get_story(first)['status'] == 'pending'
+
+
+def test_collect_model_output_wrapping_network_error_still_stops():
+    from app.services.gold_story.collect import pipeline as p
+    error = p.llm_steps.ModelOutputError('wrapped response failure')
+    error.__cause__ = TimeoutError('upstream unavailable')
+    assert p._stops_collection(p._execution_failure(error, 'LLM'))
+
+
+def test_collect_only_refills_shortfall_and_preserves_pending_on_execution_failure(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story as repo
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    searches = []; processed = []
+    def search(**kwargs):
+        count = kwargs['max_candidates']; searches.append(count)
+        return [VideoCandidate(source='bili', source_id=f'BV1PART{len(searches)}{i:04d}', url='', title='title',
+                description='', view_count=1, reply_count=1, keyword='') for i in range(count)]
+    monkeypatch.setattr(p, 'collect_candidates', search)
+    monkeypatch.setattr(p, '_build_candidate_from_bvid', lambda sid, **k: sid)
+    def process(sid, **kwargs):
+        processed.append(sid)
+        row = kwargs['existing_row']
+        if sid == 'BV1PART10000':
+            repo.update_story_status(row['id'], status='active')
+            return {'action': 'ok', 'status': 'active'}
+        if sid.startswith('BV1PART1'): return {'action': 'reject', 'reason': 'source_not_suitable'}
+        return {'action': 'error', 'error': 'program failure', 'retryable': False}
+    monkeypatch.setattr(p, 'process_candidate', process)
+    result = p.run_collect_pipeline(max_candidates=3, write_list=False)
+    assert searches == [3, 2]
+    assert result['inserted'] == 1 and result['shortfall'] == 2
+    assert result['processed'] == 4 and result['stop_reason'] == 'execution_error'
+    untouched = repo.get_by_source_id(source='bili', source_id='BV1PART20001')
+    assert untouched['status'] == 'pending' and 'BV1PART20001' not in processed
+
+
+def test_collect_empty_round_does_not_end_before_later_candidate(app_ctx, monkeypatch):
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    calls = []
+    def search(**kwargs):
+        calls.append(1)
+        if len(calls) != 2: return []
+        return [VideoCandidate(source='bili',source_id='BV1LATER0001',url='',title='title',description='',
+                               view_count=1,reply_count=1,keyword='')]
+    monkeypatch.setattr(p, 'collect_candidates', search)
+    monkeypatch.setattr(p, '_build_candidate_from_bvid', lambda sid, **k: sid)
+    def process(sid, **kwargs):
+        p.repo_gold_story.update_story_status(kwargs['existing_row']['id'], status='active')
+        return {'action': 'ok', 'status': 'active'}
+    monkeypatch.setattr(p, 'process_candidate', process)
+    result = p.run_collect_pipeline(max_candidates=1, write_list=False)
+    assert result['stop_reason'] == 'target_reached' and result['rounds'] == 2
+
+
+def test_search_unknown_fallback_keeps_hard_gate_and_advances_cursor(app_ctx, monkeypatch):
+    from app.services.gold_story.collect import search, llm
+    from app.repositories import sql_exec as sql
+    monkeypatch.setattr(search, 'search_bilibili', lambda *a, **k: ['BV1VALID0001', 'BV1LOW000001'])
+    def meta(sid, **kwargs):
+        return {'title': '姐弟日常', 'description': '', 'view_count': 200000 if sid == 'BV1VALID0001' else 1,
+                'reply_count': 100, 'aid': 1, 'cid': 1, 'url': '', 'duration': 60}
+    monkeypatch.setattr(search, 'fetch_video_meta', meta)
+    monkeypatch.setattr(search, 'fetch_top_replies', lambda *a, **k: [])
+    monkeypatch.setattr(search, 'compute_audience_funny_metrics', lambda **k: None)
+    monkeypatch.setattr(search, 'passes_funny_gate', lambda *a, **k: (True, 'ok'))
+    monkeypatch.setattr(search, 'metrics_to_payload', lambda x: {})
+    monkeypatch.setattr(llm, '_chat_json', lambda *a, **k: {'candidates': []})
+    rows = search.collect_candidates(keywords=['姐弟'], max_candidates=1)
+    assert [r.source_id for r in rows] == ['BV1VALID0001']
+    assert rows[0].selection_signals['ranking_status'] == 'unavailable'
+    assert len(sql.fetchall('SELECT * FROM gold_story_search_cursor')) == 1
+    sql.commit()
+
+
+@pytest.mark.parametrize("score,accepted", [(0.4672, False), (0.5499, False), (0.55, True)])
+def test_queued_update_enforces_same_score_threshold_as_insert(app_ctx, score, accepted):
+    from app.repositories import repo_gold_story as repo
+    pending = repo.insert_pending(source="bili", source_id="BV1SCORECHECK", url="", title="score gate", payload={})
+    outcome = repo.update_story_from_pipeline(
+        pending["id"], mechanism="M11", structure_type="I", title="追问", conflict_core="追问理由",
+        story_raw="姐弟互相追问理由，最后无言以对。" * 10,
+        payload={"audit": {"pass": True, "reject_reasons": []}}, auto_score=score)
+    row = repo.get_story(pending["id"])
+    assert row["status"] == outcome["status"] == ("active" if accepted else "rejected")
+    assert row["payload"]["audit"]["pass"] is accepted
+    assert outcome["reason"] == (None if accepted else "auto_score_below_threshold")
+    if not accepted:
+        assert "auto_score_below_threshold" in row["payload"]["audit"]["reject_reasons"][0]
+
+
+def test_pipeline_does_not_count_score_rejection_as_success(monkeypatch):
+    from app.config import Config
+    from app.services.gold_story.collect import pipeline as p
+    from app.services.gold_story.collect.search import VideoCandidate
+    from app.services.gold_story.collect.funny import next_status_after_funny_rescore
+    cfg = Config(); cfg.gold_story_transcript_repair = False
+    row = {"id": 1, "source_id": "BV1AUDIT0001", "payload": {}}
+    candidate = VideoCandidate(source="bili", source_id=row["source_id"], url="", title="姐弟日常",
+                               description="", view_count=1, reply_count=1, keyword="")
+    monkeypatch.setattr(p, "_read_transcript", lambda *a: "姐姐和弟弟争遥控器")
+    monkeypatch.setattr(p, "transcribe_bilibili", lambda *a, **k: {"action": "ok"})
+    monkeypatch.setattr(p.llm_steps, "extract_story_raw", lambda **k: {"story_raw": "姐弟争遥控器" * 20})
+    monkeypatch.setattr(p.llm_steps, "review_story_source", lambda **k: {"faithful": True})
+    monkeypatch.setattr(p.repo_gold_story, "find_near_duplicate", lambda *a, **k: None)
+    monkeypatch.setattr(p.llm_steps, "structurize_story", lambda **k: {"mechanism": "M6", "structure_type": "N"})
+    monkeypatch.setattr(p.llm_steps, "build_scene_contract", lambda **k: {})
+    monkeypatch.setattr(p, "sync_h3_from_scene_contract", lambda h3, *a, **k: (h3, []))
+    monkeypatch.setattr(p.llm_steps, "build_dialogue_seed", lambda **k: {})
+    audit = {"pass": True, "rule_pass": True, "stage": "llm", "reject_reasons": []}
+    monkeypatch.setattr(p.gs_review, "audit_story", lambda **k: audit)
+    monkeypatch.setattr(p, "passes_funny_gate_from_payload", lambda *a, **k: (True, "ok"))
+    saved = []
+    def save(*a, **k):
+        saved.append(k["payload"]["audit"])
+        row["payload"]["audit"] = {"pass": False, "reject_reasons": ["auto_score_below_threshold"]}
+        return {"auto_score": 0.4672, "status": "rejected", "reason": "auto_score_below_threshold"}
+    monkeypatch.setattr(p.repo_gold_story, "update_story_from_pipeline", save)
+    monkeypatch.setattr(p.repo_gold_story, "get_story", lambda *a: row)
+    monkeypatch.setattr(p, "_export_collection_result", lambda *a: {})
+    result = p.process_candidate(candidate, config=cfg, existing_row=row, overwrite_existing=True, force_transcript=True)
+    assert result["status"] == "rejected"
+    assert result["action"] == "reject"
+    assert result["reason"] == "auto_score_below_threshold"
+    assert result["audit_pass"] is False
+    assert not p._stops_collection(result)

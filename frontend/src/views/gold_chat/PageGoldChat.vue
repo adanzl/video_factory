@@ -273,6 +273,8 @@ const collectPhase = ref("");
 const collectEnqueued = ref(0);
 const collectProcessed = ref(0);
 const collectCandidates = ref(0);
+const collectPassed = ref(0);
+const collectTarget = ref(0);
 
 /** 翻页状态跟着 localStorage 走，刷新页面/轮询自动刷新都不会跳回第一页 */
 function persistPage() {
@@ -280,7 +282,8 @@ function persistPage() {
 }
 
 const collectButtonLabel = computed(() => {
-  if (!collecting.value) return "采集（10 条）";
+  if (!collecting.value) return "采集（目标通过 10 条）";
+  if (collectTarget.value) return `采集中：通过 ${collectPassed.value}/${collectTarget.value}`;
   if (collectPhase.value === "enqueue" || collectPhase.value === "enqueued") {
     return `入队中 ${collectEnqueued.value}/${collectCandidates.value || "?"}`;
   }
@@ -292,6 +295,9 @@ const collectButtonLabel = computed(() => {
 
 const collectProgressText = computed(() => {
   if (!collecting.value) return "";
+  if (collectTarget.value) {
+    return `候选 ${collectCandidates.value}，已处理 ${collectProcessed.value}，通过 ${collectPassed.value}/${collectTarget.value}；不合格自动补采`;
+  }
   if (collectPhase.value === "enqueue" || collectPhase.value === "enqueued") {
     return `已入队 ${collectEnqueued.value}，随后异步 OCR`;
   }
@@ -544,11 +550,24 @@ function stopConvertPolling() {
 }
 
 function formatCollectDone(res: GoldStoryCollectResult): string {
+  const reasons: Record<string, string> = {
+    target_reached: "目标达成", sample_limit: "达到采样上限", search_limit: "达到搜索上限",
+    no_new_candidates: "连续未找到新素材", execution_error: "执行故障，已停止补采",
+  };
+  const ending = res.target != null
+    ? `；${reasons[res.stop_reason || ""] || "采集结束"}，还差 ${res.shortfall ?? Math.max(0, res.target - (res.inserted ?? 0))} 条`
+    : "";
   return (
     `采集完成：入队 ${res.enqueued ?? res.candidates ?? 0}，` +
     `通过 ${res.inserted ?? 0}，审拒 ${res.inserted_rejected ?? 0}，` +
-    `门拒 ${res.gate_rejected ?? 0}，失败 ${res.failed ?? 0}`
+    `门拒 ${res.gate_rejected ?? 0}，失败 ${res.failed ?? 0}${ending}`
   );
+}
+
+function notifyCollectDone(res: GoldStoryCollectResult) {
+  const message = formatCollectDone(res);
+  if ((res.shortfall ?? 0) > 0 || (res.failed ?? 0) > 0) ElMessage.warning(message);
+  else ElMessage.success(message);
 }
 
 function applyCollectProgress(res: GoldStoryCollectResult) {
@@ -556,6 +575,8 @@ function applyCollectProgress(res: GoldStoryCollectResult) {
   collectEnqueued.value = Number(res.enqueued || 0);
   collectProcessed.value = Number(res.processed || 0);
   collectCandidates.value = Number(res.candidates || 0);
+  collectPassed.value = Number(res.inserted || 0);
+  collectTarget.value = Number(res.target || 0);
 }
 
 function resetCollectProgress() {
@@ -563,6 +584,8 @@ function resetCollectProgress() {
   collectEnqueued.value = 0;
   collectProcessed.value = 0;
   collectCandidates.value = 0;
+  collectPassed.value = 0;
+  collectTarget.value = 0;
 }
 
 /** 采集任务启动时回第一页方便看新入队的 pending；轮询期间只回一次，别把用户翻的页顶掉 */
@@ -718,7 +741,7 @@ async function pollCollectStatus() {
       return;
     }
     if (res.status === "done") {
-      ElMessage.success(formatCollectDone(res));
+      notifyCollectDone(res);
       resetCollectProgress();
     }
   } catch (e) {
@@ -1107,7 +1130,7 @@ async function handleImportDaily() {
 async function handleCollect() {
   try {
     await ElMessageBox.confirm(
-      "将从 B 站搜索并采集最多 10 条金故事（含转写与结构化），后台进行，继续？",
+      "目标采集 10 条审核通过的金故事。不合格素材自动补采，最多处理 30 条候选；连续无新素材或执行故障时提前停止。后台进行，继续？",
       "采集金故事",
       { type: "info" },
     );
@@ -1126,7 +1149,7 @@ async function handleCollect() {
       return;
     }
     collecting.value = false;
-    ElMessage.success(formatCollectDone(res));
+    notifyCollectDone(res);
     resetCollectProgress();
     await fetchItems();
   } catch (e) {

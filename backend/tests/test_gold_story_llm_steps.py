@@ -195,6 +195,8 @@ def test_trim_story_raw(monkeypatch):
     long_text = "姐弟抢遥控器，弟弟放狠话要回家，姐姐嘴硬后又追上去问明天还玩吗。" * 20
 
     def fake_chat(_system: str, _user: str) -> dict:
+        if "摘要压缩事实审核员" in _system:
+            return {"faithful": True, "complete": True, "reason": "重复内容，关键事件完整"}
         return {
             "story_raw": long_text[:200],
             "trim_notes": "删重复",
@@ -209,6 +211,47 @@ def test_trim_story_raw(monkeypatch):
 def test_trim_story_raw_skips_when_short():
     text = "短故事" * 20
     assert llm_steps.trim_story_raw(text, max_chars=380) == text
+
+
+def test_trim_retries_locally_and_never_uses_lossy_summary_as_source(monkeypatch):
+    original = "姐姐承诺写完题再收书，弟弟答应等她，没有实际收完。" * 24
+    drafts = iter(["长" * 433, "丢失结局" * 30, "姐姐承诺稍后收书，弟弟答应等，没有实际执行。" * 6])
+    prompts = []
+    audits = []
+    def chat(system, user):
+        if "摘要压缩事实审核员" in system:
+            payload = json.loads(user)
+            assert payload["original"] == original
+            audits.append(payload["summary"])
+            return {"faithful": True, "complete": len(audits) == 2, "reason": "第一版遗漏尚未执行这个关键状态"}
+        assert original in user
+        prompts.append(user)
+        return {"story_raw": next(drafts)}
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    result = llm_steps.trim_story_raw(original)
+    assert "没有实际执行" in result
+    assert len(prompts) == 3 and len(audits) == 2
+    assert "433" in prompts[1] and "遗漏尚未执行" in prompts[2]
+
+
+@pytest.mark.parametrize("failure", ["length", "facts"])
+def test_trim_exhaustion_does_not_return_unverified_text(monkeypatch, failure):
+    calls = []
+    def chat(system, user):
+        calls.append(system)
+        if "摘要压缩事实审核员" in system:
+            return {"faithful": False, "complete": True, "reason": "承诺被改成已经完成"}
+        return {"story_raw": "字" * (500 if failure == "length" else 200)}
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    with pytest.raises(llm_steps.ModelOutputError, match="exhausted"):
+        llm_steps.trim_story_raw("原" * 700)
+    assert len(calls) == (3 if failure == "length" else 6)
+
+
+def test_trim_does_not_truncate_oversized_input(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: pytest.fail("不得截断来源"))
+    with pytest.raises(llm_steps.ModelOutputError, match="input_budget"):
+        llm_steps.trim_story_raw("原" * 12001)
 
 
 def test_gold_story_prompts_carry_unintelligible_marker_rule():
@@ -682,6 +725,7 @@ def test_source_audit_accepts_faithful_role_mapping(monkeypatch):
 
 
 def _audit_response(response, monkeypatch, *, default_age=True, **overrides):
+    monkeypatch.setattr(llm_steps, "_check_audit_evidence", lambda *_a: "")
     if default_age:
         response = {"source_age_compatible": True, "mapped_roles_age_compatible": True,
                     "core_event_supported": True, "core_event_reason": "核心事件与来源一致",
@@ -788,6 +832,7 @@ def test_source_age_missing_or_invalid_verdict_is_execution_failure(monkeypatch,
 
 
 def test_age_audit_receives_full_seed_contract_and_original_source(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_check_audit_evidence", lambda *_a: "")
     marker = "灿灿：妈，我好像要生了"
     seen = []
     def chat(_system, user):
@@ -1053,6 +1098,7 @@ def test_uncertainty_review_true_with_unknown_fact_cannot_pass(monkeypatch):
 
 
 def test_independent_core_review_overrides_combined_approval(monkeypatch):
+    monkeypatch.setattr(llm_steps, "_check_audit_evidence", lambda *_a: "")
     calls = []
     def chat(system, user, **kwargs):
         calls.append(system)
@@ -1060,7 +1106,7 @@ def test_independent_core_review_overrides_combined_approval(monkeypatch):
             return {**_high_fit_scores(), 'source_age_compatible': True, 'mapped_roles_age_compatible': True,
                     'source_age_evidence_index': 1, 'mapped_age_evidence_index': 1, 'age_reason': '儿童日常'}
         assert '独立的改编事实审核员' in system
-        assert kwargs.get('thinking_enabled') is True
+        assert kwargs.get('thinking_enabled') is False
         assert '四维' not in user and '原视频标题' not in user
         return {'core_event_supported': False, 'core_event_reason': '原文只答应，契约却说已完成'}
     monkeypatch.setattr(llm_steps, '_chat_json', chat)
@@ -1070,6 +1116,133 @@ def test_independent_core_review_overrides_combined_approval(monkeypatch):
         scene_contract={'closing_intent': '已经收完书'})
     assert len(calls) == 2 and not result['pass']
     assert result['core_event_reason'] == '原文只答应，契约却说已完成'
+
+
+def _evidence_review_arguments():
+    return {"story_raw": "姐姐问弟弟为什么不回家。", "title": "回家",
+            "dialogue_seed": [{"speaker": "灿灿", "intent": "你为什么不回家"}], "beat": []}
+
+
+def _evidence_check(**changes):
+    return {"claim_index": 1, "verdict": "contradicted", "source_index": 1,
+            "source_quote": "姐姐问弟弟为什么不回家", "output_index": 2,
+            "output_speaker": "灿灿", "output_quote": "你为什么不回家",
+            "reason": "审核称昭昭发问，但实际输出是灿灿发问", **changes}
+
+
+@pytest.mark.parametrize("changes", [
+    {"output_speaker": "昭昭"}, {"output_quote": "模型自编一句"},
+    {"source_quote": "爸爸问妈妈"}, {"source_index": 0}, {"output_index": 99},
+    {"claim_index": True}, {"verdict": "unresolved"},
+])
+def test_audit_evidence_cannot_accept_invalid_or_uncertain_citations(monkeypatch, changes):
+    monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {"checks": [_evidence_check(**changes)]})
+    with pytest.raises(llm_steps.ModelOutputError, match="evidence review"):
+        llm_steps._check_audit_evidence(_evidence_review_arguments(), {"reject_reasons": ["昭昭问了这句话"]})
+
+
+def test_audit_evidence_requires_every_claim_exactly_once(monkeypatch):
+    for checks in ([], [_evidence_check(), _evidence_check()]):
+        monkeypatch.setattr(llm_steps, "_chat_json", lambda *a: {"checks": checks})
+        with pytest.raises(llm_steps.ModelOutputError):
+            llm_steps._check_audit_evidence(_evidence_review_arguments(), {"reject_reasons": ["归属错", "结局错"]})
+
+
+def test_partially_wrong_reason_keeps_verified_veto_and_corrects_feedback(monkeypatch):
+    import copy
+    arguments = _evidence_review_arguments()
+    original = copy.deepcopy(arguments)
+    audit = {'pass': False, 'core_event_supported': False,
+             'reject_reasons': ['core_event_unfaithful: 指错字段但确有新增事件']}
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a: {'checks': [
+        _evidence_check(verdict='partially_supported', reason='实际错误在契约，不在标题；保留该事实否决')
+    ]})
+    assert llm_steps._check_audit_evidence(arguments, audit) == ''
+    assert arguments == original
+    assert audit['pass'] is False and audit['core_event_supported'] is False
+    assert '实际错误在契约' in audit['core_event_reason']
+    assert '指错字段' not in audit['reject_reasons'][0]
+
+
+def test_evidence_review_format_retry_preserves_input_and_caps_attempts(monkeypatch):
+    calls = []
+    audit = {'pass': False, 'core_event_supported': False, 'reject_reasons': ['原否决']}
+    def review(system, user):
+        calls.append(user)
+        if len(calls) == 1:
+            return {'checks': [_evidence_check(), _evidence_check()]}
+        assert 'missing claims' in user
+        return {'checks': [_evidence_check(verdict='supported')]}
+    monkeypatch.setattr(llm_steps, '_chat_json', review)
+    assert llm_steps._check_audit_evidence(_evidence_review_arguments(), audit) == ''
+    assert len(calls) == 2 and not audit['pass'] and not audit['core_event_supported']
+
+
+def test_core_review_receives_original_identity_evidence_and_correction(monkeypatch):
+    calls = []
+    source = '父亲：我是家长，这件事由我决定。\n孩子：知道了。'
+    def chat(system, user, **kwargs):
+        calls.append(user)
+        if len(calls) == 2:
+            data = json.loads(user)
+            assert data['transcript'] == source
+            assert data['evidence_review_feedback'] == '按原身份核对'
+            return {'core_event_supported': False, 'core_event_reason': '摘要漏了父亲身份，契约不能把家长决定转给姐姐'}
+        return dict(**{'pass': True}, source_age_compatible=True, mapped_roles_age_compatible=True,
+            sibling_fit=.9, age_fit=.9, conflict_usable=.9, mapping_fit=.9,
+            source_age_evidence_index=1, mapped_age_evidence_index=1, age_reason='儿童日常', reject_reasons=[])
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    result = llm_steps._audit_story_fit_once(video_title='', title='决定', story_raw='一人决定，另一人答应。',
+        conflict_core='谁决定', mechanism='M1', structure_type='A', speaker_map_note='',
+        dialogue_seed=[{'speaker': '灿灿', 'intent': '由我决定'}], beat=[], transcript=source,
+        evidence_feedback='按原身份核对')
+    assert not result['pass'] and not result['core_event_supported']
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('stage', ['contract', 'seed'])
+@pytest.mark.parametrize('constraints', [None, 'invalid legacy value'])
+def test_collection_feedback_enables_existing_rebuild_constraints_without_generation_plan(monkeypatch, stage, constraints):
+    class PromptCaptured(RuntimeError):
+        pass
+    def chat(system, user):
+        assert '把问答双方合进一个拍' in user
+        if stage == 'contract':
+            assert '不同角色的对白不能塞进同一拍拍主的intent' in user
+        else:
+            assert '每行只归属实际说话人' in user
+            assert '允许直接取原文对白' in user
+        raise PromptCaptured()
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    function = llm_steps.build_scene_contract if stage == 'contract' else llm_steps.build_dialogue_seed
+    with pytest.raises(PromptCaptured):
+        function(story_raw='姐姐问借多久，弟弟答等做完作业就还。',
+                 h3={'structure_type': 'C', 'generation_constraints': constraints},
+                 source_feedback='把问答双方合进一个拍')
+
+
+@pytest.mark.parametrize("repeat_error", [False, True])
+def test_contradictory_audit_is_fully_repeated_not_directly_approved(monkeypatch, repeat_error):
+    rounds = []
+    def audit(**kwargs):
+        rounds.append(kwargs)
+        if len(rounds) == 2 and not repeat_error:
+            return {"pass": False, "reject_reasons": ["另一个真实错误"]}
+        return {"pass": False, "reject_reasons": ["昭昭问了这句话"]}
+    monkeypatch.setattr(llm_steps, "_audit_story_fit_once", audit)
+    def review(system, user):
+        payload = json.loads(user)
+        supported = payload['claims'][0]['reason'] == '另一个真实错误'
+        return {"checks": [_evidence_check(verdict='supported' if supported else 'contradicted')]}
+    monkeypatch.setattr(llm_steps, "_chat_json", review)
+    if repeat_error:
+        with pytest.raises(llm_steps.ModelOutputError, match="contradiction after review"):
+            llm_steps.audit_story_fit(**_evidence_review_arguments())
+    else:
+        result = llm_steps.audit_story_fit(**_evidence_review_arguments())
+        assert not result['pass'] and result['evidence_checked'] is True
+    assert len(rounds) == 2
+    assert '灿灿' in rounds[1]['evidence_feedback']
 
 
 @pytest.mark.parametrize('thinking', [False, True])
@@ -1103,3 +1276,171 @@ def test_source_noise_gate_requires_review_reason(monkeypatch):
         'child_adaptation_reason': '日常对话'})
     with pytest.raises(llm_steps.ModelOutputError):
         llm_steps.review_story_source(transcript='未知：借我本书', story_raw='随后有人借书。')
+
+
+def _grounded_contract():
+    return {
+        'story_type': 'N', 'characters': ['妈妈', '昭昭', '灿灿'], 'location': '客厅',
+        'object': '学校分享的东西', 'conflict': '被问为什么没有分享',
+        'mechanism': '最后揭示东西根本不能分享', 'facts': [], 'mom_lines_max': 2,
+        'contract_confidence': 0.9, 'closing_intent': '昭昭说没有那么多鼻屎',
+        'beat_chain': [
+            {'speaker': '妈妈', 'intent': '你在学校吃东西被老师看见了吗', 'min_turns': 2},
+            {'speaker': '昭昭', 'intent': '看见了，老师让我拿出来分享', 'min_turns': 2},
+            {'speaker': '灿灿', 'intent': '拿出来分享', 'min_turns': 2},
+            {'speaker': '妈妈', 'intent': '那你拿出来了吗', 'min_turns': 2},
+            {'speaker': '昭昭', 'intent': '我没有拿出来', 'min_turns': 2},
+            {'speaker': '昭昭', 'intent': '我没有那么多鼻屎', 'min_turns': 2},
+        ],
+    }
+
+
+def test_source_contract_does_not_insert_reactions_or_change_final_speaker(monkeypatch):
+    from copy import deepcopy
+    contract = _grounded_contract()
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a, **k: deepcopy(contract))
+    result = llm_steps.build_scene_contract(story_raw='妈妈问，昭昭答，灿灿复述，最后昭昭说没有那么多鼻屎。',
+        h3={'structure_type': 'N'}, source_grounded=True)
+    assert result['source_grounded'] is True
+    assert [(r['speaker'], r['intent']) for r in result['beat_chain']] == [
+        (r['speaker'], r['intent']) for r in contract['beat_chain']]
+    assert result['closing_intent'] == contract['closing_intent']
+
+
+@pytest.mark.parametrize('issue', ['missing_child', 'turn_budget'])
+@pytest.mark.parametrize('recovers', [False, True])
+def test_source_contract_rebuilds_invalid_cast_or_budget_locally_without_fabrication(monkeypatch, issue, recovers):
+    from copy import deepcopy
+    good = _grounded_contract()
+    bad = deepcopy(good)
+    if issue == 'missing_child':
+        bad['beat_chain'] = [r for r in bad['beat_chain'] if r['speaker'] != '灿灿']
+        bad['characters'].remove('灿灿')
+    else:
+        bad['beat_chain'] = [deepcopy(good['beat_chain'][i % 6]) for i in range(34)]
+        for row in bad['beat_chain']: row['min_turns'] = 1
+    calls = []
+    def chat(system, user):
+        calls.append(user)
+        return deepcopy(good if len(calls) == 2 and recovers else bad)
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    if recovers:
+        result = llm_steps.build_scene_contract(story_raw='老师发现吃东西，问是否分享，最后回答没有那么多鼻屎。',
+            h3={'structure_type': 'N'}, source_grounded=True)
+        assert len(result['beat_chain']) == len(good['beat_chain'])
+        assert result['beat_chain'][-1]['intent'] == good['beat_chain'][-1]['intent']
+    else:
+        with pytest.raises(llm_steps.ModelOutputError, match='source_contract_two_kids_missing|beat_chain_turns_exceed'):
+            llm_steps.build_scene_contract(story_raw='老师发现吃东西，问是否分享，最后回答没有那么多鼻屎。',
+                h3={'structure_type': 'N'}, source_grounded=True)
+    assert len(calls) == 2 and '【契约局部返修】' in calls[1]
+    assert '不删不同事实/否定/因果/收束' in calls[1]
+
+
+@pytest.mark.parametrize("supported", [True, False])
+def test_source_grounded_fidelity_remains_required_without_fit_scoring(monkeypatch, supported):
+    calls = []
+    def chat(system, user, **kwargs):
+        calls.append(system)
+        if len(calls) == 1:
+            return {"pass": True, "sibling_fit": .1, "age_fit": .1,
+                    "conflict_usable": .1, "mapping_fit": .1, "reject_reasons": [],
+                    "source_age_compatible": True, "mapped_roles_age_compatible": True,
+                    "source_age_evidence": "姐弟一起整理书桌。", "mapped_age_evidence": "昭昭：擦桌子",
+                    "age_reason": "儿童整理书桌符合年龄"}
+        return {"core_event_supported": supported,
+                "core_event_reason": "原文与输出事件一致" if supported else "输出新增了原文未发生的行动"}
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    result = llm_steps._audit_story_fit_once(
+        video_title="姐弟日常", title="整理书桌", story_raw="姐弟一起整理书桌。",
+        conflict_core="分工", mechanism="M6", structure_type="A", speaker_map_note="",
+        dialogue_seed=[{"speaker": "昭昭", "intent": "擦桌子"}], beat=[],
+        scene_contract={"source_grounded": True}, age_only=True)
+    assert len(calls) == 2
+    assert result["core_event_supported"] is supported
+    assert result["pass"] is supported
+    assert bool(result["reject_reasons"]) is not supported
+
+
+def test_source_contract_receives_complete_original_context(monkeypatch):
+    from copy import deepcopy
+    original = "妈妈问，弟弟答，姐姐复述。" * 400 + "结尾来源只说等会，并未执行。"
+    def chat(system, user, **kwargs):
+        assert original in user
+        assert "强制 remap" not in system
+        assert llm_steps.GOLD_H3A_SCENE_SNIPPET not in user
+        assert "讲解者、剪辑字幕与画外评论不是现场角色发言" in system
+        return deepcopy(_grounded_contract())
+    monkeypatch.setattr(llm_steps, "_chat_json", chat)
+    llm_steps.build_scene_contract(story_raw="妈妈问、孩子答。", h3={"structure_type": "N"},
+        source_grounded=True, source_transcript=original)
+
+
+def test_source_context_budget_does_not_silently_cut_off_ending():
+    with pytest.raises(llm_steps.ModelOutputError, match="input_budget_exceeded"):
+        llm_steps._source_transcript_context("字" * 12001)
+
+
+def test_source_contract_does_not_inherit_unverified_parent_from_h3(monkeypatch):
+    from copy import deepcopy
+    contract = _grounded_contract()
+    contract['characters'] = ['灿灿', '昭昭']
+    contract['mom_lines_max'] = 0
+    for beat in contract['beat_chain']:
+        if beat['speaker'] == '妈妈':
+            beat['speaker'] = '灿灿'
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a, **k: deepcopy(contract))
+    result = llm_steps.build_scene_contract(story_raw='姐弟讨论学校分享的事情。', source_grounded=True,
+        h3={'structure_type': 'N', 'beat': ['妈妈追问孩子']})
+    assert result['characters'] == ['灿灿', '昭昭']
+    assert result['mom_lines_max'] == 0
+    assert '戏核家长须保留出场' not in result.get('remap_note', '')
+
+
+def test_repair_indexed_source_keeps_original_noise_and_blank_lines(monkeypatch):
+    source = '先说一句\n\n2\n再说一句\n最后一句'
+    captured = {}
+    def chat(_system, user):
+        captured['user'] = user
+        return {'repair_confidence': 0.9, 'lines': [
+            {'start_line': 1, 'end_line': 4, 'speaker': '未知', 'text': '先说一句再说一句', 'status': 'ok'},
+            {'start_line': 5, 'end_line': 5, 'speaker': '未知', 'text': '最后一句', 'status': 'ok'},
+        ]}
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    result = llm_steps.repair_transcript(title='测试', transcript=source)
+    assert result['lines'][0]['source_quote'] == '先说一句\n\n2\n再说一句\n'
+    assert result['lines'][1]['source_quote'] == '最后一句'
+    assert '"line": 3, "text": "2\\n"' in captured['user']
+
+
+@pytest.mark.parametrize('start,end', [(0, 1), (1, 4), (2, 1), (True, 2), (1, '2'), (None, 2)])
+def test_repair_bad_source_indices_never_fall_back_to_valid_quote(monkeypatch, start, end):
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a, **k: {
+        'repair_confidence': 0.9, 'lines': [
+            {'start_line': start, 'end_line': end, 'source_quote': '甲', 'text': '甲', 'status': 'ok'},
+            {'source_quote': '乙', 'text': '乙', 'status': 'ok'},
+        ]})
+    with pytest.raises(llm_steps.ModelOutputError, match='source line range'):
+        llm_steps.repair_transcript(title='', transcript='甲\n乙\n丙')
+
+
+@pytest.mark.parametrize('ranges', [[(1, 2), (2, 3)], [(3, 3), (1, 1)]])
+def test_repair_indexed_ranges_reject_overlap_and_reordering(monkeypatch, ranges):
+    monkeypatch.setattr(llm_steps, '_chat_json', lambda *a, **k: {
+        'repair_confidence': 0.9, 'lines': [
+            {'start_line': start, 'end_line': end, 'source_quote': '重复', 'text': '重复', 'status': 'ok'}
+            for start, end in ranges]})
+    with pytest.raises(llm_steps.ModelOutputError, match='out of order or overlapping'):
+        llm_steps.repair_transcript(title='', transcript='重复\n重复\n重复')
+
+
+def test_extract_story_uses_audit_minimum_in_both_prompts(monkeypatch):
+    captured = {}
+    def chat(system, user):
+        captured.update(system=system, user=user)
+        return {'story_raw': '已确认的原始事件。' * 20, 'has_complete_arc': True, 'extract_confidence': 0.9}
+    monkeypatch.setattr(llm_steps, '_chat_json', chat)
+    llm_steps.extract_story_raw(title='', transcript='来源', min_story_raw_chars=145)
+    assert '145–400' in captured['system']
+    assert '145–400' in captured['user']
+    assert '不补场景、动作或心理凑字' in captured['user']

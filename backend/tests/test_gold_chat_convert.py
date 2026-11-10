@@ -6500,3 +6500,31 @@ def test_source_fact_roles_reach_planning_and_filling_prompts():
     fill = format_perbeat_batch_user(scene_contract=contract, punchline='', slots=[])
     for text in [plan, fill]:
         assert '弄坏了拼图' in text and 'secret_holder' in text and 'accuser' in text
+
+
+def test_source_grounded_contract_reuse_does_not_insert_filler_beats(monkeypatch):
+    from copy import deepcopy
+    from app.services.gold_story import scene
+    row = _sample_row()
+    row['id'] = 0
+    row['payload']['story_raw'] = '姐姐问弟弟彩笔应该怎么分，弟弟说一人六支，姐姐拿走六支彩色的，弟弟提出一起画，两人决定合用。' * 2
+    contract = {
+        'story_type': 'N', 'source_grounded': True,
+        'characters': ['昭昭', '灿灿'], 'mom_lines_max': 0, 'location': '客厅',
+        'object': '彩笔', 'conflict': '如何分彩笔', 'closing_intent': '一起画',
+        'beat_chain': [
+            {'speaker': '灿灿', 'intent': '你说彩笔怎么分', 'min_turns': 3},
+            {'speaker': '昭昭', 'intent': '一人六支', 'min_turns': 3},
+            {'speaker': '昭昭', 'intent': '不如一起画', 'min_turns': 3},
+            {'speaker': '灿灿', 'intent': '好，一起画', 'min_turns': 3},
+        ],
+    }
+    row['payload']['scene_contract'] = deepcopy(contract)
+    row['payload']['dialogue_seed'] = deepcopy(contract['beat_chain'])
+    def forbid(*args, **kwargs): pytest.fail('audited source contract was padded')
+    monkeypatch.setattr(scene, 'enforce_two_kid_cast', forbid)
+    monkeypatch.setattr(scene, 'ensure_n_two_kid_alternation', forbid)
+    monkeypatch.setattr(scene, 'normalize_supplemental_kid_seed', forbid)
+    result = gc._rebuild_h3a_h3b_on_convert(row)
+    assert result['payload']['scene_contract']['beat_chain'] == contract['beat_chain']
+    assert result['payload']['dialogue_seed'] == contract['beat_chain']

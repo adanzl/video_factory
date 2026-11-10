@@ -716,6 +716,15 @@ def update_story_from_pipeline(
         )
     )
     payload = dict(payload)
+    score_rejected = status == "active" and score < _MIN_AUTO_SCORE
+    if score_rejected:
+        status = "rejected"
+        audit = dict(payload.get("audit") or {})
+        audit["pass"] = False
+        audit["reject_reasons"] = list(audit.get("reject_reasons") or []) + [
+            f"auto_score_below_threshold:{score:.4f}<{_MIN_AUTO_SCORE}"
+        ]
+        payload["audit"] = audit
     payload["story_raw"] = story_raw
     payload["extract_confidence"] = extract_confidence
     payload["structure_confidence"] = structure_confidence
@@ -790,7 +799,8 @@ def update_story_from_pipeline(
             quality["source_stale"] = True
             quality["production_reasons"] = ["来源素材已重新导入，需重新转换并导入新稿"]
             repo_daily_story.update_story(int(daily_id), story=story, status="review_pending")
-    return {"id": gold_story_id, "auto_score": score, "status": status}
+    return {"id": gold_story_id, "auto_score": score, "status": status,
+            "reason": "auto_score_below_threshold" if score_rejected else None}
 
 
 def insert_or_skip(
@@ -1133,10 +1143,14 @@ def reset_processing_to_pending() -> int:
     return int(result.rowcount or 0)
 
 
-def claim_next_pending() -> dict[str, Any] | None:
+def claim_next_pending(*, story_ids: list[int] | None = None) -> dict[str, Any] | None:
     """逐条认领；每次恢复生成新归属标记，旧执行器不能续跑或收口。"""
+    if story_ids == []:
+        return None
+    scope = "" if story_ids is None else " AND id IN (" + ",".join("?" for _ in story_ids) + ")"
     while True:
-        row = sql.fetchone("SELECT id FROM gold_story WHERE status='pending' ORDER BY id ASC LIMIT 1")
+        row = sql.fetchone("SELECT id FROM gold_story WHERE status='pending'" + scope + " ORDER BY id ASC LIMIT 1",
+                           tuple(story_ids or []))
         if row is None:
             sql.commit()
             return None
