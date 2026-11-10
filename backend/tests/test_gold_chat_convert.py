@@ -466,7 +466,7 @@ def test_rhetorical_declaration_does_not_require_one_question_phrase(line):
 def test_source_revision_keeps_candidate_context_and_merges_only_failed_lines(monkeypatch):
     slots = [{"speaker": "昭昭" if i % 2 else "灿灿", "intent": f"独立内容{i}", "source_plan": True}
              for i in range(12)]
-    original = {i: f"这是第{i}句原始台词。" for i in range(1, 13)}
+    original = {i: f"这是第{i}句原始台词，内容和位置都要保留。" for i in range(1, 13)}
     calls = []
     def chat(_system, user, **_kwargs):
         calls.append(user)
@@ -617,6 +617,10 @@ def test_source_f_audit_repairs_format_with_numbered_dialogue(monkeypatch, repai
     from copy import deepcopy
     from app.services.daily_story.story_types.f.validate import source_f_structure_valid
     story = _source_f_structure_fixture()
+    story["gold_source_line_plan"] = [
+        {"line": i, "role": "content", "source_seed_ids": [i]}
+        for i in range(1, 8)
+    ]
     items = story.pop("gold_f_source_structure")["items"]
     calls = []
 
@@ -624,6 +628,8 @@ def test_source_f_audit_repairs_format_with_numbered_dialogue(monkeypatch, repai
         calls.append(user)
         if len(calls) == 1:
             assert json.loads(user)["dialogue"][-1]["line"] == 7
+            assert json.loads(user)["source_line_plan"] == story["gold_source_line_plan"]
+            assert "reaction的行是生成的接话，不是原文" in _system
         answer = deepcopy(items)
         if len(calls) == 1 or not repair_ok:
             answer[-1]["line"] = 6
@@ -6528,3 +6534,187 @@ def test_source_grounded_contract_reuse_does_not_insert_filler_beats(monkeypatch
     result = gc._rebuild_h3a_h3b_on_convert(row)
     assert result['payload']['scene_contract']['beat_chain'] == contract['beat_chain']
     assert result['payload']['dialogue_seed'] == contract['beat_chain']
+
+
+def test_perbeat_validation_preserves_current_candidate_and_missing_event(monkeypatch):
+    from copy import deepcopy
+    from app.services.gold_story.gold_chat.repair import GoldChatFillError
+    candidate = {'scene_title': '还书', 'setting': '客厅', 'key': '借书',
+                 'conflict_core': '先说明借书条件再回答', 'punchline_explain': '回答倒置',
+                 'story_type': 'F', 'dialogue': [{'speaker': '昭昭', 'line': '姐姐，我答应明天把书还你。'}]}
+    chain = [{'speaker': '灿灿', 'intent': '要求明天还书'}, {'speaker': '昭昭', 'intent': '答应明天还书'}]
+    monkeypatch.setattr(gex, '_perbeat_enabled', lambda: True)
+    monkeypatch.setattr(gex, '_apply_expand_setting_normalize', lambda story, **kw: story)
+    monkeypatch.setattr(gex, '_apply_gold_chat_local_hard_repairs', lambda story, **kw: story)
+    def reject(*args, **kwargs):
+        raise ValueError('opening_causality: 缺少借书条件')
+    monkeypatch.setattr(gc, 'validate_gold_chat', reject)
+    with pytest.raises(GoldChatFillError) as caught:
+        gex._validate_expand_chat(deepcopy(candidate), banned_literals=[], source_type='field',
+                                  mom_lines_max=0, row={'payload': {'scene_contract': {'beat_chain': chain}}})
+    error = caught.value
+    assert error.candidate['scene_title'] == '还书'
+    assert error.candidate['dialogue'] == candidate['dialogue']
+    assert error.candidate_review_status == 'failed'
+    assert gc._missing_beat_intents_from(error) == [{'original_intent': '要求明天还书', 'expected_speaker': '灿灿'}]
+    candidate['dialogue'][0]['line'] = '后续改动'
+    assert error.candidate['dialogue'][0]['line'] != '后续改动'
+
+
+@pytest.mark.parametrize('fixes', [None, [], [{'no': True, 'line': '错误行号'}],
+                                  [{'no': 3, 'line': '越界'}],
+                                  [{'no': 1, 'line': '甲'}, {'no': 1, 'line': '乙'}],
+                                  [{'no': 1, 'line': '台词', 'speaker': '爸爸'}]])
+def test_source_spot_fix_rejects_invalid_protocol(monkeypatch, fixes):
+    story = {'dialogue': [{'speaker': '昭昭', 'line': '这本书我还没看完。'}],
+             'gold_source_line_plan': [{'line': 1, 'role': 'content', 'source_seed_ids': [1]}]}
+    monkeypatch.setattr(gex, '_chat_json', lambda *a, **kw: {'fixes': fixes})
+    with pytest.raises(ValueError, match='来源分句修稿'):
+        gex._fix_chat_with_llm(story, '错误', banned_literals=[])
+    assert story['dialogue'][0]['line'] == '这本书我还没看完。'
+
+
+def test_source_spot_fix_preserves_attribution_and_updates_reaction(monkeypatch):
+    from copy import deepcopy
+    story = {'source_raw': '原始证据', 'quality': {'old': True},
+             'dialogue': [{'speaker': '昭昭', 'line': '这本书我还没看完。'}, {'speaker': '灿灿', 'line': '那你准备看到什么时候？'}],
+             'gold_source_line_plan': [
+                 {'line': 1, 'role': 'content', 'source_seed_ids': [1], 'intent': '书没看完'},
+                 {'line': 2, 'role': 'reaction', 'source_seed_ids': [], 'intent': '那你准备看到什么时候？'}]}
+    before = deepcopy(story)
+    def respond(system, user, **kw):
+        assert 'fixes' in system and '原始证据' in user
+        return {'fixes': [{'no': 2, 'line': '那你看完这本书再还给我。'}]}
+    monkeypatch.setattr(gex, '_chat_json', respond)
+    result = gex._fix_chat_with_llm(story, '接话不自然', banned_literals=[])
+    assert story == before
+    assert result['dialogue'][0] == story['dialogue'][0]
+    assert [r['speaker'] for r in result['dialogue']] == ['昭昭', '灿灿']
+    assert result['gold_source_line_plan'][0] == story['gold_source_line_plan'][0]
+    assert result['gold_source_line_plan'][1]['intent'] == result['dialogue'][1]['line']
+    assert result['source_raw'] == story['source_raw']
+
+
+def test_source_plan_parent_budget_never_deletes_evidence_to_pass():
+    story = {'story_type': 'D', 'dialogue': [
+        {'speaker': '爸爸', 'line': '学校让我们录一段小视频。'},
+        {'speaker': '灿灿', 'line': '我已经把手机准备好了。'},
+        {'speaker': '爸爸', 'line': '请把水果一粒一粒递过来。'}],
+        'gold_source_line_plan': [{'line': i, 'role': 'content', 'source_seed_ids': [i]} for i in range(1, 4)]}
+    from copy import deepcopy
+    before = deepcopy(story)
+    fixed, changed = gex._trim_gold_chat_mom_lines(story, mom_lines_max=0, dad_lines_max=1, parent_lines_max=1)
+    assert fixed == before and story == before and not changed
+    with pytest.raises(ValueError, match='爸爸台词须≤1句'):
+        gc.validate_gold_chat(fixed, mom_lines_max=0, dad_lines_max=1, parent_lines_max=1)
+def test_source_grounded_reuse_preserves_facts_and_event_order():
+    from copy import deepcopy
+    from app.services.gold_story.scene import normalize_payload_tokens
+
+    payload = {
+        'story_raw': '弟弟先报自己的外号，再解释含义，姐姐随后追问。',
+        'scene_contract': {
+            'source_grounded': True, 'story_type': 'N',
+            'characters': ['昭昭', '灿灿'],
+            'beat_chain': [
+                {'beat': 1, 'speaker': '昭昭', 'intent': '说出自己的外号「咕噜」'},
+                {'beat': 2, 'speaker': '昭昭', 'intent': '解释因为喝水会咕噜响'},
+                {'beat': 3, 'speaker': '灿灿', 'intent': '追问外号什么意思'},
+                {'beat': 4, 'speaker': '灿灿', 'intent': '听完以后愣住'},
+            ],
+        },
+        'dialogue_seed': [
+            {'speaker': '昭昭', 'intent': '我的外号叫咕噜。'},
+            {'speaker': '昭昭', 'intent': '因为我喝水会咕噜响。'},
+            {'speaker': '灿灿', 'intent': '你的外号是什么意思？'},
+            {'speaker': '灿灿', 'intent': '行吧，这外号还挺直白。'},
+        ],
+    }
+    before = deepcopy(payload)
+    result, notes = normalize_payload_tokens(payload)
+    assert result == before and payload == before and notes == []
+    assert normalize_payload_tokens(result) == (result, [])
+
+
+def test_source_fill_reports_total_length_with_line_errors_in_same_round(monkeypatch):
+    from app.services.gold_story.gold_chat import expand
+    slots = [{'speaker': '灿灿' if i % 2 else '昭昭', 'intent': '原有对白',
+              'source_plan': True} for i in range(12)]
+    requests = []
+
+    def chat(_system, user, **_kwargs):
+        requests.append(user)
+        text = '原话太短。' if len(requests) == 1 else '这里仅用于验证篇幅反馈与单句错误在同轮一起传递。'
+        return {'lines': [{'i': i, 'line': text} for i in range(1, 13)]}
+
+    def validate(_slots, filled):
+        rows = [(slot['speaker'], filled[i]) for i, slot in enumerate(_slots, 1)]
+        return rows, [(1, filled[1], '须完整句')] if len(requests) == 1 else []
+
+    monkeypatch.setattr(expand, '_chat_json', chat)
+    monkeypatch.setattr(expand, '_perbeat_validate_fill', validate)
+    _rows, failures = expand._perbeat_fill_slots(
+        slots, scene_contract={'story_type': 'F'}, punchline='', temperature=0.3,
+        source_text='原有素材，只用于检验反馈传递。',
+    )
+    assert not failures and len(requests) == 2
+    assert '须完整句' in requests[1] and '正文总字数须≥' in requests[1]
+    assert '"i": 12' in requests[1] and '"editable": true' in requests[1]
+
+
+def test_source_plan_c_quote_keeps_speaker_when_closing_has_no_role_keyword():
+    from copy import deepcopy
+    from app.services.gold_story.gold_chat.patch import patch_m2_c_structure
+    from app.services.daily_story.review import _validate_source_audit
+
+    lines = ['书先放在这里。', '我也想先看这本书。', '谁先答对就先看。',
+             '答的是哪一道题呢？', '这一道答对也算数。', '不算，我问的不是这一道。',
+             '你刚说答对就算数，现在把书给我。', '行行行，下次我先说清楚。']
+    rows = [{'speaker': '昭昭' if i % 2 == 0 else '灿灿', 'line': line}
+            for i, line in enumerate(lines)]
+    story = {'story_type': 'C', 'dialogue': rows, 'gold_source_line_plan': [
+        {'line': i, 'speaker': r['speaker'], 'role': 'content', 'source_seed_ids': [i]}
+        for i, r in enumerate(rows, 1)]}
+    before = deepcopy(story)
+    result, notes = patch_m2_c_structure(
+        story, structure_type='C', mechanism='M2', payload={'closing_intent': '交书后嘴硬收场'},
+    )
+    assert result == before and story == before and notes == []
+    # 跳过旧模板改写不等于跳过终审的来源角色核对。
+    wrong = deepcopy(result)
+    wrong['dialogue'][6]['speaker'] = '灿灿'
+    audit = [{'line': i, 'role': 'content', 'source_seed_ids': [i],
+              'quote': r['line'], 'pass': True, 'reason': '与原素材一致'}
+             for i, r in enumerate(wrong['dialogue'], 1)]
+    assert '第7行说话人偏离' in _validate_source_audit({'source_audit': audit}, wrong)
+
+
+def test_source_plan_citation_does_not_inherit_original_speakers_role():
+    from copy import deepcopy
+    from app.services.gold_story.gold_chat.validate import apply_seed_phrase_speaker_align
+    line = '你刚才说写完作业才能看电视。'
+    story = {'dialogue': [{'speaker': '昭昭', 'line': line}],
+             'gold_source_line_plan': [{'line': 1, 'speaker': '昭昭', 'role': 'content', 'source_seed_ids': [1]}]}
+    before = deepcopy(story)
+    result, changed = apply_seed_phrase_speaker_align(
+        story, dialogue_seed=[{'speaker': '灿灿', 'intent': '写完作业才能看电视'}],
+    )
+    assert result == before and story == before and not changed
+
+
+def test_independent_fact_evidence_keeps_both_accusers_and_rejects_swapping():
+    from app.services.gold_story.scene import filter_fact_bound_rows
+    facts = [
+        {'fact_id': 'F1', 'secret_holder': '妈妈', 'accuser': '灿灿', 'discoverer': '灿灿'},
+        {'fact_id': 'F2', 'secret_holder': '妈妈', 'accuser': '昭昭', 'discoverer': '昭昭'},
+    ]
+    rows = [
+        {'speaker': '灿灿', 'intent': '你记得书在上层。', 'fact_ref': 'F1', 'speech_act': 'accuse', 'claim_role': 'accuser'},
+        {'speaker': '昭昭', 'intent': '你还记得笔剩三支。', 'fact_ref': 'F2', 'speech_act': 'accuse', 'claim_role': 'accuser'},
+        {'speaker': '灿灿', 'intent': '你还记得哪本借出去了。', 'fact_ref': 'F1', 'speech_act': 'accuse', 'claim_role': 'accuser'},
+    ]
+    kept, conflicts = filter_fact_bound_rows(rows, facts)
+    assert kept == rows and conflicts == []
+    invalid = [dict(rows[0], fact_ref='F2'), rows[1], rows[2]]
+    kept, conflicts = filter_fact_bound_rows(invalid, facts)
+    assert kept == rows[1:] and len(conflicts) == 1

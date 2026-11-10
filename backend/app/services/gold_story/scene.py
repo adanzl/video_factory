@@ -2522,6 +2522,10 @@ def normalize_payload_tokens(payload: dict[str, Any]) -> tuple[dict[str, Any], l
         return payload, []
     out, notes = _collapse_adjacent_source_repeats(dict(payload))
     contract = out.get("scene_contract")
+    if isinstance(contract, dict) and contract.get("source_grounded") is True:
+        # 来源契约已经绑定原文角色与顺序；创作模式的模板填词、换人、调序会
+        # 破坏这个绑定。仅保留上方有原文依据且记录次数的逐字重复合并。
+        return out, notes
     if isinstance(contract, dict):
         new_contract, c_notes = neutralize_mechanism_token(contract)
         if c_notes:

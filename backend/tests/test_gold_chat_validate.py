@@ -2781,3 +2781,76 @@ def test_perbeat_setting_keeps_details_when_place_is_mapped():
     assert "滚作一团" in got
     assert "贴纸" in got
     assert gex.setting_location_violations(got) == []
+
+
+def _split_source_opening():
+    chain = [
+        {'speaker': '妈妈', 'intent': '要求收好彩笔，再把图画交给姐姐'},
+        {'speaker': '昭昭', 'intent': '答应先收好彩笔再交图画'},
+        {'speaker': '灿灿', 'intent': '拿到图画后发现没有涂色'},
+    ]
+    dialogue = [
+        {'speaker': '妈妈', 'line': '先把这些彩笔全部收进盒子里。'},
+        {'speaker': '灿灿', 'line': '彩笔盒子就在桌子旁边呢。'},
+        {'speaker': '妈妈', 'line': '然后把这张图画交给姐姐。'},
+        {'speaker': '昭昭', 'line': '我先收彩笔，再把图画交给姐姐。'},
+        {'speaker': '灿灿', 'line': '我拿到图画了，怎么还没有涂色？'},
+    ]
+    plan = [
+        {'line': 1, 'beat': 1, 'speaker': '妈妈', 'role': 'content', 'source_seed_ids': [1], 'intent': dialogue[0]['line']},
+        {'line': 2, 'beat': 1, 'speaker': '灿灿', 'role': 'reaction', 'source_seed_ids': [], 'intent': dialogue[1]['line']},
+        {'line': 3, 'beat': 1, 'speaker': '妈妈', 'role': 'content', 'source_seed_ids': [2], 'intent': dialogue[2]['line']},
+        {'line': 4, 'beat': 2, 'speaker': '昭昭', 'role': 'content', 'source_seed_ids': [3], 'intent': dialogue[3]['line']},
+        {'line': 5, 'beat': 3, 'speaker': '灿灿', 'role': 'content', 'source_seed_ids': [4], 'intent': dialogue[4]['line']},
+    ]
+    return {'dialogue': dialogue, 'gold_source_line_plan': plan}, chain
+
+
+def test_opening_source_split_requires_all_actual_content_before_response():
+    from copy import deepcopy
+    from app.services.gold_story.gold_chat.validate import collect_opening_causality_issues
+    story, chain = _split_source_opening()
+    assert not collect_opening_causality_issues(story, chain, mom_lines_max=2)
+    missing = deepcopy(story)
+    missing['dialogue'][2]['line'] = '今晚咱们一起吃面条吧。'
+    assert collect_opening_causality_issues(missing, chain, mom_lines_max=2)
+    late = deepcopy(story)
+    late['dialogue'][2:4] = reversed(late['dialogue'][2:4])
+    late['gold_source_line_plan'][2:4] = reversed(late['gold_source_line_plan'][2:4])
+    for no, slot in enumerate(late['gold_source_line_plan'], 1):
+        slot['line'] = no
+    assert collect_opening_causality_issues(late, chain, mom_lines_max=2)
+
+
+def test_opening_source_witness_is_not_an_extra_causal_event():
+    from app.services.gold_story.gold_chat.validate import collect_opening_causality_issues
+    story, chain = _split_source_opening()
+    chain.insert(1, {'speaker': '灿灿', 'intent': '仅作旁观短反应', 'witness_only': True})
+    for slot in story['gold_source_line_plan']:
+        if slot['beat'] >= 2:
+            slot['beat'] += 1
+    story['gold_source_line_plan'][1]['beat'] = 2
+    assert not collect_opening_causality_issues(story, chain, mom_lines_max=2)
+    # 真实第三拍不能被旁观拍顶替：保留编号映射，删除正文中的真实回应仍须失败。
+    story['dialogue'][3]['line'] = '今天外面的天气还挺好的。'
+    assert collect_opening_causality_issues(story, chain, mom_lines_max=2)
+
+
+def test_opening_source_missing_last_event_does_not_fall_back_to_other_lines():
+    from app.services.gold_story.gold_chat.validate import collect_opening_causality_issues
+    story, chain = _split_source_opening()
+    story['dialogue'][-1]['line'] = '我现在想去喝一杯温水。'
+    issues = collect_opening_causality_issues(story, chain, mom_lines_max=2)
+    assert any(issue.get('missing_beat', {}).get('beat') == 3 for issue in issues)
+
+
+def test_opening_source_compound_event_allows_multiple_speakers_but_keeps_owner():
+    from app.services.gold_story.gold_chat.validate import collect_opening_causality_issues
+    story, chain = _split_source_opening()
+    story['dialogue'][2] = {'speaker': '灿灿', 'line': '妈妈说了，收完彩笔再把图画给我。'}
+    story['gold_source_line_plan'][2].update(speaker='灿灿', intent=story['dialogue'][2]['line'])
+    assert not collect_opening_causality_issues(story, chain, mom_lines_max=2)
+    story['dialogue'][0]['speaker'] = '灿灿'
+    story['gold_source_line_plan'][0]['speaker'] = '灿灿'
+    issues = collect_opening_causality_issues(story, chain, mom_lines_max=2)
+    assert any(issue.get('missing_beat', {}).get('beat') == 1 for issue in issues)

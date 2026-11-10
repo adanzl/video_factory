@@ -1863,7 +1863,7 @@ def test_search_unknown_fallback_keeps_hard_gate_and_advances_cursor(app_ctx, mo
     sql.commit()
 
 
-@pytest.mark.parametrize("score,accepted", [(0.4672, False), (0.5499, False), (0.55, True)])
+@pytest.mark.parametrize("score,accepted", [(0.4672, False), (0.5099, False), (0.51, True), (0.5499, True), (0.55, True)])
 def test_queued_update_enforces_same_score_threshold_as_insert(app_ctx, score, accepted):
     from app.repositories import repo_gold_story as repo
     pending = repo.insert_pending(source="bili", source_id="BV1SCORECHECK", url="", title="score gate", payload={})

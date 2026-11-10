@@ -1350,6 +1350,10 @@ def apply_seed_phrase_speaker_align(
     """seed 专属短语出现在错 speaker 时，改回 seed 标注角色（机械对齐）。"""
     import copy
 
+    if story.get("gold_source_line_plan"):
+        # 引用对方原话不改变说话人；来源计划归属由终验核对。
+        return story, False
+
     owners = _seed_unique_phrase_owners(dialogue_seed)
     if not owners:
         return story, False
@@ -3045,6 +3049,50 @@ def _beat_summary(entry: dict[str, Any], beat_no: int) -> str:
     return f"{head}（{intent}）" if intent else head
 
 
+def _source_opening_spans(
+    story: dict[str, Any], rows: list[dict[str, Any]], entries: list[tuple[int, dict[str, Any]]],
+) -> tuple[list[tuple[int, dict[str, Any]]], dict[int, tuple[int, int]]] | None:
+    """按来源单元检查复合拍；计划只定位，实际对白仍须逐项落地。"""
+    plan = story.get("gold_source_line_plan")
+    if not isinstance(plan, list) or not plan or len(plan) != len(rows):
+        return None
+    beats = dict(entries)
+    groups: dict[int, list[dict[str, Any]]] = {}
+    refs: list[int] = []
+    for no, (slot, row) in enumerate(zip(plan, rows), 1):
+        if (not isinstance(slot, dict) or type(slot.get("line")) is not int
+                or slot["line"] != no or type(slot.get("beat")) is not int
+                or slot["beat"] not in beats or slot.get("speaker") != row.get("speaker")):
+            return None
+        ids = slot.get("source_seed_ids")
+        if slot.get("role") == "reaction" and ids == []:
+            continue
+        if (slot.get("role") != "content" or not isinstance(ids, list) or len(ids) != 1
+                or type(ids[0]) is not int or ids[0] <= 0):
+            return None
+        refs.extend(ids)
+        groups.setdefault(slot["beat"], []).append(slot)
+    if refs != sorted(set(refs)):
+        return None
+    from app.services.gold_story.scene import is_n_filler_intent
+
+    # 无来源内容的真实拍仍须检查；只有明确的旁观反应拍不作为因果节点。
+    opening = [(no, beat) for no, beat in entries
+               if no in groups or not (beat.get("witness_only")
+                                       or is_n_filler_intent(str(beat.get("intent") or "")))][:3]
+    spans: dict[int, tuple[int, int]] = {}
+    for bid, _beat in opening:
+        units = groups.get(bid, [])
+        # 一个来源事件拍可以包含多人问答，但不能丢掉拍主本人的来源内容。
+        if (units and any(slot["speaker"] == _beat.get("speaker") for slot in units)
+                and all(_line_fulfills_beat(
+                str(slot["speaker"]), str(rows[slot["line"] - 1].get("line") or ""),
+                {"speaker": slot["speaker"], "intent": slot.get("intent"),
+                 "speech_act": slot.get("speech_act")}) for slot in units)):
+            spans[bid] = (units[0]["line"], units[-1]["line"])
+    return opening, spans
+
+
 def collect_opening_causality_issues(
     story: dict[str, Any],
     beat_chain: list[Any] | None = None,
@@ -3061,6 +3109,9 @@ def collect_opening_causality_issues(
 
     entries = _beat_chain_entries(chain)
     opening = entries[: min(3, len(entries))]
+    source_spans = _source_opening_spans(story, rows, entries)
+    if source_spans is not None:
+        opening = source_spans[0]
     if len(opening) < 2:
         return []
 
@@ -3081,6 +3132,19 @@ def collect_opening_causality_issues(
             "在前段对白补触发事件（勿写进 setting）"
         )
 
+    if source_spans is not None:
+        for no, entry in opening:
+            if no in source_spans[1]:
+                continue
+            plan = story.get("gold_source_line_plan") or []
+            targets = [slot["line"] for slot in plan
+                       if slot.get("beat") == no and slot.get("role") == "content"]
+            issues.append({"lines": targets or [1], "kind": "开场因果",
+                           "desc": f"{_beat_summary(entry, no)}的来源内容未逐项落地",
+                           "fix": "补齐本拍全部来源单元，保留角色与顺序，不得靠计划标签代替实际对白",
+                           "missing_beat": {"beat": no, "speaker": entry.get("speaker"),
+                                            "intent": str(entry.get("intent") or "")}})
+
     # 触发型 beat1（责备/定责/立规）就是开场因果起点：必须由第1句落地。
     # 不能允许“第7句才补一个妈妈触发，再从后面挑另一个 beat2”来伪造顺序。
     first_row = rows[0]
@@ -3089,9 +3153,9 @@ def collect_opening_causality_issues(
     beat1_no, beat1_entry = opening[0]
     beat2_no, beat2_entry = opening[1]
     beat1_acts = _intent_speech_acts(str(beat1_entry.get("intent") or ""))
-    if "trigger" in beat1_acts and not _line_fulfills_beat(
-        first_sp, first_line, beat1_entry
-    ):
+    starts_trigger = (_line_fulfills_beat(first_sp, first_line, beat1_entry)
+                      if source_spans is None else source_spans[1].get(beat1_no, (0, 0))[0] == 1)
+    if "trigger" in beat1_acts and not starts_trigger:
         issues.append(
             {
                 "lines": [1],
@@ -3119,9 +3183,14 @@ def collect_opening_causality_issues(
         beat_j_no, beat_j = opening[idx + 1]
         line_i = fulfilled.get(beat_i_no)
         line_j = fulfilled.get(beat_j_no) or _first_line_matching_beat(rows, beat_j)
+        if source_spans is not None:
+            span_i, span_j = source_spans[1].get(beat_i_no), source_spans[1].get(beat_j_no)
+            if span_i is None or span_j is None:
+                continue  # 缺失单元已逐拍报错，不回落到计划外的碰词匹配。
+            line_i, line_j = span_i[1], span_j[0]
         if line_j is None:
             continue
-        if line_i is None:
+        if line_i is None and source_spans is None:
             line_i = _first_line_matching_beat(rows, beat_i)
         if line_i is None:
             issues.append(
@@ -3145,7 +3214,7 @@ def collect_opening_causality_issues(
                 },
             )
             continue
-        if not _line_fulfills_beat(
+        if source_spans is None and not _line_fulfills_beat(
             str(rows[line_i - 1].get("speaker") or "").strip(),
             str(rows[line_i - 1].get("line") or "").strip(),
             beat_i,

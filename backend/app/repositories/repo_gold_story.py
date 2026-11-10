@@ -25,7 +25,7 @@ _GOLD_STORY_COLUMNS = (
     "created_at, updated_at, last_used_at"
 )
 
-_MIN_AUTO_SCORE = 0.55
+_MIN_AUTO_SCORE = 0.51
 _COMPACT_STORY_RE = re.compile(r"[\s\W_]+", re.UNICODE)
 NEAR_DUP_LCS_MIN = 16
 # H0/H1 先入库占位；H5 pick 只取 active/promoted，不会命中

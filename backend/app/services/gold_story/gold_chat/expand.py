@@ -579,6 +579,36 @@ def _fix_chat_with_llm(
     mom_lines_max: int = 1,
     scene_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if story.get("gold_source_line_plan"):
+        original = story.get("dialogue") or []
+        draft = _chat_json(
+            "你是来源对话稿的定点修稿编辑。只改错误涉及的台词；不增删、移动行或更换说话人，"
+            "不改变来源事实、问答方向和收束。不补新经历或动作；保留未涉及的台词。"
+            "每句8–24字，须是完整的当场对白，不含括号旁白。"
+            '仅输出JSON：{"fixes":[{"no":从1开始的行号,"line":"修改后的台词"}]}。',
+            json.dumps({"errors": errors, "story": story, "scene_contract": scene_contract,
+                        "banned_literals": banned_literals, "mom_lines_max": mom_lines_max},
+                       ensure_ascii=False),
+            temperature=0.55, model=_source_plan_model(), json_mode=False, max_tokens=4096,
+        )
+        fixes = draft.get("fixes")
+        if not isinstance(fixes, list) or not fixes:
+            raise ValueError("来源分句修稿须返回非空 fixes")
+        result = copy.deepcopy(story)
+        seen: set[int] = set()
+        for fix in fixes:
+            if not isinstance(fix, dict) or set(fix) != {"no", "line"}:
+                raise ValueError("来源分句修稿只允许 no/line 字段")
+            no, line = fix["no"], fix["line"]
+            if (type(no) is not int or not 1 <= no <= len(original) or no in seen
+                    or not isinstance(line, str) or not line.strip()):
+                raise ValueError("来源分句修稿行号无效、重复或台词为空")
+            seen.add(no)
+            result["dialogue"][no - 1]["line"] = line.strip()
+            for slot in result["gold_source_line_plan"]:
+                if slot.get("line") == no and slot.get("role") == "reaction":
+                    slot["intent"] = line.strip()
+        return result
     user = _FIX_USER.format(
         errors=errors,
         cast_block=format_cast_block(scene_contract),
@@ -587,16 +617,6 @@ def _fix_chat_with_llm(
         mom_lines_max=max(0, int(mom_lines_max)),
         **_prompt_budget_kwargs(),
     )
-    if story.get("gold_source_line_plan"):
-        draft = _chat_json(_FIX_SYSTEM, user, temperature=0.55, model=_source_plan_model(),
-                           json_mode=False, max_tokens=4096)
-        rows = draft.get("dialogue")
-        original = story.get("dialogue") or []
-        if (not isinstance(rows, list) or len(rows) != len(original)
-                or any(not isinstance(r, dict) or r.get("speaker") != old.get("speaker")
-                       for r, old in zip(rows, original))):
-            raise ValueError("来源分句修稿不得改变行数或说话人")
-        return {**story, "dialogue": rows}
     return _chat_json(_FIX_SYSTEM, user, temperature=0.55)
 
 
@@ -1123,7 +1143,16 @@ def _validate_expand_chat(
                         perbeat_length_revisions += 1
                         data = _revise_perbeat_length(data, row=row)
                         continue
-                    raise ValueError(f"perbeat validate: {exc2}") from exc2
+                    from app.services.gold_story.gold_chat.repair import GoldChatFillError
+                    from app.services.gold_story.gold_chat.validate import collect_opening_causality_issues
+
+                    issues = collect_opening_causality_issues(data, beat_chain, mom_lines_max=mom_lines_max)
+                    for issue in issues:
+                        missing = issue.get("missing_beat") or {}
+                        no = missing.get("beat")
+                        if type(no) is int and 1 <= no <= len(beat_chain):
+                            missing["speaker"] = beat_chain[no - 1].get("speaker", "")
+                    raise GoldChatFillError(f"perbeat validate: {exc2}", data, issues=issues) from exc2
             # 缺字段/妈句：本地补丁 + 通用 FIX，勿只走短篇幅扩写
             if _has_non_short_hard_errors(last_err):
                 data = _apply_gold_chat_local_hard_repairs(
@@ -4949,12 +4978,16 @@ def _audit_source_f_structure(story: dict[str, Any]) -> None:
         "中止须实际结束争执（退让、退场、外部打断或放下当下争论留待以后），不要求特定口头词。"
         "每项须同时有原文依据与成稿语义支持，不能凭计划、词语相同或声称已通过放行；不成立pass=false。"
         "角色映射仅用于理解关系，不改写source_quote的称谓。"
+        "source_line_plan标记为reaction的行是生成的接话，不是原文；content的intent也不代替原文。"
+        "source_quote只能逐字取自source_text，不能把dialogue里的生成接话当成来源引文。"
+        "无论plan是否存在，唯一原文都是source_text；无原文语义支持须pass=false，不能用生成对白或intent补证。"
         "按conflict/escalation/standoff/closing四项输出，line必须严格递增、closing在末三句。"
         '格式 {"f_structure_audit":[{"aspect":"conflict","line":2,"pass":true,'
         '"quote":"当前句连续引文","source_quote":"原文连续引文","reason":"该阶段如何成立或不成立"},...]}。'
     )
     user = json.dumps({"source_text": story["source_raw"],
         "role_mapping": story.get("source_role_mapping"),
+        "source_line_plan": story.get("gold_source_line_plan") or [],
         "dialogue": [{"line": i, "speaker": r.get("speaker"), "text": r.get("line")}
                      for i, r in enumerate(story.get("dialogue") or [], 1)]}, ensure_ascii=False)
     data = _chat_json(system, user, temperature=0.0, max_tokens=2400)
@@ -5174,6 +5207,8 @@ def _perbeat_fill_slots(
                         for i, line, why in failures]
         if source_mode:
             from app.services.daily_story.story_types.n.validate import append_n_body_errors
+            from app.services.gold_story.gold_chat.validate import gold_chat_effective_min_chars
+            from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
             type_errors: list[str] = []
             candidate = {"story_type": scene_contract.get("story_type"),
                                   "gold_n_expression_contract": scene_contract.get("gold_n_expression_contract"),
@@ -5184,6 +5219,14 @@ def _perbeat_fill_slots(
             if type_errors:
                 failures.append((0, "全文", "；".join(type_errors) + "；在合适位置自然补全，保留原素材，不固定某一行携词"))
             total_chars = dialogue_total_chars(candidate)
+            min_chars = gold_chat_effective_min_chars(candidate["dialogue"])
+            if len(slots) >= CHAT_LINE_COUNT_MIN and total_chars < min_chars:
+                # 单句与全文篇幅同时反馈，不能等单句全修完才发现全文过短，
+                # 否则最后一轮只差少数字仍会丢掉整稿重掷。
+                failures = [item for item in failures if not item[2].startswith("全文还差")]
+                failures.append((0, "全文", f"正文总字数须≥{min_chars}，当前{total_chars}；"
+                                 f"至少补足{min_chars - total_chars}字，只补清原有对象与指代，"
+                                 "不得新增事实、重复或空话凑字；保留全部槽位、说话人和顺序"))
             if total_chars > DAILY_STORY_BODY_CHARS_MAX:
                 failures.append((0, "全文", f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total_chars}；"
                                  f"至少压缩{total_chars - DAILY_STORY_BODY_CHARS_MAX}字冗余措辞，"
@@ -5668,15 +5711,41 @@ def _generate_perbeat_candidate(
         retry_feedback=retry_feedback,
         source_text=str(story_raw or ""),
     )
+    data = {
+        "scene_title": str((row or {}).get("title") or ""),
+        # validate 的必填字段：逐拍生成只管对白，其余字段从契约原地补齐，
+        # 否则缺字段会让 validate 直接失败并把整篇丢给 LLM 重写。
+        # setting 不能只取 location：H3b 产出的设定带冲突物落点（谁端着哪件），
+        # 只用地点会让导出「设定」缩成「客厅」两个字（#138/#143/#144 实测）。
+        # 契约重建后地点可能已换，所以只有地点对得上时才复用旧设定。
+        "setting": _perbeat_setting_from(row, scene_contract),
+        "key": _perbeat_key_from_object(str(scene_contract.get("object") or "")),
+        "conflict_core": str(scene_contract.get("conflict") or ""),
+        "story_type": str(structure_type or "").strip().upper(),
+        "dialogue": [{"speaker": sp, "line": ln} for sp, ln in lines],
+        "punchline_explain": str(scene_contract.get("punchline") or "").strip()
+        or str(scene_contract.get("closing_intent") or "").strip()
+        or str(scene_contract.get("conflict") or ""),
+        "gold_beat_chain": beat_chain,
+        "gold_source_line_plan": source_plan,
+        "source_link_review": bool(story_raw and (not source_plan or structure_type in {"F", "G"})),
+        "gold_n_expression_contract": n_expression,
+        # 源故事原文带上：终检判「语病」时要用它区分「作者原句」与「模型硬编」。
+        "source_raw": story_raw,
+        "source_role_mapping": str(scene_contract.get("remap_note") or ""),
+    }
+    from app.services.gold_story.scene import resolve_parent_lines_budget
+
+    mom_budget, dad_budget, parent_budget = resolve_parent_lines_budget(scene_contract)
+    data.update(_gold_chat_mom_lines_max=mom_budget, _gold_chat_dad_lines_max=dad_budget,
+                _gold_chat_parent_lines_max=parent_budget)
     if failures:
         # 契约拍没填出合格句：整条 draft 重掷（外层 draft retry），
         # 交上去只会让后文变成「引用无据」。
         detail = "；".join(f"{'全文' if i == 0 else f'第{i}句'}「{ln}」{why}" for i, ln, why in failures[:3])
         raise GoldChatFillError(
             f"perbeat: {len(failures)} line(s) invalid; {detail}",
-            {"story_type": structure_type,
-             "dialogue": [{"speaker": sp, "line": ln} for sp, ln in lines],
-             "fill_failures": failures},
+            {**data, "fill_failures": failures},
         )
     # 单句上限是硬卡（24 字）：生成端已按 14–24 判过，但返修轮拼进来的句子
     # 仍可能超（#138 实测：`单句过长(max=26>24)` 让整轮修稿预算白烧）。
@@ -5702,29 +5771,7 @@ def _generate_perbeat_candidate(
         }
         raise error
 
-    data = {
-        "scene_title": str((row or {}).get("title") or ""),
-        # validate 的必填字段：逐拍生成只管对白，其余字段从契约原地补齐，
-        # 否则缺字段会让 validate 直接失败并把整篇丢给 LLM 重写。
-        # setting 不能只取 location：H3b 产出的设定带冲突物落点（谁端着哪件），
-        # 只用地点会让导出「设定」缩成「客厅」两个字（#138/#143/#144 实测）。
-        # 契约重建后地点可能已换，所以只有地点对得上时才复用旧设定。
-        "setting": _perbeat_setting_from(row, scene_contract),
-        "key": _perbeat_key_from_object(str(scene_contract.get("object") or "")),
-        "conflict_core": str(scene_contract.get("conflict") or ""),
-        "story_type": str(structure_type or "").strip().upper(),
-        "dialogue": [{"speaker": sp, "line": ln} for sp, ln in lines],
-        "punchline_explain": str(scene_contract.get("punchline") or "").strip()
-        or str(scene_contract.get("closing_intent") or "").strip()
-        or str(scene_contract.get("conflict") or ""),
-        "gold_beat_chain": beat_chain,
-        "gold_source_line_plan": source_plan,
-        "source_link_review": bool(story_raw and (not source_plan or structure_type in {"F", "G"})),
-        "gold_n_expression_contract": n_expression,
-        # 源故事原文带上：终检判「语病」时要用它区分「作者原句」与「模型硬编」。
-        "source_raw": story_raw,
-        "source_role_mapping": str(scene_contract.get("remap_note") or ""),
-    }
+    data["dialogue"] = [{"speaker": sp, "line": ln} for sp, ln in lines]
     _audit_source_f_structure(data)
     _audit_source_g_structure(data)
     logger.info(
@@ -6290,6 +6337,10 @@ def _trim_gold_chat_mom_lines(
     口径与 validate.validate_chat_hard 共用 resolve_parent_lines_budget：
     妈妈≤mom_max、爸爸≤dad_max、家长合计≤parent_max。
     """
+    if story.get("gold_source_line_plan"):
+        # 来源句与证据编号一一绑定；删句会丢事实并错移后续审核行号。
+        # 真实超额仍由硬校验拒绝，交契约重建，不能靠删除素材过关。
+        return story, False
     import copy
 
     from app.services.gold_story.scene import resolve_parent_lines_budget

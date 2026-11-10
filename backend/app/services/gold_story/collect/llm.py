@@ -418,6 +418,10 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
   标题里抱怨方是 accuser/discoverer，被背着/被揭发的那一方才是 secret_holder
 - 判不出 secret_holder 时 `attribution_status=ambiguous`，
   **禁止**为了故事完整硬指定
+- **多人独立举证须分建事实**：不同说话人提供不同证据时，按各自实际证据拆分 fact，
+  分别填写 accuser/discoverer；event 写清该条原文证据，相关拍用对应 fact_ref。
+  不把多人的证据压成只有一个 accuser 的综合事实；同一人连续补充同一证据不必拆分。
+  普通提问、接话不等于揭发，不得一律标为 accuse 或挂到同一事实。
 - **facts 与 beat_chain 必须自洽**：填了 `claimant` 就说明源稿
   确有讨要/补偿动作，beat_chain 必须含该讨要拍（标
   `speech_act=claim_compensation`、`claim_role=claimant`），不得漏拍；

@@ -1401,6 +1401,10 @@ def patch_m2_c_structure(
 
     del theme  # 调用方兼容；主题锚不再本地改写 conflict_core
 
+    if story.get("gold_source_line_plan"):
+        # 来源角色与事件顺序已经锁定，不能再按收束关键词猜回旋镖说话人。
+        return story, []
+
     st = str(structure_type or story.get("story_type") or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     if st != "C" or mech != "M2":

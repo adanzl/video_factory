@@ -345,7 +345,7 @@ def _iter_missing_beat_issues(node: Any) -> list[dict[str, Any]]:
         item
         for item in issues
         if isinstance(item, dict)
-        and str(item.get("kind") or "").strip() == "缺前提"
+        and str(item.get("kind") or "").strip() in {"缺前提", "开场因果"}
     ]
 
 
@@ -2545,6 +2545,7 @@ def convert_gold_chat(
                     finish_stage("contract")
             current_stage = "draft"
             chat = None
+            last_candidate = None
             attempt_started = time.perf_counter()
             repair_budget = GoldChatRepairBudget(max_repairs=2, reserve_final=1)
             try:

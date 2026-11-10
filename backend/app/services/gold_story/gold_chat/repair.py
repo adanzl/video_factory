@@ -29,8 +29,12 @@ class GoldChatFillError(ValueError):
     stage = "perbeat_fill"
     candidate_review_status = "failed"
 
-    def __init__(self, message: str, candidate: dict[str, Any]) -> None:
-        self.candidate = candidate
+    def __init__(self, message: str, candidate: dict[str, Any], *,
+                 issues: list[dict[str, Any]] | None = None) -> None:
+        from copy import deepcopy
+
+        self.candidate = deepcopy(candidate)
+        self.issues = deepcopy(issues or [])
         super().__init__(message)
 
 

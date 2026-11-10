@@ -1564,7 +1564,10 @@ def _validate_source_audit(raw: dict[str, Any], story: dict[str, Any]) -> str:
         if (not isinstance(item, dict) or type(item.get("line")) is not int
                 or item.get("line") != no or item.get("role") != expected.get("role")
                 or item.get("source_seed_ids") != expected.get("source_seed_ids")):
-            return "source_audit 行号、角色类型、素材编号须与来源计划逐项一致"
+            keys = ("line", "role", "source_seed_ids")
+            return ("source_audit 行号、角色类型、素材编号须与来源计划逐项一致；"
+                    f"第{no}行期望{json.dumps({k: expected.get(k) for k in keys}, ensure_ascii=False)}，"
+                    f"实际{json.dumps({k: item.get(k) for k in keys} if isinstance(item, dict) else item, ensure_ascii=False)}")
         if not isinstance(no, int) or not 1 <= no <= len(rows):
             return "来源计划行号越界"
         line = str(rows[no - 1].get("line") or "")
