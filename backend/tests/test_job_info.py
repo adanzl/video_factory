@@ -1,3 +1,5 @@
+import pytest
+
 from app.utils.job_info import (
     CONTENT_STYLE_HISTORICAL_MYSTERY,
     merge_job_script_params,
@@ -401,3 +403,88 @@ def test_daily_story_create_job_info_stores_phrase_gap_in_tts():
     assert info["tts"]["speaker_configs"]["灿灿"]["speech_rate"] == 1.30
     assert info["tts"]["speaker_configs"]["妈妈"]["speech_rate"] == 1.20
     assert "phrase_gap_sec" not in info
+
+
+def test_job_list_keeps_story_type_after_error_is_cleared(app_ctx):
+    from app.repositories import repo_daily_story, repo_job
+
+    story_id = repo_daily_story.insert_story(theme="信息栏回归", story={}, story_type="C")
+    job = repo_job.create_job(
+        "信息栏回归", pipeline="chat", stage="publish",
+        info={"daily_story_id": story_id, "tts": {"phrase_gap_sec": 0.2}},
+        error_message="[C公平执念]",
+    )
+    client = app_ctx.test_client()
+
+    def listed():
+        response = client.get("/v_factory/api/jobs/list?pipeline=chat&limit=1")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["total"] == 1
+        return data["items"][0]
+
+    assert listed()["info_message"] == "[C公平执念]"
+    repo_job.update_job(job["id"], error_message="clip 2: 口型质检失败", status="failed")
+    assert listed()["info_message"] == "[C公平执念] clip 2: 口型质检失败"
+    repo_job.update_job(job["id"], error_message=None, status="pending")
+    row = listed()
+    assert row["info_message"] == "[C公平执念]"
+    assert row["error_message"] is None
+    assert row["story_type"] == "C"
+    stored = repo_job.get_job(job["id"])
+    assert stored["info"] == job["info"]
+    assert stored["error_message"] is None  # 读取列表不能补写错误字段
+    repo_job.update_job(job["id"], status="done", stage="done")
+    assert listed()["info_message"] == "[C公平执念] SUCCESS"
+
+
+@pytest.mark.parametrize("raw_info", [None, "{}", '{"daily_story_id":null}', '{"daily_story_id":""}', '{"daily_story_id":0}', "invalid-json"])
+def test_job_list_story_type_legacy_material_fallback(app_ctx, raw_info):
+    from app.repositories import repo_daily_story, repo_job
+    from app.repositories import sql_exec as sql
+
+    story_id = repo_daily_story.insert_story(theme="旧任务", story={}, story_type="D")
+    job = repo_job.create_job("旧任务", pipeline="chat", material_id=story_id)
+    sql.execute("UPDATE video_job SET info=? WHERE id=?", (raw_info, job["id"]))
+    sql.commit()
+    response = app_ctx.test_client().get("/v_factory/api/jobs/list")
+    assert response.status_code == 200
+    row = response.get_json()["items"][0]
+    assert row["info_message"] == "[D字面执行]"
+    assert row["error_message"] is None
+
+
+def test_job_list_type_source_and_error_compatibility(app_ctx):
+    from app.repositories import repo_daily_story, repo_job
+
+    old_id = repo_daily_story.insert_story(theme="旧类型", story={}, story_type="A")
+    current_id = repo_daily_story.insert_story(theme="当前类型", story={}, story_type="N")
+    changed = repo_job.create_job(
+        "类型更新", pipeline="chat", material_id=old_id,
+        info={"daily_story_id": current_id}, error_message="[A权威翻车] SUCCESS",
+    )
+    missing = repo_job.create_job(
+        "源故事缺失", pipeline="chat", material_id=999999,
+        error_message="[N正经胡说] 上游 503",
+    )
+    standard = repo_job.create_job(
+        "普通任务", pipeline="standard", material_id=current_id,
+        info={"daily_story_id": current_id}, error_message="上游 503",
+    )
+    prefixed = repo_job.create_job(
+        "带标签的真实错误", pipeline="chat", material_id=current_id,
+        error_message="[N正经胡说] 上游 503",
+    )
+    client = app_ctx.test_client()
+    response = client.get("/v_factory/api/jobs/list?limit=10")
+    assert response.status_code == 200
+    rows = {row["id"]: row for row in response.get_json()["items"]}
+    assert rows[changed["id"]]["info_message"] == "[N正经胡说]"
+    assert rows[changed["id"]]["error_message"] == "[A权威翻车] SUCCESS"
+    assert rows[missing["id"]]["info_message"] == "[N正经胡说] 上游 503"
+    assert rows[standard["id"]]["story_type"] is None
+    assert rows[standard["id"]]["info_message"] == "上游 503"
+    assert rows[prefixed["id"]]["info_message"] == "[N正经胡说] 上游 503"
+    page = client.get("/v_factory/api/jobs/list?pipeline=chat&limit=1&offset=1").get_json()
+    assert page["total"] == 3
+    assert page["items"][0]["id"] == missing["id"]

@@ -171,3 +171,24 @@ def chat_type_info_message(code: str | None, *, success: bool = False) -> str | 
     return f"{tag} SUCCESS" if success else tag
 
 
+def job_list_info_message(job: dict) -> str | None:
+    """列表类型来自关联故事；兼容旧错误栏中的类型标签，保留真实错误。"""
+    message = str(job.get("error_message") or "").strip()
+    if job.get("pipeline") != "chat":
+        return message or None
+    tag = chat_type_info_message(job.get("story_type"))
+    if not tag:
+        return message or None
+    # 只识别完整的旧格式，不吞掉类型前缀之后的真实报错。
+    legacy_tags = {
+        chat_type_info_message(code, success=success)
+        for code in STORY_TYPE_LABELS
+        for success in (False, True)
+    }
+    if message and message not in legacy_tags:
+        return message if message.startswith(f"{tag} ") else f"{tag} {message}"
+    if job.get("status") == "done" or job.get("publish"):
+        return f"{tag} SUCCESS"
+    return tag
+
+

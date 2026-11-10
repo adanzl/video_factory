@@ -384,9 +384,13 @@ class JobMgr:
 
     def list_jobs(self, *, condition: dict | None=None, limit: int=50, offset: int=0) -> dict:
         """返回 {items: [...], total: N}。"""
+        from app.services.daily_story.story_types.model import job_list_info_message
+
         with atomic():
             items = repo_job.list_jobs(condition=condition, limit=limit, offset=offset)
             total = repo_job.count_jobs(condition=condition)
+            for item in items:
+                item['info_message'] = job_list_info_message(item)
             return {'items': items, 'total': total}
 
     def get_job(self, job_id: int) -> dict:

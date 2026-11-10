@@ -129,7 +129,15 @@ def list_jobs(
     rows = sql.fetchall(
         f"""
         SELECT id, title, stage, status, pipeline, final_path, updated_at,
-               error_message, publish, info
+               error_message, publish, info,
+               (SELECT story_type FROM daily_story
+                WHERE video_job.pipeline = 'chat'
+                  AND daily_story.id = COALESCE(
+                      CASE WHEN json_valid(video_job.info)
+                           THEN NULLIF(NULLIF(json_extract(video_job.info, '$.daily_story_id'), ''), 0)
+                      END,
+                      video_job.material_id
+                  )) AS story_type
         FROM video_job
         {where_clause}
         ORDER BY id DESC

@@ -76,6 +76,9 @@ export interface JobListItem {
   /** info.publish_result.scheduled_at 或 .at */
   published_at?: string | null;
   error_message?: string | null;
+  /** 列表展示信息：关联故事类型 + 错误或完成标记。 */
+  info_message?: string | null;
+  story_type?: string | null;
   publish?: boolean;
 }
 

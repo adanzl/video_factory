@@ -66,20 +66,26 @@
           {{ row.published_at ? formatDateTime(row.published_at) : "" }}
         </template>
       </el-table-column>
-      <el-table-column prop="error_message" label="信息" width="200" show-overflow-tooltip />
+      <el-table-column prop="info_message" label="信息" width="200" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.info_message ?? row.error_message }}
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="180">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="handleViewDetail(row.id)">
             详情
           </el-button>
           <el-button
-            :type="row.publish ? 'success' : 'info'"
+            type="primary"
             link
             size="small"
-            :loading="publishingId === row.id"
-            @click="handleTogglePublish(row)"
+            title="补全成片"
+            :loading="fillingIds.has(row.id)"
+            :disabled="['queued', 'running'].includes(row.status)"
+            @click="handleFillMovie(row)"
           >
-            {{ row.publish ? "已发布" : "未发布" }}
+            发布
           </el-button>
           <el-button
             type="danger"
@@ -133,13 +139,14 @@
 import { h, onMounted, onUnmounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElCheckbox, ElMessage, ElMessageBox } from "element-plus";
-import { createJob, deleteJob, listJobs, updateJob } from "@/api/api-jobs";
+import { createJob, deleteJob, listJobs, runJobStageAction } from "@/api/api-jobs";
 import { pipelineLabel } from "@/constants/jobStages";
 import { PIPELINE_CHAT, PIPELINE_MATERIAL, PIPELINE_STANDARD } from "@/constants/jobStages";
 import type { CreateJobRunMode, JobListItem } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 import { formatMediaDuration, resolveFinalDuration } from "@/utils/media";
+import { FILL_CONFIRM_MESSAGE } from "./detail/stageLayout";
 
 const emit = defineEmits<{
   viewDetail: [jobId: number];
@@ -157,7 +164,7 @@ const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("jobsPageSize") || "15", 10));
 const total = ref(0);
 const deletingId = ref<number>();
-const publishingId = ref<number>();
+const fillingIds = ref(new Set<number>());
 const showCreateJobDialog = ref(false);
 const createJobTitle = ref("");
 const createJobSkipPublish = ref(true);
@@ -287,17 +294,33 @@ const handleCreateJob = async () => {
   }
 };
 
-const handleTogglePublish = async (row: JobListItem) => {
-  const next = !row.publish;
-  publishingId.value = row.id;
+const handleFillMovie = async (row: JobListItem) => {
+  if (fillingIds.value.has(row.id) || ["queued", "running"].includes(row.status)) return;
+  fillingIds.value.add(row.id);
   try {
-    await updateJob(row.id, { publish: next });
-    row.publish = next;
-    ElMessage.success(next ? "已标记为已发布" : "已标记为未发布");
+    try {
+      await ElMessageBox.confirm(FILL_CONFIRM_MESSAGE, "补全成片", {
+        confirmButtonText: "执行",
+        cancelButtonText: "取消",
+        type: "warning",
+      });
+    } catch {
+      return;
+    }
+    const endpoint = row.pipeline === PIPELINE_MATERIAL ? "prepare" : "script";
+    const result = await runJobStageAction(endpoint, {
+      id: row.id,
+      to_end: false,
+      fill: true,
+    });
+    row.status = result.status;
+    row.stage = result.stage;
+    ElMessage.success("已提交补全成片");
+    await fetchJobs();
   } catch (error) {
-    handleError(error, "更新发布状态失败");
+    handleError(error, "补全成片失败");
   } finally {
-    publishingId.value = undefined;
+    fillingIds.value.delete(row.id);
   }
 };
 
