@@ -1169,7 +1169,10 @@ class AgnesImageProvider(ImageProvider):
         "不判断是谁；两个相同服装/双胞胎/额外漂浮人头各算一人；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
         "项「粉卫衣」：穿粉色卫衣的女孩是否恰好 1 个；多了（含漂浮头）答否。"
-        "项「身高」：灿灿是否明显比昭昭高；昭昭等高或更高答「否」；"
+        "项「身高」：比较角色自身的身体比例，不是画面头顶坐标。"
+        "坐站、弯腰、透视造成的头顶高低不能作为身高颠倒的证据；"
+        "根据可见躯干和肢体比例，灿灿本体明显更高答「是」，昭昭本体等高或更高答「否」，"
+        "可见证据不足答「无法判断」，不能按设定补全；"
         "缺其一可答「无昭昭」或「无灿灿」。"
         "项「单扇门」：门是否只有一个门扇（单开门）；"
         "左右各一扇的双开门/对开门答「否」。"
@@ -1350,8 +1353,9 @@ class AgnesImageProvider(ImageProvider):
                     "height_can",
                     f"{_DAILY_LOOK['灿灿']}是否明显比{_DAILY_LOOK['昭昭']}高"
                     "（同站姿至少高约半个头；昭昭等高或更高答「否」）？"
-                    "一人坐/蹲、一人站时比体型比例：灿灿应显更高大。"
-                    "回答「是」或「否」；"
+                    "一人坐/蹲、一人站时只根据可见躯干与肢体比例比较本体身高，"
+                    "不能用画面头顶位置判高矮，也不能按角色设定补全。"
+                    "回答「是」或「否」，可见证据不足答「无法判断」；"
                     "仅当缺短发男孩答「无昭昭」、缺马尾女孩答「无灿灿」",
                 )
             )
@@ -2140,38 +2144,67 @@ class AgnesImageProvider(ImageProvider):
         crop.convert("RGB").save(buf, format="JPEG", quality=92)
         return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
+    @staticmethod
+    def _parse_limb_boxes(answer: str | None, roles: list[str]) -> dict[str, tuple[float, float, float, float]]:
+        """只转换明确声明的坐标单位；兼容旧版0至1，绝不猜测像素/千分坐标。"""
+        body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", (answer or "").strip()))
+        if not isinstance(body, dict) or body.get("complete") is not True or not isinstance(body.get("people"), list):
+            raise ValueError("incomplete")
+        unit = body.get("coordinate_system", "normalized_1")
+        if unit not in ("normalized_1", "normalized_1000"):
+            raise ValueError("unknown coordinate system")
+        scale = 1000.0 if unit == "normalized_1000" else 1.0
+        boxes: dict[str, tuple[float, float, float, float]] = {}
+        for person in body["people"]:
+            if not isinstance(person, dict):
+                raise ValueError("invalid person")
+            name, box = person.get("role"), person.get("box")
+            if not isinstance(name, str) or name not in roles or name in boxes or not isinstance(box, list) or len(box) != 4:
+                raise ValueError("invalid identity or box")
+            if any(type(v) not in (int, float) or not 0 <= v <= scale for v in box) or not box[0] < box[2] or not box[1] < box[3]:
+                raise ValueError("invalid bounds or coordinate units")
+            if not isinstance(person.get("evidence"), str) or not person["evidence"].strip():
+                raise ValueError("missing evidence")
+            boxes[name] = (box[0] / scale, box[1] / scale, box[2] / scale, box[3] / scale)
+        if set(boxes) != set(roles):
+            raise ValueError("missing person")
+        return boxes
+
     def _locate_limb_boxes(self, image_path: Path, roles: list[str], settings, keys: list) -> dict[str, tuple[float, float, float, float]]:
         question = (
             "定位当前图中每个指定角色完整可见身体的包围框，包含所有与该角色相连的手脚，"
             "尤其侧向伸出的手和手持物旁的手，不能只框人脸；不要假定角色在左中右。"
             f"角色外貌：{json.dumps({name: _ROLE_VERIFY[name][1] for name in roles}, ensure_ascii=False)}。"
-            '只输出JSON：{"complete":true,"people":[{"role":"角色名","box":[x1,y1,x2,y2],"evidence":"定位依据"}]}。'
-            "坐标相对整图归一化到0至1。每个指定角色必须恰好一个框，身份或肢体归属不确定用complete=false。"
+            '只输出JSON：{"complete":true,"coordinate_system":"normalized_1000",'
+            '"people":[{"role":"角色名","box":[x1,y1,x2,y2],"evidence":"定位依据"}]}。'
+            "使用0至1000的归一化坐标，整图左上角为[0,0]、右下角为[1000,1000]，不是像素坐标；"
+            "coordinate_system必须与实际坐标单位一致。每个指定角色必须恰好一个框，"
+            "身份或可见肢体归属不确定用complete=false。只框实际可见部分，不推测被遮挡的身体。"
         )
-        answer = self._ask_hardfail_vl(settings, keys, self._encode_verify_image_data_url(image_path),
-                                       question, f"[out={image_path.name}]", image_path=image_path, locate=True)
-        try:
-            body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", (answer or "").strip()))
-            if not isinstance(body, dict) or body.get("complete") is not True or not isinstance(body.get("people"), list):
-                raise ValueError("incomplete")
-            boxes: dict[str, tuple[float, float, float, float]] = {}
-            for person in body["people"]:
-                if not isinstance(person, dict):
-                    raise ValueError("invalid person")
-                name, box = person.get("role"), person.get("box")
-                if not isinstance(name, str) or name not in roles or name in boxes or not isinstance(box, list) or len(box) != 4:
-                    raise ValueError("invalid identity or box")
-                if any(type(v) not in (int, float) or not 0 <= v <= 1 for v in box) or not box[0] < box[2] or not box[1] < box[3]:
-                    raise ValueError("invalid bounds")
-                if not isinstance(person.get("evidence"), str) or not person["evidence"].strip():
-                    raise ValueError("missing evidence")
-                boxes[name] = (box[0], box[1], box[2], box[3])
-            if set(boxes) != set(roles):
-                raise ValueError("missing person")
-            logger.info("[out=%s] limbs locate evidence: %s", image_path.name, answer)
-            return boxes
-        except (ValueError, TypeError):
-            raise AgnesImageVerificationUnavailable("肢体质检未完成：人物定位不确定，保留图片待处理") from None
+        image_url = self._encode_verify_image_data_url(image_path)
+        answer = self._ask_hardfail_vl(settings, keys, image_url, question,
+                                       f"[out={image_path.name}]", image_path=image_path, locate=True)
+        for provider in ("agnes", "opencode_go"):
+            if provider == "opencode_go":
+                self._raise_if_job_cancelled()
+                answer = self._run_blocking_cancellable(lambda: opencode_visual_review(
+                    system="只依据图片独立定位指定人物可见身体，严格返回带坐标单位的JSON，不判断图片合格与否。",
+                    question=question, frames=[image_url], operation="limbs_locate_recheck",
+                    job_id=self._active_job_id, resource=str(image_path),
+                ))
+                self._raise_if_job_cancelled()
+            logger.info("[out=%s] limbs locate %s evidence: %s", image_path.name, provider, answer)
+            try:
+                return self._parse_limb_boxes(answer, roles)
+            except (ValueError, TypeError) as exc:
+                reason = f"人物定位结果无效：{exc}"
+                self._record_verify_failure(
+                    image_path, reason=reason, content=answer or "", check_ids=[],
+                    finish_reason=None, retry=0, key_label=provider,
+                    phase="limbs_locate" if provider == "agnes" else "limbs_locate_recheck", message=None,
+                )
+                logger.warning("[out=%s] %s: %s", image_path.name, provider, reason)
+        raise AgnesImageVerificationUnavailable("肢体质检未完成：人物定位不确定，保留图片待处理")
 
     def _verify_hardfail_limbs(
         self,
@@ -2290,7 +2323,7 @@ class AgnesImageProvider(ImageProvider):
                     "messages": [
                         {
                             "role": "system",
-                            "content": "只根据图片定位人物完整身体，返回用户要求的JSON。" if locate else _HARD_FAIL_ARM_SYSTEM_PROMPT,
+                            "content": "只根据图片定位人物可见身体，按用户指定坐标单位返回JSON。" if locate else _HARD_FAIL_ARM_SYSTEM_PROMPT,
                         },
                         {
                             "role": "user",

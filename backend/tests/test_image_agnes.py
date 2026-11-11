@@ -1887,7 +1887,10 @@ def test_limb_location_uses_actual_position_and_rejects_invalid_box(tmp_path, bo
     path = tmp_path/'image.png'
     PILImage.new('RGB', (400, 200), 'white').save(path)
     reply = json.dumps({'complete': True, 'people': [{'role': '昭昭', 'box': box, 'evidence': '右侧短发男孩'}]})
-    with patch.object(provider, '_ask_hardfail_vl', return_value=reply) as ask:
+    with (
+        patch.object(provider, '_ask_hardfail_vl', return_value=reply) as ask,
+        patch('app.services.segment.image.image_agnes.opencode_visual_review', return_value=None),
+    ):
         if box[0] == .65:
             assert provider._locate_limb_boxes(path, ['昭昭'], None, [])['昭昭'] == tuple(box)
         else:
@@ -1934,3 +1937,86 @@ def test_limb_failure_ds_recheck_preserves_strict_rule(tmp_path, count, extra, e
     assert '只回答阿拉伯数字' not in ds.call_args.kwargs['question']
     assert '是则回答' not in ds.call_args.kwargs['question']
     assert 'JSON对象' in ds.call_args.kwargs['question']
+
+
+@pytest.mark.parametrize('unit,box', [
+    ('normalized_1', [.17, .032, .434, .999]),
+    ('normalized_1000', [170, 32, 434, 999]),
+])
+def test_limb_coordinates_convert_only_declared_units(unit, box):
+    reply = json.dumps({'complete': True, 'coordinate_system': unit, 'people': [
+        {'role': '昭昭', 'box': box, 'evidence': '可见躯干及伸出的手脚'},
+    ]})
+    assert AgnesImageProvider._parse_limb_boxes(reply, ['昭昭'])['昭昭'] == pytest.approx((.17, .032, .434, .999))
+
+
+@pytest.mark.parametrize('mutation', [
+    'missing_unit', 'pixels', 'out_of_range', 'boolean', 'nan', 'infinity',
+    'reversed', 'duplicate', 'missing_role', 'unknown_role', 'no_evidence', 'incomplete',
+])
+def test_limb_location_rejects_ambiguous_or_incomplete_boxes(mutation):
+    body = {'complete': True, 'coordinate_system': 'normalized_1000', 'people': [
+        {'role': '昭昭', 'box': [100, 100, 400, 900], 'evidence': '左侧短发男孩'},
+    ]}
+    person = body['people'][0]
+    if mutation == 'missing_unit': body.pop('coordinate_system')
+    elif mutation == 'pixels': body['coordinate_system'] = 'pixels'
+    elif mutation == 'out_of_range': person['box'][2] = 1001
+    elif mutation == 'boolean': person['box'][0] = False
+    elif mutation == 'nan': person['box'][0] = float('nan')
+    elif mutation == 'infinity': person['box'][2] = float('inf')
+    elif mutation == 'reversed': person['box'] = [400, 100, 100, 900]
+    elif mutation == 'duplicate': body['people'].append(dict(person))
+    elif mutation == 'missing_role': body['people'] = []
+    elif mutation == 'unknown_role': person['role'] = '陌生人'
+    elif mutation == 'no_evidence': person['evidence'] = ''
+    elif mutation == 'incomplete': body['complete'] = False
+    with pytest.raises(ValueError):
+        AgnesImageProvider._parse_limb_boxes(json.dumps(body), ['昭昭'])
+
+
+@pytest.mark.parametrize('review_valid', [True, False])
+def test_limb_location_fallback_once_preserves_evidence_and_still_checks_arms(tmp_path, review_valid):
+    path = tmp_path / 'candidate.png'
+    PILImage.new('RGB', (400, 200), 'white').save(path)
+    provider = AgnesImageProvider()
+    original = json.dumps({'complete': True, 'people': [
+        {'role': '昭昭', 'box': [650, 100, 980, 900], 'evidence': '右侧短发男孩'},
+    ]})
+    revised = json.loads(original)
+    revised['coordinate_system'] = 'normalized_1000'
+    revised['complete'] = review_valid
+    answers = [original, '项1: 2\n项2: 否']
+    before = path.read_bytes()
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('primary', 'test')]),
+        patch.object(AgnesImageProvider, '_allowed_cast_for_verify', return_value=['昭昭']),
+        patch.object(provider, '_ask_hardfail_vl', side_effect=answers) as primary,
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch('app.services.segment.image.image_agnes.opencode_visual_review', return_value=json.dumps(revised)) as review,
+    ):
+        if review_valid:
+            assert provider._verify_hardfail_limbs(path, expected_speakers=['昭昭'], content_style='daily_story')
+            assert primary.call_count == 2  # 定位通过仍须裁剪数手。
+        else:
+            with pytest.raises(AgnesImageVerificationUnavailable, match='定位不确定'):
+                provider._verify_hardfail_limbs(path, expected_speakers=['昭昭'], content_style='daily_story')
+            assert primary.call_count == 1
+    review.assert_called_once()
+    assert '650' not in review.call_args.kwargs['question']  # 不把首轮坐标喂给独立复检。
+    evidence = [json.loads(line) for line in path.with_name(path.name + '.verify_failures.jsonl').read_text().splitlines()]
+    assert evidence[0]['answer'] == original
+    assert evidence[0]['phase'] == 'limbs_locate'
+    assert 'coordinate units' in evidence[0]['reason']
+    assert len(evidence) == (1 if review_valid else 2)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('pose', ['坐在椅子上', '蹲在地上', '弯腰捡玩具'])
+def test_mixed_posture_keeps_height_check_and_does_not_accept_unknown(pose):
+    items, _, _ = AgnesImageProvider._build_verify_checklist(
+        prompt=f'昭昭站立，灿灿{pose}。', expected_speakers=['昭昭', '灿灿'], content_style='daily_story',
+    )
+    assert 'height_can' in dict(items)
+    assert AgnesImageProvider._evaluate_verify_response('项1: 否', ['height_can']) is False
+    assert AgnesImageProvider._evaluate_verify_response('项1: 无法判断', ['height_can']) is None
