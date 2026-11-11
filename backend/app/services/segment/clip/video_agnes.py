@@ -10,6 +10,8 @@ import mimetypes
 import random
 import re
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from collections.abc import Callable
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -407,6 +409,39 @@ def _backoff_seconds(attempt: int, *, is_timeout: bool = False) -> float:
     if is_timeout:
         return min(45.0 + attempt * 30.0, 180.0)
     return min(2**attempt * 2, 60.0)
+
+
+def _rate_limit_wait_seconds(response: requests.Response, default: float) -> float:
+    """尊重上游 Retry-After 和降速窗口，不把日额度降速误当普通60秒限流。"""
+    waits = [max(0.0, default)]
+    now = datetime.now(timezone.utc)
+    try:
+        date = parsedate_to_datetime(response.headers.get("Date", ""))
+        if date.tzinfo is not None:
+            now = date
+    except (ValueError, TypeError, AttributeError):
+        pass
+    retry = response.headers.get("Retry-After", "")
+    try:
+        seconds = float(retry)
+        if math.isfinite(seconds) and seconds >= 0:
+            waits.append(seconds)
+    except (ValueError, TypeError):
+        try:
+            when = parsedate_to_datetime(retry)
+            if when.tzinfo is not None:
+                waits.append(max(0.0, (when - now).total_seconds()))
+        except (ValueError, TypeError, AttributeError):
+            pass
+    body = _response_body(response)
+    message = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+    match = re.search(r"limited to\s+1\s+requests?\s+every\s+(\d+(?:\.\d+)?)\s+(seconds?|minutes?|hours?)", message, re.I)
+    if match:
+        multiplier = 3600 if match[2].lower().startswith("hour") else 60 if match[2].lower().startswith("minute") else 1
+        interval = float(match[1]) * multiplier
+        if math.isfinite(interval):
+            waits.append(interval)
+    return max(waits)
 
 
 def _inject_mouth_motion(prompt: str, subtitle_cues: list[tuple[str, float]]) -> str:
@@ -1176,13 +1211,15 @@ class AgnesClipProvider(ClipProvider):
                     body = _response_body(resp)
                     # 429=RPM 窗口：冻结该池并立刻换下一把 key，不在同 key 上睡满窗口
                     if key_label:
-                        self._mark_pool_cooldown(key_label)
+                        cooldown = self._mark_pool_cooldown(
+                            key_label, seconds=_rate_limit_wait_seconds(resp, self._rate_limit_cooldown_sec),
+                        )
                         logger.warning(
                             "agnes %s %s rate limited (%s pool): cooldown %.0fs, switch key",
                             label,
                             url,
                             self._pool_for_key(key_label),
-                            self._rate_limit_cooldown_sec,
+                            cooldown,
                         )
                     raise_if_agnes_quota(status_code=resp.status_code, body=body)
                 if not resp.ok:
@@ -1317,7 +1354,9 @@ class AgnesClipProvider(ClipProvider):
                 "AGNES_CN_FREE_API_KEY 未配置，无法调用 Agnes 图生视频"
             )
 
-        quota_deadline = time.monotonic() + max(0.0, self._key_wait_budget_sec)
+        # 密钥等待预算从首次实际等待开始计时；请求耗时不应使一次
+        # 合法的 300 秒 Retry-After 刚收到就超过默认 300 秒预算。
+        quota_deadline: float | None = None
         upstream_deadline = time.monotonic() + max(0.0, self._upstream_wait_budget_sec)
         last_exc: Exception | None = None
         while True:
@@ -1386,11 +1425,17 @@ class AgnesClipProvider(ClipProvider):
                 sleep_for = min(cooldowns)
                 # 有池因队列满而冷却时按上游预算等（60 分钟），
                 # 纯 429 冷却仍按密钥预算等
-                deadline = (
-                    upstream_deadline
-                    if queue_full_seen or all_queue_full
-                    else quota_deadline
+                queue_cooling = queue_full_seen or any(
+                        self._pool_cooldown_left(key.label) > 0
+                        and self._pool_cooldown_reason.get(self._pool_for_key(key.label)) == "queue_full"
+                        for key in keys
                 )
+                if queue_cooling:
+                    deadline = upstream_deadline
+                else:
+                    if quota_deadline is None:
+                        quota_deadline = time.monotonic() + max(0.0, self._key_wait_budget_sec)
+                    deadline = quota_deadline
                 if time.monotonic() + sleep_for > deadline:
                     logger.warning(
                         "agnes video pools busy: %.1fs wait exceeds budget, giving up",
@@ -1916,9 +1961,9 @@ class AgnesClipProvider(ClipProvider):
                 )
                 self._raise_if_job_cancelled()
                 rechecked = _parse_subtitle_recheck(reply or "", len(batch))
+                logger.info("clip %s subtitle recheck opencode hit=%s evidence=%s", segment_index, rechecked, reply)
                 if rechecked is None:
                     raise AgnesI2VError(f"clip {segment_index}: 字幕复检未完成，保留视频待处理")
-                logger.info("clip %s subtitle recheck opencode hit=%s evidence=%s", segment_index, rechecked, reply)
                 if rechecked:
                     return False
         return True

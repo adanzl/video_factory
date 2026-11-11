@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from app.services.segment.clip.video_agnes import (
     AgnesClipProvider,
@@ -2209,3 +2210,94 @@ def test_unknown_recheck_retains_raw_candidate_without_accepting_clip(tmp_path):
     create.assert_called_once();fit.assert_not_called()
     assert out.read_bytes()==b'previous verified clip'
     assert (tmp_path/'1.agnes_unverified.mp4').read_bytes()==b'unverified candidate'
+
+
+@pytest.mark.parametrize('headers,message,expected', [
+    ({}, "you have used up today's video generation quota and are now limited to 1 request every 5 minutes. try again after 07:41:22.", 300),
+    ({'Retry-After': '420'}, 'rate limit', 420),
+    ({'Date': 'Wed, 11 Nov 2026 07:00:00 GMT', 'Retry-After': 'Wed, 11 Nov 2026 07:06:00 GMT'}, 'rate limit', 360),
+    ({'Retry-After': 'NaN'}, 'rate limit', 60),
+    ({'Retry-After': '-1'}, 'rate limit', 60),
+    ({'Retry-After': 'bad date'}, 'rate limit', 60),
+])
+def test_rate_limit_respects_upstream_wait(headers, message, expected):
+    from app.services.segment.clip.video_agnes import _rate_limit_wait_seconds
+    response = requests.Response()
+    response.status_code = 429
+    response.headers.update(headers)
+    response._content = json.dumps({'error': {'message': message}}).encode()
+    assert _rate_limit_wait_seconds(response, 60) == expected
+
+
+def test_daily_quota_cools_paid_pool_for_five_minutes():
+    provider = AgnesClipProvider()
+    AgnesClipProvider._cooldown_until_by_pool.clear()
+    response = requests.Response()
+    response.status_code = 429
+    response._content = json.dumps({'error': {'message': "you have used up today's video generation quota and are now limited to 1 request every 5 minutes.", 'code': 'rate_limit_exceeded'}}).encode()
+    with patch('app.services.segment.clip.video_agnes.requests.request', return_value=response), patch.object(provider, '_throttle_submit'):
+        with pytest.raises(AgnesQuotaExceeded):
+            provider._request('POST', 'https://example.com/videos', label='submit', key_label='primary')
+    assert 295 <= provider._pool_cooldown_left('primary') <= 300
+    AgnesClipProvider._cooldown_until_by_pool.clear()
+
+
+def test_quota_wait_budget_starts_after_request_latency():
+    provider = AgnesClipProvider()
+    _upstream_reset()
+    provider._key_wait_budget_sec = 300
+    clock = {'now': 1000.0}
+    keys = [AgnesApiKey('primary', 'test')]
+    calls = []
+
+    def operation(key):
+        calls.append(key.label)
+        if len(calls) == 1:
+            clock['now'] += 4
+            provider._mark_pool_cooldown(key.label, seconds=300)
+            raise AgnesQuotaExceeded('daily quota')
+        return 'accepted'
+
+    def sleep(seconds):
+        clock['now'] += seconds
+
+    with (
+        patch('app.services.segment.clip.video_agnes.agnes_api_keys', return_value=keys),
+        patch('app.services.segment.clip.video_agnes.time.monotonic', side_effect=lambda: clock['now']),
+        patch('app.services.segment.clip.video_agnes.time.sleep', side_effect=sleep),
+    ):
+        assert provider._with_api_key_fallback(operation) == 'accepted'
+    assert calls == ['primary', 'primary']
+    assert clock['now'] == 1304
+    _upstream_reset()
+
+
+def test_existing_free_queue_cooldown_keeps_upstream_wait_budget():
+    provider = AgnesClipProvider()
+    _upstream_reset()
+    provider._key_wait_budget_sec = 60
+    provider._upstream_wait_budget_sec = 600
+    clock = {'now': 1000.0}
+    keys = [AgnesApiKey('primary', 'paid'), AgnesApiKey('free', 'free')]
+    calls = []
+
+    def operation(key):
+        calls.append(key.label)
+        if len(calls) == 1:
+            provider._mark_pool_cooldown(key.label, seconds=300)
+            raise AgnesQuotaExceeded('daily quota')
+        return 'accepted'
+
+    def sleep(seconds):
+        clock['now'] += seconds
+
+    with (
+        patch('app.services.segment.clip.video_agnes.agnes_api_keys', return_value=keys),
+        patch('app.services.segment.clip.video_agnes.time.monotonic', side_effect=lambda: clock['now']),
+        patch('app.services.segment.clip.video_agnes.time.sleep', side_effect=sleep),
+    ):
+        provider._mark_pool_cooldown('free', seconds=120, reason='queue_full')
+        assert provider._with_api_key_fallback(operation) == 'accepted'
+    assert calls == ['primary', 'free']
+    assert clock['now'] == 1120
+    _upstream_reset()

@@ -116,6 +116,19 @@ _REQUIRED_VERIFY_IDS = (
     {"people", "cast_count"} | _ROLE_COUNT_IDS | _ROLE_CLOTHES_IDS | _ARM_COUNT_IDS | _LEG_COUNT_IDS
 )
 
+_HEIGHT_VERIFY_RULE = (
+    "先观察实际姿态与景深：两人同站姿、同景深且身体可比较时，灿灿应比昭昭高约半个头，"
+    "昭昭等高或更高答「否」。坐站混合、弯腰或身体被遮挡时，改检查可见角色体型："
+    "两人应为儿童，女孩呈姐姐的年龄感，男孩呈弟弟的年龄感，头身、躯干及肢体比例协调一致；"
+    "若男孩明显被画得更年长或体型更大，答「否」，可见体型符合上述关系答「是」。"
+    "不得以头顶坐标推断站立身高，不要求从遮挡部分证明高半个头，也不能按设定补全。"
+    "脸与身体可见信息仍不足以判断体型关系时答「无法判断」。"
+)
+_TEXT_FREE_VISUAL_RULE = (
+    "视觉呈现：手机屏幕、书页、纸张及其他道具上的信息用纯色色块或空白表示；"
+    "下文提到的具体文字仅作剧情背景，画面保留道具和动作，采用无可读文字的呈现。"
+)
+
 # ── 多手硬卡（裁剪放大数手）────────────────────────────────
 # 主校验整图数手对低分辨率下的多手会漏（图9 双手抱头+第三只手握遥控器）。
 # 按当前图的角色边界裁剪 ×2 放大，再数手并确认多手。
@@ -800,6 +813,8 @@ class AgnesImageProvider(ImageProvider):
     ) -> Path:
         size = size or self._default_size
         log_tag = f"[out={output_path.name}]"
+        if content_style == CONTENT_STYLE_DAILY_STORY:
+            prompt = _TEXT_FREE_VISUAL_RULE + prompt
         # chat 有参考图时再钉发色：涂鸦高饱和易把灿灿马尾画成彩色。
         # 无条件前置——LLM 已把硬锁写进提示词末尾时，句末权重最低等于没锁。
         # 锁必须纯正面表述：图像模型把否定词当生成指令，
@@ -811,14 +826,22 @@ class AgnesImageProvider(ImageProvider):
             and "灿灿" in expected_speakers
         ):
             prompt = "严格保留参考图发色：灿灿头发通体纯黑，头顶到马尾同一黑色。" + prompt
+        verify_feedback: list[str] = []
+        pending_edit: tuple[str, str] | None = None
+        repaired_checks: set[str] = set()
         # 未完成质检的候选只在重新通过当前要求后复用，不作为已验收缓存。
         if (output_path.name.endswith(".pending.png") and output_path.is_file()
                 and get_settings().agnes_image_verify):
             self._raise_if_job_cancelled()
             if self._verify_image(prompt, output_path, expected_speakers=expected_speakers,
-                                  content_style=content_style):
+                                  content_style=content_style, feedback=verify_feedback):
                 logger.info("%s pending image verified; generation skipped", log_tag)
                 return output_path
+            if content_style == CONTENT_STYLE_DAILY_STORY and expected_speakers and verify_feedback:
+                pending_edit = self._plan_attribute_edit(
+                    prompt, output_path, expected_speakers=expected_speakers,
+                    feedback=verify_feedback[-1], repaired_checks=repaired_checks,
+                )
         keys = _agnes_image_gen_keys()
         if not keys:
             if get_settings().mock_mode:
@@ -834,10 +857,7 @@ class AgnesImageProvider(ImageProvider):
         last_key: AgnesApiKey | None = None
         # 质检失败不换 Key：沿用上一把成功出图的 key
         sticky_key: AgnesApiKey | None = None
-        verify_feedback: list[str] = []
-        pending_edit: tuple[str, str] | None = None
         edit_attempted = False
-        attribute_edit_attempted = False
 
         for attempt in range(_VERIFY_MAX_ATTEMPTS):
             self._raise_if_job_cancelled()
@@ -960,17 +980,16 @@ class AgnesImageProvider(ImageProvider):
                 if pending_edit:
                     logger.info("%s next attempt uses targeted people removal; original scene remains the QC target", log_tag)
             if (
-                more and pending_edit is None and not attribute_edit_attempted
+                more and pending_edit is None
                 and content_style == CONTENT_STYLE_DAILY_STORY
                 and expected_speakers and verify_feedback
             ):
                 pending_edit = self._plan_attribute_edit(
                     prompt, result, expected_speakers=expected_speakers,
-                    feedback=verify_feedback[-1],
+                    feedback=verify_feedback[-1], repaired_checks=repaired_checks,
                 )
                 if pending_edit:
-                    attribute_edit_attempted = True
-                    logger.info("%s next attempt repairs clothing/mouth only; original scene remains the QC target", log_tag)
+                    logger.info("%s next attempt repairs observed local attributes; original scene remains the QC target", log_tag)
             logger.warning(
                 "%s agnes image verify FAILED (%s key, attempt=%s/%s, "
                 "prompt_chars=%s, speakers=%s)%s",
@@ -1013,8 +1032,9 @@ class AgnesImageProvider(ImageProvider):
     @staticmethod
     def _plan_attribute_edit(
         prompt: str, image_path: Path, *, expected_speakers: list[str], feedback: str,
+        repaired_checks: set[str] | None = None,
     ) -> tuple[str, str] | None:
-        """人数与其余检查已通过时，仅修服装/嘴型；未知或肢体异常仍重抽。"""
+        """人数与其余检查通过后，仅修已确认的服装/嘴型/头发/文字问题。"""
         try:
             observed = json.loads(feedback).get("observations")
         except (ValueError, AttributeError, TypeError):
@@ -1047,6 +1067,7 @@ class AgnesImageProvider(ImageProvider):
         fields = {"upper_color": "上衣颜色", "lower_color": "下装颜色", "upper_style": "上衣款式", "lower_style": "下装款式"}
         values = {"pink": "粉色", "blue": "蓝色", "beige": "米色", "gray": "灰色", "short_sleeve": "短袖", "hoodie": "连帽卫衣", "shorts": "短裤"}
         corrections: list[str] = []
+        changed_checks: set[str] = set()
         for name in sorted(roles):
             role, look = _ROLE_VERIFY[name]
             cid = f"{role}_clothes"
@@ -1060,13 +1081,23 @@ class AgnesImageProvider(ImageProvider):
                     clothes[field] = target
             if changes:
                 corrections.append(f"{look}（{name}）：{'，'.join(changes)}")
+                changed_checks.add(cid)
         if observed.get("mouth_first") == "no":
             speaker = _MOUTH_FIRST_SPEAKER_RE.search(prompt)
             if not speaker or speaker[1] not in roles:
                 return None
             corrections.append(f"{speaker[1]}嘴唇微张，正在开口说话，其余人物嘴巴自然闭合")
             observed["mouth_first"] = "yes"
-        if not corrections:
+            changed_checks.add("mouth_first")
+        if observed.get("can_hair") == "no" and "灿灿" in roles:
+            corrections.append("灿灿的头发恢复为通体纯黑的单侧高马尾，保留原有发束位置与自然明暗")
+            observed["can_hair"] = "yes"
+            changed_checks.add("can_hair")
+        if observed.get("no_text") == "no":
+            corrections.append("将道具表面可读文字替换为纯色色块或空白，保留道具轮廓、位置、持握动作、原有底色与光照")
+            observed["no_text"] = "yes"
+            changed_checks.add("no_text")
+        if not corrections or (repaired_checks is not None and changed_checks & repaired_checks):
             return None
         # 只假设以上属性被修好；其他项仍用原观察，不可隐藏场景/比例/道具等错误。
         answers = []
@@ -1080,6 +1111,9 @@ class AgnesImageProvider(ImageProvider):
         reply = '\n'.join(answers)
         if not AgnesImageProvider._evaluate_verify_response(reply, check_ids, cast_max=cast_max):
             return None
+        # 同一缺陷只局部修一次；新发现的独立缺陷仍在原总出图预算内修复。
+        if repaired_checks is not None:
+            repaired_checks.update(changed_checks)
         edit = (
             "在当前图片上只修正以下局部属性：" + "；".join(corrections) + "。"
             f"保留原图全部{len(roles)}个人及其身份、位置、姿态、身高比例、手脚、道具、背景和画风，"
@@ -1169,10 +1203,7 @@ class AgnesImageProvider(ImageProvider):
         "不判断是谁；两个相同服装/双胞胎/额外漂浮人头各算一人；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
         "项「粉卫衣」：穿粉色卫衣的女孩是否恰好 1 个；多了（含漂浮头）答否。"
-        "项「身高」：比较角色自身的身体比例，不是画面头顶坐标。"
-        "坐站、弯腰、透视造成的头顶高低不能作为身高颠倒的证据；"
-        "根据可见躯干和肢体比例，灿灿本体明显更高答「是」，昭昭本体等高或更高答「否」，"
-        "可见证据不足答「无法判断」，不能按设定补全；"
+        "项「身高」：" + _HEIGHT_VERIFY_RULE +
         "缺其一可答「无昭昭」或「无灿灿」。"
         "项「单扇门」：门是否只有一个门扇（单开门）；"
         "左右各一扇的双开门/对开门答「否」。"
@@ -1342,7 +1373,7 @@ class AgnesImageProvider(ImageProvider):
                     "回答「是」或「否」",
                 )
             )
-        # 身高硬卡：姐弟同框时灿灿须明显高于昭昭（约半个头）
+        # 同姿态比较身高；混合姿态检查可见年龄及体型，不能按头顶坐标误判。
         if (
             content_style == CONTENT_STYLE_DAILY_STORY
             and "昭昭" in speakers
@@ -1351,10 +1382,7 @@ class AgnesImageProvider(ImageProvider):
             items.append(
                 (
                     "height_can",
-                    f"{_DAILY_LOOK['灿灿']}是否明显比{_DAILY_LOOK['昭昭']}高"
-                    "（同站姿至少高约半个头；昭昭等高或更高答「否」）？"
-                    "一人坐/蹲、一人站时只根据可见躯干与肢体比例比较本体身高，"
-                    "不能用画面头顶位置判高矮，也不能按角色设定补全。"
+                    _HEIGHT_VERIFY_RULE +
                     "回答「是」或「否」，可见证据不足答「无法判断」；"
                     "仅当缺短发男孩答「无昭昭」、缺马尾女孩答「无灿灿」",
                 )
@@ -1495,6 +1523,13 @@ class AgnesImageProvider(ImageProvider):
         )
         # 手臂/腿条数：是/否不可靠（三臂/三腿仍答「是」）。按人报数字。
         if content_style == CONTENT_STYLE_DAILY_STORY:
+            items.append((
+                "no_text",
+                "画面是否没有可读文字？检查屏幕、书页、纸张等道具及所有画面区域。"
+                "有可辨认的字、字母、数字或字幕答「否」，空白、纯色色块、普通图形答「是」；"
+                "疑似文字但无法辨认、看不清时答「无法判断」，不能默认无字。"
+                "只判断实际画面，提示词中的剧情文字不算图片证据。",
+            ))
             for name in _DAILY_SPEAKER_ORDER:
                 if name in allowed and name in _DAILY_ARM_IDS:
                     items.append(
@@ -1608,7 +1643,8 @@ class AgnesImageProvider(ImageProvider):
     ) -> bool | None:
         """按检查项判定。
 
-        True=合格，False=明确不合格，None=漏答或无法判断，不能触发重画。
+        True=全部合格，False=存在明确不合格，None=漏答、格式错误，
+        或仅有无法判断而无明确不合格证据；None 不能触发重画。
         cast_count 须报数字，并由 cast_max 卡上限（是/否已不可靠）。
         手臂/腿条数须报数字，超过 2 失败。
         其余项：答「是」通过；答「否」失败
@@ -1626,6 +1662,25 @@ class AgnesImageProvider(ImageProvider):
             if item_index in raw_answers or not 1 <= item_index <= len(check_ids):
                 return None
             raw_answers[item_index] = m.group(2)
+
+        # 明确报告“无法判断”与漏答/格式错误不同；其他项目有独立的
+        # 不合格证据时仍可修复图片，但未知项绝不能使图片通过。
+        unknown_items = {
+            i for i, cid in enumerate(check_ids, start=1)
+            if raw_answers.get(i, "").strip() == "无法判断"
+            and cid not in {"people", "cast_count"}
+            and cid not in _ROLE_COUNT_IDS | _ROLE_CLOTHES_IDS | _ARM_COUNT_IDS | _LEG_COUNT_IDS
+        }
+        if unknown_items:
+            results = [
+                AgnesImageProvider._evaluate_verify_response(
+                    f"项1: {raw_answers.get(i, '')}", [cid], cast_max=cast_max,
+                )
+                for i, cid in enumerate(check_ids, start=1) if i not in unknown_items
+            ]
+            if any(result is None for result in results):
+                return None
+            return False if any(result is False for result in results) else None
 
         parsed_any = False
         people_count: int | None = None
@@ -1728,6 +1783,7 @@ class AgnesImageProvider(ImageProvider):
                 "door_single",
                 "no_float_hair",
                 "hair_wind_dir",
+                "no_text",
             }:
                 return False
             if verdict != "yes":
@@ -1878,7 +1934,16 @@ class AgnesImageProvider(ImageProvider):
                         or not isinstance(evidence, str) or not evidence.strip()):
                     return None
                 answer = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-                if "\n" in answer or self._evaluate_verify_response(f"项1: {answer}", [check_ids[number - 1]]) is None:
+                cid = check_ids[number - 1]
+                explicit_unknown = (
+                    answer.strip() == "无法判断"
+                    and cid not in {"people", "cast_count"}
+                    and cid not in _ROLE_COUNT_IDS | _ROLE_CLOTHES_IDS | _ARM_COUNT_IDS | _LEG_COUNT_IDS
+                )
+                if "\n" in answer or (
+                    not explicit_unknown
+                    and self._evaluate_verify_response(f"项1: {answer}", [cid]) is None
+                ):
                     return None
                 answers[number] = answer
             return "\n".join(f"项{i}: {answers[i]}" for i in range(1, len(check_ids) + 1))

@@ -510,6 +510,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         "can_one",
         "height_can",
         "mom_adult",
+        "no_text",
         "zhao_arms",
         "can_arms",
         "mom_arms",
@@ -525,7 +526,8 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "一共几个" in user
     assert "阿拉伯数字" in user
     assert "穿粉色卫衣的女孩是否恰好 1 个" in user
-    assert "是否明显比" in user
+    assert "两人同站姿、同景深" in user
+    assert "改检查可见角色体型" in user
     assert "高约半个头" in user
     assert "只数人头" in user
     assert "只能是：" not in user
@@ -1531,6 +1533,74 @@ def test_attribute_edit_does_not_hide_other_failures(tmp_path, defect, value):
     assert AgnesImageProvider._plan_attribute_edit(prompt, path, expected_speakers=roles, feedback=json.dumps({"observations": observed})) is None
 
 
+@pytest.mark.parametrize('defects', [('can_hair',), ('no_text',), ('can_hair', 'no_text')])
+def test_confirmed_hair_and_prop_text_can_be_repaired_without_redrawing_scene(tmp_path, defects):
+    prompt = '客厅，昭昭拿着书，灿灿坐着，桌上有手机。'
+    roles = ['昭昭', '灿灿']
+    observed = _attribute_feedback(prompt, roles)
+    for cid in defects:
+        observed[cid] = 'no'
+    path = tmp_path / 'source.png'
+    path.write_bytes(b'original scene')
+    plan = AgnesImageProvider._plan_attribute_edit(prompt, path, expected_speakers=roles,
+                                                   feedback=json.dumps({'observations': observed}))
+    assert plan is not None
+    assert ('通体纯黑' in plan[0]) == ('can_hair' in defects)
+    assert ('可读文字替换' in plan[0]) == ('no_text' in defects)
+    assert '位置、姿态、身高比例、手脚、道具、背景和画风' in plan[0]
+    assert path.read_bytes() == b'original scene'
+
+
+@pytest.mark.parametrize('answer,expected', [('是', True), ('否', False), ('无法判断', None)])
+def test_prop_text_check_does_not_accept_unclear_text(answer, expected):
+    assert AgnesImageProvider._evaluate_verify_response(f'项1: {answer}', ['no_text']) is expected
+
+
+def test_attribute_repair_allows_new_defect_but_does_not_repeat_same_edit(tmp_path):
+    prompt = '昭昭和灿灿坐在桌边。'
+    roles = ['昭昭', '灿灿']
+    image = tmp_path / 'scene.png'
+    image.write_bytes(b'scene')
+    repaired = set()
+    for cid in ['no_text', 'can_hair']:
+        observed = _attribute_feedback(prompt, roles)
+        observed[cid] = 'no'
+        feedback = json.dumps({'observations': observed})
+        assert AgnesImageProvider._plan_attribute_edit(prompt, image, expected_speakers=roles,
+            feedback=feedback, repaired_checks=repaired) is not None
+        assert AgnesImageProvider._plan_attribute_edit(prompt, image, expected_speakers=roles,
+            feedback=feedback, repaired_checks=repaired) is None
+    assert repaired == {'no_text', 'can_hair'}
+
+
+def test_pending_candidate_repairs_confirmed_attributes_before_whole_scene_redraw(tmp_path):
+    provider = AgnesImageProvider()
+    output = tmp_path / '9.pending.png'
+    output.write_bytes(b'existing scene')
+    prompt = '昭昭与灿灿在客厅。'
+    observed = _attribute_feedback(prompt, ['昭昭', '灿灿'])
+    observed['can_hair'] = 'no'
+    calls = []
+
+    def verify(text, path, **kwargs):
+        calls.append(text)
+        if len(calls) == 1:
+            kwargs['feedback'].append(json.dumps({'observations': observed}))
+            return False
+        return True
+
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('primary', 'test')]),
+        patch.object(provider, '_verify_image', side_effect=verify),
+        patch.object(provider, '_generate_with_key', return_value=output) as draw,
+    ):
+        assert provider.generate(prompt, output, expected_speakers=['昭昭', '灿灿'], content_style='daily_story') == output
+    draw.assert_called_once()
+    assert '只修正以下局部属性' in draw.call_args.args[1]
+    assert draw.call_args.kwargs['ref_images'][0].startswith('data:image/png;base64,')
+    assert len(set(calls)) == 1
+
+
 def test_attribute_edit_missing_observations_does_not_guess(tmp_path):
     roles = ["昭昭", "灿灿"]
     prompt = "昭昭嘴唇微张，正在开口说话。"
@@ -1879,6 +1949,34 @@ def test_image_recheck_incomplete_never_accepts_partial_failure(tmp_path, mutati
         patch('app.services.segment.image.image_agnes.opencode_visual_review', return_value=json.dumps({'complete': True, 'items': rows})),
     ):
         assert provider._recheck_image('检查', 'data', ['scene', 'zhao_count'], tmp_path/'x.png') is None
+
+
+@pytest.mark.parametrize('answers,expected', [
+    (['无法判断', '否'], False),
+    (['否', '无法判断'], False),
+    (['是', '无法判断'], None),
+    (['无法判断', '无法判断'], None),
+    (['无法判断', '看不清'], None),
+])
+def test_image_unknown_never_hides_independent_failure(tmp_path, answers, expected):
+    provider = AgnesImageProvider()
+    check_ids = ['height_can', 'can_hair']
+    rows = [{'number': i, 'answer': answer, 'evidence': '对应项目的可见证据或遮挡原因'}
+            for i, answer in enumerate(answers, 1)]
+    with (
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch('app.services.segment.image.image_agnes.opencode_visual_review',
+              return_value=json.dumps({'complete': True, 'items': rows})),
+    ):
+        reply = provider._recheck_image('检查', 'data', check_ids, tmp_path/'x.png')
+    result = provider._evaluate_verify_response(reply, check_ids) if reply else None
+    assert result is expected
+
+
+def test_image_known_failure_with_unknown_still_requires_every_item():
+    assert AgnesImageProvider._evaluate_verify_response(
+        '项1: 无法判断\n项2: 否', ['height_can', 'can_hair', 'scene'],
+    ) is None
 
 
 @pytest.mark.parametrize('box', [[.65,.1,.98,.9], [-.1,0,1,1], [0,0,0,1], [0,0,True,1], [0,0,float('nan'),1]])
