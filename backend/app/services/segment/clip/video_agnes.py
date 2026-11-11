@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import math
 import mimetypes
@@ -18,6 +19,8 @@ from gevent.lock import Semaphore
 import requests
 
 from app.config import get_settings
+from app.services.llm.llm_mgr import llm_http_post, llm_call_context, record_llm_decision
+from app.services.llm.llm_opencode_go import opencode_visual_review
 from app.exceptions import JobStageFailureError
 from app.services.segment.clip.clip_mgr import ClipProvider, clip_mgr
 from app.services.segment.clip.clip_render import fit_video_duration
@@ -137,6 +140,17 @@ _MOUTH_VERIFY_SYSTEM = (
     "多个人都有口型变化则答多人。"
     "画面清晰且所有人嘴部均无变化答无人；嘴部遮挡、模糊或证据不足答无法判断，不要猜测。"
     "只回答「左侧」「中间」「右侧」「多人」「无人」或「无法判断」，不要输出任何其他内容。"
+)
+_MOUTH_RECHECK_SYSTEM = (
+    "你是独立的视频口型复检员。只依据按时间顺序提供的图片，不知道台词或预期说话人。"
+    "逐人检查跨帧嘴部开合，头部或身体移动、静态张嘴和露齿都不算说话。"
+    "必须列出全部人物；两人标左侧/右侧，三人标左侧/中间/右侧，单人按画面位置标记。"
+    "身份跨帧保持一致；人物遮挡、身份不明或嘴部不清晰时不能猜测。"
+    "只输出JSON：{\"can_see_images\":true,\"complete\":true,\"people\":["
+    "{\"position\":\"左侧\",\"mouth_states\":[\"闭合\",\"张开\"],"
+    "\"speaking_motion\":true,\"evidence\":\"具体跨帧变化\"}]}。"
+    "mouth_states须逐帧列出，限闭合/微张/张开/露齿/遮挡/不清晰；"
+    "speaking_motion用true/false，无法判断用null。无法完整检查所有人时complete=false。"
 )
 _SUBTITLE_VERIFY_SYSTEM = (
     "你是视频抽帧质检员。这些图按时间顺序取自同一段图生视频。"
@@ -300,6 +314,43 @@ def _parse_speaking_sides(content: str) -> set[str] | None:
     return None
 
 
+def _parse_mouth_recheck(content: str, frame_count: int) -> tuple[set[str], set[str]] | None:
+    """完整逐帧证据才可复核；未知、矛盾或缺人不能放行。"""
+    try:
+        body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip()))
+        if not isinstance(body, dict) or body.get("can_see_images") is not True or body.get("complete") is not True:
+            return None
+        people = body.get("people")
+        if not isinstance(people, list) or not 1 <= len(people) <= 3:
+            return None
+        cast: set[str] = set()
+        speaking: set[str] = set()
+        for person in people:
+            if not isinstance(person, dict):
+                return None
+            side = person.get("position")
+            if side not in {"左侧", "中间", "右侧"} or side in cast:
+                return None
+            states = person.get("mouth_states")
+            motion = person.get("speaking_motion")
+            evidence = person.get("evidence")
+            if (
+                not isinstance(states, list) or len(states) != frame_count
+                or any(not isinstance(state, str) or state not in {"闭合", "微张", "张开", "露齿"} for state in states)
+                or type(motion) is not bool or not isinstance(evidence, str) or not evidence.strip()
+                or motion != (len(set(states)) > 1)
+            ):
+                return None
+            cast.add(side)
+            if motion:
+                speaking.add(side)
+        if len(cast) == 2 and cast != {"左侧", "右侧"}:
+            return None
+        return speaking, cast
+    except (ValueError, TypeError):
+        return None
+
+
 def _vl_frame_batches(frames: list[str]) -> list[list[str]]:
     """重叠覆盖所有帧及相邻帧对；尾批向前补齐上下文，避免只看末尾两帧。"""
     if not frames:
@@ -313,6 +364,33 @@ def _vl_frame_batches(frames: list[str]) -> list[list[str]]:
         frames[start:start + _VL_MAX_FRAMES]
         for start in starts
     ]
+
+
+def _parse_subtitle_recheck(content: str, frame_count: int) -> bool | None:
+    """每帧均有明确观察才作判定；任何位置的可读文字仍然不合格。"""
+    try:
+        body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip()))
+        if not isinstance(body, dict) or body.get("complete") is not True:
+            return None
+        frames = body.get("frames")
+        if not isinstance(frames, list) or len(frames) != frame_count:
+            return None
+        seen: set[int] = set()
+        hit = False
+        for row in frames:
+            if not isinstance(row, dict) or row.get("clear") is not True:
+                return None
+            index, texts = row.get("index"), row.get("texts")
+            if type(index) is not int or not 1 <= index <= frame_count or index in seen or not isinstance(texts, list):
+                return None
+            seen.add(index)
+            for item in texts:
+                if not isinstance(item, dict) or any(not isinstance(item.get(k), str) or not item[k].strip() for k in ("text", "position", "category")):
+                    return None
+                hit = True
+        return hit
+    except (ValueError, TypeError):
+        return None
 
 
 def _parse_subtitle_hit(content: str) -> bool | None:
@@ -1584,8 +1662,9 @@ class AgnesClipProvider(ClipProvider):
             for attempt in range(_VL_MAX_ATTEMPTS):
                 self._raise_if_job_cancelled()
                 try:
-                    resp = requests.post(
-                        url,
+                    resp = llm_http_post(
+                        url, provider="agnes", operation=tag, key_label=api_key.label,
+                        job_id=self._active_job_id, attempt=attempt + 1, retry_reason="upstream_retry" if attempt else None,
                         headers=agnes_auth_header(api_key.value),
                         json=payload,
                         timeout=(self._connect_timeout, _VL_READ_TIMEOUT_SEC),
@@ -1702,6 +1781,48 @@ class AgnesClipProvider(ClipProvider):
             sides.update(observed)
         return sides
 
+    def _recheck_mouth_motion(self, frames: list[str]) -> set[str] | None:
+        """OpenCode Go 独立复检一次；不用直连 DeepSeek，也不循环问到通过。"""
+        if len(frames) < 2 or not get_settings().opencode_go_api_key:
+            return None
+        from app.services.llm.llm_opencode_go import OpenCodeGoClient
+
+        client = OpenCodeGoClient()
+        speaking: set[str] = set()
+        cast: set[str] | None = None
+        for batch in _vl_frame_batches(frames):
+            self._raise_if_job_cancelled()
+            try:
+                with llm_call_context(job_id=self._active_job_id, stage="mouth_recheck"):
+                    reply, finish = client.chat_messages(
+                        [
+                            {"role": "system", "content": _MOUTH_RECHECK_SYSTEM},
+                            {"role": "user", "content": [
+                                {"type": "text", "text": f"共{len(batch)}帧，按顺序检查全部人物嘴部变化。"},
+                                *[{"type": "image_url", "image_url": {"url": uri}} for uri in batch],
+                            ]},
+                        ],
+                        max_tokens=4096, thinking_enabled=False, temperature=0,
+                    )
+            except JobCancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("mouth recheck OpenCode Go unavailable (%s)", type(exc).__name__)
+                return None
+            self._raise_if_job_cancelled()
+            parsed = _parse_mouth_recheck(reply, len(batch)) if finish == "stop" else None
+            if parsed is None:
+                logger.warning("mouth recheck OpenCode Go evidence incomplete: %s", reply[:500])
+                return None
+            observed, people = parsed
+            if cast is not None and people != cast:
+                logger.warning("mouth recheck OpenCode Go cast changed across batches")
+                return None
+            cast = people
+            speaking.update(observed)
+            logger.info("mouth recheck OpenCode Go evidence: %s", reply)
+        return speaking
+
     def _verify_mouth_motion(
         self,
         sampled: list[tuple[float, float, str, list[str]]],
@@ -1721,7 +1842,8 @@ class AgnesClipProvider(ClipProvider):
                 f"{start:.1f}-{end:.1f} 秒。逐人对比跨帧嘴部变化，谁有说话口型变化？"
                 f"回答「左侧」「中间」「右侧」「多人」「无人」或「无法判断」。"
             )
-            sides = self._ask_vl_speaking_sides(question, frames)
+            with llm_call_context(resource=f"segment:{segment_index} window:{start:g}-{end:g}"):
+                sides = self._ask_vl_speaking_sides(question, frames)
             if sides is None:
                 raise AgnesI2VError(f"clip {segment_index}: 口型质检未完成，接口无有效判断")
             expected_side = label[:2]
@@ -1736,7 +1858,20 @@ class AgnesClipProvider(ClipProvider):
                 "ok" if ok else "SPEAKING SIDES MISMATCH",
             )
             if not ok:
-                return False
+                # 原样复用初检的 640px 抽帧，仅换独立模型，不放大、不重新抽帧。
+                # 不增加生成次数；未知复检结果停止，不能触发付费重抽或当成通过。
+                with llm_call_context(resource=f"segment:{segment_index} window:{start:g}-{end:g}"):
+                    rechecked = self._recheck_mouth_motion(frames)
+                if rechecked is None:
+                    raise AgnesI2VError(f"clip {segment_index}: 口型复检未完成，未取得完整有效证据")
+                ok = rechecked == {expected_side}
+                logger.info(
+                    "clip %s mouth recheck %.1f-%.1fs expect=%s opencode=%s: %s",
+                    segment_index, start, end, label,
+                    "/".join(sorted(rechecked)) or "无人", "ok" if ok else "SPEAKING SIDES MISMATCH",
+                )
+                if not ok:
+                    return False
         return True
 
     def _verify_no_burned_subtitles(
@@ -1770,7 +1905,22 @@ class AgnesClipProvider(ClipProvider):
                 "BURNED SUBTITLES" if hit else "ok",
             )
             if hit:
-                return False
+                reply = opencode_visual_review(
+                    system=("你是独立画面文字检查员。逐帧检查所有可读文字，包括字幕、水印、对白条、"
+                            "道具、牌子或包装上的文字；道具文字也不允许。纹理不算文字。"
+                            "只输出JSON：{\"complete\":true,\"frames\":[{\"index\":1,\"clear\":true,"
+                            "\"texts\":[{\"text\":\"实际文字\",\"position\":\"具体位置\",\"category\":\"字幕/水印/道具/其他\"}]}]}。"
+                            "每帧都要列出，无字用空texts；看不清用clear=false，不猜测。"),
+                    question=f"共{len(batch)}帧，按顺序检查画面文字。",
+                    frames=batch, operation="subtitle_recheck", job_id=self._active_job_id,
+                )
+                self._raise_if_job_cancelled()
+                rechecked = _parse_subtitle_recheck(reply or "", len(batch))
+                if rechecked is None:
+                    raise AgnesI2VError(f"clip {segment_index}: 字幕复检未完成，保留视频待处理")
+                logger.info("clip %s subtitle recheck opencode hit=%s evidence=%s", segment_index, rechecked, reply)
+                if rechecked:
+                    return False
         return True
 
     def _submit_and_poll(
@@ -1855,6 +2005,7 @@ class AgnesClipProvider(ClipProvider):
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             pending_path: Path | None = None
+            accepted = False
             try:
                 settings = get_settings()
                 verify_attempts = max(1, settings.agnes_video_mouth_verify_attempts)
@@ -1898,6 +2049,9 @@ class AgnesClipProvider(ClipProvider):
                     )
                     if mouth_ok and sub_ok:
                         break
+                    record_llm_decision(operation="video_verify", job_id=self._active_job_id, resource=f"segment:{segment_index}",
+                                        action="regenerate" if v_attempt < verify_attempts else "stop",
+                                        reason="subtitle_present" if not sub_ok else "speaker_mismatch", attempt=v_attempt)
                     if not sub_ok:
                         if v_attempt < verify_attempts:
                             logger.warning(
@@ -1959,10 +2113,15 @@ class AgnesClipProvider(ClipProvider):
                 if pending_path.stat().st_size == 0:
                     raise AgnesI2VError(f"clip {segment_index}: 最终编码未生成有效文件")
                 pending_path.replace(output_path)
+                accepted = True
             finally:
                 if pending_path is not None:
                     pending_path.unlink(missing_ok=True)
-                raw_path.unlink(missing_ok=True)
+                if accepted:
+                    raw_path.unlink(missing_ok=True)
+                elif raw_path.is_file():
+                    # 复检未知/失败只保留候选证据，不能作为 clip 成品缓存。
+                    raw_path.replace(work_dir / f"{segment_index}.agnes_unverified.mp4")
                 scaled_path.unlink(missing_ok=True)
                 loop_path = work_dir / f"{segment_index}.agnes_loop.mp4"
                 loop_path.unlink(missing_ok=True)

@@ -247,3 +247,42 @@ print(mode + ': deadline enforced')
         result = subprocess.run([sys.executable, "-c", script, mode], capture_output=True, text=True, timeout=20)
         assert result.returncode == 0, result.stdout + result.stderr
         assert "deadline enforced" in result.stdout
+
+
+def test_usage_records_actual_tokens_and_context_without_secrets(caplog):
+    import json,logging
+    from app.services.llm.llm_mgr import llm_call_context,llm_http_post,llm_usage_context
+    response=MagicMock(status_code=200)
+    response.json.return_value={'choices':[{'finish_reason':'stop'}],'usage':{'prompt_tokens':123,'completion_tokens':45,'total_tokens':168,'cost':0,'api_key':'must-not-log','opencode':{'billing_source':'go'}}}
+    with caplog.at_level(logging.INFO),llm_call_context(job_id=150,stage='image_recheck'):
+        result=llm_http_post('https://private.invalid',provider='opencode_go',operation='text_chat',key_label='go',headers={'Authorization':'Bearer secret'},json={'model':'test','messages':[{'content':'private source text'}],'max_tokens':16384},post=MagicMock(return_value=response))
+    assert result is response
+    row=json.loads(next(r.message.split('[LLM_USAGE] ',1)[1] for r in caplog.records if '[LLM_USAGE]' in r.message))
+    assert row['job_id']==150 and row['stage']=='image_recheck'
+    assert row['usage']=={'prompt_tokens':123,'completion_tokens':45,'total_tokens':168,'cost':0}
+    assert row['billing_source']=='go'
+    assert not any(secret in caplog.text for secret in ['Bearer secret','private source text','must-not-log','private.invalid','16384'])
+    assert llm_usage_context.get()=={}
+
+
+def test_usage_timeout_and_missing_usage_remain_unknown(caplog):
+    import logging,json,requests
+    from app.services.llm.llm_mgr import llm_http_post
+    with caplog.at_level(logging.INFO),pytest.raises(requests.Timeout):
+        llm_http_post('private',provider='agnes',operation='image_verify',key_label='free',attempt=2,retry_reason='upstream_retry',json={'model':'test'},post=MagicMock(side_effect=requests.Timeout('secret body')))
+    row=json.loads(next(r.message.split('[LLM_USAGE] ',1)[1] for r in caplog.records if '[LLM_USAGE]' in r.message))
+    assert row['usage'] is None and row['http_status'] is None
+    assert row['retry_reason']=='upstream_retry' and row['error_type']=='Timeout'
+    assert 'secret body' not in caplog.text
+
+
+def test_usage_context_isolated_between_greenlets():
+    import gevent
+    from app.services.llm.llm_mgr import llm_call_context,llm_usage_context
+    def check(job):
+        with llm_call_context(job_id=job):
+            gevent.sleep(0)
+            return llm_usage_context.get()['job_id']
+    a,b=gevent.spawn(check,1),gevent.spawn(check,2);gevent.joinall([a,b],raise_error=True)
+    assert (a.value,b.value)==(1,2)
+    assert llm_usage_context.get()=={}

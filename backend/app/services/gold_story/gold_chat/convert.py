@@ -2349,7 +2349,7 @@ def convert_gold_chat(
     from app.services.gold_story.gold_chat.repair import GoldChatRepairBudget
     from app.services.gold_story.gold_chat.repair import GoldChatContractError, GoldChatFillError
     from app.services.llm.llm_mgr import (
-        llm_deadline, LLMTimeBudgetExceeded, LLMDeadlineExpired, start_llm_deadline_timer,
+        llm_deadline, LLMTimeBudgetExceeded, LLMDeadlineExpired, start_llm_deadline_timer, llm_usage_context,
     )
     from app.services.gold_story.gold_chat.status import (
         clear_gold_chat_converting,
@@ -2370,6 +2370,7 @@ def convert_gold_chat(
     _budget_s = float(os.environ.get("GOLD_CHAT_TIME_BUDGET_S") or 180)
     _deadline = time.monotonic() + _budget_s if _budget_s > 0 else 0.0
     deadline_token = llm_deadline.set(_deadline)
+    usage_token = llm_usage_context.set({"gold_story_id": gid_for_status, "stage": "gold_chat"})
     cancel_deadline = lambda: None
 
     def _check_budget(stage: str, reserve: float = 0.0) -> None:
@@ -2844,5 +2845,6 @@ def convert_gold_chat(
     finally:
         cancel_deadline()
         llm_deadline.reset(deadline_token)
+        llm_usage_context.reset(usage_token)
         if gid_for_status > 0:
             clear_gold_chat_converting(gid_for_status)

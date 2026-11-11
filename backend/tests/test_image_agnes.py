@@ -800,7 +800,7 @@ def test_verify_image_uses_base64_even_with_sidecar(tmp_path: Path) -> None:
     assert cdn not in posted_urls[0]
 
 
-def test_crop_zone_data_url_zooms(tmp_path: Path) -> None:
+def test_crop_person_data_url_zooms(tmp_path: Path) -> None:
     img = PILImage.new("RGB", (1000, 600), "white")
     for x in (100, 600, 800):
         for y in (100, 300):
@@ -808,9 +808,9 @@ def test_crop_zone_data_url_zooms(tmp_path: Path) -> None:
     path = tmp_path / "crop.png"
     img.save(path)
 
-    left = AgnesImageProvider._crop_zone_data_url(path, "left")
-    right = AgnesImageProvider._crop_zone_data_url(path, "right")
-    center = AgnesImageProvider._crop_zone_data_url(path, "center")
+    left = AgnesImageProvider._crop_person_data_url(path, (0, 0, .5, 1))
+    right = AgnesImageProvider._crop_person_data_url(path, (.5, 0, 1, 1))
+    center = AgnesImageProvider._crop_person_data_url(path, (.25, 0, .75, 1))
     assert left.startswith("data:image/jpeg;base64,")
     assert right.startswith("data:image/jpeg;base64,")
     assert center.startswith("data:image/jpeg;base64,")
@@ -828,6 +828,7 @@ def test_verify_hardfail_limbs_passes_normal(tmp_path: Path) -> None:
     img.save(path)
 
     with (
+        patch.object(provider, "_locate_limb_boxes", return_value={"昭昭": (0., 0., .5, 1.), "灿灿": (.5, 0., 1., 1.)}),
         patch.object(provider, "_ask_hardfail_vl", return_value="项1: 2\n项2: 否"),
         patch(
             "app.services.segment.image.image_agnes.agnes_api_keys",
@@ -850,6 +851,8 @@ def test_verify_hardfail_limbs_fails_on_third_arm(tmp_path: Path) -> None:
     img.save(path)
 
     with (
+        patch("app.services.segment.image.image_agnes.opencode_visual_review", return_value=json.dumps({"complete": True, "count": 3, "extra": True, "evidence": "三只手"})),
+        patch.object(provider, "_locate_limb_boxes", return_value={"昭昭": (0., 0., .5, 1.), "灿灿": (.5, 0., 1., 1.)}),
         patch.object(
             provider, "_ask_hardfail_vl", return_value="项1: 3\n项2: 是"
         ),
@@ -876,6 +879,7 @@ def test_verify_hardfail_limbs_reports_incomplete_on_vl_failure(tmp_path: Path, 
     img.save(path)
 
     with (
+        patch.object(provider, "_locate_limb_boxes", return_value={"昭昭": (0., 0., .5, 1.), "灿灿": (.5, 0., 1., 1.)}),
         patch.object(provider, "_ask_hardfail_vl", return_value=answer),
         patch(
             "app.services.segment.image.image_agnes.agnes_api_keys",
@@ -1232,6 +1236,7 @@ def test_verify_observations_reach_feedback(tmp_path: Path, cid, answer, expecte
     response.json.return_value = {'choices': [{'message': {'content': f'项1: {answer}'}}]}
     feedback: list[str] = []
     with (
+        patch.object(provider, "_recheck_image", return_value=f"项1: {answer}"),
         patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('free', 'test')]),
         patch('app.services.segment.image.image_agnes.requests.post', return_value=response),
         patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
@@ -1622,6 +1627,8 @@ def test_partial_limb_answer_with_explicit_defect_still_rejects(tmp_path, answer
     output = tmp_path / 'frame.png'
     PILImage.new('RGB', (32, 32), 'white').save(output)
     with (
+        patch("app.services.segment.image.image_agnes.opencode_visual_review", return_value=json.dumps({"complete": True, "count": 3, "extra": True, "evidence": "三只手"})),
+        patch.object(provider, "_locate_limb_boxes", return_value={"昭昭": (0., 0., .5, 1.), "灿灿": (.5, 0., 1., 1.)}),
         patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('cn_free', 'test-key')]),
         patch.object(provider, '_allowed_cast_for_verify', return_value=['灿灿']),
         patch.object(provider, '_ask_hardfail_vl', return_value=answer),
@@ -1813,6 +1820,7 @@ def test_limb_failure_records_actual_reply_not_main_verdict(tmp_path, failure):
     if failure == 'invalid_json':
         limb.json.side_effect = ValueError('bad JSON')
     with (
+        patch.object(provider, "_locate_limb_boxes", return_value={"昭昭": (0., 0., .5, 1.), "灿灿": (.5, 0., 1., 1.)}),
         patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('primary', 'fake')]),
         patch.object(AgnesImageProvider, '_build_verify_checklist', return_value=([('scene', '场景')], '检查', None)),
         patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
@@ -1822,6 +1830,107 @@ def test_limb_failure_records_actual_reply_not_main_verdict(tmp_path, failure):
     ):
         provider._verify_image('scene', output, expected_speakers=['昭昭'], content_style='daily_story')
     records = [json.loads(line) for line in output.with_name(output.name + '.verify_failures.jsonl').read_text().splitlines()]
-    assert len(records) == 3
+    assert len(records) == 1
     assert all(r['phase'] == 'limbs:昭昭' and r['check_ids'] == ['arm_count', 'extra_limbs'] for r in records)
     assert all(r['answer'] == ('broken limb JSON' if failure == 'invalid_json' else answer) for r in records)
+
+
+@pytest.mark.parametrize('verdict', ['pass', 'fail', 'unknown'])
+def test_image_recheck_independent_complete_and_no_repeated_review(tmp_path, verdict):
+    provider = AgnesImageProvider()
+    path = tmp_path / 'candidate.png'
+    PILImage.new('RGB', (20, 20), 'white').save(path)
+    before = path.read_bytes()
+    response = MagicMock(status_code=200, ok=True)
+    response.json.return_value = {'choices': [{'finish_reason': 'stop', 'message': {'content': '项1: 否'}}]}
+    reviewed = None if verdict == 'unknown' else json.dumps({'complete': True, 'items': [
+        {'number': 1, 'answer': '是' if verdict == 'pass' else '否', 'evidence': '可见的场景与要求比较'}]})
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('primary', 'test')]),
+        patch('app.services.segment.image.image_agnes.requests.post', return_value=response) as primary,
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch.object(AgnesImageProvider, '_build_verify_checklist', return_value=([('scene', '场景')], '检查客厅场景', None)),
+        patch('app.services.segment.image.image_agnes.opencode_visual_review', return_value=reviewed) as ds,
+        patch.object(provider, '_sleep_cancellable') as sleep,
+    ):
+        if verdict == 'unknown':
+            with pytest.raises(AgnesImageVerificationUnavailable, match='复检未完成'):
+                provider._verify_image('客厅', path)
+        else:
+            assert provider._verify_image('客厅', path) is (verdict == 'pass')
+    primary.assert_called_once()
+    ds.assert_called_once()
+    assert ds.call_args.kwargs['question'].startswith('检查客厅场景')
+    assert '项1: 否' not in str(ds.call_args)
+    sleep.assert_not_called()
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('mutation', ['missing', 'duplicate', 'no_evidence', 'invalid_answer'])
+def test_image_recheck_incomplete_never_accepts_partial_failure(tmp_path, mutation):
+    provider = AgnesImageProvider()
+    rows = [{'number': 1, 'answer': '否', 'evidence': '场景不符'}, {'number': 2, 'answer': 1, 'evidence': '一个人'}]
+    if mutation == 'missing': rows.pop()
+    if mutation == 'duplicate': rows[1]['number'] = 1
+    if mutation == 'no_evidence': rows[1]['evidence'] = ''
+    if mutation == 'invalid_answer': rows[1]['answer'] = '看不清'
+    with (
+        patch.object(provider, '_run_blocking_cancellable', side_effect=lambda fn: fn()),
+        patch('app.services.segment.image.image_agnes.opencode_visual_review', return_value=json.dumps({'complete': True, 'items': rows})),
+    ):
+        assert provider._recheck_image('检查', 'data', ['scene', 'zhao_count'], tmp_path/'x.png') is None
+
+
+@pytest.mark.parametrize('box', [[.65,.1,.98,.9], [-.1,0,1,1], [0,0,0,1], [0,0,True,1], [0,0,float('nan'),1]])
+def test_limb_location_uses_actual_position_and_rejects_invalid_box(tmp_path, box):
+    provider = AgnesImageProvider()
+    path = tmp_path/'image.png'
+    PILImage.new('RGB', (400, 200), 'white').save(path)
+    reply = json.dumps({'complete': True, 'people': [{'role': '昭昭', 'box': box, 'evidence': '右侧短发男孩'}]})
+    with patch.object(provider, '_ask_hardfail_vl', return_value=reply) as ask:
+        if box[0] == .65:
+            assert provider._locate_limb_boxes(path, ['昭昭'], None, [])['昭昭'] == tuple(box)
+        else:
+            with pytest.raises(AgnesImageVerificationUnavailable, match='定位不确定'):
+                provider._locate_limb_boxes(path, ['昭昭'], None, [])
+    assert ask.call_args.kwargs['locate'] is True
+
+
+def test_limb_crop_tracks_swapped_character_position(tmp_path):
+    import base64, io
+    provider = AgnesImageProvider()
+    path = tmp_path/'swapped.png'
+    image = PILImage.new('RGB', (400, 200), 'red')
+    image.paste('blue', (200, 0, 400, 200));image.save(path)
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys', return_value=[AgnesApiKey('primary', 'test')]),
+        patch.object(AgnesImageProvider, '_allowed_cast_for_verify', return_value=['昭昭']),
+        patch.object(provider, '_locate_limb_boxes', return_value={'昭昭': (.65,.1,.98,.9)}),
+        patch.object(provider, '_ask_hardfail_vl', return_value='项1: 2\n项2: 否') as ask,
+    ):
+        assert provider._verify_hardfail_limbs(path, expected_speakers=['昭昭'], content_style='daily_story')
+    crop = PILImage.open(io.BytesIO(base64.b64decode(ask.call_args.args[2].split(',')[1])))
+    red, green, blue = crop.getpixel((crop.width//2, crop.height//2))
+    assert blue > 200 and red < 20
+
+
+@pytest.mark.parametrize('count,extra,expected', [(2,False,True),(3,True,False),(2,True,None),(3,False,None)])
+def test_limb_failure_ds_recheck_preserves_strict_rule(tmp_path, count, extra, expected):
+    provider = AgnesImageProvider();path=tmp_path/'candidate.png';PILImage.new('RGB',(40,40),'white').save(path)
+    with (
+        patch('app.services.segment.image.image_agnes.agnes_api_keys',return_value=[AgnesApiKey('primary','test')]),
+        patch.object(AgnesImageProvider,'_allowed_cast_for_verify',return_value=['昭昭']),
+        patch.object(provider,'_locate_limb_boxes',return_value={'昭昭':(0.,0.,1.,1.)}),
+        patch.object(provider,'_ask_hardfail_vl',return_value='项1: 3\n项2: 是'),
+        patch.object(provider,'_run_blocking_cancellable',side_effect=lambda fn:fn()),
+        patch('app.services.segment.image.image_agnes.opencode_visual_review',return_value=json.dumps({'complete':True,'count':count,'extra':extra,'evidence':'逐个手的位置'})) as ds,
+    ):
+        if expected is None:
+            with pytest.raises(AgnesImageVerificationUnavailable,match='复检未完成'):
+                provider._verify_hardfail_limbs(path,expected_speakers=['昭昭'],content_style='daily_story')
+        else:
+            assert provider._verify_hardfail_limbs(path,expected_speakers=['昭昭'],content_style='daily_story') is expected
+    ds.assert_called_once()
+    assert '只回答阿拉伯数字' not in ds.call_args.kwargs['question']
+    assert '是则回答' not in ds.call_args.kwargs['question']
+    assert 'JSON对象' in ds.call_args.kwargs['question']

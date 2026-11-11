@@ -147,7 +147,9 @@ class MaterialVideoMgr:
         """后台线程：执行分析并写 DB。"""
         try:
             analyzer = VideoAnalyzer(video_path, duration=duration)
-            note_text = analyzer.analyze()
+            from app.services.llm.llm_mgr import llm_call_context
+            with llm_call_context(material_id=material_id, stage="material_analysis"):
+                note_text = analyzer.analyze()
             with atomic():
                 repo_material_video.update_material_video(material_id, note=note_text, status='active')
             logger.info('material %s analysis complete', material_id)

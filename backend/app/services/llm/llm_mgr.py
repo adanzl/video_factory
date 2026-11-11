@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import json
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Literal, cast
 from collections.abc import Callable
@@ -19,6 +21,76 @@ logger = logging.getLogger(__name__)
 
 # 请求/greenlet/线程隔离，避免上一条失败任务的截止时间污染下一条。
 llm_deadline: ContextVar[float] = ContextVar("llm_deadline", default=0.0)
+llm_usage_context: ContextVar[dict[str, Any]] = ContextVar("llm_usage_context", default={})
+
+
+@contextmanager
+def llm_call_context(**fields: Any):
+    """任务/greenlet 隔离的审计元数据；只传 ID、环节，不传正文或凭据。"""
+    allowed = {k: v for k, v in fields.items() if k in {
+        "job_id", "gold_story_id", "material_id", "stage", "resource", "operation", "retry_reason",
+    } and v is not None}
+    token = llm_usage_context.set({**llm_usage_context.get(), **allowed})
+    try:
+        yield
+    finally:
+        llm_usage_context.reset(token)
+
+
+def llm_http_post(
+    url: str, *, provider: str, operation: str, key_label: str,
+    job_id: int | None = None, resource: str | None = None,
+    attempt: int = 1, retry_reason: str | None = None, post: Any = None, **kwargs: Any,
+):
+    """记录每次实际 HTTP 调用；usage 缺失记 null，不把上限当消费，不保存请求/密钥。"""
+    import requests
+
+    started = time.monotonic()
+    record: dict[str, Any] = {
+        "job_id": None, "stage": operation, **llm_usage_context.get(), "provider": provider, "operation": operation,
+        "model": (kwargs.get("json") or {}).get("model"), "key_label": key_label,
+        "attempt": attempt, "retry_reason": retry_reason or llm_usage_context.get().get("retry_reason"),
+        "http_status": None, "finish_reason": None, "usage": None,
+    }
+    if job_id is not None:
+        record["job_id"] = job_id
+    if resource is not None:
+        record["resource"] = resource
+    try:
+        response = (post or requests.post)(url, **kwargs)
+        record["http_status"] = response.status_code
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                usage = body.get("usage")
+                if isinstance(usage, dict):
+                    record["usage"] = {k: v for k, v in usage.items() if k in {
+                        "prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens", "cost",
+                    } and type(v) in (int, float)}
+                    go = usage.get("opencode")
+                    if isinstance(go, dict) and go.get("billing_source") in {"go", "paygo"}:
+                        record["billing_source"] = go["billing_source"]
+                choices = body.get("choices")
+                if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                    record["finish_reason"] = choices[0].get("finish_reason")
+        except (ValueError, TypeError, AttributeError):
+            pass
+        return response
+    except BaseException as exc:
+        record["error_type"] = type(exc).__name__
+        raise
+    finally:
+        record["elapsed_ms"] = round((time.monotonic() - started) * 1000, 1)
+        logger.info("[LLM_USAGE] %s", json.dumps(record, ensure_ascii=False, default=str))
+
+
+def record_llm_decision(*, operation: str, job_id: int | None, resource: str,
+                        action: str, reason: str, attempt: int) -> None:
+    """关联审核结论与后续重生成，便于按任务核算误判造成的成本。"""
+    logger.info("[LLM_DECISION] %s", json.dumps({
+        **llm_usage_context.get(), "operation": operation, "job_id": job_id,
+        "resource": resource, "action": action, "reason": reason, "attempt": attempt,
+    }, ensure_ascii=False))
 
 
 class LLMTimeBudgetExceeded(ValueError):
@@ -325,6 +397,7 @@ class LLMMgr:
             "(use deepseek, agnes, or opencode_go)"
         )
 
+    @llm_call_context(stage="generate_script")
     def generate_script(
         self,
         title: str,
@@ -354,6 +427,7 @@ class LLMMgr:
             include_sd15_prompt=include_sd15_prompt,  # type: ignore[arg-type]
         )
 
+    @llm_call_context(stage="generate_storyboard")
     def generate_storyboard(
         self,
         title: str,
@@ -375,6 +449,7 @@ class LLMMgr:
             job=job,
         )
 
+    @llm_call_context(stage="generate_board")
     def generate_board(
         self,
         title: str,
@@ -396,6 +471,7 @@ class LLMMgr:
             job=job,
         )
 
+    @llm_call_context(stage="fill_image_prompts")
     def fill_image_prompts(
         self,
         script: dict[str, Any],
@@ -415,6 +491,7 @@ class LLMMgr:
             include_sd15_prompt=include_sd15_prompt,
         )
 
+    @llm_call_context(stage="fill_visual_briefs")
     def fill_visual_briefs(
         self,
         script: dict[str, Any],
@@ -432,6 +509,7 @@ class LLMMgr:
             segment_indices=segment_indices,
         )
 
+    @llm_call_context(stage="review_image_prompts")
     def review_image_prompts(
         self,
         script: dict[str, Any],
@@ -446,6 +524,7 @@ class LLMMgr:
             segment_indices=segment_indices,
         )
 
+    @llm_call_context(stage="shrink_segment_texts")
     def shrink_segment_texts(
         self,
         script: dict[str, Any],
@@ -481,6 +560,7 @@ class LLMMgr:
             model=model,
         )
 
+    @llm_call_context(stage="fill_image_prompts_with_retries")
     def fill_image_prompts_with_retries(
         self,
         script: dict[str, Any],
@@ -664,6 +744,7 @@ class LLMMgr:
         )
         return feedback, sorted(set(indices))
 
+    @llm_call_context(stage="generate_topics")
     def generate_topics(
         self,
         theme: str,
@@ -733,6 +814,7 @@ class LLMMgr:
         )
         return topics
 
+    @llm_call_context(stage="optimize_script_title")
     def optimize_script_title(
         self,
         draft_title: str,
@@ -762,6 +844,7 @@ class LLMMgr:
         )
         return title
 
+    @llm_call_context(stage="generate_video_description")
     def generate_video_description(
         self,
         title: str,
@@ -789,6 +872,7 @@ class LLMMgr:
         )
         return description
 
+    @llm_call_context(stage="generate_tags")
     def generate_tags(
         self,
         title: str,
@@ -816,6 +900,7 @@ class LLMMgr:
         )
         return tags
 
+    @llm_call_context(stage="generate_material_script")
     def generate_material_script(
         self,
         title: str,
@@ -837,6 +922,7 @@ class LLMMgr:
             job=job,
         )
 
+    @llm_call_context(stage="rewrite_pixabay_query")
     def rewrite_pixabay_query(
         self,
         query: str,
@@ -859,6 +945,7 @@ class LLMMgr:
         )
         return rewritten
 
+    @llm_call_context(stage="prepare_sd15_image_prompt")
     def prepare_sd15_image_prompt(
         self,
         prompt: str,
@@ -891,6 +978,7 @@ class LLMMgr:
         )
         return result
 
+    @llm_call_context(stage="generate_daily_story")
     def generate_daily_story(
         self,
         theme: str,
@@ -1154,6 +1242,7 @@ class LLMMgr:
             f"daily story generation failed after {max_full} attempts"
         )
 
+    @llm_call_context(stage="generate_daily_story_themes")
     def generate_daily_story_themes(
         self,
         count: int = 15,
@@ -1185,6 +1274,7 @@ class LLMMgr:
         )
         return themes
 
+    @llm_call_context(stage="generate_daily_script")
     def generate_daily_script(
         self,
         dialogue_script: dict,

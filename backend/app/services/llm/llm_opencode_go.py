@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from app.config import get_settings, normalize_opencode_go_base_url
-from app.services.llm.llm_mgr import llm_request_timeout
+from app.services.llm.llm_mgr import llm_request_timeout, llm_http_post, llm_call_context
 from app.services.llm.llm_deepseek import (
     DeepSeekClient,
     _build_deepseek_chat_payload,
@@ -16,6 +16,31 @@ from app.services.llm.llm_deepseek import (
 logger = logging.getLogger(__name__)
 
 _opencode_client_cls: type | None = None
+
+
+def opencode_visual_review(
+    *, system: str, question: str, frames: list[str], operation: str,
+    job_id: int | None = None, resource: str | None = None,
+) -> str | None:
+    """只走 Go 的一次独立看图；接口/截断未知，不切直连、不重复问到通过。"""
+    from app.utils.job_cancel import JobCancelledError
+
+    if not frames or len(frames) > 4 or not get_settings().opencode_go_api_key:
+        return None
+    try:
+        with llm_call_context(job_id=job_id, resource=resource, stage=operation):
+            reply, finish = _opencode_client_class()().chat_messages(
+                [{"role": "system", "content": system}, {"role": "user", "content": [
+                    {"type": "text", "text": question},
+                    *[{"type": "image_url", "image_url": {"url": uri}} for uri in frames],
+                ]}], max_tokens=4096, thinking_enabled=False, temperature=0,
+            )
+        return reply if finish == "stop" and reply.strip() else None
+    except JobCancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("%s OpenCode Go unavailable (%s)", operation, type(exc).__name__)
+        return None
 
 
 def _session_id_for_chat(system: str, user: str) -> str:
@@ -69,8 +94,9 @@ def _opencode_client_class() -> type:
                 "User-Agent": self._user_agent,
                 "x-opencode-session": _session_id_for_chat(system, user),
             }
-            resp = self._requests.post(
+            resp = llm_http_post(
                 f"{self._base_url}/chat/completions",
+                provider="opencode_go", operation="text_chat", key_label="go", post=self._requests.post,
                 headers=headers,
                 json=_build_deepseek_chat_payload(
                     model=use_model,
@@ -123,8 +149,9 @@ def _opencode_client_class() -> type:
                 "User-Agent": self._user_agent,
                 "x-opencode-session": f"vf-{hashlib.sha256(session_seed.encode()).hexdigest()[:32]}",
             }
-            resp = self._requests.post(
+            resp = llm_http_post(
                 f"{self._base_url}/chat/completions",
+                provider="opencode_go", operation="text_chat", key_label="go", post=self._requests.post,
                 headers=headers,
                 json=_build_deepseek_messages_payload(
                     model=use_model,

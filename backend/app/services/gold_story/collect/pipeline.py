@@ -155,6 +155,21 @@ def _process_collection(candidate: VideoCandidate, *, config: Config,
         return finish({**base, **failure})
 
 
+def _collection_usage(function):
+    from functools import wraps
+    from app.services.llm.llm_mgr import llm_call_context
+
+    @wraps(function)
+    def wrapped(candidate, *args, **kwargs):
+        row = kwargs.get("existing_row") or {}
+        with llm_call_context(stage="gold_collection", resource=candidate.source_id,
+                              gold_story_id=row.get("id"),
+                              retry_reason="source_repair" if kwargs.get("repair_feedback") else None):
+            return function(candidate, *args, **kwargs)
+    return wrapped
+
+
+@_collection_usage
 def process_candidate(
     candidate: VideoCandidate,
     *,

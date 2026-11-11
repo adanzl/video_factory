@@ -5,14 +5,18 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import math
+import io
 import re
 import tempfile
 import time
 from pathlib import Path
 
 import requests
+from PIL import Image
 
 from app.config import get_settings
+from app.services.llm.llm_mgr import llm_http_post, llm_call_context
 from app.services.llm.llm_agnes import (
     AgnesContentPolicyError,
     AgnesQuotaExceeded,
@@ -25,7 +29,7 @@ from app.services.llm.llm_agnes import (
     raise_if_agnes_content_policy,
     raise_if_agnes_quota,
 )
-from app.services.media.ffmpeg_utils import extract_frames_interval, probe_duration
+from app.services.media.ffmpeg_utils import extract_frames_interval, probe_duration, run_ffmpeg, ffmpeg_cmd_start
 
 logger = logging.getLogger(__name__)
 
@@ -57,28 +61,63 @@ class VideoAnalyzer:
             "analyzing material with %d frames (interval=%ds, duration=%.1fs)",
             len(images_b64), interval, self._duration,
         )
-        system, user = self._build_prompts(images_b64, interval)
-        raw = self._call_multimodal(system, user, images_b64)
-        return self._validate(raw)
+        if not images_b64 or len(images_b64) > 32:
+            raise ValueError("素材分析抽帧数量无效，最多32帧")
+        merged: list[dict] = []
+        title = "素材时间表"
+        for offset in range(0, len(images_b64), 4):
+            batch = images_b64[offset:offset + 4]
+            start = float(offset * interval)
+            end = float(self._duration) if offset + len(batch) == len(images_b64) else float((offset + len(batch)) * interval)
+            if not start < end:
+                raise ValueError("素材分析抽帧时间超出视频范围")
+            system, user = self._build_prompts(batch, interval, start_sec=start, end_sec=end)
+            user += (f"\n本批仅负责全片的{start:.3f}至{end:.3f}秒区间。"
+                     f"图片采样位置约为{[float((offset + i) * interval) for i in range(len(batch))]}秒。"
+                     "必须使用全片绝对时间，仅覆盖本批区间，不补写其他区间。")
+            with llm_call_context(stage="material_analysis", resource=str(self._video_path)):
+                raw = self._call_multimodal(system, user, batch)
+            part = json.loads(self._validate(raw, range_start=start, range_end=end))
+            if offset == 0:
+                title = part["title"]
+            for segment in part["segments"]:
+                if (merged and merged[-1]["name"] == segment["name"]
+                        and merged[-1]["description"] == segment["description"]):
+                    merged[-1]["end_sec"] = segment["end_sec"]
+                    merged[-1]["duration_sec"] = round(segment["end_sec"] - merged[-1]["start_sec"], 3)
+                else:
+                    merged.append(segment)
+        return self._validate(json.dumps({"title": title, "segments": merged}, ensure_ascii=False))
 
     # ── frame extraction ────────────────────────────────────
 
     def _extract_frames(self) -> tuple[list[str], int]:
-        """抽帧：3s间隔算帧数 → +1 → 重算间隔。"""
-        target = int(self._duration / 3) + 1  # type: ignore[arg-type,assignment]
-        interval = max(2, round(self._duration / target))  # type: ignore[union-attr]
+        """整片最多32帧，长片扩大采样间隔，图片最长边不超过640。"""
+        if self._duration is None or not math.isfinite(self._duration) or self._duration <= 0:
+            raise ValueError("素材视频时长无效")
+        interval = max(3, math.ceil(self._duration / 32))
+        encoded: list[str] = []
         with tempfile.TemporaryDirectory() as tmpdir:
             frames = extract_frames_interval(self._video_path, Path(tmpdir), interval)
             if not frames:
-                raise ValueError("未能从视频中提取到帧")
-            return (
-                [base64.b64encode(f.read_bytes()).decode("ascii") for f in frames],
-                interval,
-            )
+                first = Path(tmpdir) / "first.jpg"
+                run_ffmpeg([*ffmpeg_cmd_start(hwaccel=False), "-i", str(self._video_path), "-frames:v", "1", str(first)])
+                if not first.is_file():
+                    raise ValueError("未能从视频中提取到帧")
+                frames = [first]
+            if len(frames) > 32:
+                raise ValueError("素材分析抽帧超出32帧预算")
+            for frame in frames:
+                with Image.open(frame) as image:
+                    image.thumbnail((640, 640))
+                    buf = io.BytesIO()
+                    image.convert("RGB").save(buf, format="JPEG", quality=85)
+                    encoded.append(base64.b64encode(buf.getvalue()).decode("ascii"))
+        return encoded, interval
 
     # ── prompt building ─────────────────────────────────────
 
-    def _build_prompts(self, images_b64: list[str], interval: int) -> tuple[str, str]:
+    def _build_prompts(self, images_b64: list[str], interval: int, *, start_sec: float = 0.0, end_sec: float | None = None) -> tuple[str, str]:
         """构造 system / user prompt。"""
         system = (
             "你是一个视频内容分析专家。你的任务是分析视频帧序列，识别其中逐一展示的不同物品/对象，"
@@ -87,6 +126,7 @@ class VideoAnalyzer:
             "所有输出文本必须使用简体中文，包括但不限于：title、name、description 字段。\n"
             "不要使用英文或中英混合，专有名词可保留但描述部分必须为中文。"
         )
+        end_sec = self._duration if end_sec is None else end_sec
         user = (
             f"视频时长约 {self._duration:.1f} 秒，共提供 {len(images_b64)} 帧样本"
             f"（每约 {interval} 秒一帧）。\n\n"
@@ -107,10 +147,10 @@ class VideoAnalyzer:
             "}\n\n"
             "【输出规则】\n"
             "1. 每个不同的视觉对象单独一个 segment，按出现时间顺序排列\n"
-            "2. segments 必须覆盖整个视频，无遗漏、无重叠\n"
+            f"2. segments 必须仅覆盖本批 {start_sec:.3f} 至 {end_sec:.3f} 秒，无遗漏、无重叠，使用全片绝对时间\n"
             "3. 时间戳基于帧样本位置推断，精确到±1秒\n"
             "4. duration_sec 必须等于 end_sec - start_sec\n"
-            "5. 最后一个 segment 的 end_sec 应接近视频总时长\n"
+            f"5. 最后一个 segment 的 end_sec 必须为本批终点 {end_sec:.3f} 秒\n"
             "6. name 供后续口播点名，禁止只用颜色/形状等泛称代替具体对象\n\n"
             "【语言规则】\n"
             "- title、name、description 三个字段必须全部使用简体中文\n"
@@ -131,6 +171,8 @@ class VideoAnalyzer:
         max_tokens: int | None = None,
     ) -> str:
         """调用 Agnes 多模态 LLM，返回响应文本。"""
+        if not 1 <= len(images_b64) <= 4:
+            raise ValueError("素材分析每次仅允许1至4帧")
         settings = get_settings()
         keys = agnes_api_keys(settings)
         if not keys:
@@ -146,7 +188,7 @@ class VideoAnalyzer:
             })
 
         limit = (
-            settings.agnes_llm_max_tokens if max_tokens is None else max_tokens
+            4096 if max_tokens is None else max_tokens
         )
         payload: dict = {
             "model": settings.agnes_vl_model,
@@ -169,8 +211,8 @@ class VideoAnalyzer:
             host_failover_tried: set[str] = {url}
             for attempt in range(settings.agnes_http_max_retries):
                 try:
-                    resp = requests.post(
-                        url, headers=headers, json=payload, timeout=timeout
+                    resp = llm_http_post(
+                        url, provider="agnes", operation="material_analysis", key_label=api_key.label, attempt=attempt + 1, retry_reason="upstream_retry" if attempt else None, headers=headers, json=payload, timeout=timeout
                     )
                     if resp.status_code == 503:
                         alt = agnes_apply_host_failover(
@@ -208,7 +250,12 @@ class VideoAnalyzer:
                         )
                     resp.raise_for_status()
                     choice = resp.json()["choices"][0]
-                    return (choice.get("message", {}).get("content") or "").strip()
+                    if choice.get("finish_reason") != "stop":
+                        raise ValueError("素材分析未完成：模型回答截断或非正常结束")
+                    reply = (choice.get("message", {}).get("content") or "").strip()
+                    if not reply:
+                        raise ValueError("素材分析未完成：模型回答为空")
+                    return reply
                 except AgnesContentPolicyError:
                     raise
                 except AgnesQuotaExceeded as exc:
@@ -256,7 +303,7 @@ class VideoAnalyzer:
         raise RuntimeError("agnes multimodal request failed after all retries")
     # ── response validation ─────────────────────────────────
 
-    def _validate(self, raw: str) -> str:
+    def _validate(self, raw: str, *, range_start: float = 0.0, range_end: float | None = None) -> str:
         """校验并规范化时间表 JSON。"""
         text = raw.strip()
         if text.startswith("```"):
@@ -282,8 +329,12 @@ class VideoAnalyzer:
         if video_duration is None:
             coerced = _coerce_optional_float(parsed.get("duration_sec"))
             video_duration = coerced
-        if video_duration is not None:
-            parsed["duration_sec"] = round(float(video_duration), 1)
+        if video_duration is None or not math.isfinite(video_duration) or video_duration <= 0:
+            raise ValueError("素材时间表缺少有效视频时长")
+        expected_end = video_duration if range_end is None else range_end
+        if not 0 <= range_start < expected_end <= video_duration:
+            raise ValueError("素材时间表批次范围无效")
+        parsed["duration_sec"] = round(float(video_duration), 3)
 
         fixed: list[dict] = []
         for i, item in enumerate(segments, start=1):
@@ -294,28 +345,26 @@ class VideoAnalyzer:
             if not name:
                 raise ValueError(f"segments[{i}] 缺少 name")
             if not description:
-                description = name
+                raise ValueError(f"segments[{i}] 缺少 description")
             start_sec = _coerce_optional_float(item.get("start_sec"))
             end_sec = _coerce_optional_float(item.get("end_sec"))
             duration_sec = _coerce_optional_float(item.get("duration_sec"))
-            if start_sec is None and end_sec is not None and duration_sec and duration_sec > 0:
-                start_sec = end_sec - duration_sec
-            if end_sec is None and start_sec is not None and duration_sec and duration_sec > 0:
-                end_sec = start_sec + duration_sec
             if start_sec is None or end_sec is None:
                 raise ValueError(f"segments[{i}] 缺少 start_sec/end_sec")
             if end_sec <= start_sec:
                 raise ValueError(
                     f"segments[{i}] end_sec({end_sec}) 须大于 start_sec({start_sec})"
                 )
-            duration_sec = round(end_sec - start_sec, 1)
+            if duration_sec is None or abs(duration_sec - (end_sec - start_sec)) > .1:
+                raise ValueError(f"segments[{i}] duration_sec 缺失或与起止时间不符")
+            duration_sec = round(end_sec - start_sec, 3)
             fixed.append(
                 {
                     "index": i,
                     "name": name,
                     "description": description,
-                    "start_sec": round(start_sec, 1),
-                    "end_sec": round(end_sec, 1),
+                    "start_sec": round(start_sec, 3),
+                    "end_sec": round(end_sec, 3),
                     "duration_sec": duration_sec,
                 }
             )
@@ -324,42 +373,15 @@ class VideoAnalyzer:
         for i, seg in enumerate(fixed, start=1):
             seg["index"] = i
 
-        for i in range(1, len(fixed)):
-            prev, cur = fixed[i - 1], fixed[i]
-            if cur["start_sec"] < prev["end_sec"] - 0.5:
-                logger.warning(
-                    "timeline overlap: seg %s ends %.1f, seg %s starts %.1f",
-                    prev["index"],
-                    prev["end_sec"],
-                    cur["index"],
-                    cur["start_sec"],
-                )
-                # 裁掉重叠：后段起点贴齐前段终点
-                cur["start_sec"] = prev["end_sec"]
-                if cur["end_sec"] <= cur["start_sec"]:
-                    cur["end_sec"] = round(cur["start_sec"] + max(0.5, cur["duration_sec"]), 1)
-                cur["duration_sec"] = round(cur["end_sec"] - cur["start_sec"], 1)
-
-        if video_duration is not None and fixed:
-            if fixed[0]["start_sec"] > 1.0:
-                logger.warning(
-                    "timeline gap at start: first segment starts at %.1fs",
-                    fixed[0]["start_sec"],
-                )
-            last_end = fixed[-1]["end_sec"]
-            if abs(last_end - video_duration) > 2.0:
-                logger.warning(
-                    "timeline end mismatch: last end %.1fs vs duration %.1fs",
-                    last_end,
-                    video_duration,
-                )
-                # 末段贴齐总时长（不缩短到 0）
-                fixed[-1]["end_sec"] = round(float(video_duration), 1)
-                if fixed[-1]["end_sec"] <= fixed[-1]["start_sec"]:
-                    fixed[-1]["end_sec"] = round(fixed[-1]["start_sec"] + 0.5, 1)
-                fixed[-1]["duration_sec"] = round(
-                    fixed[-1]["end_sec"] - fixed[-1]["start_sec"], 1
-                )
+        previous_end = range_start
+        for segment in fixed:
+            start, end = segment["start_sec"], segment["end_sec"]
+            if (start < range_start - .1 or end > expected_end + .1
+                    or abs(start - previous_end) > .1):
+                raise ValueError("素材时间表存在越界、缺口或重叠")
+            previous_end = end
+        if abs(previous_end - expected_end) > .1:
+            raise ValueError("素材时间表未覆盖完整区间")
 
         title = str(parsed.get("title") or "").strip() or "素材时间表"
         parsed["title"] = title
@@ -371,13 +393,14 @@ def _coerce_optional_float(value: object) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        return float(value) if math.isfinite(value) else None
     if isinstance(value, str):
         text = value.strip()
         if not text:
             return None
         try:
-            return float(text)
+            number = float(text)
+            return number if math.isfinite(number) else None
         except ValueError:
             return None
     return None

@@ -865,7 +865,9 @@ class JobMgr:
             def _worker() -> None:
                 from app.repositories.database import get_app
 
-                with get_app().app_context():
+                from app.services.llm.llm_mgr import llm_call_context
+
+                with get_app().app_context(), llm_call_context(job_id=job_id, stage=action):
                     try:
                         mode = 'sync' if sync else 'background greenlet'
                         if action_detail:

@@ -362,11 +362,11 @@ def _post_chat(*, api_key: AgnesApiKey, base_url: str, payload: dict[str, Any], 
     host_failover_tried: set[str] = {url}
     for attempt in range(max_retries):
         try:
-            from app.services.llm.llm_mgr import remaining_llm_time, llm_request_timeout
+            from app.services.llm.llm_mgr import remaining_llm_time, llm_request_timeout, llm_http_post
 
             if remaining_llm_time() is not None:
                 timeout = llm_request_timeout(read_timeout)
-            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            resp = llm_http_post(url, provider="agnes", operation="text_chat", key_label=api_key.label, attempt=attempt + 1, retry_reason="upstream_retry" if attempt else None, headers=headers, json=payload, timeout=timeout)
             if resp.status_code == 503:
                 alt = agnes_apply_host_failover(
                     url,

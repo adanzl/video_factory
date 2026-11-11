@@ -22,6 +22,8 @@ from typing import Any, cast
 import requests
 
 from app.config import get_settings
+from app.services.llm.llm_mgr import llm_http_post, record_llm_decision
+from app.services.llm.llm_opencode_go import opencode_visual_review
 from app.services.daily_story.speaker import DAILY_STORY_SPEAKER_NAMES
 from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.llm.llm_agnes import (
@@ -116,7 +118,7 @@ _REQUIRED_VERIFY_IDS = (
 
 # ── 多手硬卡（裁剪放大数手）────────────────────────────────
 # 主校验整图数手对低分辨率下的多手会漏（图9 双手抱头+第三只手握遥控器）。
-# 硬卡把角色所在半幅裁剪 ×2 放大后再数手+多手确认，两问任一命中即失败。
+# 按当前图的角色边界裁剪 ×2 放大，再数手并确认多手。
 _HARD_FAIL_ARM_SYSTEM_PROMPT = (
     "你是图像质检员。只根据用户列出的检查项逐项判断，每项单独一行回答。"
     "回答格式必须为「项N: 是」或「项N: 否」，数字项只回答阿拉伯数字。"
@@ -133,13 +135,6 @@ _HARD_FAIL_ARM_Q2 = (
     "（数清楚她/他身上所有的手，包括握着东西的手、"
     "从腰侧/背后/胸前伸出的手）是则回答「是」，否则回答「否」。"
 )
-# daily 固定布局：昭昭左、灿灿右、家长中
-_HARD_FAIL_ZONE = {
-    "昭昭": "left",
-    "灿灿": "right",
-    "妈妈": "center",
-    "爸爸": "center",
-}
 _HARD_FAIL_ZOOM = 2
 
 
@@ -949,6 +944,8 @@ class AgnesImageProvider(ImageProvider):
                 )
                 return result
             more = attempt + 1 < _VERIFY_MAX_ATTEMPTS
+            record_llm_decision(operation="image_verify", job_id=self._active_job_id, resource=str(result),
+                                action="regenerate" if more else "stop", reason="verified_image_mismatch", attempt=attempt + 1)
             if (
                 more and not edit_attempted and last_key is not None
                 and content_style == CONTENT_STYLE_DAILY_STORY
@@ -1108,8 +1105,9 @@ class AgnesImageProvider(ImageProvider):
                 f'目标出场角色：{"、".join(expected_speakers)}。目标分镜：{prompt}。'
                 f'上一轮观察仅供核对，必须以图片为准：{feedback}'
             )
-            response = cast(requests.Response, self._run_blocking_cancellable(lambda: requests.post(
+            response = cast(requests.Response, self._run_blocking_cancellable(lambda: llm_http_post(
                 agnes_key_base_url(api_key, get_settings()) + "/chat/completions",
+                provider="agnes", operation="people_edit_plan", key_label=api_key.label, job_id=self._active_job_id, resource=str(image_path),
                 headers=agnes_auth_header(api_key.value),
                 json={"model": get_settings().agnes_vl_model, "max_tokens": 2048,
                       "messages": [{"role": "user", "content": [
@@ -1842,6 +1840,47 @@ class AgnesImageProvider(ImageProvider):
         except (OSError, ValueError, TypeError) as exc:
             logger.warning("[out=%s] cannot save verification evidence: %s", image_path.name, exc)
 
+    def _recheck_image(
+        self, user: str, image_url: str, check_ids: list[str], image_path: Path,
+    ) -> str | None:
+        """独立观察同一图片；保持原检查项，不传初检结论。"""
+        criteria = self._VERIFY_SYSTEM_PROMPT.split("项「场景」：", 1)[1]
+        question = user.replace("每项一行：", "逐项观察：").removesuffix("不要输出任何其他内容。")
+        question += "\n项编号仅标识检查项目。统一输出带complete和items的JSON对象，每项包含number、answer、evidence。"
+        reply = self._run_blocking_cancellable(lambda: opencode_visual_review(
+            system=("你是独立图片质检员，只依据图片逐项回答用户检查项，不知道其他模型结论。"
+                    "项「场景」：" + criteria +
+                    "不要把要求当成已观察事实。不清楚就complete=false。只输出JSON："
+                    '{"complete":true,"items":[{"number":1,"answer":"是","evidence":"具体可见证据"}]}。'
+                    "items必须覆盖全部编号，answer按检查项要求使用数字、字符串、JSON对象或数组。"),
+            question=question, frames=[image_url], operation="image_recheck",
+            job_id=self._active_job_id, resource=str(image_path),
+        ))
+        self._raise_if_job_cancelled()
+        logger.info("[out=%s] image recheck evidence: %s", image_path.name, reply)
+        try:
+            body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", str(reply or "").strip()))
+            if not isinstance(body, dict) or body.get("complete") is not True:
+                return None
+            rows = body.get("items")
+            if not isinstance(rows, list) or len(rows) != len(check_ids):
+                return None
+            answers: dict[int, str] = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    return None
+                number, value, evidence = row.get("number"), row.get("answer"), row.get("evidence")
+                if (type(number) is not int or not 1 <= number <= len(check_ids) or number in answers
+                        or not isinstance(evidence, str) or not evidence.strip()):
+                    return None
+                answer = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                if "\n" in answer or self._evaluate_verify_response(f"项1: {answer}", [check_ids[number - 1]]) is None:
+                    return None
+                answers[number] = answer
+            return "\n".join(f"项{i}: {answers[i]}" for i in range(1, len(check_ids) + 1))
+        except (ValueError, TypeError):
+            return None
+
     def _verify_image(
         self,
         prompt: str,
@@ -1919,8 +1958,8 @@ class AgnesImageProvider(ImageProvider):
                         def _post_verify() -> requests.Response:
                             nonlocal url, verify_url  # type: ignore[var-annotated]
                             try:
-                                resp = requests.post(
-                                    url, headers=headers, json=payload, timeout=300
+                                resp = llm_http_post(
+                                    url, provider="agnes", operation="image_verify", key_label=api_key.label, job_id=self._active_job_id, resource=str(image_path), attempt=retry + 1, retry_reason="verification_retry" if retry else None, headers=headers, json=payload, timeout=300
                                 )
                             except requests.Timeout:
                                 alt = agnes_apply_host_failover(
@@ -1930,7 +1969,7 @@ class AgnesImageProvider(ImageProvider):
                                     raise
                                 self._raise_if_job_cancelled()
                                 verify_url = url = alt
-                                resp = requests.post(url, headers=headers, json=payload, timeout=300)
+                                resp = llm_http_post(url, provider="agnes", operation="image_verify", key_label=api_key.label, job_id=self._active_job_id, resource=str(image_path), attempt=retry + 1, retry_reason="host_failover", headers=headers, json=payload, timeout=300)
                             if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
                                 alt = agnes_apply_host_failover(
                                     url,
@@ -1942,8 +1981,8 @@ class AgnesImageProvider(ImageProvider):
                                     self._raise_if_job_cancelled()
                                     verify_url = alt  # type: ignore[var-annotated]
                                     url = alt
-                                    resp = requests.post(
-                                        url, headers=headers, json=payload, timeout=300
+                                    resp = llm_http_post(
+                                        url, provider="agnes", operation="image_verify", key_label=api_key.label, job_id=self._active_job_id, resource=str(image_path), attempt=retry + 1, retry_reason="host_failover", headers=headers, json=payload, timeout=300
                                     )
                             return resp
 
@@ -1978,6 +2017,14 @@ class AgnesImageProvider(ImageProvider):
                                     content, check_ids
                                 ),
                             )
+                            if not ok:
+                                phase = "recheck"
+                                reviewed = self._recheck_image(user, image_url, check_ids, image_path)
+                                ok = self._evaluate_verify_response(reviewed, check_ids, cast_max=cast_max) if reviewed else None
+                                if ok is None:
+                                    raise AgnesImageVerificationUnavailable("图片复检未完成：独立证据不足，保留图片待处理")
+                                content = reviewed or ""
+                                logger.info("%s image recheck opencode: ok=%s", log_tag, ok)
                             if ok and content_style == CONTENT_STYLE_DAILY_STORY:
                                 phase = "limbs"
                                 ok = self._verify_hardfail_limbs(
@@ -2009,6 +2056,8 @@ class AgnesImageProvider(ImageProvider):
                     except JobCancelledError:
                         raise
                     except AgnesImageVerificationUnavailable as exc:
+                        if phase in {"recheck", "limbs"}:
+                            raise
                         last_incomplete = exc
                         if phase == "main":
                             self._record_verify_failure(
@@ -2067,26 +2116,15 @@ class AgnesImageProvider(ImageProvider):
     # ── 多手硬卡：裁剪放大数手 ────────────────────────────────
 
     @staticmethod
-    def _crop_zone_data_url(
-        image_path: Path,
-        zone: str,
-        *,
-        zoom: int = _HARD_FAIL_ZOOM,
+    def _crop_person_data_url(
+        image_path: Path, bounds: tuple[float, float, float, float], *, zoom: int = _HARD_FAIL_ZOOM,
     ) -> str:
-        """把角色所在区域裁剪出来并放大，返回 base64 data URL。
-
-        daily 固定布局：昭昭在左半幅、灿灿在右半幅、妈妈在中间半幅。
-        整图 VL 对低分辨率多手会漏（三手相叠/握着东西被忽略），
-        裁剪放大后手部轮廓更清晰，VL 才能数出来。
-        """
+        """按当前图的角色完整肢体边界裁剪，稍留边缘，不再按姓名假定位置。"""
         img = PILImage.open(image_path)
         w, h = img.size
-        if zone == "left":
-            box = (0, 0, w // 2, h)
-        elif zone == "right":
-            box = (w // 2, 0, w, h)
-        else:  # center
-            box = (w // 4, 0, w * 3 // 4, h)
+        x1, y1, x2, y2 = bounds
+        box = (max(0, int((x1 - .03) * w)), max(0, int((y1 - .03) * h)),
+               min(w, int((x2 + .03) * w + .5)), min(h, int((y2 + .03) * h + .5)))
         crop = img.crop(box)
         crop = crop.resize(
             (crop.size[0] * zoom, crop.size[1] * zoom), PILImage.LANCZOS  # type: ignore[attr-defined]
@@ -2101,6 +2139,39 @@ class AgnesImageProvider(ImageProvider):
         buf = io.BytesIO()
         crop.convert("RGB").save(buf, format="JPEG", quality=92)
         return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+    def _locate_limb_boxes(self, image_path: Path, roles: list[str], settings, keys: list) -> dict[str, tuple[float, float, float, float]]:
+        question = (
+            "定位当前图中每个指定角色完整可见身体的包围框，包含所有与该角色相连的手脚，"
+            "尤其侧向伸出的手和手持物旁的手，不能只框人脸；不要假定角色在左中右。"
+            f"角色外貌：{json.dumps({name: _ROLE_VERIFY[name][1] for name in roles}, ensure_ascii=False)}。"
+            '只输出JSON：{"complete":true,"people":[{"role":"角色名","box":[x1,y1,x2,y2],"evidence":"定位依据"}]}。'
+            "坐标相对整图归一化到0至1。每个指定角色必须恰好一个框，身份或肢体归属不确定用complete=false。"
+        )
+        answer = self._ask_hardfail_vl(settings, keys, self._encode_verify_image_data_url(image_path),
+                                       question, f"[out={image_path.name}]", image_path=image_path, locate=True)
+        try:
+            body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", (answer or "").strip()))
+            if not isinstance(body, dict) or body.get("complete") is not True or not isinstance(body.get("people"), list):
+                raise ValueError("incomplete")
+            boxes: dict[str, tuple[float, float, float, float]] = {}
+            for person in body["people"]:
+                if not isinstance(person, dict):
+                    raise ValueError("invalid person")
+                name, box = person.get("role"), person.get("box")
+                if not isinstance(name, str) or name not in roles or name in boxes or not isinstance(box, list) or len(box) != 4:
+                    raise ValueError("invalid identity or box")
+                if any(type(v) not in (int, float) or not 0 <= v <= 1 for v in box) or not box[0] < box[2] or not box[1] < box[3]:
+                    raise ValueError("invalid bounds")
+                if not isinstance(person.get("evidence"), str) or not person["evidence"].strip():
+                    raise ValueError("missing evidence")
+                boxes[name] = (box[0], box[1], box[2], box[3])
+            if set(boxes) != set(roles):
+                raise ValueError("missing person")
+            logger.info("[out=%s] limbs locate evidence: %s", image_path.name, answer)
+            return boxes
+        except (ValueError, TypeError):
+            raise AgnesImageVerificationUnavailable("肢体质检未完成：人物定位不确定，保留图片待处理") from None
 
     def _verify_hardfail_limbs(
         self,
@@ -2127,16 +2198,16 @@ class AgnesImageProvider(ImageProvider):
             speakers=speakers,
             content_style=content_style,
         )
-        roles = [name for name in allowed if name in _HARD_FAIL_ZONE]
+        roles = [name for name in allowed if name in _ROLE_VERIFY]
         if not roles:
             return True
 
+        boxes = self._locate_limb_boxes(image_path, roles, settings, keys)
         log_tag = f"[out={image_path.name}]"
         for name in roles:
             self._raise_if_job_cancelled()
-            zone = _HARD_FAIL_ZONE[name]
             try:
-                data_url = AgnesImageProvider._crop_zone_data_url(image_path, zone)
+                data_url = AgnesImageProvider._crop_person_data_url(image_path, boxes[name])
             except Exception as exc:
                 logger.warning(
                     "%s agnes hardfail crop %s error: %s", log_tag, name, exc
@@ -2165,7 +2236,30 @@ class AgnesImageProvider(ImageProvider):
                 hit,
             )
             if hit:
-                return False
+                review_question = question.replace("只回答阿拉伯数字", "将数字写入count字段").replace(
+                    "是则回答「是」，否则回答「否」。", "将判断写入extra布尔字段。"
+                ) + "\n统一输出complete、count、extra、evidence四个字段的JSON对象，不输出逐行答案。"
+                reviewed = self._run_blocking_cancellable(lambda: opencode_visual_review(
+                    system=("只根据图片检查指定人物实际手臂数量，不知道其他审核结果。只输出JSON："
+                            '{"complete":true,"count":2,"extra":false,"evidence":"逐个手臂的可见位置"}。'
+                            "看不清或不能确定归属时complete=false。"),
+                    question=review_question, frames=[data_url], operation="limbs_recheck",
+                    job_id=self._active_job_id, resource=str(image_path),
+                ))
+                self._raise_if_job_cancelled()
+                try:
+                    body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", str(reviewed or "").strip()))
+                    if (not isinstance(body, dict) or body.get("complete") is not True
+                            or type(body.get("count")) is not int or body["count"] < 0
+                            or type(body.get("extra")) is not bool or body["extra"] != (body["count"] > 2)
+                            or not isinstance(body.get("evidence"), str) or not body["evidence"].strip()):
+                        raise ValueError("incomplete")
+                except (ValueError, TypeError):
+                    raise AgnesImageVerificationUnavailable("肢体复检未完成：独立证据不足，保留图片待处理") from None
+                logger.info("%s limbs recheck %s evidence: %s", log_tag, name, reviewed)
+                if body["extra"]:
+                    return False
+                continue
             if count is None or extra is None:
                 raise AgnesImageVerificationUnavailable(f"肢体质检未完成：{name}复核结果缺项或无法解析")
         return True
@@ -2180,6 +2274,7 @@ class AgnesImageProvider(ImageProvider):
         *,
         image_path: Path | None = None,
         role: str = "",
+        locate: bool = False,
     ) -> str | None:
         """裁剪图数手 VL 调用；网络失败返回 None，由调用方报告质检未完成。"""
         for api_key in keys:
@@ -2195,7 +2290,7 @@ class AgnesImageProvider(ImageProvider):
                     "messages": [
                         {
                             "role": "system",
-                            "content": _HARD_FAIL_ARM_SYSTEM_PROMPT,
+                            "content": "只根据图片定位人物完整身体，返回用户要求的JSON。" if locate else _HARD_FAIL_ARM_SYSTEM_PROMPT,
                         },
                         {
                             "role": "user",
@@ -2209,8 +2304,8 @@ class AgnesImageProvider(ImageProvider):
                 }
 
                 def _post() -> requests.Response:
-                    return requests.post(
-                        url, headers=headers, json=payload, timeout=300
+                    return llm_http_post(
+                        url, provider="agnes", operation="limbs_locate" if locate else "limbs_verify", key_label=api_key.label, job_id=self._active_job_id, resource=str(image_path) if image_path else None, headers=headers, json=payload, timeout=300
                     )
 
                 resp = cast(requests.Response, self._run_blocking_cancellable(_post))
@@ -2237,6 +2332,8 @@ class AgnesImageProvider(ImageProvider):
                                 retry=0, key_label=api_key.label, phase=f"limbs:{role}", message=message,
                             )
                         return None
+                    if locate:
+                        return content
                     count, extra = self._parse_hardfail_arm_answer(content)
                     if (image_path is not None and (count is None or extra is None)
                             and not ((count is not None and count > _MAX_ARMS_PER_PERSON) or extra is True)):

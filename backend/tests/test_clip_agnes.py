@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,7 @@ from app.services.segment.clip.video_agnes import (
     _extract_speak_windows,
     _normalize_submit_ids,
     _parse_speaking_sides,
+    _parse_mouth_recheck,
     _pick_seconds,
     _remap_prompt_timeline,
     _resolve_aspect_ratio,
@@ -110,7 +112,10 @@ def test_mouth_checks_tail_frames_and_keeps_unknown(replies, expected):
 @pytest.mark.parametrize("last_reply", ["有字幕", "无法判断", "无字幕"])
 def test_subtitle_checks_later_windows(last_reply):
     provider = AgnesClipProvider()
-    with patch.object(provider, "_ask_vl_content", side_effect=["无字幕", "无字幕", last_reply]) as vl:
+    with (
+        patch.object(provider, "_ask_vl_content", side_effect=["无字幕", "无字幕", last_reply]) as vl,
+        patch("app.services.segment.clip.video_agnes.opencode_visual_review", return_value=json.dumps({"complete": True, "frames": [{"index": i + 1, "clear": True, "texts": [{"text": "示例", "position": "下方", "category": "字幕"}]} for i in range(4)]})),
+    ):
         if last_reply == "无法判断":
             with pytest.raises(AgnesI2VError, match="字幕质检未完成"):
                 provider._verify_no_burned_subtitles([f"f{i}" for i in range(10)], segment_index=1)
@@ -1638,7 +1643,10 @@ def test_resume_job_does_not_prepare() -> None:
 @pytest.mark.parametrize("sides,expected", [({"左侧"}, True), ({"右侧"}, False), ({"中间"}, False), ({"左侧", "右侧"}, False), (set(), False)])
 def test_mouth_requires_only_expected_speaker(sides, expected):
     provider = AgnesClipProvider()
-    with patch.object(provider, "_ask_vl_speaking_sides", return_value=sides):
+    with (
+        patch.object(provider, "_ask_vl_speaking_sides", return_value=sides),
+        patch.object(provider, "_recheck_mouth_motion", return_value=sides),
+    ):
         assert provider._verify_mouth_motion([(0, 3, "左侧男孩", ["frame1", "frame2"])], segment_index=1) is expected
 
 
@@ -1669,6 +1677,7 @@ def test_failed_mouth_never_publishes_clip(tmp_path, unavailable, existing):
         patch.object(provider, "_generate_raw") as generate,
         patch("app.services.segment.clip.video_agnes._sample_verify_windows", return_value=[(0, 3, "左侧男孩", ["frame1", "frame2"])]),
         patch.object(provider, "_ask_vl_speaking_sides", return_value=None if unavailable else {"右侧"}),
+        patch.object(provider, "_recheck_mouth_motion", return_value={"右侧"}),
         patch.object(provider, "_verify_no_burned_subtitles", return_value=True),
         patch("app.services.segment.clip.video_agnes.clip_mgr.cue_total_duration", return_value=3.0),
         patch("app.services.segment.clip.video_agnes.fit_video_duration") as fit,
@@ -1680,7 +1689,8 @@ def test_failed_mouth_never_publishes_clip(tmp_path, unavailable, existing):
     assert out.read_bytes() == b"previous verified clip" if existing else not out.exists()
 
 
-def test_mouth_retry_publishes_only_after_pass(tmp_path):
+@pytest.mark.parametrize("rescued", [False, True])
+def test_mouth_retry_publishes_only_after_pass(tmp_path, rescued):
     provider = AgnesClipProvider()
     out = tmp_path / "clip.mp4"
     settings = SimpleNamespace(video_width=720, video_height=1280, agnes_video_mouth_verify=True, agnes_video_mouth_verify_attempts=2)
@@ -1689,6 +1699,7 @@ def test_mouth_retry_publishes_only_after_pass(tmp_path):
         patch.object(provider, "_generate_raw") as generate,
         patch("app.services.segment.clip.video_agnes._sample_verify_windows", return_value=[(0, 3, "左侧男孩", ["frame1", "frame2"])]),
         patch.object(provider, "_ask_vl_speaking_sides", side_effect=[{"右侧"}, {"左侧"}]),
+        patch.object(provider, "_recheck_mouth_motion", return_value={"左侧"} if rescued else {"右侧"}),
         patch.object(provider, "_verify_no_burned_subtitles", return_value=True),
         patch("app.services.segment.clip.video_agnes.clip_mgr.cue_total_duration", return_value=3.0),
         patch("app.services.segment.clip.video_agnes._loop_video_to_duration", side_effect=lambda path, **kw: path),
@@ -1696,7 +1707,7 @@ def test_mouth_retry_publishes_only_after_pass(tmp_path):
         patch("app.services.segment.clip.video_agnes.fit_video_duration", side_effect=lambda path, target, *a, **kw: target.write_bytes(b"verified clip")) as fit,
     ):
         result = provider.build_segment_clip(image_path=tmp_path / "1.png", subtitle_cues=[("x", 3)], output_path=out, motion_preset="none", work_dir=tmp_path, segment_index=1, motion_prompt="0.0-3.0秒左侧男孩开口说话")
-    assert generate.call_count == 2
+    assert generate.call_count == (1 if rescued else 2)
     fit.assert_called_once()
     assert result.read_bytes() == b"verified clip"
 
@@ -2045,3 +2056,156 @@ def test_video_qc_requires_completed_response(finish_reason, field):
         result = provider._ask_vl_content(system='质检',question='检查',frames=['frame'],tag='test')
     assert result == ('左侧' if finish_reason in {None,'stop'} else None)
     post.assert_called_once()
+
+
+def _mouth_review(positions=("左侧", "右侧"), speaking=("右侧",), count=4):
+    return json.dumps({"can_see_images": True, "complete": True, "people": [
+        {"position": side, "mouth_states": ["张开" if side in speaking and i == 1 else "闭合" for i in range(count)],
+         "speaking_motion": side in speaking, "evidence": "逐帧嘴部开合" if side in speaking else "各帧闭合不变"}
+        for side in positions
+    ]}, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("kind", ["valid", "no_images", "incomplete", "missing_frame", "duplicate", "occluded", "unknown", "contradiction", "static_open", "bad_json", "bad_type"])
+def test_mouth_recheck_requires_complete_consistent_evidence(kind):
+    body = json.loads(_mouth_review())
+    if kind == "no_images": body["can_see_images"] = False
+    if kind == "incomplete": body["complete"] = False
+    if kind == "missing_frame": body["people"][0]["mouth_states"].pop()
+    if kind == "duplicate": body["people"][1]["position"] = "左侧"
+    if kind == "occluded": body["people"][0]["mouth_states"][0] = "遮挡"
+    if kind == "unknown": body["people"][0]["speaking_motion"] = None
+    if kind == "contradiction": body["people"][1]["speaking_motion"] = False
+    if kind == "static_open": body["people"][1]["mouth_states"] = ["张开"] * 4
+    if kind == "bad_type": body["people"][0]["position"] = []
+    content = "not JSON" if kind == "bad_json" else json.dumps(body)
+    assert _parse_mouth_recheck(content, 4) == (({"右侧"}, {"左侧", "右侧"}) if kind == "valid" else None)
+
+
+@pytest.mark.parametrize("last_reply,expected", [
+    (_mouth_review(speaking=("左侧",)), {"左侧", "右侧"}),
+    (_mouth_review(speaking=()), {"右侧"}),
+    (_mouth_review(positions=("左侧", "中间", "右侧")), None),
+    ("无法判断", None),
+])
+def test_opencode_recheck_covers_tail_and_all_people(last_reply, expected):
+    from app.services.llm.llm_opencode_go import OpenCodeGoClient
+    provider = AgnesClipProvider()
+    with (
+        patch("app.services.segment.clip.video_agnes.get_settings", return_value=SimpleNamespace(opencode_go_api_key="configured")),
+        patch.object(OpenCodeGoClient, "__init__", return_value=None),
+        patch.object(OpenCodeGoClient, "chat_messages", side_effect=[(_mouth_review(), "stop"), (last_reply, "stop")]) as chat,
+    ):
+        assert provider._recheck_mouth_motion([f"frame{i}" for i in range(5)]) == expected
+    assert chat.call_count == 2
+    assert "frame4" in str(chat.call_args_list[-1])
+    for call in chat.call_args_list:
+        messages = call.args[0]
+        assert len(messages[1]["content"]) == 5  # 文字 + 4 帧
+        assert "expected" not in str(messages)
+        assert call.kwargs["thinking_enabled"] is False
+
+
+@pytest.mark.parametrize("mode", ["exception", "truncated", "missing_key"])
+def test_opencode_recheck_unavailable_never_falls_back_to_direct_deepseek(mode):
+    from app.services.llm.llm_opencode_go import OpenCodeGoClient
+    provider = AgnesClipProvider()
+    with (
+        patch("app.services.segment.clip.video_agnes.get_settings", return_value=SimpleNamespace(opencode_go_api_key=None if mode == "missing_key" else "configured")),
+        patch.object(OpenCodeGoClient, "__init__", return_value=None),
+        patch.object(OpenCodeGoClient, "chat_messages", side_effect=TimeoutError if mode == "exception" else None, return_value=(_mouth_review(), "length")) as chat,
+        patch("requests.post") as network,
+    ):
+        assert provider._recheck_mouth_motion(["frame1", "frame2"]) is None
+    assert chat.call_count == (0 if mode == "missing_key" else 1)
+    network.assert_not_called()
+
+
+@pytest.mark.parametrize("rechecked,expected", [({"左侧"}, True), ({"右侧"}, False), ({"左侧", "右侧"}, False), (set(), False), (None, None)])
+def test_failed_primary_has_only_one_independent_recheck(rechecked, expected):
+    provider = AgnesClipProvider()
+    frames = ["f1", "f2"]
+    with (
+        patch.object(provider, "_ask_vl_speaking_sides", return_value={"左侧", "右侧"}),
+        patch("app.services.segment.clip.video_agnes._sample_window_frames") as sample,
+        patch.object(provider, "_recheck_mouth_motion", return_value=rechecked) as recheck,
+    ):
+        if expected is None:
+            with pytest.raises(AgnesI2VError, match="复检未完成"):
+                provider._verify_mouth_motion([(0, 3, "左侧男孩", frames)], segment_index=1)
+        else:
+            assert provider._verify_mouth_motion([(0, 3, "左侧男孩", frames)], segment_index=1) is expected
+    recheck.assert_called_once_with(frames)
+    assert recheck.call_args.args[0] is frames
+    sample.assert_not_called()
+
+
+def test_primary_pass_does_not_recheck_and_rescued_window_continues():
+    provider = AgnesClipProvider()
+    with (
+        patch.object(provider, "_ask_vl_speaking_sides", side_effect=[{"左侧", "右侧"}, {"右侧"}]) as primary,
+        patch.object(provider, "_recheck_mouth_motion", return_value={"左侧"}) as recheck,
+    ):
+        assert provider._verify_mouth_motion([(0, 3, "左侧男孩", ["f1", "f2"]), (3, 6, "右侧女孩", ["f3", "f4"])], segment_index=1)
+    assert primary.call_count == 2
+    recheck.assert_called_once()
+
+
+def test_incomplete_primary_frames_stop_without_recheck():
+    provider = AgnesClipProvider()
+    with (
+        patch.object(provider, "_ask_vl_speaking_sides", return_value={"右侧"}),
+        patch.object(provider, "_recheck_mouth_motion") as recheck,
+        pytest.raises(AgnesI2VError, match="抽帧不足"),
+    ):
+        provider._verify_mouth_motion([(0, 3, "左侧男孩", ["f1"])], segment_index=1)
+    recheck.assert_not_called()
+
+
+@pytest.mark.parametrize('kind', ['absent', 'subtitle', 'prop', 'unknown', 'missing', 'truncated'])
+def test_subtitle_independent_recheck_never_exempts_prop_text(kind):
+    provider = AgnesClipProvider()
+    rows = [{'index':i+1,'clear':True,'texts':[]} for i in range(2)]
+    if kind in {'subtitle','prop'}:
+        rows[0]['texts'] = [{'text':'限重四十斤','position':'椅背','category':'道具' if kind=='prop' else '字幕'}]
+    if kind=='unknown': rows[0]['clear']=False
+    if kind=='missing': rows.pop()
+    reply = None if kind=='truncated' else json.dumps({'complete':True,'frames':rows})
+    with (
+        patch.object(provider,'_ask_vl_content',return_value='有字幕'),
+        patch('app.services.segment.clip.video_agnes.opencode_visual_review',return_value=reply) as ds,
+    ):
+        if kind in {'unknown','missing','truncated'}:
+            with pytest.raises(AgnesI2VError,match='字幕复检未完成'):
+                provider._verify_no_burned_subtitles(['f1','f2'],segment_index=4)
+        else:
+            assert provider._verify_no_burned_subtitles(['f1','f2'],segment_index=4) is (kind=='absent')
+    ds.assert_called_once()
+    assert ds.call_args.kwargs['frames']==['f1','f2']
+
+
+def test_subtitle_primary_pass_never_calls_ds():
+    provider=AgnesClipProvider()
+    with patch.object(provider,'_ask_vl_content',return_value='无字幕'),patch('app.services.segment.clip.video_agnes.opencode_visual_review') as ds:
+        assert provider._verify_no_burned_subtitles(['f1','f2'],segment_index=1)
+    ds.assert_not_called()
+
+
+def test_unknown_recheck_retains_raw_candidate_without_accepting_clip(tmp_path):
+    provider=AgnesClipProvider();out=tmp_path/'clip.mp4';out.write_bytes(b'previous verified clip')
+    def generate(image,prompt,raw,**kwargs):raw.write_bytes(b'unverified candidate')
+    settings=SimpleNamespace(video_width=720,video_height=1280,agnes_video_mouth_verify=True,agnes_video_mouth_verify_attempts=2)
+    with (
+        patch('app.services.segment.clip.video_agnes.get_settings',return_value=settings),
+        patch.object(provider,'_generate_raw',side_effect=generate) as create,
+        patch('app.services.segment.clip.video_agnes._sample_verify_windows',return_value=[(0,3,'左侧男孩',['f1','f2'])]),
+        patch.object(provider,'_ask_vl_speaking_sides',return_value={'右侧'}),
+        patch.object(provider,'_recheck_mouth_motion',return_value=None),
+        patch('app.services.segment.clip.video_agnes.clip_mgr.cue_total_duration',return_value=3.),
+        patch('app.services.segment.clip.video_agnes.fit_video_duration') as fit,
+        pytest.raises(AgnesI2VError,match='复检未完成'),
+    ):
+        provider.build_segment_clip(image_path=tmp_path/'1.png',subtitle_cues=[('x',3)],output_path=out,motion_preset='none',work_dir=tmp_path,segment_index=1,motion_prompt='0.0-3.0秒左侧男孩开口说话')
+    create.assert_called_once();fit.assert_not_called()
+    assert out.read_bytes()==b'previous verified clip'
+    assert (tmp_path/'1.agnes_unverified.mp4').read_bytes()==b'unverified candidate'

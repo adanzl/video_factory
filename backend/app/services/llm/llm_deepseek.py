@@ -12,7 +12,7 @@ import gevent.pool
 
 from app.config import get_settings
 from app.exceptions import JobStageFailureError
-from app.services.llm.llm_mgr import LLMClient, llm_request_timeout
+from app.services.llm.llm_mgr import LLMClient, llm_request_timeout, llm_http_post, llm_call_context
 from app.services.script.description import (
     build_video_description_prompts,
     parse_video_description_payload,
@@ -732,8 +732,9 @@ class DeepSeekClient(LLMClient):
         limit = settings.deepseek_max_tokens if max_tokens is None else max_tokens
         use_thinking = settings.deepseek_thinking_enabled if thinking_enabled is None else thinking_enabled
         use_model = model or self._model
-        resp = self._requests.post(
+        resp = llm_http_post(
             f"{self._base_url}/chat/completions",
+            provider="deepseek", operation="text_chat", key_label="direct", post=self._requests.post,
             headers={
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
@@ -784,8 +785,9 @@ class DeepSeekClient(LLMClient):
             else thinking_enabled
         )
         use_model = model or self._model
-        resp = self._requests.post(
+        resp = llm_http_post(
             f"{self._base_url}/chat/completions",
+            provider="deepseek", operation="text_chat", key_label="direct", post=self._requests.post,
             headers={
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
@@ -824,15 +826,16 @@ class DeepSeekClient(LLMClient):
     ) -> tuple[dict[str, Any], str | None]:
         _EMPTY_RETRIES = 3
         _JSON_RETRIES = 1
-        for _ in range(_EMPTY_RETRIES):
-            content, finish = self._chat(
-                system,
-                user,
-                max_tokens=max_tokens,
-                thinking_enabled=thinking_enabled,
-                temperature=temperature,
-                model=model,
-            )
+        for retry in range(_EMPTY_RETRIES):
+            with llm_call_context(retry_reason="empty_response" if retry else None):
+                content, finish = self._chat(
+                    system,
+                    user,
+                    max_tokens=max_tokens,
+                    thinking_enabled=thinking_enabled,
+                    temperature=temperature,
+                    model=model,
+                )
             if content.strip():
                 break
             logger.warning(
@@ -865,16 +868,17 @@ class DeepSeekClient(LLMClient):
                     _JSON_RETRIES,
                     exc,
                 )
-                content, finish = self._chat(
-                    system,
-                    user
-                    + "\n\n上次输出不是合法 JSON，请重新输出严格合法的 JSON 对象，"
-                    "不要包含任何解释文字、markdown 代码围栏、注释或多余字符。",
-                    max_tokens=max_tokens,
-                    thinking_enabled=thinking_enabled,
-                    temperature=temperature,
-                    model=model,
-                )
+                with llm_call_context(retry_reason="invalid_json"):
+                    content, finish = self._chat(
+                        system,
+                        user
+                        + "\n\n上次输出不是合法 JSON，请重新输出严格合法的 JSON 对象，"
+                        "不要包含任何解释文字、markdown 代码围栏、注释或多余字符。",
+                        max_tokens=max_tokens,
+                        thinking_enabled=thinking_enabled,
+                        temperature=temperature,
+                        model=model,
+                    )
                 continue
             break
         return parsed, finish
