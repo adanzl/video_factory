@@ -71,9 +71,10 @@ _POOL_BY_LABEL: dict[str, str] = {
 
 
 def agnes_api_keys(settings: Settings | None = None) -> list[AgnesApiKey]:
-    """Key 链：国际收费 → 国内收费 → 国际免费 → 国内免费；各自绑定 base_url。
+    """Key 链：国际收费 → 国际免费 → 国内免费；各自绑定 base_url。
 
-    四把 key 分属四个互相独立的限制池（付费/免费 × 国际/国内）：
+    国内付费 Key 已停用，遗留配置也不参与调用或去重。
+    三把 key 分属三个互相独立的限制池：
     额度按池共享，视频队列满（503 ``video_queue_full``）也按池计，
     故某一池排满时可轮换到下一池，而不是直接进全局冷却。
     """
@@ -82,7 +83,6 @@ def agnes_api_keys(settings: Settings | None = None) -> list[AgnesApiKey]:
     cn = (getattr(cfg, "agnes_api_base_url_cn", None) or "").rstrip("/") or intl
     candidates: tuple[tuple[str, str | None, str], ...] = (
         ("primary", cfg.agnes_api_key, intl),
-        ("cn_paid", getattr(cfg, "agnes_cn_api_key", None), cn),
         ("free", cfg.agnes_free_api_key, intl),
         ("cn_free", getattr(cfg, "agnes_cn_free_api_key", None), cn),
     )
@@ -431,7 +431,7 @@ def _chat_with_key_fallback(*, system: str, user: str, max_tokens: int | None=No
     keys = agnes_api_keys(settings)
     if not keys:
         raise RuntimeError(
-            'AGNES_API_KEY / AGNES_CN_API_KEY / AGNES_FREE_API_KEY / '
+            'AGNES_API_KEY / AGNES_FREE_API_KEY / '
             'AGNES_CN_FREE_API_KEY 未配置，无法使用 Agnes LLM'
         )
     limit = settings.agnes_llm_max_tokens if max_tokens is None else max_tokens
@@ -476,7 +476,7 @@ def _chat_messages_with_key_fallback(*, messages: list[dict[str, Any]], max_toke
     keys = agnes_api_keys(settings)
     if not keys:
         raise RuntimeError(
-            'AGNES_API_KEY / AGNES_CN_API_KEY / AGNES_FREE_API_KEY / '
+            'AGNES_API_KEY / AGNES_FREE_API_KEY / '
             'AGNES_CN_FREE_API_KEY 未配置，无法使用 Agnes LLM'
         )
     limit = settings.agnes_llm_max_tokens if max_tokens is None else max_tokens

@@ -1235,7 +1235,7 @@ class AgnesClipProvider(ClipProvider):
         keys = agnes_api_keys()
         if not keys:
             raise AgnesI2VError(
-                "AGNES_API_KEY / AGNES_CN_API_KEY / AGNES_FREE_API_KEY / "
+                "AGNES_API_KEY / AGNES_FREE_API_KEY / "
                 "AGNES_CN_FREE_API_KEY 未配置，无法调用 Agnes 图生视频"
             )
 

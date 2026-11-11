@@ -261,6 +261,7 @@ class Config:
         self.z_image_size: str = os.getenv("Z_IMAGE_SIZE", wan_image_size)
         self.z_image_prompt_extend: bool = _bool("Z_IMAGE_PROMPT_EXTEND")
         self.agnes_api_key: str | None = _opt("AGNES_API_KEY")
+        # 兼容遗留配置；国内付费 Key 已退出调用链和配置就绪判断。
         self.agnes_cn_api_key: str | None = _opt("AGNES_CN_API_KEY")
         self.agnes_free_api_key: str | None = _opt("AGNES_FREE_API_KEY")
         self.agnes_cn_free_api_key: str | None = _opt("AGNES_CN_FREE_API_KEY")
@@ -580,7 +581,6 @@ class Config:
         if provider == "agnes":
             return bool(
                 self.agnes_api_key
-                or self.agnes_cn_api_key
                 or self.agnes_free_api_key
                 or self.agnes_cn_free_api_key
             )
@@ -598,12 +598,11 @@ class Config:
             missing.append("DEEPSEEK_API_KEY")
         elif provider == "agnes" and not (
             self.agnes_api_key
-            or self.agnes_cn_api_key
             or self.agnes_free_api_key
             or self.agnes_cn_free_api_key
         ):
             missing.append(
-                "AGNES_API_KEY / AGNES_CN_API_KEY / AGNES_FREE_API_KEY / "
+                "AGNES_API_KEY / AGNES_FREE_API_KEY / "
                 "AGNES_CN_FREE_API_KEY"
             )
         elif provider == "opencode_go" and not self.opencode_go_api_key:

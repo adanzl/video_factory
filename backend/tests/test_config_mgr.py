@@ -6,10 +6,17 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.services.config_mgr import (
+    CONFIG_GROUPS,
     mask_secret,
     parse_env_file,
     write_env_updates,
 )
+
+
+def test_retired_agnes_cn_paid_key_is_not_editable():
+    attrs = {field.attr for group in CONFIG_GROUPS for field in group.items}
+    assert "agnes_cn_api_key" not in attrs
+    assert {"agnes_api_key", "agnes_free_api_key", "agnes_cn_free_api_key"} <= attrs
 
 
 def test_write_env_updates_preserves_comments(tmp_path: Path):

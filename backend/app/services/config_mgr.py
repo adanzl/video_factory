@@ -286,13 +286,6 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
                 max_value=120,
             ),
             _f("agnes_api_key", "AGNES_API_KEY", "国外付费 Key", "secret"),
-            _f(
-                "agnes_cn_api_key",
-                "AGNES_CN_API_KEY",
-                "国内付费 Key",
-                "secret",
-                description="绑 AGNES_API_BASE_URL_CN，与国外付费 Key 分属两个限制池",
-            ),
             _f("agnes_free_api_key", "AGNES_FREE_API_KEY", "国外免费 Key（备用）", "secret"),
             _f(
                 "agnes_cn_free_api_key",

@@ -80,8 +80,8 @@ def test_agnes_api_keys_includes_cn_free() -> None:
     ]
 
 
-def test_agnes_api_keys_includes_cn_paid_second() -> None:
-    """四池齐全：国外收费 → 国内收费 → 国外免费 → 国内免费。"""
+def test_agnes_api_keys_excludes_retired_cn_paid() -> None:
+    """遗留国内付费配置不参与调用，其余三池仍按原顺序轮换。"""
     settings = SimpleNamespace(
         agnes_api_key="intl-paid",
         agnes_cn_api_key="cn-paid",
@@ -93,18 +93,28 @@ def test_agnes_api_keys_includes_cn_paid_second() -> None:
     keys = agnes_api_keys(settings)  # type: ignore[arg-type]
     assert keys == [
         AgnesApiKey("primary", "intl-paid", "https://apihub.agnes-ai.com/v1"),
-        AgnesApiKey("cn_paid", "cn-paid", "https://api.agnes-ai.cn/v1"),
         AgnesApiKey("free", "intl-free", "https://apihub.agnes-ai.com/v1"),
         AgnesApiKey("cn_free", "cn-free", "https://api.agnes-ai.cn/v1"),
     ]
     assert [agnes_key_pool(k.label) for k in keys] == [
         "paid_intl",
-        "paid_cn",
         "free_intl",
         "free_cn",
-    ], "四把 key 必须落在四个独立限制池"
-    assert agnes_pool_is_paid("paid_cn") is True
+    ], "可用 key 必须落在三个独立限制池"
+    assert agnes_pool_is_paid("paid_intl") is True
     assert agnes_pool_is_paid("free_cn") is False
+
+
+def test_agnes_api_keys_cn_paid_only_is_unconfigured() -> None:
+    settings = SimpleNamespace(
+        agnes_api_key=None,
+        agnes_cn_api_key="retired-key",
+        agnes_free_api_key=None,
+        agnes_cn_free_api_key=None,
+        agnes_api_base_url="https://apihub.agnes-ai.com/v1",
+        agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
+    )
+    assert agnes_api_keys(settings) == []  # type: ignore[arg-type]
 
 
 def test_agnes_api_keys_free_only() -> None:
